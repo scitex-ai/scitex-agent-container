@@ -13,6 +13,7 @@ a failure nobody could see went unnoticed for hours.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -57,8 +58,8 @@ _ALWAYS_SHOWN = (
 def _print_report(report) -> None:
     colour, label = _STYLE[report.verdict]
     # soft_wrap: a wrapped agent name is one you cannot grep out of a cron log.
-    console.print(f"[{colour}]{label:<14}[/{colour}] {report.name}", soft_wrap=True)
-    console.print(f"    [dim]{report.detail}[/dim]", soft_wrap=True)
+    render_rich(f"[{colour}]{label:<14}[/{colour}] {report.name}", __name__)
+    render_rich(f"    [dim]{report.detail}[/dim]", __name__)
 
 
 @click.command(name="reconcile")
@@ -167,67 +168,51 @@ def reconcile(
         raise SystemExit(code)
 
     mode = "apply" if apply else "dry-run (read-only)"
-    console.print(
-        f"[bold]sac agents reconcile[/bold]  {mode} — {len(outcome.reports)} spec(s)\n"
-    )
+    render_rich(f"[bold]sac agents reconcile[/bold]  {mode} — {len(outcome.reports)} spec(s)\n", __name__)
     shown = _ALWAYS_SHOWN + ((Verdict.OK, Verdict.NOT_MANAGED) if verbose else ())
     for report in outcome.reports:
         if report.verdict in shown:
             _print_report(report)
 
     counts = outcome.counts()
-    console.print(
-        "\n[bold]"
+    render_rich("\n[bold]"
         + ("  ".join(f"{k}={v}" for k, v in counts.items()) or "nothing")
-        + "[/bold]"
-    )
+        + "[/bold]", __name__)
 
     # Never silent: say what the verdict MEANS, not just what it was.
     would = outcome.of(Verdict.WOULD_RESTART)
     if would:
-        console.print(
-            f"\n[yellow]{len(would)} agent(s) DIED and would be restarted:[/yellow] "
+        render_rich(f"\n[yellow]{len(would)} agent(s) DIED and would be restarted:[/yellow] "
             f"{', '.join(r.name for r in would)}\n"
             "  Nothing was restarted — this is a dry-run. To act:\n"
-            "    sac agents reconcile --apply"
-        )
+            "    sac agents reconcile --apply", __name__)
     down = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
     if down:
-        console.print(
-            f"\n[red]{len(down)} agent(s) are DOWN and sac could NOT recover "
+        render_rich(f"\n[red]{len(down)} agent(s) are DOWN and sac could NOT recover "
             f"them:[/red] {', '.join(r.name for r in down)}\n"
             "  Each has a board card naming it. A human needs to look — "
-            "restarting is not fixing these."
-        )
+            "restarting is not fixing these.", __name__)
     if outcome.of(Verdict.BUDGET_UNKNOWN):
-        console.print(
-            "\n[magenta]sac could not read its OWN restart history[/magenta] "
+        render_rich("\n[magenta]sac could not read its OWN restart history[/magenta] "
             "— so the debounce and the hourly cap cannot be enforced, and an "
             "unenforceable budget is not a budget. It has REFUSED to restart "
             "anything rather than risk a loop; dead agents are staying dead.\n"
             "  A board card names it. Check the state root (on some hosts "
             "~/.scitex is a symlink into a revocable project), or pin the "
             "state somewhere durable:\n"
-            "    export SAC_RECONCILE_HISTORY=/var/tmp/sac-fleet-reconcile.json"
-        )
+            "    export SAC_RECONCILE_HISTORY=/var/tmp/sac-fleet-reconcile.json", __name__)
     if outcome.of(Verdict.UNKNOWN):
-        console.print(
-            "\n[magenta]UNKNOWN is NOT clean[/magenta] — sac could not read "
+        render_rich("\n[magenta]UNKNOWN is NOT clean[/magenta] — sac could not read "
             "the fleet's tmux (are we inside a container? is tmux wedged?), "
-            "so nothing was inferred and nothing was restarted."
-        )
+            "so nothing was inferred and nothing was restarted.", __name__)
     elif code == 0:
-        console.print(
-            "\n[green]every agent sac promised to keep running is running[/green] "
+        render_rich("\n[green]every agent sac promised to keep running is running[/green] "
             "[dim](verified against the host's tmux, not the registry's "
-            "session_id — that field is a hypothesis)[/dim]"
-        )
+            "session_id — that field is a hypothesis)[/dim]", __name__)
     if not outcome.heartbeat_ok:
-        console.print(
-            "[yellow]note:[/yellow] this pass was NOT recorded in sac's "
+        render_rich("[yellow]note:[/yellow] this pass was NOT recorded in sac's "
             "event log — nothing durable now says whether this enforcer ran. "
-            "See the stderr line above."
-        )
+            "See the stderr line above.", __name__)
     raise SystemExit(code)
 
 

@@ -19,13 +19,13 @@ Re-exported from :mod:`.state_store_nodes`, so every existing
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import time
 from typing import Any
 
 from .state_store_acl_policy import read_comms_policy
 
-_logger = logging.getLogger(__name__)
+_logger = slogging.getLogger(__name__)
 
 __all__ = ["derive_group", "record_lineage"]
 

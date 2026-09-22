@@ -18,6 +18,7 @@ Verbs:
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 import sys
 from pathlib import Path
@@ -376,7 +377,7 @@ def image_build(
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
-    console.print(f"[green]built[/green] {output}")
+    render_rich(f"[green]built[/green] {output}", __name__)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +406,7 @@ def image_sandbox(source: str, output: Path | None) -> None:
     result = sandbox_create(
         source=src_path, containers_dir=_CONTAINERS_DIR, output_dir=output
     )
-    console.print(f"[green]sandbox[/green] {result}")
+    render_rich(f"[green]sandbox[/green] {result}", __name__)
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +456,7 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
     sandbox_to_sif = _load_apptainer().sandbox_to_sif
 
     result = sandbox_to_sif(sandbox_dir=sandbox_dir, output_sif=output_sif)
-    console.print(f"[green]frozen[/green] {result}")
+    render_rich(f"[green]frozen[/green] {result}", __name__)
 
 
 # ---------------------------------------------------------------------------

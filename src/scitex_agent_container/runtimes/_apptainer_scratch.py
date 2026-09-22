@@ -59,7 +59,7 @@ is logged, never silent.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,7 +72,7 @@ from .._state.host_scratch import (
     scratch_agent_dir,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: The in-container path every spec's uv / venv / TMPDIR wiring targets.
 UVWORK_CONTAINER_PATH = "/uvwork"

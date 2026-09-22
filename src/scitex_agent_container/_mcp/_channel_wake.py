@@ -18,7 +18,7 @@ import path.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 import time
 from typing import Any
@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from scitex_dev.status import StatusCode, is_exchange_id
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = ["_should_wake_turn", "_wake_text", "_wake_turn"]
 

@@ -13,6 +13,7 @@ remaining 49 agents).
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 from typing import Callable
 
 import click
@@ -20,7 +21,6 @@ import click
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
-from .._helpers import console
 from ._common import _local_host_names, _singleton_skip_reason
 
 
@@ -64,7 +64,7 @@ def run_bulk_path(
     # Resolved ONCE for the whole bulk run: this machine's identity cannot
     # change mid-loop, and each call reads the fleet host registry off disk.
     local_names = _local_host_names(current_host)
-    console.print(f"=== [blue]Starting {len(yamls)} agents...[/blue] ===")
+    render_rich(f"=== [blue]Starting {len(yamls)} agents...[/blue] ===", __name__)
     for yaml_path in yamls:
         # stx-allow: fallback (reason: one agent's config parse or
         # launch failure must not abort the remaining agents in a bulk
@@ -76,27 +76,22 @@ def run_bulk_path(
                 config, current_host, local_names=local_names
             )
             if skip:
-                console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
+                render_rich(f"  [yellow]SKIP[/yellow] {config.name}: {skip}", __name__)
                 continue
             # ``config.remote`` was deleted in WI-6. Host pinning under
             # v3 lives in ``spec.host`` / ``spec.hosts`` and is shown
             # via ``sac host`` / ``sac agent status``, not in the
             # bulk-start one-liner.
-            console.print(
-                f"  [blue]{config.name}[/blue]...",
-                end=" ",
-            )
+            render_rich(f"  [blue]{config.name}[/blue]...", __name__)
             agent_start(
                 yaml_path,
                 no_preflight=no_preflight,
                 force=force,
                 dry_run=dry_run,
             )
-            console.print(
-                "[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]"
-            )
+            render_rich("[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            console.print(f"[red]FAILED: {exc}[/red]")
+            render_rich(f"[red]FAILED: {exc}[/red]", __name__)
 
 
 __all__ = ["run_bulk_path"]

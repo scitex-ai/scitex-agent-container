@@ -17,10 +17,10 @@ the rest of the to_home cascade ("higher layer wins on conflict").
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 class McpMergeConflict(Exception):

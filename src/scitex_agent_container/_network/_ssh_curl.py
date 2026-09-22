@@ -77,7 +77,7 @@ it has always had.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import subprocess
 
 __all__ = [
@@ -87,7 +87,7 @@ __all__ = [
     "split_status_line",
 ]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 #: The line the GET snippet appends after the response body, carrying the
 #: HTTP status curl saw. A marker rather than a bare number because peer

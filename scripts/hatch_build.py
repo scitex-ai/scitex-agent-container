@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# File: src/hatch_build.py
+# File: scripts/hatch_build.py
 
 """Bake the build stamp into the distribution (hatchling build hook).
 
@@ -24,7 +24,7 @@ is not installed and going through the package ``__init__`` would trigger
 
 Run it directly to see what a build would bake, without building::
 
-    $ python src/hatch_build.py
+    $ python scripts/hatch_build.py
     version:    0.21.13
     commit:     082d2fe949118fe0b13e7bac2b5ecd966846167b (git)
     code_hash:  c6c986b1f49b77c7175eaea5cf74198d
@@ -38,7 +38,7 @@ from pathlib import Path
 
 try:
     from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-except ImportError:  # stx-allow: fallback (reason: hatchling is a build-time-only dep; guarding it keeps the `python src/hatch_build.py` dry-run usable on a machine with no build frontend)
+except ImportError:  # stx-allow: fallback (reason: hatchling is a build-time-only dep; guarding it keeps the `python scripts/hatch_build.py` dry-run usable on a machine with no build frontend)
     BuildHookInterface = object  # type: ignore[assignment,misc]
 
 _ROOT = Path(__file__).resolve().parent.parent

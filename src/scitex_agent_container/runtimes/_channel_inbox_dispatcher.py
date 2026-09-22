@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
+import scitex_logging as slogging
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
@@ -16,7 +16,7 @@ from .._mcp.channel import _push_channel_event
 from ._apptainer_build import _read_listen_bearer
 from ._cards_ingress import consume as consume_cards
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 class _NotificationSink:

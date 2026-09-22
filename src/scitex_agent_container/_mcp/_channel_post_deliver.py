@@ -22,7 +22,7 @@ instead of two large gated blocks (and re-passes the line ceiling).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any
 
 from ._channel_auto_ack import (
@@ -37,7 +37,7 @@ from ._channel_reaction_ack import (
     should_emit_reaction_ack,
 )
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = ["run_post_deliver_receipts"]
 

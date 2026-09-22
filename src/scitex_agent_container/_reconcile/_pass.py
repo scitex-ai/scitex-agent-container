@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import write_stream
 from .._events import EmitOutcome
 from ._alarm import (
     record_pass_completed,
@@ -448,9 +449,9 @@ def reconcile_pass(
                 now=now,
                 err_stream=err_stream,
             )
-            print(
+            write_stream(
                 f"[fleet-reconcile] REFUSING to restart anything: {read.detail}",
-                file=stream,
+                stream,
             )
         else:
             record_self_recovered(

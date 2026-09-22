@@ -26,6 +26,7 @@ locally with a misleading "not running".
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import json as _json
 import shlex
 import subprocess
@@ -311,7 +312,7 @@ def stop(
         # parses a single object from a peer's stdout), so zero targets
         # correctly yields zero objects.
         if not as_json:
-            console.print("[dim]No agents found to stop.[/dim]")
+            render_rich("[dim]No agents found to stop.[/dim]", __name__)
         return
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
@@ -380,7 +381,7 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": yaml_path, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({yaml_path}): {exc}[/red]")
+                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__)
     for raw_target in single_targets:
         try:
             name: str = raw_target
@@ -394,7 +395,7 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": raw_target, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
 
     # Dispatch loop — try remote first, fall back to local agent_stop.
     peers = _load_host_config().peers
@@ -456,12 +457,10 @@ def stop(
                     if as_json:
                         click.echo(_json.dumps(release_holder))
                     else:
-                        console.print(
-                            f"[yellow]Agent '{name}' force-released on "
+                        render_rich(f"[yellow]Agent '{name}' force-released on "
                             f"'{release_holder.get('host')}' "
                             f"(peer unreachable; "
-                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]"
-                        )
+                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]", __name__)
                     continue
                 if as_json:
                     click.echo(
@@ -479,10 +478,8 @@ def stop(
                         )
                     )
                 else:
-                    console.print(
-                        f"[green]Agent '{name}' stopped on "
-                        f"'{envelope_holder.get('_peer')}'[/green]"
-                    )
+                    render_rich(f"[green]Agent '{name}' stopped on "
+                        f"'{envelope_holder.get('_peer')}'[/green]", __name__)
                 continue
             # Terminal operator stop: opt into the inode-hygiene prune.
             # The gate inside agent_stop restricts it to opted-in
@@ -509,13 +506,13 @@ def stop(
                     )
                 )
             else:
-                console.print(f"[green]Agent '{name}' stopped[/green]")
+                render_rich(f"[green]Agent '{name}' stopped[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining targets; surfaces via the per-target JSON envelope or red console line)
             any_error = True
             if as_json:
                 click.echo(_json.dumps({"name": name, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
 
     if any_error:
         sys.exit(1)

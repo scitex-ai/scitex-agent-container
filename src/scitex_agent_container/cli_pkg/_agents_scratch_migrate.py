@@ -28,6 +28,7 @@ Registered onto ``sac agents`` by :func:`register`, exactly as
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -89,27 +90,20 @@ def _payload(plan: ScratchPlan, *, mode: str) -> dict:
 
 def _render_plan(plan: ScratchPlan) -> None:
     if not plan.roster.is_populated:
-        console.print(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}")
+        render_rich(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}", __name__)
         return
-    console.print(
-        f"scratch root: [bold]{_lit(plan.scratch.root)}[/bold] "
-        f"[dim]({_lit(plan.scratch.source)}: {_lit(plan.scratch.reason)})[/dim]"
-    )
+    render_rich(f"scratch root: [bold]{_lit(plan.scratch.root)}[/bold] "
+        f"[dim]({_lit(plan.scratch.source)}: {_lit(plan.scratch.reason)})[/dim]", __name__)
     # Said ONCE at the top rather than only inside 17 identical row reasons:
     # from a blind vantage nothing can move, and that is the headline.
     blind = liveness_vantage()
     if blind:
-        console.print(
-            f"[yellow]LIVENESS UNREADABLE FROM HERE[/yellow] — {_lit(blind)}\n"
+        render_rich(f"[yellow]LIVENESS UNREADABLE FROM HERE[/yellow] — {_lit(blind)}\n"
             "Sizes below are real (the overlays are read through a bind "
             "mount); every agent is refused because no agent can be shown "
-            "to be stopped.",
-            soft_wrap=True,
-        )
-    console.print(
-        f"[bold]{len(plan.rows) + len(plan.unreadable)} spec(s)[/bold] under "
-        f"{_lit(plan.roster.root)}\n"
-    )
+            "to be stopped.", __name__)
+    render_rich(f"[bold]{len(plan.rows) + len(plan.unreadable)} spec(s)[/bold] under "
+        f"{_lit(plan.roster.root)}\n", __name__)
     for row in plan.rows:
         if row.action == "move":
             tag = "[green]MOVE   [/green]"
@@ -118,35 +112,26 @@ def _render_plan(plan: ScratchPlan) -> None:
         else:
             tag = "[dim]nothing[/dim]"
         size = human_bytes(row.bytes) if row.source is not None else "-"
-        console.print(
-            f"  {tag} {_lit(row.agent):<32} {_lit(size):>10}  {_lit(row.reason)}",
-            soft_wrap=True,
-        )
+        render_rich(f"  {tag} {_lit(row.agent):<32} {_lit(size):>10}  {_lit(row.reason)}", __name__)
     for name in plan.unknown:
-        console.print(f"\n[red]UNKNOWN[/red] --agent {_lit(name)}: no such spec under {_lit(plan.roster.root)}")
+        render_rich(f"\n[red]UNKNOWN[/red] --agent {_lit(name)}: no such spec under {_lit(plan.roster.root)}", __name__)
     for entry in plan.unreadable:
-        console.print(f"\n[red]UNREADABLE[/red] {_lit(entry)}", soft_wrap=True)
-    console.print(
-        f"\n[bold]{len(plan.movable)} agent(s), {human_bytes(plan.total_bytes)} "
+        render_rich(f"\n[red]UNREADABLE[/red] {_lit(entry)}", __name__)
+    render_rich(f"\n[bold]{len(plan.movable)} agent(s), {human_bytes(plan.total_bytes)} "
         f"({plan.total_bytes} bytes) would move from the overlay upper to "
-        f"{_lit(plan.scratch.root)}[/bold]"
-    )
+        f"{_lit(plan.scratch.root)}[/bold]", __name__)
     if plan.refused:
-        console.print(
-            f"[yellow]{len(plan.refused)} refused[/yellow]: "
-            + ", ".join(_lit(r.agent) for r in plan.refused)
-        )
+        render_rich(f"[yellow]{len(plan.refused)} refused[/yellow]: "
+            + ", ".join(_lit(r.agent) for r in plan.refused), __name__)
 
 
 def _render_apply(results) -> None:
     for res in results:
         tag = "[green]MOVED [/green]" if res.moved else "[red]FAILED[/red]"
-        console.print(f"  {tag} {_lit(res.agent):<32} {_lit(res.detail)}", soft_wrap=True)
+        render_rich(f"  {tag} {_lit(res.agent):<32} {_lit(res.detail)}", __name__)
     moved = [r for r in results if r.moved]
-    console.print(
-        f"\n[bold]{len(moved)}/{len(results)} moved, "
-        f"{human_bytes(sum(r.bytes for r in moved))} freed from the overlay upper[/bold]"
-    )
+    render_rich(f"\n[bold]{len(moved)}/{len(results)} moved, "
+        f"{human_bytes(sum(r.bytes for r in moved))} freed from the overlay upper[/bold]", __name__)
 
 
 @click.command(name="scratch-migrate")
@@ -208,13 +193,11 @@ def scratch_migrate(ctx: click.Context, agents: tuple[str, ...], apply: bool, as
         if want_json:
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(code)
-        console.print("[bold]sac agents scratch-migrate[/bold]  dry-run (read-only)\n")
+        render_rich("[bold]sac agents scratch-migrate[/bold]  dry-run (read-only)\n", __name__)
         _render_plan(plan)
         if plan.movable:
-            console.print(
-                "\nNothing was moved — this is a dry-run. To act:\n"
-                "    sac agents scratch-migrate --apply"
-            )
+            render_rich("\nNothing was moved — this is a dry-run. To act:\n"
+                "    sac agents scratch-migrate --apply", __name__)
         raise SystemExit(code)
 
     if not plan.safe_to_apply:
@@ -223,12 +206,10 @@ def scratch_migrate(ctx: click.Context, agents: tuple[str, ...], apply: bool, as
         if want_json:
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_PLAN_UNSOUND)
-        console.print("[bold]sac agents scratch-migrate[/bold]  apply\n")
+        render_rich("[bold]sac agents scratch-migrate[/bold]  apply\n", __name__)
         _render_plan(plan)
-        console.print(
-            "\n[red]REFUSED[/red] — nothing was moved. A plan that cannot "
-            "describe every selected spec does not describe the sweep."
-        )
+        render_rich("\n[red]REFUSED[/red] — nothing was moved. A plan that cannot "
+            "describe every selected spec does not describe the sweep.", __name__)
         raise SystemExit(_EXIT_PLAN_UNSOUND)
 
     results = apply_scratch_migration(plan)
@@ -241,9 +222,9 @@ def scratch_migrate(ctx: click.Context, agents: tuple[str, ...], apply: bool, as
     if want_json:
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
-    console.print("[bold]sac agents scratch-migrate[/bold]  apply\n")
+    render_rich("[bold]sac agents scratch-migrate[/bold]  apply\n", __name__)
     _render_plan(plan)
-    console.print("")
+    render_rich("", __name__)
     _render_apply(results)
     raise SystemExit(code)
 
@@ -257,7 +238,7 @@ def _emit_refusal(want_json: bool, mode: str, reason: str) -> None:
             )
         )
         return
-    console.print(f"[red]REFUSED[/red] — {_lit(reason)}", soft_wrap=True)
+    render_rich(f"[red]REFUSED[/red] — {_lit(reason)}", __name__)
 
 
 def register(agent_group) -> None:

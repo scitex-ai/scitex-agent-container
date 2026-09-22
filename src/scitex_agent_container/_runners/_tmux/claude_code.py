@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import scitex_logging as slogging
 import re
 import threading
 import time
@@ -42,7 +43,7 @@ from .src_files import (  # noqa: F401  # MISSING — Day-2 blocker
     deploy_src_mcp_json,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Backward-compatible aliases for extracted functions
 _setup_claude_md = setup_claude_md
@@ -306,7 +307,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "auto-accept.log"
 
-        file_logger = logging.getLogger(f"auto-accept.{config.name}")
+        file_logger = slogging.getLogger(f"auto-accept.{config.name}")
         file_logger.setLevel(logging.DEBUG)
         # Remove old handlers to avoid duplicates on restart
         file_logger.handlers.clear()

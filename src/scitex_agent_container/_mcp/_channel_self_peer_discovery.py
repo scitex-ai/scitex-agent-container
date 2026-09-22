@@ -64,11 +64,12 @@ the operator knows where to drop the file.
 from __future__ import annotations
 
 import logging
+import scitex_logging as slogging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Type alias for the runtime-identity resolver — a zero-arg callable that
 # returns the running session's runtime identity (``host_config.lead.name``

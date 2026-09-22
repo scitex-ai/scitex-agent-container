@@ -46,7 +46,7 @@ leaves the last-known-good heartbeat intact.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 import threading
 import time
@@ -57,7 +57,7 @@ from typing import Any, Callable
 
 from ..config._harness_registry import host_probed_runtime_spellings
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default cadence. The SDK ``health.interval`` default is 300s; beating
 # every ~30s keeps ``heartbeat_at`` comfortably fresh inside that window.

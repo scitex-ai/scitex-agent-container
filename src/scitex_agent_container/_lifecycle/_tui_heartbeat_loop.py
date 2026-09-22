@@ -74,14 +74,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default cadence. The TUI-alive max-idle window is 300s
 # (``runtimes.tui_session._DEFAULT_MAX_IDLE_S``); beating every ~30s

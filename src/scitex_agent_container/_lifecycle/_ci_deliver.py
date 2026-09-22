@@ -21,10 +21,10 @@ agent learns of the verdict on its next heartbeat/poll regardless).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 TERMINAL_CONCLUSIONS = frozenset({"success", "failure"})
 

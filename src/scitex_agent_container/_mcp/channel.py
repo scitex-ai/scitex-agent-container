@@ -36,12 +36,12 @@ container and no spec; its AgentCard is synthesised by
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 from collections import deque
 from typing import Any
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Bounded ring buffer of recently received events so the a2a_reply +
 # a2a_ack tools can look up the original sender by msg_id without the

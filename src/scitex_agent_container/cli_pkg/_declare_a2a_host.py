@@ -26,6 +26,7 @@ operation and deserves its own PR.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,17 +70,15 @@ def _report(plan, host: str) -> None:
 
     for reason, agents in group_refusals(plan).items():
         shown = ", ".join(agents[:6]) + (" …" if len(agents) > 6 else "")
-        console.print(f"  [dim]{len(agents):>3} {reason}[/dim] ({shown})")
+        render_rich(f"  [dim]{len(agents):>3} {reason}[/dim] ({shown})", __name__)
     for edit in plan.writable:
-        console.print(f"  [green]+[/green] {edit.agent}: spec.a2a.host: {host}")
+        render_rich(f"  [green]+[/green] {edit.agent}: spec.a2a.host: {host}", __name__)
     if plan.malformed:
-        console.print(
-            f"  [red]{len(plan.malformed)} MALFORMED[/red] — the editor would "
+        render_rich(f"  [red]{len(plan.malformed)} MALFORMED[/red] — the editor would "
             "change more than the one intended line: "
-            + ", ".join(e.agent for e in plan.malformed)
-        )
+            + ", ".join(e.agent for e in plan.malformed), __name__)
     for entry in plan.unreadable:
-        console.print(f"  [red]UNREADABLE[/red] {entry}")
+        render_rich(f"  [red]UNREADABLE[/red] {entry}", __name__)
 
 
 @click.command(name="declare-a2a-host")
@@ -123,19 +122,17 @@ def declare_a2a_host(apply_: bool) -> None:
         )
 
     plan = plan_a2a_host_sweep(registry, DEFAULT_A2A_HOST)
-    console.print(f"[bold]{_headline(plan)}[/bold]")
+    render_rich(f"[bold]{_headline(plan)}[/bold]", __name__)
     _report(plan, DEFAULT_A2A_HOST)
 
     if not apply_:
-        console.print(
-            "\n[dim]Dry-run — nothing written. Re-run with --apply to write.[/dim]"
-        )
+        render_rich("\n[dim]Dry-run — nothing written. Re-run with --apply to write.[/dim]", __name__)
         # A dry-run that FOUND a problem must not exit 0; a caller scripting
         # this needs the plan's own verdict, not just its prose.
         raise SystemExit(0 if plan.safe_to_apply else 1)
 
     if not plan.writable:
-        console.print("\n[green]Every spec already declares it. Nothing to do.[/green]")
+        render_rich("\n[green]Every spec already declares it. Nothing to do.[/green]", __name__)
         return
 
     archive = _archive_dir(registry)
@@ -145,19 +142,15 @@ def declare_a2a_host(apply_: bool) -> None:
     )
 
     if result.refused:
-        console.print(f"\n[red]REFUSED[/red] — nothing written: {result.refused}")
+        render_rich(f"\n[red]REFUSED[/red] — nothing written: {result.refused}", __name__)
         raise SystemExit(1)
     if result.rolled_back:
-        console.print(
-            f"\n[red]ROLLED BACK[/red] — verification failed after writing, "
-            f"originals restored from {archive}: {result.rolled_back}"
-        )
+        render_rich(f"\n[red]ROLLED BACK[/red] — verification failed after writing, "
+            f"originals restored from {archive}: {result.rolled_back}", __name__)
         raise SystemExit(1)
 
-    console.print(
-        f"\n[green]Wrote {len(result.written)} spec(s)[/green]; "
-        f"originals archived at {archive}"
-    )
+    render_rich(f"\n[green]Wrote {len(result.written)} spec(s)[/green]; "
+        f"originals archived at {archive}", __name__)
 
 
 __all__ = ["declare_a2a_host"]

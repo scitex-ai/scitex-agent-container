@@ -24,6 +24,7 @@ bool alone. Two reasons it is additive rather than a replacement:
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from typing import Any
 
 __all__ = [
@@ -168,12 +169,10 @@ def print_liveness(console: Any, liveness: dict) -> None:
     verdict = str(liveness.get("verdict", "unknown"))
     colour = _VERDICT_COLOUR.get(verdict, "yellow")
     summary = liveness.get("summary", "?")
-    console.print(f"[{colour}]liveness: {summary}[/{colour}]")
+    render_rich(f"[{colour}]liveness: {summary}[/{colour}]", __name__)
     veto = liveness.get("destroy_veto_reason")
     if veto:
-        console.print(
-            f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]"
-        )
+        render_rich(f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]", __name__)
 
 
 def print_inbox(
@@ -202,34 +201,26 @@ def print_inbox(
     from .._listen._reachability import UNKNOWN, UNREACHABLE
 
     if reachable == UNREACHABLE and fault == FAULT_NOT_RUNNING:
-        console.print(
-            f"[red]inbox: NOT REACHABLE — and '{name}' IS NOT RUNNING. No live "
+        render_rich(f"[red]inbox: NOT REACHABLE — and '{name}' IS NOT RUNNING. No live "
             f"session was observed for it, so its registry row has outlived "
             f"its process. Messages are queued durably, but NOTHING WILL "
             f"DRAIN THAT QUEUE until the agent is started — there is no "
-            f"adapter left to reconnect. Do not wait for a reply.[/red]"
-        )
+            f"adapter left to reconnect. Do not wait for a reply.[/red]", __name__)
     elif reachable == UNREACHABLE and fault == FAULT_DEAF_INBOX:
-        console.print(
-            f"[yellow]inbox: NOT REACHABLE — RUNNING BUT DEAF. A live session "
+        render_rich(f"[yellow]inbox: NOT REACHABLE — RUNNING BUT DEAF. A live session "
             f"was observed for '{name}' AND it has 0 subscribers, so a2a_send "
             f"reaches nobody while the agent is up. Messages are queued and "
             f"replayed when its channel adapter reconnects. Do NOT "
-            f"force-restart: the session is healthy.[/yellow]"
-        )
+            f"force-restart: the session is healthy.[/yellow]", __name__)
     elif reachable == UNREACHABLE:
-        console.print(
-            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers, cause "
+        render_rich(f"[yellow]inbox: NOT REACHABLE — 0 live subscribers, cause "
             f"UNCONFIRMED. a2a_send to '{name}' will reach nobody. This is "
             f"EITHER a detached inbox adapter on a live agent (messages "
             f"replay on reconnect) OR an agent that is not running at all "
             f"(nothing will reconnect) — this reading cannot tell them apart. "
-            f"Do NOT force-restart on it.[/yellow]"
-        )
+            f"Do NOT force-restart on it.[/yellow]", __name__)
     elif reachable == UNKNOWN:
-        console.print(
-            "[dim]inbox: unknown (could not reach sac listen to observe "
-            "subscribers)[/dim]"
-        )
+        render_rich("[dim]inbox: unknown (could not reach sac listen to observe "
+            "subscribers)[/dim]", __name__)
     else:
-        console.print(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]")
+        render_rich(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]", __name__)

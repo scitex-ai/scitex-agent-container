@@ -10,6 +10,7 @@ delegates the per-target loop here. Mirrors the existing sibling
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import json as _json
 import os
 import sys
@@ -164,7 +165,7 @@ def run_single_targets(
     with broker_ctx:
         for target_idx, raw_target in enumerate(single_targets):
             if target_idx > 0 and not as_json:
-                console.print()  # blank line between agents
+                render_rich("", __name__)  # blank line between agents
 
             # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
             try:
@@ -219,9 +220,7 @@ def run_single_targets(
                             }
                         )
                     else:
-                        console.print(
-                            f"[yellow]Skipping '{config.name}': {skip}[/yellow]"
-                        )
+                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__)
                     continue
                 # Location reads as `host@<host-workdir>:<container-workdir>`.
                 host = resolve_hostname() or "local"

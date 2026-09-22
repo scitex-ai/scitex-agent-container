@@ -496,9 +496,9 @@ class TuiSessionRuntime(
                 is_running=self.is_running(config) if alive else False,
             )
             if not ok:
-                import logging
+                import scitex_logging as slogging
 
-                logging.getLogger(__name__).error(
+                slogging.getLogger(__name__).error(
                     "TuiSessionRuntime: start FAILED for %s — tmux session "
                     "%s (session_alive=%s, reached_ready=%s). The inner claude "
                     "did not survive boot and reach its input field. Reproduce "

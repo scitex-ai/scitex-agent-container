@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import math
 import time
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ from ..config import AgentConfig
 from ..runtimes._hermes_tui_rpc import HermesTurnActivity, observe_turn_activity
 from ..runtimes.tui_session import state_dir_for_config
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 class ManagedTurnDrainRefusal(RuntimeError):

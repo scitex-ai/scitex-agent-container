@@ -49,12 +49,12 @@ Hard guarantees:
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import signal
 from typing import Any, Callable, Iterable
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = ["kill_orphan_mcp_children", "MCP_CMDLINE_MARKERS"]
 

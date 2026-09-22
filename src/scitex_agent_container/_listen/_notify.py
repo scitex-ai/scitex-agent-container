@@ -61,7 +61,7 @@ failure → ``500`` with the reason. No silent drops.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 from typing import Any
 
 from starlette.requests import Request
@@ -71,7 +71,7 @@ from .._lifecycle._off_loop import run_blocking
 from .._state.state_store_channel import persist_event
 from ..a2a._inbox_bus import Broker, mint_event
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default sender identity stamped on the envelope when the caller does
 # not supply ``from_agent``. The board (scitex-cards) is the canonical

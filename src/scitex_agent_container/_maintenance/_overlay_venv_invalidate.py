@@ -48,7 +48,7 @@ refuse to run broken in-container.
 from __future__ import annotations
 
 import errno
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 import uuid
@@ -71,7 +71,7 @@ from ._overlay_venv_model import (
 )
 from ._overlay_venv_predicate import plan_invalidation
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "ARCHIVE_DIRNAME",

@@ -9,6 +9,7 @@ rendering lives here. ``_agent_list`` re-exports these names so existing
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import json as json_mod
 
 import click
@@ -165,29 +166,23 @@ def _print_auth_footer(data: list[dict]) -> None:
     failed = [r for r in live if r.get("auth_failed")]
     hint = "run `sac agents auth-status` (or put it on a timer)"
     if not ages:
-        console.print(
-            Text(
+        render_rich(Text(
                 "auth: never checked — a green agent is NOT verified "
                 f"working, only tmux-alive; {hint}",
                 style="yellow",
-            )
-        )
+            ), __name__)
         return
     freshest = min(ages)
     if freshest > STALE_AFTER_S:
-        console.print(
-            Text(
+        render_rich(Text(
                 f"auth: last checked {_fmt_age(freshest)} ago (STALE) — "
                 f"green is no longer verified; {hint}",
                 style="yellow",
-            )
-        )
+            ), __name__)
     else:
         unchecked = len(live) - len(ages)
         extra = f", {unchecked} unchecked" if unchecked else ""
-        console.print(
-            Text(f"auth: checked {_fmt_age(freshest)} ago{extra}", style="dim")
-        )
+        render_rich(Text(f"auth: checked {_fmt_age(freshest)} ago{extra}", style="dim"), __name__)
     if failed:
         detail = ", ".join(
             f"{terminal_safe(r['name'])} "
@@ -195,12 +190,10 @@ def _print_auth_footer(data: list[dict]) -> None:
             f"{terminal_safe(r.get('auth_remedy') or 'restart')})"
             for r in failed
         )
-        console.print(
-            Text(
+        render_rich(Text(
                 f"{len(failed)} agent(s) cannot authenticate: {detail}",
                 style="bold red",
-            )
-        )
+            ), __name__)
 
 
 def print_agent_list_json(
@@ -278,11 +271,9 @@ def _print_hidden_footer(
     summary = ", ".join(parts)
     if none_running:
         message = f"No running agents ({summary} hidden — -v for all)."
-        console.print(Text(message, style="dim"))
+        render_rich(Text(message, style="dim"), __name__)
     else:
-        console.print(Text(f"({summary} hidden — -v for all)", style="dim"))
-
-
+        render_rich(Text(f"({summary} hidden — -v for all)", style="dim"), __name__)
 def print_agent_list(
     registry: Registry | None,
     capability: str | None = None,
@@ -331,7 +322,7 @@ def print_agent_list(
         )
         empty_msg = "[dim]No agents found (registry empty, no specs on disk).[/dim]"
     if not data:
-        console.print(empty_msg)
+        render_rich(empty_msg, __name__)
         return
 
     # `--all` reveals dead spec-missing registry ghosts; hidden otherwise.
@@ -359,9 +350,7 @@ def print_agent_list(
 
     if not data:
         if show_full:
-            console.print(
-                "[dim]No active agents (all hidden as stale; --all to show).[/dim]"
-            )
+            render_rich("[dim]No active agents (all hidden as stale; --all to show).[/dim]", __name__)
         else:
             _print_hidden_footer(status_hidden, hidden_ghosts, none_running=True)
         return
@@ -451,7 +440,7 @@ def print_agent_list(
         cells.append(Text(str(started)))
         table.add_row(*cells)
 
-    console.print(table)
+    render_rich(table, __name__)
 
     # Thirteen verbose columns collapse to unreadable one-character cells on a
     # narrow terminal.  Preserve every operator-facing identity/start value in
@@ -475,7 +464,7 @@ def print_agent_list(
             f"({hidden_ghosts} stale/ghost agent(s) hidden — --all to show, "
             "-v for paths)"
         )
-        console.print(Text(message, style="dim"))
+        render_rich(Text(message, style="dim"), __name__)
 
     # Full per-agent validation-error text — FULL view only. In the default
     # view these blocks (repeated dozens of times on a real fleet) are the
@@ -484,9 +473,9 @@ def print_agent_list(
         for row in data:
             if row.get("validation_errors"):
                 heading = f"✗ {terminal_safe(row['name'])} validation errors:"
-                console.print(Text(heading, style="bold red"))
+                render_rich(Text(heading, style="bold red"), __name__)
                 for err in row["validation_errors"]:
-                    console.print(Text(f"    - {terminal_safe(err)}", style="red"))
+                    render_rich(Text(f"    - {terminal_safe(err)}", style="red"), __name__)
 
 
 def _extract_damaged_fields(errors: list[str]) -> list[str]:

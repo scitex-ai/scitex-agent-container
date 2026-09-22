@@ -16,7 +16,7 @@ re-imports :func:`list_agents` so route registration and the historical
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -28,7 +28,7 @@ from .._state.state_store_instances_store import INSTANCES_STORE
 
 __all__ = ["annotate_runtime_rows", "list_agents"]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def annotate_runtime_rows(

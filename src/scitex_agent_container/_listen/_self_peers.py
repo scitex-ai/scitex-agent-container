@@ -68,11 +68,11 @@ Out of scope (deferred follow-ups):
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Mapping, Sequence
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 # The two keys that mark a YAML as "container-agent" rather than

@@ -14,6 +14,7 @@ rendered as nothing is how a fleet with no peer tokens reads as healthy.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -37,43 +38,32 @@ def _print_row(row) -> None:
     else:
         alias = f"ssh://{row.ssh_alias}" if row.ssh_alias else "(no ssh alias)"
     # soft_wrap: a wrapped host name is one you cannot grep out of a log.
-    console.print(
-        f"[{colour}]{label:<12}[/{colour}] {row.host:<20} {alias:<28} {ms}",
-        soft_wrap=True,
-    )
+    render_rich(f"[{colour}]{label:<12}[/{colour}] {row.host:<20} {alias:<28} {ms}", __name__)
     if row.error:
-        console.print(f"    [dim]{row.error}[/dim]", soft_wrap=True)
+        render_rich(f"    [dim]{row.error}[/dim]", __name__)
 
 
 def _print_report(report, *, alarm_line: str | None) -> None:
-    console.print(
-        f"[bold]sac a2a reachability[/bold]  from {report.probed_from} "
-        f"-> {len(report.rows)} host(s), listen port {report.port}\n"
-    )
+    render_rich(f"[bold]sac a2a reachability[/bold]  from {report.probed_from} "
+        f"-> {len(report.rows)} host(s), listen port {report.port}\n", __name__)
     for row in report.rows:
         _print_row(row)
     counts = report.counts()
-    console.print("")
+    render_rich("", __name__)
     if report.exit_code == 3:
-        console.print(
-            "[magenta]nothing measurable[/magenta] — every host is UNKNOWN, so "
+        render_rich("[magenta]nothing measurable[/magenta] — every host is UNKNOWN, so "
             "this pass proves nothing about the fleet. Fix the reasons above "
             "(peer tokens: `sac host add-peer <host> <token>`; aliases: "
-            "hosts.yaml / config.yaml peers)."
-        )
+            "hosts.yaml / config.yaml peers).", __name__)
     elif report.exit_code == 1:
         down = [r.host for r in report.rows if r.reachable is False]
-        console.print(
-            f"[red]cross-host a2a is DOWN to {len(down)} host(s):[/red] "
-            f"{', '.join(down)} — a2a_send to agents there fails from here."
-        )
+        render_rich(f"[red]cross-host a2a is DOWN to {len(down)} host(s):[/red] "
+            f"{', '.join(down)} — a2a_send to agents there fails from here.", __name__)
     else:
-        console.print(
-            f"[green]all {counts['reachable']} measured host(s) reachable[/green] "
-            f"[dim]({counts['unknown']} unknown, listed above)[/dim]"
-        )
+        render_rich(f"[green]all {counts['reachable']} measured host(s) reachable[/green] "
+            f"[dim]({counts['unknown']} unknown, listed above)[/dim]", __name__)
     if alarm_line:
-        console.print(f"[dim]{alarm_line}[/dim]")
+        render_rich(f"[dim]{alarm_line}[/dim]", __name__)
 
 
 @click.command("reachability")

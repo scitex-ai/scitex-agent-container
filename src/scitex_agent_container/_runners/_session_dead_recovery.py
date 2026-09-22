@@ -24,12 +24,12 @@ falls through to the auth/sdk-runtime classification.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Hard cap on dead-session recoveries per conversation lifetime. One per
 # distinct dead id is the realistic ceiling (latest + every forked id in

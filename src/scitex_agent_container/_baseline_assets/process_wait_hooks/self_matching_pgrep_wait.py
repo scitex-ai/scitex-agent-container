@@ -17,6 +17,33 @@ import os
 import re
 import shlex
 import sys
+
+
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+except ImportError:  # standalone copy without sac installed
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr.
+
+        Used only when ``scitex_logging`` is not importable (standalone
+        copy on agent $HOME / bare SIF). Diagnostics go to stderr —
+        never stdout, which carries protocol frames.
+        """
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
 from collections.abc import Iterator, Sequence
 
 DENY = 2
@@ -133,7 +160,7 @@ def main() -> int:
     if pattern is None:
         return ALLOW
 
-    print(
+    log.error(
         "BLOCKED by deny_self_matching_pgrep_wait.sh: this looping "
         f"`pgrep -f` pattern matches the waiter's own command line: {pattern!r}\n\n"
         "After the intended process exits, pgrep will continue finding the "
@@ -142,8 +169,7 @@ def main() -> int:
         "Use the launched process PID and `wait \"$pid\"` when possible. If "
         "you must discover an unrelated process, use a self-excluding pattern "
         "such as `pgrep -f '[w]orker-name'` and verify it once with `pgrep -af` "
-        "before starting the loop.",
-        file=sys.stderr,
+        "before starting the loop."
     )
     return DENY
 

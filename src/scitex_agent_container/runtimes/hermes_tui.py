@@ -134,7 +134,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         poll_s: float = 0.5,
     ) -> bool:
         """Observe Hermes' own footer until its session composer is bound."""
-        import logging
+        import scitex_logging as slogging
 
         name = self.session_name(config)
         deadline = time.monotonic() + timeout_s
@@ -143,7 +143,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
             ready = _hermes_pane_boot_ready(pane)
             if ready is not None:
                 if not ready:
-                    logging.getLogger(__name__).error(
+                    slogging.getLogger(__name__).error(
                         "Hermes TUI start refused for %s: pane is at Setup Required "
                         "and has no active model session",
                         config.name,

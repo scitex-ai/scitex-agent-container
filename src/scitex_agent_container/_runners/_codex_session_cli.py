@@ -28,14 +28,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
 
 from ..config._residency_types import AGENT_RESIDENCIES, RESIDENT
 from ._session_state import DEFAULT_TICK_SECONDS
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["_parse_argv", "main"]
 

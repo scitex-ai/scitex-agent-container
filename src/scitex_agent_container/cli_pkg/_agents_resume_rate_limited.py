@@ -21,6 +21,7 @@ agent this pass touched gets a line saying what we concluded and WHY.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -61,8 +62,8 @@ _ALWAYS_SHOWN = tuple(_STYLE)
 def _print_report(report) -> None:
     colour, label = _STYLE.get(report.verdict, ("white", report.verdict.value))
     # soft_wrap: a wrapped agent name is one you cannot grep out of a timer log.
-    console.print(f"[{colour}]{label:<15}[/{colour}] {report.name}", soft_wrap=True)
-    console.print(f"    [dim]{report.detail}[/dim]", soft_wrap=True)
+    render_rich(f"[{colour}]{label:<15}[/{colour}] {report.name}", __name__)
+    render_rich(f"    [dim]{report.detail}[/dim]", __name__)
 
 
 @click.command(name="resume-rate-limited")
@@ -201,45 +202,32 @@ def resume_rate_limited(
 
     mode = "apply" if apply else "check (read-only)"
     shown = outcome.of(*_ALWAYS_SHOWN)
-    console.print(
-        f"[bold]sac agents resume-rate-limited[/bold]  {mode} — "
+    render_rich(f"[bold]sac agents resume-rate-limited[/bold]  {mode} — "
         f"{len(shown)} agent(s) behind a rate wall, "
-        f"{len(outcome.reports) - len(shown)} with nothing to report\n"
-    )
+        f"{len(outcome.reports) - len(shown)} with nothing to report\n", __name__)
     for report in shown:
         _print_report(report)
 
     counts = outcome.counts()
     if counts:
-        console.print(
-            "\n" + "  ".join(f"{k.lower()}={v}" for k, v in sorted(counts.items()))
-        )
+        render_rich("\n" + "  ".join(f"{k.lower()}={v}" for k, v in sorted(counts.items())), __name__)
 
     stuck = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET, Verdict.SWITCH_FAILED)
     if stuck:
-        console.print(
-            f"\n[red]{len(stuck)} agent(s) are STILL parked and sac could not "
-            f"get them working again.[/red] Each is recorded as degraded.",
-            soft_wrap=True,
-        )
+        render_rich(f"\n[red]{len(stuck)} agent(s) are STILL parked and sac could not "
+            f"get them working again.[/red] Each is recorded as degraded.", __name__)
     blind = outcome.of(
         Verdict.RESET_UNKNOWN, Verdict.UNREADABLE, Verdict.SWITCH_UNVERIFIED
     )
     if blind:
-        console.print(
-            f"\n[magenta]{len(blind)} agent(s) could not be DETERMINED.[/magenta] "
+        render_rich(f"\n[magenta]{len(blind)} agent(s) could not be DETERMINED.[/magenta] "
             f"A wall whose reset clause does not parse needs a new pattern in "
             f"_ratelimit._banner; a switch whose outcome the pane will not show "
             f"needs a human to look at that pane. Nothing here can resolve "
-            f"either by guessing.",
-            soft_wrap=True,
-        )
+            f"either by guessing.", __name__)
     if not outcome.heartbeat_ok:
-        console.print(
-            "\n[yellow]note:[/yellow] this pass could not record that it RAN. "
-            "A silent enforcer and a satisfied one look identical.",
-            soft_wrap=True,
-        )
+        render_rich("\n[yellow]note:[/yellow] this pass could not record that it RAN. "
+            "A silent enforcer and a satisfied one look identical.", __name__)
     raise SystemExit(code)
 
 

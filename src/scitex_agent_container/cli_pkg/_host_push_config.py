@@ -31,6 +31,7 @@ value either.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -70,7 +71,7 @@ _TOKEN_STYLE = {
 
 def _evidence(text: str) -> None:
     """One evidence line WITHOUT rich's word-wrap (grep-able from cron logs)."""
-    console.print(text, soft_wrap=True)
+    render_rich(text, __name__)
 
 
 def _print_result(result: PushConfigResult, *, show_diff: bool) -> None:
@@ -89,7 +90,7 @@ def _print_result(result: PushConfigResult, *, show_diff: bool) -> None:
     if result.diff and (show_diff or must_show):
         for line in result.diff.splitlines():
             _evidence(f"    [dim]{line}[/dim]")
-    console.print("")
+    render_rich("", __name__)
 
 
 def _print_token_result(result: TokenStateResult) -> None:
@@ -121,7 +122,7 @@ def _print_token_result(result: TokenStateResult) -> None:
         _evidence(f"    listen file     {name}  sha256:{digest or '<undigested>'}")
     for line in result.detail.splitlines():
         _evidence(f"    {line}" if line.strip() else "")
-    console.print("")
+    render_rich("", __name__)
 
 
 @click.command("push-config")
@@ -361,9 +362,7 @@ def host_push_config(
         raise SystemExit(code)
 
     mode = "check (read-only)" if check_only else "push"
-    console.print(
-        f"[bold]sac host push-config {mode}[/bold]  master -> {len(results)} peer(s)\n"
-    )
+    render_rich(f"[bold]sac host push-config {mode}[/bold]  master -> {len(results)} peer(s)\n", __name__)
     for result in results:
         _print_result(result, show_diff=show_diff)
     for token in tokens:
@@ -373,29 +372,23 @@ def host_push_config(
     drifted = [r.peer for r in results if r.exit_code != 0]
     tok_drifted = [t.peer for t in tokens if t.exit_code != 0]
     if check_only and drifted:
-        console.print(
-            f"[yellow]config drift on {len(drifted)} peer(s):[/yellow] "
+        render_rich(f"[yellow]config drift on {len(drifted)} peer(s):[/yellow] "
             f"{', '.join(drifted)}\n"
             "  These peers are NOT running the master's generated client "
             "config. Reconcile with:\n"
-            f"    sac host push-config {drifted[0]}"
-        )
+            f"    sac host push-config {drifted[0]}", __name__)
     if check_only and tok_drifted:
-        console.print(
-            f"[red]token drift on {len(tok_drifted)} peer(s):[/red] "
+        render_rich(f"[red]token drift on {len(tok_drifted)} peer(s):[/red] "
             f"{', '.join(tok_drifted)}\n"
             "  a2a is broken (or will break at the next listen restart) in at "
             "least one direction. Reconcile with:\n"
             f"    sac host push-config {tok_drifted[0]} --with-tokens   "
             "# the master's OWN bearer\n"
             f"    sac host push-config --rotate-tokens {tok_drifted[0]}   "
-            "# the peer's bearer (restarts its listen)"
-        )
+            "# the peer's bearer (restarts its listen)", __name__)
     if code == 0:
-        console.print(
-            "[green]all peers carry the master's generated client config[/green] "
-            "[dim](verified by read-back bytes, not by a write's exit code)[/dim]"
-        )
+        render_rich("[green]all peers carry the master's generated client config[/green] "
+            "[dim](verified by read-back bytes, not by a write's exit code)[/dim]", __name__)
     raise SystemExit(code)
 
 
@@ -429,7 +422,7 @@ def _run_rotate(
         )
         raise SystemExit(result.exit_code)
 
-    console.print(f"[bold]sac host push-config --rotate-tokens[/bold]  {peer}\n")
+    render_rich(f"[bold]sac host push-config --rotate-tokens[/bold]  {peer}\n", __name__)
     colour = "green" if result.ok else "red"
     label = result.action.upper() if not result.ok else "rotated"
     _evidence(f"[{colour}]{label:<14}[/{colour}] {peer}")
@@ -443,7 +436,7 @@ def _run_rotate(
         _evidence(f"    RETAINED        {result.backup}")
     for line in result.detail.splitlines():
         _evidence(f"    {line}" if line.strip() else "")
-    console.print("")
+    render_rich("", __name__)
     raise SystemExit(result.exit_code)
 
 

@@ -30,13 +30,13 @@ specs are not the relaxed ``--home``-override pattern).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._to_home import deploy_to_home
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Apptainer directory overlays keep the writable layer under ``upper/``
 # (sibling ``work/`` is scratch). See ``apptainer overlay create`` docs.

@@ -63,7 +63,7 @@ declares a planned END, never an excuse.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 import signal
 from pathlib import Path
@@ -105,7 +105,7 @@ from ._session_state import (
     heartbeat_loop as _heartbeat_loop,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["_autonomous_loop", "run_session_daemon"]
 

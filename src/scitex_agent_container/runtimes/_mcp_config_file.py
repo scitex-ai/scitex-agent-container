@@ -70,7 +70,7 @@ to leak.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import re
 import tempfile
@@ -79,7 +79,7 @@ from typing import Any, Mapping
 
 from .._runners._atomic import atomic_write_text
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Directory (under the in-container ``$HOME``) holding per-agent MCP configs.
 #: Created 0700 — the file itself is 0600, the directory keeps the *names*

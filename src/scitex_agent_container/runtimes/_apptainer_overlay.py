@@ -48,11 +48,11 @@ label ``container_creation_unknown``.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Apptainer's directory-overlay layout: the writable layer lives in ``upper/``
 # and the overlayfs scratch area in ``work/`` (``apptainer overlay create``).

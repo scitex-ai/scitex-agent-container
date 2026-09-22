@@ -7,6 +7,7 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
+from .._logging import write_stream
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -278,7 +279,7 @@ def _rotate_among_credentials_files(
     # discarded (preflight_from_config_path's dry-probe suppression), so it
     # must not reach a logger at all.
     if log_stream is not None:
-        print(f"[sac:creds] {headline}\n{detail}", file=log_stream)
+        write_stream(f"[sac:creds] {headline}\n{detail}", log_stream)
         return
 
     from ..cli_pkg._helpers._console import system_msg
@@ -421,7 +422,7 @@ def _rotate_to_healthy_account(
         f"(policy={policy}; {pinned} stale, 5h-blocked, or outranked)"
     )
     if log_stream is not None:
-        print(f"[sac:creds] {notice}", file=log_stream)
+        write_stream(f"[sac:creds] {notice}", log_stream)
         return
 
     from ..cli_pkg._helpers._console import system_msg

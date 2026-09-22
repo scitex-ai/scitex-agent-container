@@ -12,7 +12,7 @@ unit-testable without a live TUI); this mixin owns only the orchestration.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._tui_compose import clear_compose_buffer, verify_submit_by_advancement
@@ -67,7 +67,7 @@ class StartupPromptInjectorMixin:
         from ._boot_recovery import with_missed_input_recovery
         from .tui_session import session_name_for
 
-        log = logging.getLogger(__name__)
+        log = slogging.getLogger(__name__)
         spec_prompts = list(getattr(config, "startup_prompts", []) or [])
         # An EXPLICITLY empty startup_prompts stays a no-op. That guard predates
         # me and I did not establish why it exists, so I am not overwriting it

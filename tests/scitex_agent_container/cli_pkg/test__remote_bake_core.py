@@ -448,7 +448,7 @@ def test_remote_stage_stamps_gitless_source_with_checkout_head() -> None:
     expected = (
         'rm -f "$CTX/scitex-agent-container-src/src/scitex_agent_container/_provenance/_build_info.py"',
         'SAC_BUILD_COMMIT="$HEAD_SHA" "$PYTHON"',
-        'src/hatch_build.py" --write',
+        'scripts/hatch_build.py" --write',
     )
 
     # Act

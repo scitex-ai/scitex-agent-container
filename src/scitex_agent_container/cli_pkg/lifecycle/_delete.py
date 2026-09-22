@@ -10,6 +10,7 @@ lead-side instances row + local spec/runtime/registry as usual.
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import shlex
 import subprocess
 import sys
@@ -311,7 +312,7 @@ def delete(
         except Exception:
             pass
 
-        console.print(f"[green]deleted[/green] {name}")
+        render_rich(f"[green]deleted[/green] {name}", __name__)
 
     if any_err:
         sys.exit(1)

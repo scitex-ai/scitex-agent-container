@@ -47,6 +47,7 @@ reassign to a real (no MagicMock) recording fake.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from pathlib import Path
 from typing import Any, Callable
 
@@ -267,7 +268,7 @@ def run_build(
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
-    console.print(f"[green]built[/green] {result.sif}")
+    render_rich(f"[green]built[/green] {result.sif}", __name__)
     for line in describe_result(result):
         click.echo(line)
     return result

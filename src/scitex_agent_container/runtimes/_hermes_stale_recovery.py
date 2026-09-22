@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import logging
+import scitex_logging as slogging
 import os
 import re
 import signal
@@ -32,7 +32,7 @@ from ..config import AgentConfig, load_config
 from ._hermes_tui_rpc import HermesSlashReceipt, HermesTurnOutcome, HermesTurnProgress
 from ._runtime_control import READY, RECOVERING, STALE_LATCHED, write_control_state
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 PID_FILENAME = "hermes-recovery.pid"
 LOG_FILENAME = "hermes-recovery.log"

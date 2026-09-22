@@ -17,6 +17,7 @@ never load a database driver. The same lazy pattern used by
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -64,7 +65,7 @@ def _do_unblock(sender: str, target: str, note: str | None) -> None:
     if result.get("cleared_pending"):
         extras.append("cleared pending prompt")
     tail = f" [dim]({'; '.join(extras)})[/dim]" if extras else ""
-    console.print(f"[green]ok[/green]  unblocked  {sender}  ->  {target}{tail}")
+    render_rich(f"[green]ok[/green]  unblocked  {sender}  ->  {target}{tail}", __name__)
 
 
 @click.command("grant")
@@ -169,7 +170,7 @@ def a2a_block(sender: str, target: str, note: str | None) -> None:
     tail = (
         " [dim](cleared pending prompt)[/dim]" if result.get("cleared_pending") else ""
     )
-    console.print(f"[yellow]ok[/yellow]  blocked  {sender}  ->  {target}{tail}")
+    render_rich(f"[yellow]ok[/yellow]  blocked  {sender}  ->  {target}{tail}", __name__)
 
 
 @click.command("revoke")
@@ -199,9 +200,9 @@ def a2a_revoke(sender: str, target: str) -> None:
 
     removed = revoke_send(sender=sender, target=target)
     if removed:
-        console.print(f"[green]ok[/green]  revoked  {sender}  ->  {target}")
+        render_rich(f"[green]ok[/green]  revoked  {sender}  ->  {target}", __name__)
     else:
-        console.print(f"[dim]no-op[/dim]  no grant  {sender}  ->  {target}")
+        render_rich(f"[dim]no-op[/dim]  no grant  {sender}  ->  {target}", __name__)
 
 
 @click.command("grants")
@@ -233,7 +234,7 @@ def a2a_grants(as_json: bool) -> None:
     from ._helpers import console
 
     if not rows:
-        console.print("[dim](no grants)[/dim]")
+        render_rich("[dim](no grants)[/dim]", __name__)
         return
     from rich.table import Table
 
@@ -249,7 +250,7 @@ def a2a_grants(as_json: bool) -> None:
             f"{r['created_at']:.0f}",
             r["note"] if r["note"] is not None else "",
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 def register(a2a_group) -> None:

@@ -19,7 +19,7 @@ basename class:
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import re
 import shutil
@@ -39,7 +39,7 @@ from ._to_home_text import (
     split_around_generated_section,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _clear_readonly_dst(dst: Path) -> None:

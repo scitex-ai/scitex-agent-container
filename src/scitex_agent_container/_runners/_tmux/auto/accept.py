@@ -13,7 +13,7 @@ Returns True if a key action was sent, False for no-op / escalate.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import subprocess
 import time
 from typing import Callable
@@ -24,7 +24,7 @@ from scitex_agent_container._notify.login_relay import (
 )
 from scitex_agent_container._runners._tmux._target import exact_target
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 _TMUX_SERVER = "sac"
 

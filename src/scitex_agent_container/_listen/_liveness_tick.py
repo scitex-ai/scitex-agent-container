@@ -40,7 +40,7 @@ criticals in the first place.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -57,7 +57,7 @@ from ._liveness_tick_resolve import (  # the blocking IO resolvers
     resolve_liveness,  # re-exported (public surface, see __all__)
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # --- env knobs (conservative defaults to avoid false alarms) ----------------
 ENV_DISABLED = "SAC_LIVENESS_TICK_DISABLED"

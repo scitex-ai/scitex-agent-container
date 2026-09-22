@@ -29,7 +29,7 @@ OWN records outrank it:
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from datetime import timezone
 from pathlib import Path
@@ -37,7 +37,7 @@ from typing import Iterable
 
 from ._liveness_tick_detect import AgentLiveness, open_card_owners
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Tail window for the session.jsonl read. The last record lives at the end of
 # the file, so an O(1) tail beats an O(file) scan — and this now runs for

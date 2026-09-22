@@ -41,6 +41,7 @@ not only of the payload.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from rich.markup import escape
 
 from ._helpers import console
@@ -163,11 +164,8 @@ def render_floor(audit: "dict | None") -> None:
     if not audit or not audit.get("active"):
         return
     dates = ", ".join(audit["measured_on"]) or "no measured rows"
-    console.print(
-        f"[bold]version floor[/bold] {len(audit['hosts'])} host(s) consulted, "
-        f"roster measured {_lit(dates)}",
-        soft_wrap=True,
-    )
+    render_rich(f"[bold]version floor[/bold] {len(audit['hosts'])} host(s) consulted, "
+        f"roster measured {_lit(dates)}", __name__)
     width = max((len(r["host"]) for r in audit["hosts"]), default=0)
     for row in audit["hosts"]:
         colour = "green" if row["support"] == "supports-engines" else "yellow"
@@ -184,24 +182,15 @@ def render_floor(audit: "dict | None") -> None:
             if row["canonical"] != row["host"]
             else ""
         )
-        console.print(
-            f"  [{colour}]{row['specs']:4d}[/{colour}]  "
+        render_rich(f"  [{colour}]{row['specs']:4d}[/{colour}]  "
             f"{_lit(row['host'].ljust(width))}  {_lit(row['support'].ljust(16))}  "
-            f"{_lit(when)}{alias}{'  LIFTED' if row['overridden'] else ''}",
-            soft_wrap=True,
-        )
+            f"{_lit(when)}{alias}{'  LIFTED' if row['overridden'] else ''}", __name__)
     if audit["specs_with_an_unreadable_host"]:
-        console.print(
-            f"  [red]{audit['specs_with_an_unreadable_host']:4d}[/red]  "
-            f"(host unreadable)",
-            soft_wrap=True,
-        )
+        render_rich(f"  [red]{audit['specs_with_an_unreadable_host']:4d}[/red]  "
+            f"(host unreadable)", __name__)
     if audit["specs_with_no_declared_host"]:
-        console.print(
-            f"  [yellow]{audit['specs_with_no_declared_host']:4d}[/yellow]  "
-            f"(spec names no host)",
-            soft_wrap=True,
-        )
+        render_rich(f"  [yellow]{audit['specs_with_no_declared_host']:4d}[/yellow]  "
+            f"(spec names no host)", __name__)
     _render_overrides(audit)
 
 
@@ -216,24 +205,18 @@ def _render_overrides(audit: dict) -> None:
     """
     for row in (r for r in audit["hosts"] if r["overridden"]):
         if row["contradicts_a_measurement"]:
-            console.print(
-                f"\n[red]FLOOR LIFTED[/red] --host-supports-engines "
+            render_rich(f"\n[red]FLOOR LIFTED[/red] --host-supports-engines "
                 f"{_lit(row['host'])} CONTRADICTS a measurement: "
                 f"{_lit(row['host'])} is recorded {_lit(row['support'])}, "
                 f"measured {_lit(row['measured_on'])} — {_lit(row['evidence'])}. "
                 f"{row['specs']} spec(s) pinned there will be written and, by "
                 f"that measurement, then fail their host's validator and stop "
-                f"those agents starting.",
-                soft_wrap=True,
-            )
+                f"those agents starting.", __name__)
             continue
-        console.print(
-            f"\n[yellow]FLOOR LIFTED[/yellow] --host-supports-engines "
+        render_rich(f"\n[yellow]FLOOR LIFTED[/yellow] --host-supports-engines "
             f"{_lit(row['host'])}: nobody measured that host, so nothing here "
             f"contradicts it — {row['specs']} spec(s) will be written on your "
-            f"claim.",
-            soft_wrap=True,
-        )
+            f"claim.", __name__)
 
 
 def _engine_histogram(plan) -> "dict[str, int]":
@@ -266,107 +249,76 @@ def _group_refusals(entries) -> "list[tuple[str, str, list[str]]]":
 def _render_selection_gaps(payload: dict) -> None:
     """Everything the SELECTION left out, named. Never a silent narrowing."""
     if payload.get("selectors"):
-        console.print(
-            f"\n[cyan]FILTERED[/cyan] this run was narrowed to "
+        render_rich(f"\n[cyan]FILTERED[/cyan] this run was narrowed to "
             f"{_lit(', '.join(payload['selectors']))} — it is a census of a "
             f"SUBSET, not of the roster, so it can never report the migration "
-            f"as complete.",
-            soft_wrap=True,
-        )
+            f"as complete.", __name__)
     for kind, key in (("--agent", "unmatched_agents"), ("--host", "unmatched_hosts")):
         if payload.get(key):
-            console.print(
-                f"\n[yellow]MATCHED NOTHING[/yellow] {kind} "
+            render_rich(f"\n[yellow]MATCHED NOTHING[/yellow] {kind} "
                 f"{_lit(', '.join(payload[key]))} selected no spec. A typo or a "
-                f"renamed agent drops out of every batch in silence otherwise.",
-                soft_wrap=True,
-            )
+                f"renamed agent drops out of every batch in silence otherwise.", __name__)
     for entry in payload.get("shadowed", ()):
-        console.print(
-            f"\n[yellow]SHADOWED[/yellow] {_lit(entry['agent'])}: "
+        render_rich(f"\n[yellow]SHADOWED[/yellow] {_lit(entry['agent'])}: "
             f"{_lit(entry['shadowed'])} was NOT examined — an earlier root "
             f"supplied {_lit(entry['kept'])} for the same agent name. Earlier "
             f"roots win deterministically, so no later run reaches it either; "
             f"the loader raises AmbiguousRegistryScope on this collision and a "
-            f"human has to resolve it.",
-            soft_wrap=True,
-        )
+            f"human has to resolve it.", __name__)
 
 
 def render_plan(plan, payload: dict, *, diff: bool) -> None:
     if plan.roster is not None and not plan.roster.is_populated:
-        console.print(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}")
+        render_rich(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}", __name__)
         return
-    console.print(
-        f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
-        f"{payload['would_migrate']} would gain a spec.engines block\n"
-    )
+    render_rich(f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
+        f"{payload['would_migrate']} would gain a spec.engines block\n", __name__)
     for keys, count in payload["engine_sets"].items():
-        console.print(f"  [green]{count:4d}[/green]  engines: {_lit(keys)}")
+        render_rich(f"  [green]{count:4d}[/green]  engines: {_lit(keys)}", __name__)
     if payload.get("roots_absent"):
         # A resolved root that is not there was NOT searched. Dropping it from
         # the report would let an operator whose tree is missing read the
         # count as covering it.
-        console.print(
-            f"[yellow]NOT SEARCHED[/yellow] "
+        render_rich(f"[yellow]NOT SEARCHED[/yellow] "
             f"{len(payload['roots_absent'])} resolved root(s) do not exist "
-            f"({_lit(', '.join(payload['roots_absent']))}).\n",
-            soft_wrap=True,
-        )
+            f"({_lit(', '.join(payload['roots_absent']))}).\n", __name__)
     if payload.get("roots_excluded"):
-        console.print(
-            f"[yellow]NOT SEARCHED[/yellow] "
+        render_rich(f"[yellow]NOT SEARCHED[/yellow] "
             f"{len(payload['roots_excluded'])} project-local root(s) found by "
             f"walking up from the working directory "
             f"({_lit(', '.join(payload['roots_excluded']))}). A repo's own "
             f"checked-in fixtures are not the fleet, and a sweep whose scope "
             f"changed with the cwd could rewrite them. Pass --root to sweep "
-            f"one deliberately.\n",
-            soft_wrap=True,
-        )
+            f"one deliberately.\n", __name__)
     render_floor(payload.get("engine_floor"))
     _render_selection_gaps(payload)
     if payload["already_migrated"]:
-        console.print(
-            f"\n[dim]{len(payload['already_migrated'])} spec(s) already declare "
-            f"spec.engines — nothing to do for those.[/dim]"
-        )
+        render_rich(f"\n[dim]{len(payload['already_migrated'])} spec(s) already declare "
+            f"spec.engines — nothing to do for those.[/dim]", __name__)
     for reason, detail, agents in _group_refusals(payload["refused"]):
-        console.print(
-            f"\n[yellow]REFUSED[/yellow] {len(agents)} spec(s): {_lit(reason)}\n"
-            f"    {_lit(', '.join(sorted(agents)))}",
-            soft_wrap=True,
-        )
+        render_rich(f"\n[yellow]REFUSED[/yellow] {len(agents)} spec(s): {_lit(reason)}\n"
+            f"    {_lit(', '.join(sorted(agents)))}", __name__)
         if detail:
-            console.print(f"    [dim]{_lit(detail)}[/dim]", soft_wrap=True)
+            render_rich(f"    [dim]{_lit(detail)}[/dim]", __name__)
     for entry in payload["unreadable"]:
-        console.print(
-            f"\n[red]UNREADABLE[/red] {_lit(entry['agent'])}: {_lit(entry['detail'])}",
-            soft_wrap=True,
-        )
+        render_rich(f"\n[red]UNREADABLE[/red] {_lit(entry['agent'])}: {_lit(entry['detail'])}", __name__)
     if payload["held_back"]:
-        console.print(
-            f"\n[cyan]HELD BACK[/cyan] {len(payload['held_back'])} spec(s) past "
+        render_rich(f"\n[cyan]HELD BACK[/cyan] {len(payload['held_back'])} spec(s) past "
             f"--limit ({_lit(', '.join(payload['held_back']))}). Run the same "
-            f"command again to take the next batch.",
-            soft_wrap=True,
-        )
+            f"command again to take the next batch.", __name__)
     if payload["skipped_templates"]:
         # Named, never silent: `sac agents create` copies these, so a template
         # left behind re-introduces the legacy shape on every agent made after
         # the sweep — the migration would then never finish.
-        console.print(
-            f"\n[yellow]NOT SEARCHED[/yellow] "
+        render_rich(f"\n[yellow]NOT SEARCHED[/yellow] "
             f"{len(payload['skipped_templates'])} template spec(s) "
             f"({_lit(', '.join(payload['skipped_templates']))}). "
             f"`sac agents create` copies them, so an unmigrated template "
             f"re-introduces the legacy shape on every new agent. Pass "
-            f"--templates to include them.",
-            soft_wrap=True,
-        )
+            f"--templates to include them.", __name__)
     if diff:
         render_diffs(plan)
-    console.print(f"\n[bold]{_lit(payload['summary'])}[/bold]")
+    render_rich(f"\n[bold]{_lit(payload['summary'])}[/bold]", __name__)
 
 
 def _render_unfinished(payload: dict) -> None:
@@ -379,19 +331,13 @@ def _render_unfinished(payload: dict) -> None:
     templates came to be reported in one and absent from the other.
     """
     for line in payload.get("outstanding", ()):
-        console.print(f"  [yellow]•[/yellow] {_lit(line)}", soft_wrap=True)
+        render_rich(f"  [yellow]•[/yellow] {_lit(line)}", __name__)
     for reason, _detail, agents in _group_refusals(payload["refused"]):
-        console.print(
-            f"  [yellow]REFUSED[/yellow] {_lit(', '.join(sorted(agents)))}: "
-            f"{_lit(reason)}",
-            soft_wrap=True,
-        )
+        render_rich(f"  [yellow]REFUSED[/yellow] {_lit(', '.join(sorted(agents)))}: "
+            f"{_lit(reason)}", __name__)
     if payload["held_back"]:
-        console.print(
-            f"  [cyan]HELD BACK[/cyan] {len(payload['held_back'])} past --limit "
-            f"({_lit(', '.join(payload['held_back']))})",
-            soft_wrap=True,
-        )
+        render_rich(f"  [cyan]HELD BACK[/cyan] {len(payload['held_back'])} past --limit "
+            f"({_lit(', '.join(payload['held_back']))})", __name__)
 
 
 def render_apply(result, payload: dict) -> None:
@@ -403,44 +349,32 @@ def render_apply(result, payload: dict) -> None:
         # sentence counted the SELECTED specs, so it called both of those
         # completed. A scheduled runner reading exit 0 believed it.
         if not payload["migration_complete"]:
-            console.print(
-                f"[yellow]Nothing was written[/yellow] — "
+            render_rich(f"[yellow]Nothing was written[/yellow] — "
                 f"{len(payload['already_migrated'])} of {payload['specs']} "
                 f"spec(s) under {_lit(payload['root'])} declare spec.engines. "
-                f"The sweep is NOT complete:",
-                soft_wrap=True,
-            )
+                f"The sweep is NOT complete:", __name__)
             _render_unfinished(payload)
             return
-        console.print(
-            f"[green]Nothing to write[/green] — all "
+        render_rich(f"[green]Nothing to write[/green] — all "
             f"{payload['specs']} spec(s) under {_lit(payload['root'])} already "
             f"declare spec.engines. The sweep is idempotent; this is what a "
-            f"completed one looks like."
-        )
+            f"completed one looks like.", __name__)
         return
     if result.applied:
-        console.print(
-            f"[green]APPLIED[/green] {len(result.written)} spec(s) written and "
+        render_rich(f"[green]APPLIED[/green] {len(result.written)} spec(s) written and "
             f"verified under {_lit(payload['root'])} — every one still resolves "
             f"the SAME backend.\n"
-            f"  [dim]originals archived at {_lit(result.archive_dir)}[/dim]"
-        )
+            f"  [dim]originals archived at {_lit(result.archive_dir)}[/dim]", __name__)
         if not payload["migration_complete"]:
-            console.print("\n[bold]Still outstanding[/bold] — run again:")
+            render_rich("\n[bold]Still outstanding[/bold] — run again:", __name__)
             _render_unfinished(payload)
         return
     if result.rolled_back:
-        console.print(
-            f"[red]ROLLED BACK[/red] — {_lit(result.rolled_back)}", soft_wrap=True
-        )
+        render_rich(f"[red]ROLLED BACK[/red] — {_lit(result.rolled_back)}", __name__)
         for entry in (*result.drift, *result.errors):
-            console.print(f"    [magenta]{_lit(entry)}[/magenta]", soft_wrap=True)
+            render_rich(f"    [magenta]{_lit(entry)}[/magenta]", __name__)
         return
-    console.print(
-        f"[red]REFUSED[/red] — nothing was written.\n  {_lit(result.refused)}",
-        soft_wrap=True,
-    )
+    render_rich(f"[red]REFUSED[/red] — nothing was written.\n  {_lit(result.refused)}", __name__)
 
 
 def render_diffs(plan) -> None:
@@ -452,5 +386,5 @@ def render_diffs(plan) -> None:
     reviewing the rewrite saw a one-line summary and no diff at all.
     """
     for outcome in plan.migrated:
-        console.print(f"\n[bold]{_lit(outcome.agent)}[/bold]")
-        console.print(_lit(outcome.diff), soft_wrap=True, highlight=False)
+        render_rich(f"\n[bold]{_lit(outcome.agent)}[/bold]", __name__)
+        render_rich(_lit(outcome.diff), __name__)

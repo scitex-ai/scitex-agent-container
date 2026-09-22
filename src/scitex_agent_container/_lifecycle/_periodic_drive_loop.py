@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import scitex_logging as slogging
 import time
 from typing import Any, Iterable
 
 from ._periodic_drive import PeriodicDriveEnvelope, _AgentState, sweep
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _log_emit_outcome(log: logging.Logger, agent: str, task: asyncio.Task) -> None:

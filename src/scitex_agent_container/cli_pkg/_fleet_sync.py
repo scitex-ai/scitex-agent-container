@@ -31,17 +31,19 @@ hand.
 
 from __future__ import annotations
 
+import scitex_logging as slogging
+from .._logging import render_rich
 import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import click
-from rich.console import Console
 
 from .._state.host_config import Config, build_ssh_argv, load
 from .._state.spec_manifest import build_manifest, diff_manifests
-from ._helpers import console
+
+log = slogging.getLogger(__name__)
 
 _DEFAULT_AGENTS_DIR = "~/.scitex/agent-container/agents"
 
@@ -52,7 +54,6 @@ _DEFAULT_AGENTS_DIR = "~/.scitex/agent-container/agents"
 # the payload, so `sac fleet sync --json | jq` and `sac fleet sync > out` both
 # stay honest. ``Console(stderr=True)`` resolves ``sys.stderr`` per write, so it
 # stays in lockstep with click's isolated streams and pytest's capture.
-_err_console = Console(stderr=True)
 
 
 def _resolve_agents_dir(override: Path | None) -> Path:
@@ -152,16 +153,14 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
     """
     fleet = diff["fleet"]
     unreachable = diff.get("unreachable", [])
-    _err_console.print(
-        "FLEET SPEC CONFLICT — fail loud, no auto-merge", style="bold red"
-    )
-    _err_console.print("=" * 72)
-    _err_console.print(f"fleet hosts: {', '.join(fleet)}")
+    log.error("FLEET SPEC CONFLICT — fail loud, no auto-merge")
+    log.error("=" * 72)
+    log.error(f"fleet hosts: {', '.join(fleet)}")
     if unreachable:
-        _err_console.print("[yellow]warnings (unresolvable peers):[/yellow]")
+        log.error("warnings (unresolvable peers):")
         for u in unreachable:
-            _err_console.print(f"  - {u['peer']}: {u.get('reason', '?')}")
-    _err_console.print("")
+            log.error(f"  - {u['peer']}: {u.get('reason', '?')}")
+    log.error("")
 
     conflict_count = 0
     for agent in sorted(diff["agents"].keys()):
@@ -169,41 +168,32 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
         if entry["ok"]:
             continue
         conflict_count += 1
-        _err_console.print(f"agent: {agent}", style="bold")
+        log.error(f"agent: {agent}")
         for c in entry["conflicts"]:
-            _err_console.print(f"  file: {c['file']}")
-            _err_console.print(f"    kind:       {c['kind']}")
+            log.error(f"  file: {c['file']}")
+            log.error(f"    kind:       {c['kind']}")
             for h in fleet:
                 ph = c["per_host"].get(h)
                 if ph is None:
                     continue
                 if not ph.get("present"):
                     marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                    _err_console.print(
-                        f"    {h:<11} <missing>                                     {marker}"
-                    )
+                    log.error(f"    {h:<11} <missing>                                     {marker}")
                     continue
                 sha = ph.get("sha256", "")
                 size = ph.get("size", "")
                 mode = ph.get("mode", "")
                 marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                _err_console.print(
-                    f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
-                    f"size={size}  mode={mode}   {marker}".rstrip()
-                )
-        _err_console.print("")
-    _err_console.print("=" * 72)
-    _err_console.print(
-        f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.",
-        style="bold",
-    )
-    _err_console.print("Operator action (sac will NEVER do this for you):")
-    _err_console.print(
-        "  1. Pick the authoritative copy per agent — sac has no opinion."
-    )
-    _err_console.print("  2. Rsync that tree to the diverged hosts manually.")
-    _err_console.print("  3. Re-run `sac fleet sync` until it exits 0.")
-    _err_console.print("=" * 72)
+                log.error(f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
+                    f"size={size}  mode={mode}   {marker}".rstrip())
+        log.error("")
+    log.error("=" * 72)
+    log.error(f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.")
+    log.error("Operator action (sac will NEVER do this for you):")
+    log.error("  1. Pick the authoritative copy per agent — sac has no opinion.")
+    log.error("  2. Rsync that tree to the diverged hosts manually.")
+    log.error("  3. Re-run `sac fleet sync` until it exits 0.")
+    log.error("=" * 72)
 
 
 def _fetch_peer_manifest(
@@ -384,10 +374,8 @@ def fleet_sync_impl(
         click.echo(json.dumps(diff, indent=2))
     else:
         if diff["exit_code"] == 0:
-            console.print(
-                f"[green]ok[/green]  every agent agrees across "
-                f"{len(fleet)} host(s): {', '.join(fleet)}"
-            )
+            render_rich(f"[green]ok[/green]  every agent agrees across "
+                f"{len(fleet)} host(s): {', '.join(fleet)}", __name__)
         else:
             _render_text_conflicts(diff)
 

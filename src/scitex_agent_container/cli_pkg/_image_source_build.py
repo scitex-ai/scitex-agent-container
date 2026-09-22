@@ -238,7 +238,7 @@ def _locate_bundled_sibling(
     ``editable_rel`` exists because a file's slot in the wheel's FLAT
     ``_bundled/`` dir need not mirror its path in the repo:
     ``hatch_build.py`` bundles to ``_bundled/hatch_build.py`` but lives
-    at ``<repo>/src/hatch_build.py``. Defaults to ``name`` (the
+    at ``<repo>/scripts/hatch_build.py``. Defaults to ``name`` (the
     repo-root case: pyproject.toml, README.md).
 
     Raises
@@ -285,12 +285,12 @@ def locate_bundled_hatch_build(pkg_root: Path) -> Path:
     """Return the custom hatchling BUILD HOOK pyproject.toml declares.
 
     pyproject wires ``[tool.hatch.build.targets.*.hooks.custom] path =
-    "src/hatch_build.py"``, and hatchling resolves that path RELATIVE TO
+    "scripts/hatch_build.py"``, and hatchling resolves that path RELATIVE TO
     THE TREE BEING BUILT. The staged tree IS that tree (the .def runs
     ``uv pip install /opt/scitex-agent-container-src``), so the hook must
     be staged next to pyproject.toml or the backend dies before reading
     one line of source: ``OSError: Build script does not exist:
-    src/hatch_build.py``. Not hypothetical — that is how EVERY SIF build
+    scripts/hatch_build.py``. Not hypothetical — that is how EVERY SIF build
     failed from the moment the hook landed.
 
     The hook is a BUILD input (same category as pyproject.toml/README.md),
@@ -299,11 +299,11 @@ def locate_bundled_hatch_build(pkg_root: Path) -> Path:
     ``scitex_agent_container.*`` — which keeps hatch_build.py's own rule
     that an ``import hatchling`` module never reaches the runtime path.
 
-    Editable fallback is ``<repo>/src/hatch_build.py``, not the repo
+    Editable fallback is ``<repo>/scripts/hatch_build.py``, not the repo
     root — hence ``editable_rel``. See :func:`_locate_bundled_sibling`.
     """
     return _locate_bundled_sibling(
-        pkg_root, "hatch_build.py", editable_rel="src/hatch_build.py"
+        pkg_root, "hatch_build.py", editable_rel="scripts/hatch_build.py"
     )
 
 
@@ -444,8 +444,9 @@ def stage_build_context(
             <bootstrap_sif.name>               # symlink to bootstrap_sif (if any)
             scitex-agent-container-src/        # pip-installable source tree
                 pyproject.toml                 # from locate_bundled_pyproject
-                src/
+                scripts/
                     hatch_build.py             # pyproject's hooks.custom path
+                src/
                     scitex_agent_container/    # copy of pkg_root contents
                     <other declared packages>/ # e.g. console bootstrap
 
@@ -544,7 +545,7 @@ def stage_build_context(
     # The staged pip-installable source tree:
     #   <staged_src>/pyproject.toml
     #   <staged_src>/README.md           (pyproject's readme=)
-    #   <staged_src>/src/hatch_build.py  (pyproject's hooks.custom path)
+    #   <staged_src>/scripts/hatch_build.py  (pyproject's hooks.custom path)
     #   <staged_src>/src/scitex_agent_container/...
     #
     # EVERY path pyproject NAMES must be staged, not just the package:
@@ -554,8 +555,8 @@ def stage_build_context(
     staged_src.mkdir()
     shutil.copy2(pyproject_src, staged_src / "pyproject.toml")
     shutil.copy2(readme_src, staged_src / "README.md")
-    (staged_src / "src").mkdir()
-    shutil.copy2(hatch_build_src, staged_src / "src" / "hatch_build.py")
+    (staged_src / "scripts").mkdir()
+    shutil.copy2(hatch_build_src, staged_src / "scripts" / "hatch_build.py")
     for relative, source in package_sources:
         destination = staged_src / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

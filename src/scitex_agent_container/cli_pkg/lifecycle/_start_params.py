@@ -12,6 +12,7 @@ them identically. Pure helper — it validates, calls the production
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import sys
 from pathlib import Path
 
@@ -116,10 +117,8 @@ def expand_params_targets(
         click.echo(f"Error: {exc}", err=True)
         sys.exit(2)
     if not as_json:
-        console.print(
-            f"[bold]--params-file[/bold]  expanded "
-            f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]"
-        )
+        render_rich(f"[bold]--params-file[/bold]  expanded "
+            f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]", __name__)
     return tuple(str(p) for p in materialised)
 
 

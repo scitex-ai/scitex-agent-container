@@ -38,11 +38,11 @@ See: ywatanabe1989/todo#396 ; fresh-agent boot reliability (2026-06-19).
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Minimal project entry that satisfies Claude Code's onboarding gate.
 # Fields with dynamic values (lastCost, lastSessionId, etc.) are omitted —

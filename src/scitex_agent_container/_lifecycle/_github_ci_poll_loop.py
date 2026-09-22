@@ -27,11 +27,11 @@ deterministically without gh / network / state.db.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default poll cadence. The verdict already arrives "fast" because dev's
 # Spartan CI is ~3 min + auto-merge; a 5-min poll floor keeps GitHub API

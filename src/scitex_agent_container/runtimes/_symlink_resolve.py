@@ -24,12 +24,12 @@ orchestration lives in :mod:`_to_home`.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 class DanglingToHomeSymlinkError(RuntimeError):

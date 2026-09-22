@@ -62,7 +62,7 @@ import argparse
 import errno
 import hashlib
 import json
-import logging
+import scitex_logging as slogging
 import os
 import re
 import signal
@@ -100,7 +100,7 @@ from ._turn_exchange_ledger import (
     read_turn_exchange,
 )
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 _CHANNEL_OPEN_RE = re.compile(r"^<channel\s+(?P<attrs>[^>]+)>")
 _CHANNEL_ATTR_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
@@ -1024,7 +1024,7 @@ def _build_on_turn(
                     dispatch_id=dispatch_id,
                 )
             except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging)
-                logging.getLogger(__name__).warning(
+                slogging.getLogger(__name__).warning(
                     "tui-outbound: failed to record inbound dispatch for %s: %s",
                     config.name,
                     exc,

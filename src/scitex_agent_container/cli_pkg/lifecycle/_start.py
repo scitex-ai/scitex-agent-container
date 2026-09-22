@@ -9,6 +9,7 @@ template fan-out, and the multi-target foreground multiplexer.
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import sys
 from pathlib import Path
 
@@ -341,7 +342,7 @@ def start(
     if not targets:
         # All targets were dry-run cold-starts: plan(s) shown, nothing to launch.
         if not as_json:
-            console.print("[dim]--dry-run: spec(s) planned above; not started.[/dim]")
+            render_rich("[dim]--dry-run: spec(s) planned above; not started.[/dim]", __name__)
         return
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
@@ -446,10 +447,8 @@ def start(
     if bulk_yamls_from_dirs:
         yamls = bulk_yamls_from_dirs
         if not yamls:
-            console.print(
-                "[dim]No agents found in "
-                "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]"
-            )
+            render_rich("[dim]No agents found in "
+                "~/.scitex/agent-container/agents/ or $SCITEX_AGENT_CONTAINER_YAML_DIRS[/dim]", __name__)
             if not single_targets:
                 return
         else:

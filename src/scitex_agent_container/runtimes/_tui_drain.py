@@ -26,7 +26,7 @@ Three boot fixes live here (card
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import time
 from typing import Callable
 
@@ -139,7 +139,7 @@ def drain_modals_until_ready(
     best-effort return.
     """
     settle_quiet_s, settle_max_s = _resolve_settle(poll_s, settle_quiet_s, settle_max_s)
-    log = logging.getLogger(__name__)
+    log = slogging.getLogger(__name__)
     deadline = time_fn() + timeout_s
     resends: dict[str, int] = {}
     # Keep the most recent NON-empty pane: when the inner process EXITS the

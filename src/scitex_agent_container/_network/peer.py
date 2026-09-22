@@ -44,7 +44,7 @@ receiving host").
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import time
 import urllib.error
 import urllib.request
@@ -128,7 +128,7 @@ def post_control_to_url(
     return payload
 
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 class PeerError(RuntimeError):

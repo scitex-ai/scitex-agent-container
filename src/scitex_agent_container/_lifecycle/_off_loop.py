@@ -64,11 +64,11 @@ is visible instead of quietly leaking threads.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import threading
 from typing import Any, Callable, TypeVar
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 T = TypeVar("T")
 

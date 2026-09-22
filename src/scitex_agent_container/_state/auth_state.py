@@ -56,7 +56,7 @@ A CACHE IS NOT TRUTH — IT HAS AN AGE
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
 from datetime import datetime, timezone
 
@@ -94,7 +94,7 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 #: buying nothing until federation exists. This matches the closest precedent,
 #: `state_store_acl_deny_notify` (explicitly "a per-host rate-limit ledger", which
 #: also keeps its original key and carries no host column).
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 STORE_NAME = "auth_state"
 

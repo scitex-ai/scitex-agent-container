@@ -130,6 +130,18 @@ def test_deepseek_alias_resolves_to_neutral_external_gateway():
     assert direct == neutral
 
 
+def test_resolve_provider_returns_local_free_gateway():
+    # Arrange
+    name = "scitex-free"
+    # Act
+    entry = resolve_provider(name)
+    # Assert
+    assert entry == {
+        "base_url": "http://127.0.0.1:18779/v1",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
+    }
+
+
 # The harness registry (``spec.harness``) used to be a second, unrelated
 # constant in this module. It moved to ``config._harness_types`` with the
 # spec-key migration; its tests live in ``test__harness_types.py``.

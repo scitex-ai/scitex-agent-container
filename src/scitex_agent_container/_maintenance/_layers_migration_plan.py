@@ -40,7 +40,7 @@ first ``": "``.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
 from ..config import load_config
@@ -48,7 +48,7 @@ from ..config._to_home_layers_line import insert_to_home_layers
 from ._layers_migration_model import MigrationPlan, SpecEdit, count_added_lines
 from ._roster_state import inspect_roster
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 _NO_ANCHOR = "no 'to_home:' line to anchor the declaration to"
 #: An unreadable spec's reason, capped. The full exception is logged; this is

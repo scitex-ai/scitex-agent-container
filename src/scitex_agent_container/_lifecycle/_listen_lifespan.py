@@ -24,11 +24,11 @@ The lifespan:
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 from contextlib import asynccontextmanager
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def build_listen_lifespan(*, health_watchdog_port: int | None = None):

@@ -70,6 +70,7 @@ that some process holds the port. See :mod:`...config._engine_reach`.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import datetime as _dt
 import json
 from pathlib import Path as _Path
@@ -222,7 +223,7 @@ def _show_preflight(payload: dict) -> None:
     """
     if payload.get("preflight"):
         render_preflight(payload["preflight"])
-        console.print("")
+        render_rich("", __name__)
 
 
 def _archive_dir():
@@ -436,14 +437,12 @@ def migrate_engines(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(code)
-        console.print("[bold]sac agents migrate-engines[/bold]  dry-run (read-only)\n")
+        render_rich("[bold]sac agents migrate-engines[/bold]  dry-run (read-only)\n", __name__)
         _show_preflight(payload)
         render_plan(plan, payload, diff=diff)
         if plan.migrated:
-            console.print(
-                "\nNothing was written — this is a dry-run. To act:\n"
-                "    sac agents migrate-engines --apply"
-            )
+            render_rich("\nNothing was written — this is a dry-run. To act:\n"
+                "    sac agents migrate-engines --apply", __name__)
         raise SystemExit(code)
 
     if not plan.safe_to_apply:
@@ -452,13 +451,11 @@ def migrate_engines(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_PLAN_UNSOUND)
-        console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
+        render_rich("[bold]sac agents migrate-engines[/bold]  apply\n", __name__)
         _show_preflight(payload)
         render_plan(plan, payload, diff=diff)
-        console.print(
-            "\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
-            "describe every spec does not describe the sweep."
-        )
+        render_rich("\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
+            "describe every spec does not describe the sweep.", __name__)
         raise SystemExit(_EXIT_PLAN_UNSOUND)
 
     result = apply_engines_migration(plan, _archive_dir())
@@ -484,14 +481,14 @@ def migrate_engines(
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
-    console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
+    render_rich("[bold]sac agents migrate-engines[/bold]  apply\n", __name__)
     _show_preflight(payload)
     if diff:
         # `--diff` is on by DEFAULT and its help calls it "the whole point".
         # It used to be accepted and dropped on this path, so an operator who
         # believed they were reviewing what was written saw nothing at all.
         render_diffs(plan)
-        console.print("")
+        render_rich("", __name__)
     render_apply(result, payload)
     raise SystemExit(code)
 

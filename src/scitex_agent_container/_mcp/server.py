@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import scitex_logging as slogging
 import sys
 
 # NOTE: ``register_all_tools`` is deliberately NOT imported at module top
@@ -30,7 +31,7 @@ import sys
 def _ensure_stderr_logging() -> None:
     """Attach a stderr StreamHandler so INFO-level diagnostic lines appear in
     claude-code's MCP debug log. Idempotent."""
-    root = logging.getLogger("scitex_agent_container")
+    root = slogging.getLogger("scitex_agent_container")
     if any(getattr(h, "_sac_stderr", False) for h in root.handlers):
         return
     handler = logging.StreamHandler(sys.stderr)
@@ -45,7 +46,7 @@ def _ensure_stderr_logging() -> None:
 
 _ensure_stderr_logging()
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 scitex-agent-container (sac) — declarative container wrapper for

@@ -48,7 +48,7 @@ their own cache on top.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 import subprocess
@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Default thresholds (env-overridable)

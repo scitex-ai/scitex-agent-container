@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+import scitex_logging as slogging
 import shutil
 import time
 from pathlib import Path
@@ -31,7 +31,7 @@ from pathlib import Path
 from ._atomic import atomic_write_text
 from ._session_quota import read_quota
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # State-machine vocabulary used by both the runner and the runtime
 # adapter's ``status`` surface. Keep tight: each value must mean exactly
@@ -88,7 +88,7 @@ class _DefaultDBWriter:
     """
 
     def __init__(self) -> None:
-        self._log = logging.getLogger(__name__ + "._DefaultDBWriter")
+        self._log = slogging.getLogger(__name__ + "._DefaultDBWriter")
 
     def _best_effort(self, kind: str, write):
         """Run one diary write, absorbing any failure into a log line.
@@ -526,7 +526,7 @@ async def heartbeat_loop(
                 writer=writer,
             )
         except Exception as exc:  # noqa: BLE001 - best-effort beat
-            logging.getLogger(__name__).warning(
+            slogging.getLogger(__name__).warning(
                 "heartbeat write failed (continuing, best-effort): %s", exc
             )
 

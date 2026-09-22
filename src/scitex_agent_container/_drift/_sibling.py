@@ -42,6 +42,7 @@ launch is a launch-killer wearing a warning's clothes.
 
 from __future__ import annotations
 
+from .._logging import write_stream
 import os
 import time
 from collections.abc import Sequence
@@ -269,7 +270,7 @@ def warn_if_newer_sibling(
                 log.warning(line)
         else:
             for line in lines:
-                print(line, file=stream, flush=True)
+                write_stream(line, stream, flush=True)
         return len(siblings)
     except (
         Exception

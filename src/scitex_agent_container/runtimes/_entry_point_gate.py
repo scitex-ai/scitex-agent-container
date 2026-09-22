@@ -42,11 +42,11 @@ construction rather than by discipline.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import subprocess
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Probe timeout. Generous: the first exec of a cold SIF pays a mount cost, and
 # a probe that times out on a slow host would be reported as UNKNOWN anyway.

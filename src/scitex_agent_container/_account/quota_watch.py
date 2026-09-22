@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import scitex_logging as slogging
 import os
 import sys
 import time
@@ -21,7 +22,7 @@ from .._state.account_store import list_accounts, switch_account
 from .claude_usage import fetch_usage
 from .credentials import read_credentials_metadata
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 DEFAULT_THRESHOLD = 80.0  # rotate when usage exceeds this %
 DEFAULT_INTERVAL = 300  # check every 5 minutes

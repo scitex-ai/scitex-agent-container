@@ -6,7 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import threading
 import time
 import traceback
@@ -25,7 +25,7 @@ from ._instances import end_local_instance as _end_local_instance
 from ._instances import resolve_local_stop_instance
 from ._runtime_select import _get_runtime
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default upper bound on how long ``agent_restart`` will wait for the
 # previous runtime to actually exit before ESCALATING to SIGKILL (see

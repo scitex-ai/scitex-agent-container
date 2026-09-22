@@ -7,6 +7,7 @@ cap; the command is attached onto the ``host`` group at import time via
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -125,44 +126,36 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
         return
     # Header: where did our config come from?
     if config_path:
-        console.print(f"[dim]config_path  {config_path}[/dim]")
+        render_rich(f"[dim]config_path  {config_path}[/dim]", __name__)
     else:
-        console.print(
-            "[dim]config_path  (no config.yaml found — using built-in defaults)[/dim]"
-        )
+        render_rich("[dim]config_path  (no config.yaml found — using built-in defaults)[/dim]", __name__)
     # Local host always present.
-    console.print(f"[bold]local[/bold]       {local['name']}")
+    render_rich(f"[bold]local[/bold]       {local['name']}", __name__)
     if local["aliases"]:
         for raw, alias in sorted(local["aliases"].items()):
-            console.print(f"  alias       {raw}  ->  {alias}")
+            render_rich(f"  alias       {raw}  ->  {alias}", __name__)
     for iface in local["interfaces"]:
-        console.print(f"  {iface['iface']:<11} {iface['family']:<6} {iface['addr']}")
+        render_rich(f"  {iface['iface']:<11} {iface['family']:<6} {iface['addr']}", __name__)
     # Peers.
     if peers:
-        console.print("[bold]peers[/bold] [dim](every name probe/exec/--on accepts)[/dim]")
+        render_rich("[bold]peers[/bold] [dim](every name probe/exec/--on accepts)[/dim]", __name__)
         for r in peers:
             via = f"  via={','.join(r['via'])}" if r["via"] else ""
             origin = "  [dim](registry)[/dim]" if r["source"] == "registry" else ""
-            console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}{origin}")
+            render_rich(f"  {r['name']:<11} ssh={r['ssh']}{via}{origin}", __name__)
             if r["scitex_root"]:
-                console.print(
-                    f"              scitex_root={r['scitex_root']} [dim](registry)[/dim]"
-                )
+                render_rich(f"              scitex_root={r['scitex_root']} [dim](registry)[/dim]", __name__)
     else:
-        console.print("[dim](no peers configured)[/dim]")
+        render_rich("[dim](no peers configured)[/dim]", __name__)
     # Registry (scitex-dev hosts.yaml) — the SSOT sac resolves through.
     if registry:
-        console.print("[bold]registry[/bold] [dim](scitex_dev.hosts — SSOT)[/dim]")
+        render_rich("[bold]registry[/bold] [dim](scitex_dev.hosts — SSOT)[/dim]", __name__)
         for h in registry:
             alias = f"  ssh_alias={h['ssh_alias']}" if h["ssh_alias"] else ""
-            console.print(
-                f"  {h['name']:<11} {h['kind']:<12} scitex_root={h['scitex_root']}{alias}"
-            )
+            render_rich(f"  {h['name']:<11} {h['kind']:<12} scitex_root={h['scitex_root']}{alias}", __name__)
     else:
-        console.print(
-            "[dim](no scitex-dev host registry found — "
-            "peers fall back to the remote's ~/.scitex)[/dim]"
-        )
+        render_rich("[dim](no scitex-dev host registry found — "
+            "peers fall back to the remote's ~/.scitex)[/dim]", __name__)
 
 
 def register_list_command(group: click.Group) -> None:

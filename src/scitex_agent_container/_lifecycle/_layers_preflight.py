@@ -47,11 +47,11 @@ deleted together; ``--allow-undeclared-layers`` is the part that survives.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
 from ..runtimes._to_home_errors import UndeclaredToHomeLayers
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Flip to ``True`` to make an undeclared spec refuse to start by DEFAULT.
 #: Gated on the fleet's 102 specs being migrated first — see the module

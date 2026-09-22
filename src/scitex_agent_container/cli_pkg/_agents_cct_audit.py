@@ -41,6 +41,7 @@ TOKEN VALUES ARE NEVER READ
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 from pathlib import Path
 
@@ -220,7 +221,7 @@ def _render_table(rows: list[dict]) -> None:
             ", ".join(row["slots_tried"]) or "-",
             ", ".join(row["near_miss_slots"]) or "-",
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 @click.command(name="cct-audit")
@@ -294,27 +295,21 @@ def cct_audit(
         )
     else:
         _render_table(rows)
-        console.print(f"[dim]pool source: {_short_pool_label(pool_label)}[/dim]")
-        console.print(
-            f"{len(rows)} agent(s) considered — "
-            f"[red]{len(down)} DOWN[/red], [yellow]{len(unknown)} UNKNOWN[/yellow]"
-        )
+        render_rich(f"[dim]pool source: {_short_pool_label(pool_label)}[/dim]", __name__)
+        render_rich(f"{len(rows)} agent(s) considered — "
+            f"[red]{len(down)} DOWN[/red], [yellow]{len(unknown)} UNKNOWN[/yellow]", __name__)
         if unknown:
-            console.print(
-                "[yellow]UNKNOWN is not an all-clear.[/yellow] sac could not "
+            render_rich("[yellow]UNKNOWN is not an all-clear.[/yellow] sac could not "
                 "read the pool it meant to read from HERE. Re-run from where "
                 "the agents are started (the pool resolves from the LAUNCHING "
                 "process env), or set SAC_SECRETS_ENVRC, before believing any "
-                "row."
-            )
+                "row.", __name__)
         if down:
-            console.print(
-                "Fix each DOWN agent with ONE line in its spec under "
+            render_rich("Fix each DOWN agent with ONE line in its spec under "
                 "[bold]spec.apptainer.env[/bold]:  "
                 "[bold]CCT_BOT_TOKEN_SLOT: <SLOT>[/bold]  — or drop "
                 "'server:claude-code-telegrammer' from spec.comms.channels "
-                "if it needs no Telegram rail."
-            )
+                "if it needs no Telegram rail.", __name__)
 
     if down or unknown:
         ctx.exit(1)

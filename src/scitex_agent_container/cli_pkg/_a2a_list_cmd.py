@@ -7,6 +7,7 @@ onto it by :func:`register`, the same way :mod:`._host_sync` attaches to
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -77,7 +78,7 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
     from ._helpers import console
 
     if not agents:
-        console.print("[dim](no a2a peers)[/dim]")
+        render_rich("[dim](no a2a peers)[/dim]", __name__)
         return
 
     from rich.table import Table
@@ -97,7 +98,7 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
             "" if port is None else str(port),
             str(a.get("turn_url") or ""),
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 def register(a2a_group) -> None:

@@ -49,7 +49,7 @@ pre-keying sidecar is left strictly alone.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import signal
 import subprocess
@@ -61,7 +61,7 @@ import yaml
 
 from scitex_agent_container.config import AgentConfig
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 PID_FILENAME = "a2a-sidecar.pid"
 LOG_FILENAME = "a2a-sidecar.log"

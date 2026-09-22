@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json as json_mod
 import os
 import sys
@@ -313,7 +314,7 @@ def status(
             if use_json:
                 click.echo(json_mod.dumps({"error": str(exc)}))
             else:
-                console.print(f"[red]Error: {exc}[/red]")
+                render_rich(f"[red]Error: {exc}[/red]", __name__)
             sys.exit(1)
 
         if with_snapshot:
@@ -383,7 +384,7 @@ def status(
             style = "red" if key == "status" and value == "stopped" else style
             cell = _encode_safe_cell(value, cell_encoding)
             table.add_row(key, cell, style=style)
-        console.print(table)
+        render_rich(table, __name__)
     else:
         # `agents status` only shows agents now. Claude-account info
         # moved to `sac accounts list` — different noun, different
@@ -455,7 +456,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         if use_json:
             click.echo(json_mod.dumps(payload, indent=2))
         else:
-            console.print(payload["message"])
+            render_rich(payload["message"], __name__)
         if not payload["healthy"]:
             sys.exit(1)
         return
@@ -490,7 +491,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                 )
             )
         else:
-            console.print(f"[red]Error loading config: {exc}[/red]")
+            render_rich(f"[red]Error loading config: {exc}[/red]", __name__)
         sys.exit(1)
 
     is_healthy, message = health_check(config)
@@ -580,11 +581,11 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         return
 
     if health_state == "healthy":
-        console.print(f"[green]{message}[/green]")
+        render_rich(f"[green]{message}[/green]", __name__)
     elif health_state in {"unknown", "alive-by-delivery-only"}:
-        console.print(f"[yellow]{message}[/yellow]")
+        render_rich(f"[yellow]{message}[/yellow]", __name__)
     else:
-        console.print(f"[red]{message}[/red]")
+        render_rich(f"[red]{message}[/red]", __name__)
 
     print_liveness(console, liveness)
     print_overlay_masking(console, overlay_masking)

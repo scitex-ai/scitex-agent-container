@@ -39,10 +39,10 @@ IDENTITY SPLIT — safety-critical:
 from __future__ import annotations
 
 import copy
-import logging
+import scitex_logging as slogging
 from typing import Any, Iterable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Env var carrying the parent's name into the twin's container. Presence
 # marks a spec as a twin (the sole trigger for :func:`seed_twin_from_parent`)

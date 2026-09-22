@@ -42,7 +42,7 @@ healthy endpoint into an opaque 404.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ from ._openai_api_surface import select_api_surface
 from ._session_state import append_session_message, report_sdk_error
 from ._session_supervisor_helpers import _drain_failed_inbox
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["run_openai_conversation"]
 

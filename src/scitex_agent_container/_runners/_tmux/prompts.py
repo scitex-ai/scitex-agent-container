@@ -11,12 +11,12 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 # Unicode whitespace Claude's Ink TUI renders where an ASCII space is expected.

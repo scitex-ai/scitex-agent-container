@@ -77,13 +77,13 @@ to monitor.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Env-var escape hatch for fleet-wide pause without a redeploy.
 _DISABLE_ENV = "SAC_PERIODIC_DRIVE_DISABLED"

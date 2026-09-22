@@ -13,6 +13,7 @@ product; the removals are the easy half.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -36,7 +37,7 @@ def _evidence(text: str) -> None:
     A wrapped absolute path is a path you cannot grep out of a cron log,
     and every line here exists to be read back later.
     """
-    console.print(text, soft_wrap=True)
+    render_rich(text, __name__)
 
 
 def _print_repo(result: RepoGcResult) -> None:
@@ -44,7 +45,7 @@ def _print_repo(result: RepoGcResult) -> None:
     if result.unreadable:
         _evidence(f"[magenta]UNKNOWN[/magenta]   {result.repo}")
         _evidence(f"    [red]could not read repo: {result.error}[/red]")
-        console.print("")
+        render_rich("", __name__)
         return
 
     colour = "yellow" if result.exceeds_cap else "green"
@@ -71,41 +72,31 @@ def _print_repo(result: RepoGcResult) -> None:
     if result.prune_detail:
         for line in result.prune_detail.splitlines():
             _evidence(f"    [dim]prune: {line}[/dim]")
-    console.print("")
+    render_rich("", __name__)
 
 
 def _print_report(outcome: GcOutcome, *, apply: bool) -> None:
     mode = "apply" if apply else "dry-run (read-only)"
-    console.print(
-        f"[bold]sac worktree gc[/bold]  {mode} — {len(outcome.results)} repo(s)\n"
-    )
+    render_rich(f"[bold]sac worktree gc[/bold]  {mode} — {len(outcome.results)} repo(s)\n", __name__)
     for result in outcome.results:
         _print_repo(result)
 
     # Never silent: say what the verdict MEANS, not just what it was.
     if outcome.over_cap:
         names = ", ".join(r.repo for r in outcome.over_cap)
-        console.print(
-            f"[yellow]{len(outcome.over_cap)} repo(s) still over cap:[/yellow] {names}\n"
+        render_rich(f"[yellow]{len(outcome.over_cap)} repo(s) still over cap:[/yellow] {names}\n"
             "  Every kept worktree failed at least one safety leg (see the\n"
             "  kept-reasons above). The GC will NEVER auto-remove those — a\n"
-            "  human decides. Dirty worktrees hold work that exists nowhere else."
-        )
+            "  human decides. Dirty worktrees hold work that exists nowhere else.", __name__)
     elif outcome.unreadable:
-        console.print(
-            f"[magenta]{len(outcome.unreadable)} repo(s) UNREADABLE[/magenta] "
-            "[dim]— unknown is not clean; their sprawl is unobserved, not absent.[/dim]"
-        )
+        render_rich(f"[magenta]{len(outcome.unreadable)} repo(s) UNREADABLE[/magenta] "
+            "[dim]— unknown is not clean; their sprawl is unobserved, not absent.[/dim]", __name__)
     else:
-        console.print(
-            "[green]every repo under its worktree cap[/green] "
+        render_rich("[green]every repo under its worktree cap[/green] "
             "[dim](removals are proven-safe only: clean AND merged AND aged "
-            "AND idle)[/dim]"
-        )
+            "AND idle)[/dim]", __name__)
     if not apply:
-        console.print(
-            "[dim]dry-run: nothing was removed. Re-run with --apply to act.[/dim]"
-        )
+        render_rich("[dim]dry-run: nothing was removed. Re-run with --apply to act.[/dim]", __name__)
 
 
 @click.command("gc")
@@ -321,9 +312,9 @@ def worktree_gc(
         raise SystemExit(status)
 
     _print_report(outcome, apply=apply)
-    console.print(f"[dim]{outcome.summary_line()}[/dim]")
+    render_rich(f"[dim]{outcome.summary_line()}[/dim]", __name__)
     if alarm_outcome is not None:
-        console.print(f"[dim]{alarm_outcome.summary_line()}[/dim]")
+        render_rich(f"[dim]{alarm_outcome.summary_line()}[/dim]", __name__)
     raise SystemExit(status)
 
 

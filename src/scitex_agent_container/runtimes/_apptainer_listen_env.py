@@ -31,9 +31,9 @@ URL and log a loud warning.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:

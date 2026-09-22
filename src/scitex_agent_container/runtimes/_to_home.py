@@ -58,7 +58,7 @@ content — see ``_to_home_errors.py`` for context.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
 from ..config import AgentConfig
@@ -108,7 +108,7 @@ from ._to_home_text import (
     validate_marker_invariants,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Marker constants + text helpers re-exported for legacy import paths
 # (e.g. tests doing ``from ...runtimes._to_home import END_MARKER``).

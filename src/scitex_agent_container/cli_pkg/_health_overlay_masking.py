@@ -6,6 +6,7 @@ Published NEXT TO ``healthy`` (never folded into the exit code), same as
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from typing import Any
 
 __all__ = ["overlay_masking_payload", "print_overlay_masking"]
@@ -45,14 +46,12 @@ def print_overlay_masking(console: Any, payload: dict) -> None:
     verdict = str(payload.get("verdict", "unknown"))
     colour = _VERDICT_COLOUR.get(verdict, "yellow")
     detail = payload.get("detail") or payload.get("reason") or "?"
-    console.print(f"[{colour}]overlay: {verdict} — {detail}[/{colour}]")
+    render_rich(f"[{colour}]overlay: {verdict} — {detail}[/{colour}]", __name__)
     if verdict != "masked":
         return
     for shadow in payload.get("shadows", []):
         if shadow.get("status") == "masked":
-            console.print(
-                f"[red]  {shadow.get('package')} {shadow.get('version')} "
+            render_rich(f"[red]  {shadow.get('package')} {shadow.get('version')} "
                 f"masks base {shadow.get('base_version')} — "
-                f"{shadow.get('dist_info')}[/red]"
-            )
-    console.print(f"[dim]  {OPERATIONAL_RULE}[/dim]")
+                f"{shadow.get('dist_info')}[/red]", __name__)
+    render_rich(f"[dim]  {OPERATIONAL_RULE}[/dim]", __name__)

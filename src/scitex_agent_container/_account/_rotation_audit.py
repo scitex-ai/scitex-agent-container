@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import scitex_logging as slogging
 import os
 import socket
 import sys
@@ -36,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Filename of the append-only audit log, relative to the accounts store.
 AUDIT_FILENAME = "rotation-audit.jsonl"

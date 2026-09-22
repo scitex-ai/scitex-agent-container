@@ -92,7 +92,7 @@ a forked child (the concurrency tests use ``multiprocessing``) never reuses
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -103,7 +103,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: greppable across the migration and in operator muscle memory.
 #: ``scitex_dev.store`` renders it as four physical tables (``<name>_rows``,
 #: ``_oplog``, ``_identity``, ``_cursor``).
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 STORE_NAME = "a2a_ports"
 

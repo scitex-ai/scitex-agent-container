@@ -41,7 +41,7 @@ FAIL-LOUD invariants (ADR-0010 / handoff §0):
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from typing import Any, Callable
 
@@ -56,7 +56,7 @@ from typing import Any, Callable
 # timeout is DERIVED from the server's declared deadline.
 from .._listen._handler_deadline import client_timeout_for
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "IN_SIF_ENV_VARS",

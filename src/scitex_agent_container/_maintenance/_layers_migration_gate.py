@@ -31,7 +31,7 @@ must not be zero — and refuses while either side has an unmeasurable agent.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,7 +44,7 @@ from ..runtimes._hook_origin_manifest import hook_origins
 # two different agents had two different problems.
 from ._layers_migration_plan import _reason
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

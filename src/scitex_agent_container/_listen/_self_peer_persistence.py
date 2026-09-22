@@ -42,10 +42,10 @@ DESIGN
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Iterable, Mapping
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _parse_listen_port(listen_url: str) -> int | None:

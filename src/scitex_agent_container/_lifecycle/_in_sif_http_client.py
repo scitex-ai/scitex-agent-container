@@ -37,13 +37,13 @@ Stdlib-only on purpose (mirrors :mod:`._spawn_client`): urllib
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import socket
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["HostListenTransportError", "host_listen_call"]
 

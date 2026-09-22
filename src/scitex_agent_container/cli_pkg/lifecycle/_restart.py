@@ -35,6 +35,7 @@ returned", never "the state changed".
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import json as _json
 import sys
 
@@ -134,7 +135,7 @@ def _restart_one(
                 f"agents start {name} --force --yes --engine {engine}"
             )
             if not as_json:
-                console.print(f"[red]{msg}[/red]")
+                render_rich(f"[red]{msg}[/red]", __name__)
             out, ok = {"name": name, "error": msg, "restarted": False}, False
         elif broker:
             broker_kwargs = {"as_json": as_json, "fresh": fresh}
@@ -150,7 +151,7 @@ def _restart_one(
             out, ok = _restart_locally(name, **local_kwargs)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not as_json:
-            console.print(f"[red]Error: {exc}[/red]")
+            render_rich(f"[red]Error: {exc}[/red]", __name__)
         out, ok = {"name": name, "error": str(exc)}, False
     log_restart_decision(
         event="completed",
@@ -297,7 +298,7 @@ def restart(
         if as_json:
             click.echo(_json.dumps([]))
         else:
-            console.print("[dim]No agents found to restart.[/dim]")
+            render_rich("[dim]No agents found to restart.[/dim]", __name__)
         return
 
     # --engine names ONE engine key, and keys are declared per spec, so

@@ -39,6 +39,7 @@ See :mod:`..runtimes._cct_token_collision`.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -110,19 +111,15 @@ def _local_agents_spec_dir() -> str:
 def _render_local_human(status: DriftStatus) -> None:
     """Print the local spec-source drift verdict."""
     style = _STATE_STYLE.get(status.state, "white")
-    console.print(
-        f"[bold]local spec-source[/bold]  [{style}]{status.summary()}[/{style}]"
-    )
+    render_rich(f"[bold]local spec-source[/bold]  [{style}]{status.summary()}[/{style}]", __name__)
     if status.repo:
-        console.print(f"  repo  {status.repo}")
+        render_rich(f"  repo  {status.repo}", __name__)
 
 
 def _render_pollers_human(verdict: PollerSingletonVerdict) -> None:
     """Print the poller-singleton verdict, and its remedy when alarming."""
     style = _POLLER_STYLE.get(verdict.state, "white")
-    console.print(
-        f"[bold]telegram pollers[/bold]  [{style}]{verdict.summary()}[/{style}]"
-    )
+    render_rich(f"[bold]telegram pollers[/bold]  [{style}]{verdict.summary()}[/{style}]", __name__)
     for poller in verdict.pollers:
         owner = poller.agent or "(agent unknown)"
         if poller.token_fp:
@@ -131,28 +128,26 @@ def _render_pollers_human(verdict: PollerSingletonVerdict) -> None:
             mark = "(no token — by design)"
         else:
             mark = "(token unreadable)"
-        console.print(f"  pid {poller.pid:<8} {mark:<24}  {owner}")
-    console.print(f"  [dim]{verdict.population()}[/dim]")
-    console.print(f"  [dim]{SCOPE_NOTE}[/dim]")
+        render_rich(f"  pid {poller.pid:<8} {mark:<24}  {owner}", __name__)
+    render_rich(f"  [dim]{verdict.population()}[/dim]", __name__)
+    render_rich(f"  [dim]{SCOPE_NOTE}[/dim]", __name__)
     if verdict.is_alarming:
-        console.print(f"  [{style}]{verdict.detail}[/{style}]")
-        console.print(f"  [bold]hint[/bold]  {verdict.hint()}")
+        render_rich(f"  [{style}]{verdict.detail}[/{style}]", __name__)
+        render_rich(f"  [bold]hint[/bold]  {verdict.hint()}", __name__)
 
 
 def _render_collisions_human(verdict: TokenCollisionVerdict) -> None:
     """Print the static spec-collision verdict, and its remedy when alarming."""
     style = _COLLISION_STYLE.get(verdict.state, "white")
-    console.print(
-        f"[bold]spec bot tokens[/bold]  [{style}]{verdict.summary()}[/{style}]"
-    )
+    render_rich(f"[bold]spec bot tokens[/bold]  [{style}]{verdict.summary()}[/{style}]", __name__)
     for collision in verdict.collisions:
         mark = "cross-host" if collision.cross_host else "same host"
-        console.print(f"  {collision.token_fp:<24} {collision.describe()}  ({mark})")
-    console.print(f"  [dim]{verdict.population()}[/dim]")
-    console.print(f"  [dim]{COLLISION_SCOPE_NOTE}[/dim]")
+        render_rich(f"  {collision.token_fp:<24} {collision.describe()}  ({mark})", __name__)
+    render_rich(f"  [dim]{verdict.population()}[/dim]", __name__)
+    render_rich(f"  [dim]{COLLISION_SCOPE_NOTE}[/dim]", __name__)
     if verdict.is_alarming:
-        console.print(f"  [{style}]{verdict.detail}[/{style}]")
-        console.print(f"  [bold]hint[/bold]  {verdict.hint()}")
+        render_rich(f"  [{style}]{verdict.detail}[/{style}]", __name__)
+        render_rich(f"  [bold]hint[/bold]  {verdict.hint()}", __name__)
 
 
 def _render_node_human(readiness: NodeReadiness) -> None:
@@ -168,27 +163,23 @@ def _render_node_human(readiness: NodeReadiness) -> None:
         "cannot-deploy": "[red]cannot-deploy[/red]",
         "unknown": "[yellow]unknown[/yellow]",
     }.get(readiness.verdict, readiness.verdict)
-    console.print(f"node: {label}")
+    render_rich(f"node: {label}", __name__)
     # The count on its own line, and said as a FLOOR. An agent shipping its own
     # .mcp.json can have more; what failed on compute-01 was agents that had
     # nothing else to fall back on.
-    console.print(
-        f"  tools: {readiness.tool_count} MCP server(s) "
-        f"(baseline floor — an agent with no per-agent .mcp.json)"
-    )
+    render_rich(f"  tools: {readiness.tool_count} MCP server(s) "
+        f"(baseline floor — an agent with no per-agent .mcp.json)", __name__)
     if readiness.baseline_dir:
-        console.print(f"  baseline: {readiness.baseline_dir}")
+        render_rich(f"  baseline: {readiness.baseline_dir}", __name__)
     for link in readiness.dangling_links:
-        console.print(f"  [red]dangling symlink[/red]: {link}  (deploys abort here)")
+        render_rich(f"  [red]dangling symlink[/red]: {link}  (deploys abort here)", __name__)
     for broken in readiness.broken_servers:
-        console.print(
-            f"  [red]{broken.state}[/red]: {broken.name}"
-            + (f" -> {broken.command}" if broken.command else "")
-        )
+        render_rich(f"  [red]{broken.state}[/red]: {broken.name}"
+            + (f" -> {broken.command}" if broken.command else ""), __name__)
         if broken.detail:
-            console.print(f"      {broken.detail}")
+            render_rich(f"      {broken.detail}", __name__)
     for note in readiness.notes:
-        console.print(f"  {note}")
+        render_rich(f"  {note}", __name__)
 
 
 def _render_fleet(ctx: click.Context, as_json: bool, strict: bool, timeout: int) -> int:
@@ -209,17 +200,15 @@ def _render_fleet(ctx: click.Context, as_json: bool, strict: bool, timeout: int)
             )
         )
     elif not rows:
-        console.print(
-            "[dim](no peers configured — nothing to drift-check. "
-            "Add peers with `sac host add <name> --ssh ...`.)[/dim]"
-        )
+        render_rich("[dim](no peers configured — nothing to drift-check. "
+            "Add peers with `sac host add <name> --ssh ...`.)[/dim]", __name__)
     else:
-        console.print("[bold]fleet spec-source drift[/bold]")
+        render_rich("[bold]fleet spec-source drift[/bold]", __name__)
         width = max((len(r.host) for r in rows), default=4)
         for r in rows:
             style = _STATE_STYLE.get(r.status.state, "white")
             line = f"  {r.host:<{width}}  [{style}]{r.status.summary()}[/{style}]"
-            console.print(line)
+            render_rich(line, __name__)
     drifted = [r for r in rows if r.status.is_drifted]
     if strict and drifted:
         return 1
@@ -274,7 +263,7 @@ def _render_local(
     else:
         if image_venv is not None:
             for line in image_venv_lines(image_venv):
-                console.print(line)
+                render_rich(line, __name__)
         if status is not None:
             _render_local_human(status)
         if verdict is not None:

@@ -21,14 +21,14 @@ managed keys (skip-permissions / statusLine / event-ring hooks) on top.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
 from ._layer_merge import deep_merge_layers
 from ._to_home_errors import WorkspaceSettingsMergeError
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Per layer, prefer the USER-scope name; accept the legacy project-scope name
 # as a fallback source so un-renamed baselines still contribute.

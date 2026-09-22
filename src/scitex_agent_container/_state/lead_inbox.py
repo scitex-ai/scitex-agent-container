@@ -47,7 +47,7 @@ not a registry implementation.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import urllib.error
 import urllib.request
 import uuid
@@ -66,7 +66,7 @@ __all__ = [
     "resolve_lead",
 ]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 LEAD_EVENT_KINDS: tuple[str, ...] = ("done", "blocker", "status")
 LeadEventKind = Literal["done", "blocker", "status"]

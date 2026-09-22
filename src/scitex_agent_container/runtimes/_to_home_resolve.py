@@ -19,14 +19,14 @@ home by spec alone (see the two ``*_ENV_VAR`` constants).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._to_home_errors import UnknownToHomeLayer
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Env var: explicit override for the shared/common baseline to_home dir.
 # Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``

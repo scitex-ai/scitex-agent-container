@@ -63,14 +63,14 @@ this module's output, because nothing here can observe a crash loop.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "HealthProbe",

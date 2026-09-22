@@ -62,11 +62,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import scitex_logging as slogging
 from typing import Any
 
 __all__ = ["detach_launch", "inflight_count"]
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Headroom added to the probe's own budget when dispatching it off the loop.
 # ``run_blocking`` needs a ceiling STRICTLY GREATER than the work it bounds, or

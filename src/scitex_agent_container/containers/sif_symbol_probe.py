@@ -3,6 +3,38 @@
 import sys
 from importlib import import_module
 
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+    plain = slogging.getPlainConsole(__name__)
+except ImportError:  # SIF without sac on the probe path
+    class _PlainFallback:
+        """Verbatim stdout writer for the OK verdict line."""
+
+        @staticmethod
+        def emit(message: str) -> None:
+            sys.stdout.write(f"{message}\n")
+            sys.stdout.flush()
+
+    plain = _PlainFallback()
+
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr."""
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
+
 # noqa placement is deliberate: this import LOOKS unused and is not. The
 # probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
 # whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
@@ -63,14 +95,14 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: E402,F
 from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: E402,F401
 
 if "in_progress" not in WIP_STATUSES:
-    print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+    log.error(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)
 
 # scitex-cards #1003: scoped DM recipients must resolve to the durable bare
 # identity SAC subscribes under, and startup must carry the cross-connection
 # doorbell probe instead of treating LISTEN success as delivery evidence.
 if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
-    print("FATAL: scitex-cards #1003 DM recipient canonicalization is absent")
+    log.error("FATAL: scitex-cards #1003 DM recipient canonicalization is absent")
     sys.exit(1)
 
 # Newer than any published sac release => proves the %files-staged source
@@ -79,4 +111,4 @@ from scitex_agent_container.runtimes._apptainer_overlay import (  # noqa: E402
     ensure_overlay_dirs,  # noqa: F401
 )
 
-print("OK: artifact symbol probe passed")
+plain.emit("OK: artifact symbol probe passed")

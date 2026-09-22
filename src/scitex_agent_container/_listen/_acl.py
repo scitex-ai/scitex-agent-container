@@ -36,7 +36,7 @@ forwarder's side — see :mod:`_listen.peer_tokens`).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Literal
 
 from starlette.responses import JSONResponse
@@ -53,7 +53,7 @@ from .._state.state_store_nodes import (
 )
 from ..config._group_resolver import groups_mesh
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "AclDecision",

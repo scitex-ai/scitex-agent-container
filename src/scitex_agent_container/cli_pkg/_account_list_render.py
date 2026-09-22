@@ -40,6 +40,7 @@ contract downstream consumers parse.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import os
 import time
 from dataclasses import dataclass
@@ -367,7 +368,7 @@ def render_stored_table_to_str(
     """
     console = Console(record=True, width=width, file=open(os.devnull, "w"))
     try:
-        console.print(render_stored_table(rows, now=now))
+        render_rich(render_stored_table(rows, now=now), __name__)
         return console.export_text()
     finally:
         console.file.close()

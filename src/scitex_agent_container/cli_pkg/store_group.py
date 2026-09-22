@@ -19,6 +19,7 @@ ship a delta to.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 import os
 from pathlib import Path
@@ -88,10 +89,8 @@ def store_migrate(
     if _json_flag(ctx, as_json):
         click.echo(json.dumps({"registry_dir": str(registry_dir), **result}, indent=2))
         return
-    console.print(
-        f"Migrated from [cyan]{registry_dir}[/cyan]: "
-        f"imported={result['imported']} skipped={result['skipped']}"
-    )
+    render_rich(f"Migrated from [cyan]{registry_dir}[/cyan]: "
+        f"imported={result['imported']} skipped={result['skipped']}", __name__)
 
 
 @store_group.command("clean")
@@ -152,10 +151,10 @@ def store_clean(
         return
     total = sum(counters.values())
     label = "would-sweep" if dry_run else "swept"
-    console.print(f"[bold]sac store clean[/bold]  {label}={total}")
+    render_rich(f"[bold]sac store clean[/bold]  {label}={total}", __name__)
     for kind, n in counters.items():
         if n:
-            console.print(f"  {kind:<14}  {n}")
+            render_rich(f"  {kind:<14}  {n}", __name__)
 
 
 @store_group.command("tick")

@@ -15,6 +15,7 @@ Design notes:
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 from pathlib import Path
 
@@ -48,11 +49,9 @@ def _refuse_if_generated(path: Path) -> None:
         return
     if not is_generated(path.read_text()):
         return
-    console.print(
-        "[red]error:[/red] this host's config is GENERATED (client). "
+    render_rich("[red]error:[/red] this host's config is GENERATED (client). "
         "Edit the MASTER's config.yaml and run "
-        "`sac host push-config <this-host>` from the master."
-    )
+        "`sac host push-config <this-host>` from the master.", __name__)
     raise SystemExit(2)
 
 
@@ -176,7 +175,7 @@ def _emit_ok(
             )
         )
     else:
-        console.print(f"[green]ok[/green]  {action} peer '{peer}'")
+        render_rich(f"[green]ok[/green]  {action} peer '{peer}'", __name__)
 
 
 def _emit_validation_failure(
@@ -201,8 +200,8 @@ def _emit_validation_failure(
         )
     else:
         for e in errors:
-            console.print(f"[red]error:[/red] {e}")
-        console.print("[red]aborted[/red]  config.yaml reverted to pre-edit state")
+            render_rich(f"[red]error:[/red] {e}", __name__)
+        render_rich("[red]aborted[/red]  config.yaml reverted to pre-edit state", __name__)
 
 
 @click.command("add")

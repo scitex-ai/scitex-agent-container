@@ -44,7 +44,7 @@ avoid a duplicate/conflicting flag.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import re
 import shutil
 from pathlib import Path
@@ -60,7 +60,7 @@ from .._state.host_scratch import (
 # Mirrors the overlay_size grammar in _apptainer_build._create_overlay_image.
 _SIZE_RE = re.compile(r"^\s*(\d+)\s*([MG]B?)\s*$", re.IGNORECASE)
 _UNIT_BYTES = {"M": 1024**2, "MB": 1024**2, "G": 1024**3, "GB": 1024**3}
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 class TmpfsSpaceError(RuntimeError):

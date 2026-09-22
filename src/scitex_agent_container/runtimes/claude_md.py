@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import re
 from pathlib import Path
 
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 # ----------------------------- skill resolution -----------------------------

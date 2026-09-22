@@ -47,11 +47,11 @@ an agent sac believes is RUNNING can have its bridge respawned.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Kill switch, mirroring SAC_TUI_HEARTBEAT_DISABLED / SAC_SDK_HEARTBEAT_DISABLED.
 DISABLE_ENV = "SAC_TUI_BRIDGE_SUPERVISION_DISABLED"

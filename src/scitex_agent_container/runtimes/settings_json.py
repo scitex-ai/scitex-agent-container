@@ -51,7 +51,7 @@ Global seed (ensure_global_settings_json):
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
@@ -66,7 +66,7 @@ from ._settings_hooks import (  # noqa: F401
     _strip_stale_sac_ingest_hooks,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Keys managed by this module — cleanup removes exactly these.
 _MANAGED_KEYS = frozenset(

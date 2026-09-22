@@ -23,7 +23,7 @@ notify-send, etc.).
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import shlex
 import subprocess
@@ -32,7 +32,7 @@ from typing import Any, Mapping
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 _HTTP_TIMEOUT_S = 5.0
 _SHELL_TIMEOUT_S = 10.0

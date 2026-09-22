@@ -28,12 +28,12 @@ empty ``commands/`` dir fabricated). Non-``*.md`` entries (e.g.
 from __future__ import annotations
 
 import hashlib
-import logging
+import scitex_logging as slogging
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The standard Claude Code slash-commands dir under the operator's host home.
 # Resolved fresh at deploy time so it always tracks the real host user (no

@@ -49,11 +49,11 @@ separate opt-out mechanism because per-agent precedence already is one.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # ``config.yaml`` key (under ``spec:``) carrying the operator's host-scope
 # fleet defaults. Same file + cascade as ``spec.hostname_aliases``.

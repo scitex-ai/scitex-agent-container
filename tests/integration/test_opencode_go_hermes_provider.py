@@ -195,6 +195,57 @@ def test_portable_alternative_resolves_exact_responses_transport(
     )
 
 
+def test_free_engine_resolves_exact_chat_completions_transport(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    config = load_config(EXAMPLE)
+    selected = select_engine(
+        config.engines, "scitex-free-muse-spark-1.3-contributor-free"
+    )
+    assert selected is not None
+    apply_engine(config, selected)
+
+    # Act
+    plan = _hermes_profile._launch_plan(config, launch_mode="tui")
+    rendered = compile_hermes_config(plan, workdir="/work")
+    provider = rendered["providers"][
+        "sac-scitex-free-muse-spark-1.3-contributor-free"
+    ]
+
+    # Assert
+    assert (
+        plan.engine.key,
+        plan.engine.model_id,
+        plan.endpoint.protocol,
+        plan.endpoint.url,
+        plan.endpoint.auth_env,
+        rendered["model"],
+        provider["base_url"],
+        provider["key_env"],
+        rendered["fallback_providers"],
+        "secret-must-not-be-serialized" in repr(rendered),
+    ) == (
+        "scitex-free-muse-spark-1.3-contributor-free",
+        "muse-spark-1.3-contributor-free",
+        "openai-chat-completions",
+        "http://127.0.0.1:18779/v1/chat/completions",
+        "SCITEX_GENAI_GATEWAY_API_KEY",
+        {
+            "default": "muse-spark-1.3-contributor-free",
+            "provider": "custom:sac-scitex-free-muse-spark-1.3-contributor-free",
+            "api_mode": "chat_completions",
+        },
+        "http://127.0.0.1:18779/v1",
+        "SCITEX_GENAI_GATEWAY_API_KEY",
+        [],
+        False,
+    )
+
+
 def test_opaque_non_uuid_session_header_is_stable_for_same_sac_conversation():
     """OpenCode documents stability, and Hermes documents an opaque value."""
     # Arrange

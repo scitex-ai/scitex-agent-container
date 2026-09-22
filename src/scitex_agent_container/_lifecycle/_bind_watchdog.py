@@ -27,9 +27,9 @@ via :func:`_off_loop.run_blocking`.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # How long after startup to first check the bind. Generous enough that a
 # healthy server is always serving by then, short enough that the operator

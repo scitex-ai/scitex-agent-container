@@ -43,6 +43,7 @@ be trusted about what it did.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import datetime as _dt
 import json
 
@@ -123,44 +124,32 @@ def _render_plan(plan, *, verbose: bool) -> None:
         # "0 spec(s) — 0 would gain a declaration" headline over a root that
         # does not exist is a true sentence that answers a question nobody
         # asked, and it is the sentence that read as success.
-        console.print(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}")
+        render_rich(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}", __name__)
         return
-    console.print(
-        f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
-        f"{payload['writable']} would gain a to_home_layers declaration\n"
-    )
+    render_rich(f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
+        f"{payload['writable']} would gain a to_home_layers declaration\n", __name__)
     for layers, count in payload["layer_sets"].items():
-        console.print(f"  [green]{count:4d}[/green]  {_lit('[' + layers + ']')}")
+        render_rich(f"  [green]{count:4d}[/green]  {_lit('[' + layers + ']')}", __name__)
     if payload["already_declared"]:
-        console.print(
-            f"\n[dim]{len(payload['already_declared'])} spec(s) already declare "
-            f"the key — nothing to do for those.[/dim]"
-        )
+        render_rich(f"\n[dim]{len(payload['already_declared'])} spec(s) already declare "
+            f"the key — nothing to do for those.[/dim]", __name__)
     # Never silent about a decision: refusals print whether or not -v is given.
     for entry in payload["refused"]:
-        console.print(
-            f"\n[yellow]REFUSED[/yellow] {_lit(entry['agent'])}: "
-            f"{_lit(entry['reason'])}",
-            soft_wrap=True,
-        )
-        console.print(f"    [dim]{_lit(entry['path'])}[/dim]", soft_wrap=True)
+        render_rich(f"\n[yellow]REFUSED[/yellow] {_lit(entry['agent'])}: "
+            f"{_lit(entry['reason'])}", __name__)
+        render_rich(f"    [dim]{_lit(entry['path'])}[/dim]", __name__)
     for entry in payload["malformed"]:
-        console.print(
-            f"\n[red]MALFORMED[/red] {_lit(entry['agent'])}: the planned edit "
+        render_rich(f"\n[red]MALFORMED[/red] {_lit(entry['agent'])}: the planned edit "
             f"touches {entry['lines_added']} line(s), not 1 — this is a DEFECT "
-            f"in the editor, not a spec needing attention",
-            soft_wrap=True,
-        )
+            f"in the editor, not a spec needing attention", __name__)
     for entry in payload["unreadable"]:
-        console.print(f"\n[red]UNREADABLE[/red] {_lit(entry)}", soft_wrap=True)
+        render_rich(f"\n[red]UNREADABLE[/red] {_lit(entry)}", __name__)
     if verbose:
-        console.print("")
+        render_rich("", __name__)
         for edit in plan.writable:
             layers = _lit("[" + ", ".join(edit.layers) + "]")
-            console.print(
-                f"  [dim]{_lit(edit.agent)}[/dim] -> {layers}", soft_wrap=True
-            )
-    console.print(f"\n[bold]{_lit(payload['summary'])}[/bold]")
+            render_rich(f"  [dim]{_lit(edit.agent)}[/dim] -> {layers}", __name__)
+    render_rich(f"\n[bold]{_lit(payload['summary'])}[/bold]", __name__)
 
 
 def _run_apply(plan, covered) -> "tuple[int, dict]":
@@ -213,27 +202,19 @@ def _run_apply(plan, covered) -> "tuple[int, dict]":
 
 def _render_apply(payload: dict) -> None:
     if payload.get("applied"):
-        console.print(
-            f"[green]APPLIED[/green] {len(payload['written'])} spec(s) written "
+        render_rich(f"[green]APPLIED[/green] {len(payload['written'])} spec(s) written "
             f"and verified.\n  [dim]originals archived at "
-            f"{_lit(payload['archive_dir'])}[/dim]"
-        )
-        console.print(f"  [dim]{_lit(payload['gate']['summary'])}[/dim]")
+            f"{_lit(payload['archive_dir'])}[/dim]", __name__)
+        render_rich(f"  [dim]{_lit(payload['gate']['summary'])}[/dim]", __name__)
         return
     if payload.get("rolled_back"):
-        console.print(
-            f"[red]ROLLED BACK[/red] — the specs were written, the arming gate "
+        render_rich(f"[red]ROLLED BACK[/red] — the specs were written, the arming gate "
             f"refused them, and every original was restored.\n"
-            f"  {_lit(payload['rolled_back'])}"
-        )
+            f"  {_lit(payload['rolled_back'])}", __name__)
         return
-    console.print(
-        f"[red]REFUSED[/red] — nothing was written.\n  {_lit(payload['apply_refused'])}"
-    )
+    render_rich(f"[red]REFUSED[/red] — nothing was written.\n  {_lit(payload['apply_refused'])}", __name__)
     for entry in payload.get("before_unmeasurable", []):
-        console.print(
-            f"    [magenta]UNMEASURABLE[/magenta] {_lit(entry)}", soft_wrap=True
-        )
+        render_rich(f"    [magenta]UNMEASURABLE[/magenta] {_lit(entry)}", __name__)
 
 
 @click.command(name="migrate-layers")
@@ -312,13 +293,11 @@ def migrate_layers(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(code)
-        console.print("[bold]sac agents migrate-layers[/bold]  dry-run (read-only)\n")
+        render_rich("[bold]sac agents migrate-layers[/bold]  dry-run (read-only)\n", __name__)
         _render_plan(plan, verbose=verbose)
         if plan.writable:
-            console.print(
-                "\nNothing was written — this is a dry-run. To act:\n"
-                "    sac agents migrate-layers --apply"
-            )
+            render_rich("\nNothing was written — this is a dry-run. To act:\n"
+                "    sac agents migrate-layers --apply", __name__)
         raise SystemExit(code)
 
     if not plan.safe_to_apply:
@@ -327,12 +306,10 @@ def migrate_layers(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_PLAN_UNSOUND)
-        console.print("[bold]sac agents migrate-layers[/bold]  apply\n")
+        render_rich("[bold]sac agents migrate-layers[/bold]  apply\n", __name__)
         _render_plan(plan, verbose=verbose)
-        console.print(
-            "\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
-            "describe every spec does not describe the sweep."
-        )
+        render_rich("\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
+            "describe every spec does not describe the sweep.", __name__)
         raise SystemExit(_EXIT_PLAN_UNSOUND)
 
     if not plan.writable:
@@ -346,11 +323,9 @@ def migrate_layers(
         # layers ... this is what a completed one looks like" — was printed
         # verbatim by a run that had discovered ZERO specs. An assertion that
         # the migration is FINISHED is the last place to omit its population.
-        console.print(
-            f"[green]Nothing to write[/green] — all {payload['specs']} spec(s) "
+        render_rich(f"[green]Nothing to write[/green] — all {payload['specs']} spec(s) "
             f"under {_lit(payload['root'])} already declare their layers. The "
-            f"sweep is idempotent; this is what a completed one looks like."
-        )
+            f"sweep is idempotent; this is what a completed one looks like.", __name__)
         raise SystemExit(_EXIT_OK)
 
     code, applied = _run_apply(plan, [e.path for e in plan.edits])
@@ -359,7 +334,7 @@ def migrate_layers(
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
-    console.print("[bold]sac agents migrate-layers[/bold]  apply\n")
+    render_rich("[bold]sac agents migrate-layers[/bold]  apply\n", __name__)
     _render_apply(payload)
     raise SystemExit(code)
 

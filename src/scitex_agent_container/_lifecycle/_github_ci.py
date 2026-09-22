@@ -24,10 +24,10 @@ authenticated on the fleet hosts (repo + workflow scopes); no extra dep.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 from typing import Callable, NamedTuple
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # A ``run`` seam returns the subprocess stdout for ``gh <args>``.
 GhRunner = Callable[[list], str]

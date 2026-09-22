@@ -22,6 +22,15 @@ spec:
       provider:
         base_url: http://127.0.0.1:18765/v1/responses
         auth_token_env: SCITEX_GENAI_GATEWAY_API_KEY
+    # Free tier: Meta muse-spark through the local free-SKU gateway,
+    # named via the provider registry so the loopback address lives in
+    # one place. Loopback-only like the entry above. The
+    # contributor-suffixed model id trips Hermes's data-training-tier
+    # warning; the generated profile pre-acknowledges it for
+    # non-interactive runs, so headless starts never block on it.
+    scitex-free-muse-spark-1.3-contributor-free:
+      model: muse-spark-1.3-contributor-free
+      provider: scitex-free
 
   available_harnesses:
     hermes:

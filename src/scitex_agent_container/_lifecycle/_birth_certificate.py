@@ -34,13 +34,13 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import logging
+import scitex_logging as slogging
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "SPEC_SHA_UNRESOLVABLE",

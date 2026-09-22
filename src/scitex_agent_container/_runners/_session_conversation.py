@@ -21,7 +21,7 @@ of those names from this module keep resolving.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +53,7 @@ from ._stderr_capture import (
     write_stderr_log,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 async def run_conversation(

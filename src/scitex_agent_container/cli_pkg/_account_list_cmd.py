@@ -26,6 +26,7 @@ consumers.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import click
 
 from ._account_list_fleet import fleet_account_options, run_fleet_account_list
@@ -250,24 +251,22 @@ def account_list(
         active_meta = {}
     lines = _format_claude_account_block(active_meta)
     for line in lines:
-        console.print(line)
+        render_rich(line, __name__)
     if lines:
-        console.print("")
+        render_rich("", __name__)
 
     if openai_error is not None:
-        console.print(f"[yellow]OpenAI accounts UNREADABLE:[/yellow] {openai_error}")
-        console.print(
-            "[dim]The Claude accounts below are unaffected. "
-            "Repair with: sac accounts sync-openai[/dim]"
-        )
-        console.print("")
+        render_rich(f"[yellow]OpenAI accounts UNREADABLE:[/yellow] {openai_error}", __name__)
+        render_rich("[dim]The Claude accounts below are unaffected. "
+            "Repair with: sac accounts sync-openai[/dim]", __name__)
+        render_rich("", __name__)
 
     for openai_account in openai_accounts:
         openai_lines = format_openai_account_block(openai_account)
         for line in openai_lines:
-            console.print(line)
+            render_rich(line, __name__)
         if openai_lines:
-            console.print("")
+            render_rich("", __name__)
 
     if not refresh:
         # FLEET view: every reachable host's credentials in one table, above
@@ -295,12 +294,10 @@ def account_list(
             "scitex-agent-container account save <name>"
         )
         return
-    console.print(
-        "[dim]--refresh is LOCAL-ONLY: it refetches usage, and a refetch can "
+    render_rich("[dim]--refresh is LOCAL-ONLY: it refetches usage, and a refetch can "
         "rotate an expired token. Doing that on every host at once is not "
-        "something a listing may do, so the fleet view never carries it.[/dim]"
-    )
-    console.print(render_stored_table(all_rows))
+        "something a listing may do, so the fleet view never carries it.[/dim]", __name__)
+    render_rich(render_stored_table(all_rows), __name__)
     # Operator directive 2026-07-11: the bars own the percentages AND
     # their reset hints; the table above holds only what the bars
     # cannot express. Emitted via click.echo (NOT console.print) so

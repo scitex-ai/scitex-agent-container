@@ -22,6 +22,7 @@ copies the parent's transcript and seeds the fork's session marker so its
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import json
 import sys
 
@@ -255,16 +256,12 @@ def fork(
     else:
         if rc == 0:
             lifetime = "persistent" if persist else "ephemeral"
-            console.print(
-                f"[green]spawned fork[/green] {resolved_name} "
-                f"({lifetime}, inheriting {parent}'s session)"
-            )
+            render_rich(f"[green]spawned fork[/green] {resolved_name} "
+                f"({lifetime}, inheriting {parent}'s session)", __name__)
             if ttl_note:
-                console.print(f"  {ttl_note}")
-            console.print(
-                f"  identity: writes attributed to {resolved_name}; "
-                f"cards must stay owned by {parent} (assignee=$SAC_FORK_PARENT)."
-            )
+                render_rich(f"  {ttl_note}", __name__)
+            render_rich(f"  identity: writes attributed to {resolved_name}; "
+                f"cards must stay owned by {parent} (assignee=$SAC_FORK_PARENT).", __name__)
         else:
             click.echo(
                 f"Error: host accepted the spawn of {resolved_name!r} but "

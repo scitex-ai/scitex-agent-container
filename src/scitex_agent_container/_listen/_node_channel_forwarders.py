@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
-import logging
+import scitex_logging as slogging
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,7 +58,7 @@ __all__ = [
     "_is_test_loopback_alias",
 ]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 #: Hosts this process has already refused with the "not an ssh peer" 502.
 #: The 502 body carries the whole remedy on EVERY call; the WARNING line is

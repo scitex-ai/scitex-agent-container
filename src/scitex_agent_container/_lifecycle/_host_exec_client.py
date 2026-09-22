@@ -13,7 +13,7 @@ tests inject a hand-rolled fake so there is no monkeypatching of the transport.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 from typing import Any, Callable
 from urllib import error as urlerror
@@ -26,7 +26,7 @@ from ._listen_client_resolve import (
     _resolve_caller,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Server-side per-command timeout CONTRACT (mirrors the listen ``/v1/host_exec``
 # handler): when the caller omits ``timeout_s`` the server uses 300 s, and any

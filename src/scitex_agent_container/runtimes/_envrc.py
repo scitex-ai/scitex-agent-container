@@ -51,7 +51,7 @@ no-op, exactly as before).
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import shlex
 import subprocess
@@ -59,7 +59,7 @@ from pathlib import Path
 
 from ._to_home_text import _is_legacy_identity_var
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Shell-internal vars that legitimately differ between two otherwise-identical
 # bash invocations (or are set by bash itself) — never part of the

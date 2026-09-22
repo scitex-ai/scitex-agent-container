@@ -262,9 +262,9 @@ async def _annotate_status_reachability(
         counts = await request.app.state.inbox.subscriber_counts()
         local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
-        import logging
+        import scitex_logging as slogging
 
-        logging.getLogger(__name__).warning(
+        slogging.getLogger(__name__).warning(
             "agent_status: could not read inbox broker (reporting reachability "
             "as %r, NOT as unreachable): %s",
             UNKNOWN,

@@ -12,7 +12,7 @@ Kept deliberately stdlib-only: no psutil, no yaml, no new deps.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import platform
 import re
@@ -28,7 +28,7 @@ from ._lock import _snapshot_lock
 from ._paths import _diff_path, _latest_path, _prev_path
 from ._sidecars import _project_agent_meta, _sidecars_payload
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 import sys
 
@@ -182,7 +183,7 @@ def priority_check(
         if as_json:
             click.echo(json.dumps({"error": str(exc)}, indent=2))
         else:
-            console.print(f"[red]Config not found: {exc}[/red]")
+            render_rich(f"[red]Config not found: {exc}[/red]", __name__)
         sys.exit(2)
 
     if not current_host:
@@ -201,7 +202,7 @@ def priority_check(
         if as_json:
             click.echo(json.dumps({"error": str(exc)}, indent=2))
         else:
-            console.print(f"[red]Error building priority report: {exc}[/red]")
+            render_rich(f"[red]Error building priority report: {exc}[/red]", __name__)
         sys.exit(2)
 
     if as_json:
@@ -209,13 +210,11 @@ def priority_check(
     else:
         should = report.get("should_yield", False)
         symbol = "[red]YIELD[/red]" if should else "[green]STAY[/green]"
-        console.print(f"[bold]{report['agent']}[/bold]: {symbol}")
-        console.print(f"  {report.get('reason', '')}")
+        render_rich(f"[bold]{report['agent']}[/bold]: {symbol}", __name__)
+        render_rich(f"  {report.get('reason', '')}", __name__)
         if "reachable_higher_hosts" in report:
-            console.print(
-                f"  chain: {report.get('host_chain', [])}"
-                f"  reachable-higher: {report.get('reachable_higher_hosts', [])}"
-            )
+            render_rich(f"  chain: {report.get('host_chain', [])}"
+                f"  reachable-higher: {report.get('reachable_higher_hosts', [])}", __name__)
 
     sys.exit(1 if report.get("should_yield") else 0)
 
@@ -382,23 +381,19 @@ def _singleton_reconcile_body(execute: bool, current_host: str, as_json: bool) -
     else:
         for r in results:
             if "error" in r:
-                console.print(f"[yellow]{r['agent']}[/yellow]: error — {r['error']}")
+                render_rich(f"[yellow]{r['agent']}[/yellow]: error — {r['error']}", __name__)
                 continue
             agent = r["agent"]
             action = r["action"]
             if action in ("yielded",):
-                console.print(
-                    f"[green]{agent}[/green]: yielded → {r['preferred_host']} (local stopped)"
-                )
+                render_rich(f"[green]{agent}[/green]: yielded → {r['preferred_host']} (local stopped)", __name__)
             elif action == "yield-recommended":
-                console.print(
-                    f"[red]{agent}[/red]: YIELD recommended → {r['preferred_host']} "
-                    f"(run with --execute to trigger)"
-                )
+                render_rich(f"[red]{agent}[/red]: YIELD recommended → {r['preferred_host']} "
+                    f"(run with --execute to trigger)", __name__)
             elif action in ("remote-start-failed", "remote-started-local-stop-failed"):
-                console.print(f"[red]{agent}[/red]: handover failed ({action})")
+                render_rich(f"[red]{agent}[/red]: handover failed ({action})", __name__)
             elif action == "stay":
-                console.print(f"[dim]{agent}: stay ({r.get('reason', '')})[/dim]")
+                render_rich(f"[dim]{agent}: stay ({r.get('reason', '')})[/dim]", __name__)
 
     if any_error and not any_yield:
         sys.exit(2)

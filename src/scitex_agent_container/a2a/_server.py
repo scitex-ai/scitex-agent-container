@@ -28,7 +28,7 @@ store.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import socket
 from pathlib import Path
 from typing import Any
@@ -59,7 +59,7 @@ from scitex_agent_container.a2a._inbox_ack import inbox_ack_route
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 # ---------------------------------------------------------------------
 # Per-agent SDK plumbing
 # ---------------------------------------------------------------------

@@ -31,11 +31,11 @@ a masked failure.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The SDK symbol names this module observes, mapped to the
 # ``session.jsonl`` event ``type`` we record them under.

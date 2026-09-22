@@ -32,7 +32,7 @@ sac's neutrality rule — logic never names a consumer — holds.
 from __future__ import annotations
 
 import getpass
-import logging
+import scitex_logging as slogging
 import os
 import stat
 from pathlib import Path
@@ -41,7 +41,7 @@ from urllib.parse import unquote, urlsplit
 
 from ._board_identity_env import raw_args_env
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The libpq user variable. Everything speaking to PostgreSQL through libpq or
 # psycopg honours it; nothing else in the fleet uses the name.

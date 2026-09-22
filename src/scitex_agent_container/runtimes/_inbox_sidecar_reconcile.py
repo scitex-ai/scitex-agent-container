@@ -8,7 +8,7 @@ process metadata instead of trusting either generation's pidfile.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import signal
 import time
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 CURRENT_MODULE = "scitex_agent_container.runtimes._channel_inbox_dispatcher"
 LEGACY_MODULE = "scitex_agent_container.runtimes._hermes_inbox_bridge"

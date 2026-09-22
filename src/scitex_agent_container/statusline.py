@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from ._env import getenv as _sac_env
+from ._logging import render_content
 
 
 def _state_dir() -> Path:
@@ -319,7 +320,7 @@ def _display(raw: bytes) -> None:
     # stx-allow: fallback (reason: statusLine display must never raise; corrupt
     # or unexpected payload shape silently outputs nothing rather than aborting)
     try:
-        print(_render(json.loads(raw)), flush=True)
+        render_content(_render(json.loads(raw)))
     except Exception:
         pass
 

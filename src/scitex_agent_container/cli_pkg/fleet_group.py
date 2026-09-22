@@ -21,6 +21,7 @@ transport.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 import subprocess
 from pathlib import Path
@@ -176,14 +177,12 @@ def fleet_launch(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps({"plan": plan, "rows": []}, indent=2))
             return
-        console.print("[bold]DRY RUN[/bold]")
-        console.print(
-            f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
+        render_rich("[bold]DRY RUN[/bold]", __name__)
+        render_rich(f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
             if plan["rsync"]
-            else "  rsync:           (skipped)"
-        )
+            else "  rsync:           (skipped)", __name__)
         for n in names:
-            console.print(f"  start on {peer}: {n}")
+            render_rich(f"  start on {peer}: {n}", __name__)
         return
 
     # ---- rsync the spec dir to the peer ----
@@ -203,9 +202,7 @@ def fleet_launch(
                 rsync_argv.insert(1, "-e")
                 rsync_argv.insert(2, f"ssh -J {','.join(chain)}")
         if not as_json:
-            console.print(
-                f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/"
-            )
+            render_rich(f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/", __name__)
         rc = subprocess.run(rsync_argv).returncode
         if rc != 0:
             click.echo(f"error: rsync failed (exit {rc})", err=True)
@@ -235,9 +232,9 @@ def fleet_launch(
                 if proc.returncode == 0
                 else f"[red]fail[/red] exit={proc.returncode}"
             )
-            console.print(f"  start {name:<32} {status}")
+            render_rich(f"  start {name:<32} {status}", __name__)
             if proc.stderr.strip():
-                console.print(f"    [dim]{proc.stderr.strip()[:200]}[/dim]")
+                render_rich(f"    [dim]{proc.stderr.strip()[:200]}[/dim]", __name__)
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps({"plan": plan, "rows": rows}, indent=2))

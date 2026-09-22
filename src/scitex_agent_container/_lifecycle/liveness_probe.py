@@ -41,13 +41,13 @@ Design rules
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import secrets
 import time
 from enum import Enum
 from typing import Callable, Optional
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The TUI is responsive (not mid-turn) when these markers are absent
 # from the tail. Keep the list tight — false positives turn ALIVE

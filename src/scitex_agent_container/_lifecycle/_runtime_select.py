@@ -30,7 +30,7 @@ container-engine selector to LAUNCH-MODE selector. Accepted values
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
 from ..config import AgentConfig
@@ -45,7 +45,7 @@ from ..config._harness_registry import (
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _get_runtime(config: AgentConfig):

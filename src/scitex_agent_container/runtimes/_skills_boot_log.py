@@ -17,12 +17,12 @@ raises; a diagnostic must not abort a start.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def log_effective_skills(config: AgentConfig, home_dir: str | Path) -> None:

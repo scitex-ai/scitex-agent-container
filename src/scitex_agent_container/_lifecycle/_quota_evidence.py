@@ -47,11 +47,11 @@ way in the other.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Stable marker opening the degraded-boot warning. A grep target for the
 #: operator and the one token a test can key on without matching the ordinary

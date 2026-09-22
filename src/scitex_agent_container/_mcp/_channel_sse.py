@@ -42,12 +42,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+import scitex_logging as slogging
 import os
 import random
 from typing import Any
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Bound the SSE CONNECT phase (see module docstring — #591).
 _SSE_CONNECT_TIMEOUT_S: float = 30.0

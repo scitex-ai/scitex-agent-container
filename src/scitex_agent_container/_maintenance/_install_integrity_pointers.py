@@ -28,7 +28,7 @@ else is string/AST work, so the shapes can be tested from literal text.
 from __future__ import annotations
 
 import ast
-import logging
+import scitex_logging as slogging
 import re
 from pathlib import Path
 
@@ -40,7 +40,7 @@ from ._install_integrity_model import (
     canonical_dist_name,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "EDITABLE_PTH_MARKERS",

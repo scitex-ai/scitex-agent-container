@@ -21,6 +21,7 @@ gap visible.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -64,13 +65,11 @@ def host_validate(ctx: click.Context, as_json: bool) -> None:
         )
     else:
         for w in warnings:
-            console.print(f"[yellow]warning:[/yellow] {w}")
+            render_rich(f"[yellow]warning:[/yellow] {w}", __name__)
         for e in errors:
-            console.print(f"[red]error:[/red] {e}")
+            render_rich(f"[red]error:[/red] {e}", __name__)
         if not errors and not warnings:
-            console.print(
-                f"[green]ok[/green]  config.yaml is valid ({detail['peers']} peer(s))"
-            )
+            render_rich(f"[green]ok[/green]  config.yaml is valid ({detail['peers']} peer(s))", __name__)
     if errors:
         raise SystemExit(1)
 

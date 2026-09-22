@@ -55,7 +55,7 @@ Two rules inherited from :mod:`._reachability`, and not negotiable here
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any, Callable, Mapping
 
 from ._reachability import UNKNOWN
@@ -69,7 +69,7 @@ __all__ = [
     "session_snapshot",
 ]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 #: A live session whose inbox adapter is attached to nothing. The agent is up,
 #: answering, holding a tmux session — and every ``a2a_send`` aimed at it fans

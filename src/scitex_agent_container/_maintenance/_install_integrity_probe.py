@@ -16,7 +16,7 @@ inside it.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import sysconfig
 from pathlib import Path
 
@@ -32,7 +32,7 @@ from ._install_integrity_model import (
 from ._install_integrity_pointers import candidate_dist_names, collect_pointers
 from ._install_integrity_predicate import build_report
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "inspect_install",

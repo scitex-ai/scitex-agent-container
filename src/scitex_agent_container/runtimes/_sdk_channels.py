@@ -42,12 +42,13 @@ from __future__ import annotations
 
 import json as _json
 import logging as _logging
+import scitex_logging as slogging
 import os as _os
 import shutil as _shutil
 from dataclasses import dataclass
 from pathlib import Path as _Path
 
-_log = _logging.getLogger(__name__)
+_log = slogging.getLogger(__name__)
 
 
 class SacBinaryNotFoundError(RuntimeError):

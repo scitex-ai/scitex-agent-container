@@ -48,7 +48,7 @@ correct default.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import secrets
 import socket
@@ -62,7 +62,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Iterator
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "BrokerSelfError",

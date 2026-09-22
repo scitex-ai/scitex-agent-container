@@ -85,7 +85,7 @@ def fake_pkg_root(tmp_path: Path) -> Path:
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
         "\n[tool.hatch.build.targets.wheel]\n"
         "packages = ['src/scitex_agent_container']\n"
-        '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "src/hatch_build.py"\n'
+        '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "scripts/hatch_build.py"\n'
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
     # The wheel force-includes the custom build hook too — pyproject
@@ -406,14 +406,15 @@ def test_locate_bundled_readme_falls_back_to_editable_repo_root(tmp_path):
 
 
 def test_locate_bundled_hatch_build_falls_back_to_editable_src_dir(tmp_path):
-    # Arrange — editable layout. hatch_build.py lives at <repo>/src/,
+    # Arrange — editable layout. hatch_build.py lives at <repo>/scripts/,
     # NOT the repo root: it is the one bundled sibling whose repo path
     # differs from its slot in the wheel's flat _bundled/ dir.
     repo = tmp_path / "repo"
     pkg = repo / "src" / "scitex_agent_container"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("\n")
-    hook = repo / "src" / "hatch_build.py"
+    (repo / "scripts").mkdir(parents=True)
+    hook = repo / "scripts" / "hatch_build.py"
     hook.write_text("# editable repo build hook\n")
     # Act
     found = isb.locate_bundled_hatch_build(pkg)
@@ -422,7 +423,7 @@ def test_locate_bundled_hatch_build_falls_back_to_editable_src_dir(tmp_path):
 
 
 def test_locate_bundled_hatch_build_raises_when_neither_location_exists(tmp_path):
-    # Arrange — no _bundled/hatch_build.py and no <repo>/src/hatch_build.py
+    # Arrange — no _bundled/hatch_build.py and no <repo>/scripts/hatch_build.py
     pkg = tmp_path / "orphan-pkg" / "scitex_agent_container"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("\n")
@@ -439,14 +440,14 @@ def test_locate_bundled_hatch_build_raises_when_neither_location_exists(tmp_path
 def test_stage_build_context_stages_hatch_build_hook_under_src(
     tmp_path, fake_pkg_root, fake_def
 ):
-    # Arrange — pyproject declares hooks.custom path = "src/hatch_build.py",
+    # Arrange — pyproject declares hooks.custom path = "scripts/hatch_build.py",
     # a path hatchling resolves against the STAGED root.
     dest = tmp_path / "staging"
     # Act
     isb.stage_build_context(fake_pkg_root, fake_def, dest)
     # Assert — the hook is staged at exactly the path pyproject names,
     # beside (not inside) the package dir.
-    staged_hook = dest / "scitex-agent-container-src" / "src" / "hatch_build.py"
+    staged_hook = dest / "scitex-agent-container-src" / "scripts" / "hatch_build.py"
     bundled = fake_pkg_root / "_bundled" / "hatch_build.py"
     assert staged_hook.is_file() and staged_hook.read_text() == bundled.read_text()
 
@@ -1279,7 +1280,7 @@ _skip_no_pip = pytest.mark.skipif(
 # it, the whole suite stayed green while EVERY `sac image build` died in
 # %post — 8 minutes in, on a machine nobody was watching:
 #
-#     OSError: Build script does not exist: src/hatch_build.py
+#     OSError: Build script does not exist: scripts/hatch_build.py
 #
 # A fixture that declares nothing cannot disagree with a stager that
 # copies nothing. So this test stages the REAL package root and asserts
@@ -1446,7 +1447,7 @@ def test_sif_staged_wheel_contains_importable_console_bootstrap(staged_wheel: Pa
 @_skip_no_repo
 @_skip_no_pip
 def test_wheel_ships_bundled_hatch_build_py(built_wheel: Path):
-    # Arrange — the bundled pyproject NAMES src/hatch_build.py as a build
+    # Arrange — the bundled pyproject NAMES scripts/hatch_build.py as a build
     # hook, so the wheel must carry the hook too or a wheel-installed sac
     # stages a pyproject whose hook it does not have. That is the FLEET
     # case: agents run sac from a wheel, not a checkout.
@@ -1459,7 +1460,7 @@ def test_wheel_ships_bundled_hatch_build_py(built_wheel: Path):
         f"wheel must ship hatch_build.py under {expected} (force-include in "
         "pyproject.toml). Ship the bundled pyproject without the hook it "
         "declares and every `sac image build` from a wheel-installed sac "
-        "dies in %post: 'Build script does not exist: src/hatch_build.py'."
+        "dies in %post: 'Build script does not exist: scripts/hatch_build.py'."
     )
 
 

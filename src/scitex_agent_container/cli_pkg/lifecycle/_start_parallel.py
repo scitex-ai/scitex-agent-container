@@ -32,6 +32,7 @@ one-shot / resume / dry-run / params-file) is in play.
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 import subprocess
 import sys
 import time
@@ -114,10 +115,8 @@ def run_parallel_targets(
     workers = max(1, int(concurrency))
     pause = max(0.0, float(stagger))
 
-    console.print(
-        f"=== [blue]Starting {len(targets)} agents[/blue] "
-        f"[dim](concurrency={workers}, stagger={pause:g}s)[/dim] ==="
-    )
+    render_rich(f"=== [blue]Starting {len(targets)} agents[/blue] "
+        f"[dim](concurrency={workers}, stagger={pause:g}s)[/dim] ===", __name__)
 
     def _launch(target: str) -> _Result:
         proc = subprocess.run(
@@ -154,15 +153,13 @@ def run_parallel_targets(
     any_error = False
     for res in results:
         if res.returncode == 0:
-            console.print(f"  [green]OK[/green] {res.target}")
+            render_rich(f"  [green]OK[/green] {res.target}", __name__)
         else:
             any_error = True
             tail = (res.stderr or res.stdout or "").strip().splitlines()
             hint = tail[-1] if tail else f"rc={res.returncode}"
-            console.print(
-                f"  [red]FAILED[/red] {res.target} "
-                f"[dim](rc={res.returncode}: {hint})[/dim]"
-            )
+            render_rich(f"  [red]FAILED[/red] {res.target} "
+                f"[dim](rc={res.returncode}: {hint})[/dim]", __name__)
 
     if any_error:
         sys.exit(1)

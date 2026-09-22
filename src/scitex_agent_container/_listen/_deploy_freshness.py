@@ -53,12 +53,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import scitex_logging as slogging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # --- env knobs (git fetch is heavier than a registry read → slow cadence) ---
 ENV_DISABLED = "SAC_DEPLOY_FRESHNESS_DISABLED"

@@ -23,6 +23,7 @@ so ``ERRO`` marks the verified failure and ``FAIL`` the failed check.
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 from typing import Any, Callable
 
 import click
@@ -120,9 +121,7 @@ def _warn_manual_accept(config: Any, host: str, *, dry_run: bool) -> None:
             )
         )
     ):
-        console.print(
-            f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
-        )
+        render_rich(f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]", __name__)
 
 
 def _skip_reason(*, foreground: bool, one_shot: bool) -> str | None:

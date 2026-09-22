@@ -41,13 +41,13 @@ health check is worse than none. See ``docs/mcp-load-resilience.md``.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Critical MCP servers → the capability surface each one gates. These are
 # LOOKUP KEYS into the ``.mcp.json`` the fleet deploys — a file sac does NOT

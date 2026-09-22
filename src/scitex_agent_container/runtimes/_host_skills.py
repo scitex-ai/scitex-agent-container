@@ -32,10 +32,10 @@ error). No empty ``skills/`` dir is fabricated when nothing is deployed.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The curated host dev-rule skill SETS the operator chose to propagate into
 # every agent. Deliberately excludes tool skills and ``secret`` /

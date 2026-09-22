@@ -68,11 +68,11 @@ this point has already failed.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import re
 from typing import Any, Iterable, Mapping
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: The board-identity variable scitex-cards reads TODAY.
 BOARD_ID_ENV = "SCITEX_CARDS_AGENT_ID"

@@ -15,7 +15,7 @@ artifact events as output appears.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 from abc import abstractmethod
 from typing import Any
 
@@ -28,7 +28,7 @@ from a2a.types.a2a_pb2 import Part as PbPart
 
 from scitex_agent_container.a2a._handlers import HandlerError
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _text_part(text: str) -> PbPart:

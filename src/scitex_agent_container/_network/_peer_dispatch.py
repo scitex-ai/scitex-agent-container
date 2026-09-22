@@ -26,10 +26,10 @@ update that silently matches nothing.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def self_agent_name() -> str | None:

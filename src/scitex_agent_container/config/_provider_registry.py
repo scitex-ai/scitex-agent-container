@@ -73,6 +73,15 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": None,
         "auth_token_env": None,
     },
+    # Free-SKU endpoint: Zen free models through the local opencode serve
+    # (config-opencode-free.yaml fronts 127.0.0.1:4096 as 127.0.0.1:18779).
+    # OpenAI-compatible /v1, so a Hermes engine reaches it with no shape
+    # overrides; the raw free SKU is app-locked, and this gateway carries
+    # the app identity that makes the round-trip cost-0.
+    "scitex-free": {
+        "base_url": "http://127.0.0.1:18779/v1",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
+    },
     "deepseek": {
         # Back-compatible spelling. It deliberately resolves to the neutral
         # egress gateway: model selection in a harness is not an outbound

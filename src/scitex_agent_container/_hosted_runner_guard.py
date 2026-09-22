@@ -68,7 +68,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import scitex_logging as slogging
 import yaml
+
+log = slogging.getLogger(__name__)
+console = slogging.getConsole(f"{__name__}.console")
 
 # Runner-image families GitHub hosts. Prefix match, so `ubuntu-latest`,
 # `ubuntu-24.04`, `ubuntu-22.04-arm`, `macos-13-xlarge`, `windows-2022`
@@ -499,8 +503,11 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     repo = Path(args[0]).resolve() if args else Path.cwd()
     violations = check_repo(repo)
-    stream = sys.stderr if violations else sys.stdout
-    print(format_report(repo, violations), file=stream)
+    report = format_report(repo, violations)
+    if violations:
+        log.error(report)
+    else:
+        console.info(report)
     return 1 if violations else 0
 
 

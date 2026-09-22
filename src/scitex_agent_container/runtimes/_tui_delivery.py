@@ -33,13 +33,13 @@ is fast.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any, Callable
 
 from . import _pane_acceptance
 from ._tui_compose import verify_submit_by_advancement
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def send_turn_to_pane(

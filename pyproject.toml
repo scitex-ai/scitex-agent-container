@@ -744,10 +744,10 @@ environment = "/opt/hermes-agent/.venv"
 # rather than clobbering it with "unknown". Register only the wheel target
 # and every published wheel ships an unknown commit.
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "src/hatch_build.py"
+path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.sdist.hooks.custom]
-path = "src/hatch_build.py"
+path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 # NEVER ship .git. In a plain clone `.git` is a directory and hatchling
@@ -793,16 +793,16 @@ exclude = [".git"]
 "README.md" = "scitex_agent_container/_bundled/README.md"
 # ...and hatch_build.py, for the same reason and no other. The bundled
 # pyproject above DECLARES this file
-# (``[tool.hatch.build.targets.*.hooks.custom] path = "src/hatch_build.py"``)
+# (``[tool.hatch.build.targets.*.hooks.custom] path = "scripts/hatch_build.py"``)
 # and hatchling resolves that path against the tree being built — which,
 # in a SIF build, is the STAGED tree. Ship the pyproject without the hook
 # it names and every `sac image build` dies in %post before reading a line
-# of source: ``OSError: Build script does not exist: src/hatch_build.py``.
+# of source: ``OSError: Build script does not exist: scripts/hatch_build.py``.
 # It lands in the inert ``_bundled/`` data dir (no ``__init__.py``), so it
 # is still NOT importable as ``scitex_agent_container.*`` — hatch_build.py's
 # own rule (never put an ``import hatchling`` module on the runtime path)
 # holds. Bundled ≠ packaged.
-"src/hatch_build.py" = "scitex_agent_container/_bundled/hatch_build.py"
+"scripts/hatch_build.py" = "scitex_agent_container/_bundled/hatch_build.py"
 
 [tool.pytest.ini_options]
 # THE PACKAGE UNDER TEST IS THIS CHECKOUT, NOT WHATEVER IS INSTALLED.
@@ -957,11 +957,6 @@ ignore = ["E501"]
 # DIAGNOSTIC, you want the logger instead; these exemptions exist only where
 # stdout/stderr IS the interface.
 [tool.ruff.lint.per-file-ignores]
-# The build hook runs under hatch during wheel/sdist construction, before the
-# package (and therefore scitex_logging) is importable at all. Its prints are
-# build-log progress; a logger here would be a circular dependency.
-"src/hatch_build.py" = ["T201"]
-
 # Claude Code WorktreeCreate hook, executed as a standalone script from the
 # agent's own $HOME after being copied out of _baseline_assets. STDOUT IS THE
 # PROTOCOL: the SDK reads the created worktree path from it (`print(policy_path)`),

@@ -56,7 +56,7 @@ fallback: a partial/stale view is never served.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 
@@ -65,7 +65,7 @@ from pathlib import Path
 from .._workdir._walk_exclusions import is_excluded_walk_dir
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The ``~/.claude`` subdirectories that get the host deep-merge for full
 # developers. ``commands`` (slash-commands) and ``skills`` are pure additive

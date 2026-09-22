@@ -31,7 +31,7 @@ a yaml file.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +39,7 @@ from typing import Any, Callable
 
 from .._env import getenv
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Built-in defaults. The sender is the shared sac agent identity; the SMTP
 # host is its provider (onamae, not gmail — so the host default matters: an

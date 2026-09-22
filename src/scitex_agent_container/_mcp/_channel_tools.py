@@ -16,7 +16,7 @@ other way around at module load).
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 from typing import Any
 
 from .._listen._inbox_fault import FAULT_NOT_RUNNING
@@ -40,7 +40,7 @@ from ._channel_target_lookup import (
 from ._channel_tool_defs import build_tool_list
 from .channel import _recent
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def register_tools(

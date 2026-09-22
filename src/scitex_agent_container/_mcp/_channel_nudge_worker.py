@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 import subprocess
@@ -19,7 +19,7 @@ from .._state.dispatch_nudges import (
     tick_nudges,
 )
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _seconds(env_name: str, default: float) -> float:

@@ -34,7 +34,7 @@ events), so it propagates to the daemon, whose done-callback records
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import sys
 from pathlib import Path
 from typing import Any
@@ -51,7 +51,7 @@ from ._session_state import (
 )
 from ._session_turn import _safe_repr
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["drive_harness_turn"]
 

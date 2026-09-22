@@ -16,6 +16,7 @@ the port. See :mod:`...config._engine_reach`.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from ._agents_migrate_engines_report import _lit
 from ._helpers import console
 
@@ -67,15 +68,9 @@ def render_preflight(payload: dict) -> None:
         # Undetermined AND listening-wrong-path land here. Neither is a
         # negative and neither is evidence the API is there.
         colour = "yellow"
-    console.print(
-        f"[bold]gateway preflight[/bold] {_lit(payload['url'])} "
+    render_rich(f"[bold]gateway preflight[/bold] {_lit(payload['url'])} "
         f"([{colour}]{_lit(payload['state'])}[/{colour}])\n"
-        f"  {_lit(payload['detail'])}",
-        soft_wrap=True,
-    )
+        f"  {_lit(payload['detail'])}", __name__)
     if payload["undetermined"]:
-        console.print(
-            "  [dim]UNDETERMINED is not a negative. Nothing here says the "
-            "gateway is down.[/dim]",
-            soft_wrap=True,
-        )
+        render_rich("  [dim]UNDETERMINED is not a negative. Nothing here says the "
+            "gateway is down.[/dim]", __name__)

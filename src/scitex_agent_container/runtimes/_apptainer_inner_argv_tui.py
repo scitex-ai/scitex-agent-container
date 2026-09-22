@@ -193,9 +193,9 @@ def _tui_runner_argv(
         if has_history:
             argv.append("-c")
         else:
-            import logging
+            import scitex_logging as slogging
 
-            logging.getLogger(__name__).warning(
+            slogging.getLogger(__name__).warning(
                 "TuiSessionRuntime: agent %r is continue-mode but its "
                 "container-home %s holds NO prior conversation transcript — "
                 "OMITTING `-c` and starting a FRESH session this boot. Reason: "

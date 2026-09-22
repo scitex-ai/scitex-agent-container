@@ -129,7 +129,7 @@ def main(as_json: bool) -> None:
             if r["detail"]:
                 line += f"  ({r['detail']})"
             click.echo(line)
-        print(
+        click.echo(
             f"\nSummary: {counts['PASS']} pass, {counts['FAIL']} fail, "
             f"{counts['SKIP']} skip (of {len(results)})"
         )

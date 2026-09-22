@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
+import scitex_logging as slogging
 import os
 import re
 import time
@@ -56,7 +56,7 @@ from pathlib import Path
 
 from .._runtime_paths import runtime_base_dir
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Consecutive IDENTICAL blocks tolerated before we alarm instead of blocking.
 #: See the module docstring for the justification of this value.

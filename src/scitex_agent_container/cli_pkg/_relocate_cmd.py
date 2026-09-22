@@ -43,6 +43,7 @@ never eleven of either because one section failed.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import time
 
 import click
@@ -309,10 +310,8 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
 
     spec_path = dict(_discover_defined_agents()).get(name)
     if spec_path is None:
-        console.print(
-            f"[red]no spec found for agent {name!r}[/red]\n"
-            "Looked for <agents>/<name>/spec.yaml under the user (and project) scope."
-        )
+        render_rich(f"[red]no spec found for agent {name!r}[/red]\n"
+            "Looked for <agents>/<name>/spec.yaml under the user (and project) scope.", __name__)
         raise SystemExit(2)
     # The RAW yaml, not the parsed AgentConfig. DECLARED must show what the spec
     # literally says: `AgentConfig` fills in defaults (runtime defaults to "tui",
@@ -345,12 +344,10 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         db_host=where.host,
     )
     if notice:
-        console.print(f"[yellow]note:[/yellow] {notice}", soft_wrap=True)
+        render_rich(f"[yellow]note:[/yellow] {notice}", __name__)
     if where.host == to_host:
-        console.print(
-            f"[yellow]{name} is already recorded on {to_host!r} — nothing to relocate.[/yellow]\n"
-            f"Source of that answer: {where.reason}"
-        )
+        render_rich(f"[yellow]{name} is already recorded on {to_host!r} — nothing to relocate.[/yellow]\n"
+            f"Source of that answer: {where.reason}", __name__)
         raise SystemExit(EXIT_REFUSED)
 
     # ONE batched ssh round trip answers all thirteen facts; each is parsed on
@@ -394,7 +391,7 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         workdir=str(declared.get("workdir") or ""),
         from_host=where.host or "",
     ):
-        console.print(line, soft_wrap=True)
+        render_rich(line, __name__)
 
     if report.blocks:
         # The checks gate the executing path too, and that is the point rather
@@ -403,19 +400,16 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         # is not a refusal.
         raise SystemExit(EXIT_REFUSED)
     for line in _readiness_notice():
-        console.print(line, soft_wrap=True)
+        render_rich(line, __name__)
     if dry_run:
         return
 
     from ._relocate_run import exit_code_for, run_relocation
 
     if not where.host:
-        console.print(
-            "[red]refusing to execute:[/red] the state db does not know which host "
+        render_rich("[red]refusing to execute:[/red] the state db does not know which host "
             f"{name} runs on, and the spec offered nothing to seed it with. A "
-            "relocation FROM an unknown host cannot stop the right source.",
-            soft_wrap=True,
-        )
+            "relocation FROM an unknown host cannot stop the right source.", __name__)
         raise SystemExit(EXIT_REFUSED)
 
     outcome = run_relocation(

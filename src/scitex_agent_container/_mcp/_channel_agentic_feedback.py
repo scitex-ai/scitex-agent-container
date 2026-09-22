@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 AGENTIC_ACK_KIND = "agentic_ack"
 PROGRESS_KIND = "a2a_progress"

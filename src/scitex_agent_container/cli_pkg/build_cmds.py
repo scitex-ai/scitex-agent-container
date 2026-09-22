@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import shutil
 import subprocess
 import sys
@@ -31,14 +32,14 @@ def check(name_or_path: str) -> None:
     try:
         config_path = resolve_config(name_or_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
+        render_rich(f"[red]Error: {exc}[/red]", __name__)
         sys.exit(1)
 
     errors = validate_config(config_path)
     if errors:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        render_rich(f"[red]Config validation failed: {config_path}[/red]", __name__)
         for error in errors:
-            console.print(f"  [red]- {error}[/red]")
+            render_rich(f"  [red]- {error}[/red]", __name__)
         sys.exit(1)
 
     # advise=True: this is THE command that answers "is this spec well-formed?",
@@ -49,12 +50,10 @@ def check(name_or_path: str) -> None:
     try:
         config = load_config(config_path, advise=True)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error loading config: {exc}[/red]")
+        render_rich(f"[red]Error loading config: {exc}[/red]", __name__)
         sys.exit(1)
 
-    console.print(
-        f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]"
-    )
+    render_rich(f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]", __name__)
 
     all_ok = True
 
@@ -64,10 +63,10 @@ def check(name_or_path: str) -> None:
     backend = "apptainer"
     backend_bin = shutil.which(backend)
     if backend_bin:
-        console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
+        render_rich(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]", __name__)
     else:
         all_ok = False
-        console.print(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]")
+        render_rich(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]", __name__)
 
     # Python (used by hooks / pre-start scripts)
     try:
@@ -75,17 +74,15 @@ def check(name_or_path: str) -> None:
             ["python3", "--version"], capture_output=True, text=True, timeout=5
         )
         if proc.returncode == 0:
-            console.print(
-                f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
-            )
+            render_rich(f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]", __name__)
         else:
             all_ok = False
-            console.print(f"  {'python:':30s} [red]FAIL[/red]")
+            render_rich(f"  {'python:':30s} [red]FAIL[/red]", __name__)
     except (
         FileNotFoundError
     ):  # stx-allow: fallback (reason: file may not exist on first use)
         all_ok = False
-        console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
+        render_rich(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]", __name__)
 
     # D4 — warn (don't fail) on bind targets that mirror host paths.
     # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
@@ -116,11 +113,9 @@ def check(name_or_path: str) -> None:
         all_ok = False
 
     if all_ok:
-        console.print("[green]Ready to deploy.[/green]")
+        render_rich("[green]Ready to deploy.[/green]", __name__)
     else:
-        console.print(
-            "[red]Preflight checks failed. Fix the issues above before deploying.[/red]"
-        )
+        render_rich("[red]Preflight checks failed. Fix the issues above before deploying.[/red]", __name__)
         sys.exit(1)
 
 
@@ -137,15 +132,15 @@ def _check_raw_args(config) -> bool:
     ap = getattr(config, "apptainer", None)
     raw = list(getattr(ap, "raw_args", None) or []) if ap is not None else []
     if not raw:
-        console.print(f"  {'raw_args:':30s} [green]OK (none declared)[/green]")
+        render_rich(f"  {'raw_args:':30s} [green]OK (none declared)[/green]", __name__)
         return True
     try:
         validate_raw_args(raw, agent=getattr(config, "name", None))
     except ApptainerArgvError as exc:
-        console.print(f"  {'raw_args:':30s} [red]FAIL[/red]")
-        console.print(f"[red]{exc}[/red]")
+        render_rich(f"  {'raw_args:':30s} [red]FAIL[/red]", __name__)
+        render_rich(f"[red]{exc}[/red]", __name__)
         return False
-    console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
+    render_rich(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]", __name__)
     return True
 
 
@@ -173,23 +168,23 @@ def _check_provider_auth(config) -> bool:
     label = "provider key:"
 
     if verdict.state == INACTIVE:
-        console.print(f"  {label:30s} [green]OK (no provider declared)[/green]")
+        render_rich(f"  {label:30s} [green]OK (no provider declared)[/green]", __name__)
         return True
 
     if verdict.state == OK:
-        console.print(f"  {label:30s} [green]OK ({verdict.detail})[/green]")
+        render_rich(f"  {label:30s} [green]OK ({verdict.detail})[/green]", __name__)
         return True
 
     if verdict.is_failure:
-        console.print(f"  {label:30s} [red]FAIL[/red]")
-        console.print(f"[red]{verdict.detail}[/red]")
+        render_rich(f"  {label:30s} [red]FAIL[/red]", __name__)
+        render_rich(f"[red]{verdict.detail}[/red]", __name__)
         # An unresolvable key already stops `start`; a REJECTED one does not,
         # which is why this check exists. Say which of the two happened.
         if verdict.state == UNRESOLVED:
-            console.print("[red]  (start would also refuse this spec)[/red]")
+            render_rich("[red]  (start would also refuse this spec)[/red]", __name__)
         return False
 
-    console.print(f"  {label:30s} [yellow]WARN ({verdict.detail})[/yellow]")
+    render_rich(f"  {label:30s} [yellow]WARN ({verdict.detail})[/yellow]", __name__)
     return True
 
 
@@ -238,10 +233,8 @@ def _check_host_route(config) -> bool:
 
     spec_host = getattr(getattr(config, "hosts_spec", None), "host", None)
     if not chain_hosts(spec_host):
-        console.print(
-            f"  {'host:':30s} [green]OK (unpinned - starts on this machine)"
-            f"[/green]"
-        )
+        render_rich(f"  {'host:':30s} [green]OK (unpinned - starts on this machine)"
+            f"[/green]", __name__)
         return True
 
     # stx-allow: fallback (reason: an unloadable peer table or unresolvable
@@ -256,9 +249,7 @@ def _check_host_route(config) -> bool:
         current_host = resolve_hostname()
         local_names = _local_host_names(current_host)
     except Exception as exc:
-        console.print(
-            f"  {'host:':30s} [yellow]WARN (cannot verify pin: {exc})[/yellow]"
-        )
+        render_rich(f"  {'host:':30s} [yellow]WARN (cannot verify pin: {exc})[/yellow]", __name__)
         return True
 
     from .lifecycle._host_routing import (
@@ -275,16 +266,13 @@ def _check_host_route(config) -> bool:
         # otherwise fail here, turning \"this fleet is not configured yet\"
         # into \"your spec is wrong\" -- the misattributed-error shape this
         # whole check exists to remove.
-        console.print(
-            f"  {'host:':30s} [yellow]WARN (not this machine, and no peers "
-            f"are registered to check it against)[/yellow]"
-        )
+        render_rich(f"  {'host:':30s} [yellow]WARN (not this machine, and no peers "
+            f"are registered to check it against)[/yellow]", __name__)
         return True
 
     if route.kind == UNROUTABLE:
-        console.print(f"  {'host:':30s} [red]FAIL[/red]")
-        console.print(
-            "[red]"
+        render_rich(f"  {'host:':30s} [red]FAIL[/red]", __name__)
+        render_rich("[red]"
             + format_route_error(
                 config.name,
                 spec_host,
@@ -294,14 +282,11 @@ def _check_host_route(config) -> bool:
                 current_host=current_host or "",
                 local_names=local_names,
             )
-            + "[/red]"
-        )
+            + "[/red]", __name__)
         return False
 
     where = "this machine" if route.kind == "local" else f"peer {route.peer}"
-    console.print(
-        f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]"
-    )
+    render_rich(f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]", __name__)
     return True
 
 
@@ -328,12 +313,8 @@ def _warn_host_mirroring_bind_targets(config) -> None:
         if not target:
             continue
         if any(target.startswith(p) for p in _HOST_MIRRORING_TARGET_PREFIXES):
-            console.print(
-                f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
-                f"host path; container-canonical convention is /srv/, /work/, "
-                f"/opt/, /data/.\n       See "
-                f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
-            )
+            render_rich(f"WARN {config.name}: bind {target} mirrors host path "
+                f"(use /srv/, /work/, /opt/, /data/; D4).", __name__, level="warning")
 
 
 def _bind_target(bind: str) -> str:
@@ -367,15 +348,15 @@ def validate(name_or_path: str) -> None:
     try:
         config_path = resolve_config(name_or_path)
     except Exception as exc:  # stx-allow: fallback (reason: resolution error written to stderr)
-        console.print(f"[red]Error: {exc}[/red]")
+        render_rich(f"[red]Error: {exc}[/red]", __name__)
         sys.exit(1)
     errors = validate_config(config_path)
     if not errors:
-        console.print(f"[green]Config is valid: {config_path}[/green]")
+        render_rich(f"[green]Config is valid: {config_path}[/green]", __name__)
     else:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        render_rich(f"[red]Config validation failed: {config_path}[/red]", __name__)
         for error in errors:
-            console.print(f"  [red]- {error}[/red]")
+            render_rich(f"  [red]- {error}[/red]", __name__)
         sys.exit(1)
 
 

@@ -19,6 +19,7 @@ commands).
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import datetime as _dt
 import json
 from pathlib import Path
@@ -117,13 +118,11 @@ def image_list(as_json: bool) -> None:
         # landed.)
         click.echo(json.dumps(versions, indent=2, default=str))
         return
-    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
+    render_rich(f"[dim]scan root: {root}/*/containers/[/dim]", __name__)
     if not versions:
-        console.print(
-            f"[dim](no SIFs under {root}/*/containers/ — "
+        render_rich(f"[dim](no SIFs under {root}/*/containers/ — "
             f"run `sac image build base -y && sac image build scitex -y` to "
-            f"populate; downstream packages populate their own siblings)[/dim]"
-        )
+            f"populate; downstream packages populate their own siblings)[/dim]", __name__)
         return
     for v in versions:
         size_mb = v["size_bytes"] / (1024 * 1024)
@@ -139,9 +138,7 @@ def image_list(as_json: bool) -> None:
         suffix = f"  -> {v['resolves_to']}" if v.get("resolves_to") else ""
         if v["target_state"] != "available":
             suffix += f"  [red]{v['target_state'].upper()}[/red]"
-        console.print(
-            f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}"
-        )
+        render_rich(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}", __name__)
     # NECESSARY, NOT SUFFICIENT — do not let a fresh date retire the content
     # question. scitex-hpc measured a bake on 2026-07-18 whose build-context
     # source was develop HEAD (1e4870fd) while the INSTALLED wheel was pre-fix
@@ -196,14 +193,12 @@ def image_status(as_json: bool) -> None:
         click.echo(json.dumps(info, indent=2, default=str))
         return
     if not info:
-        console.print(f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]")
+        render_rich(f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]", __name__)
         return
     for entry in info:
         size_mb = entry["sif_size_bytes"] / (1024 * 1024)
-        console.print(
-            f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
-            f"{entry['verification']:10s}  {entry['version']}"
-        )
+        render_rich(f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
+            f"{entry['verification']:10s}  {entry['version']}", __name__)
 
 
 @click.command("snapshot")
@@ -230,7 +225,7 @@ def image_snapshot(output: Path | None) -> None:
     payload = json.dumps(snap, indent=2, default=str)
     if output:
         output.write_text(payload)
-        console.print(f"[green]wrote[/green] {output}")
+        render_rich(f"[green]wrote[/green] {output}", __name__)
     else:
         click.echo(payload)
 

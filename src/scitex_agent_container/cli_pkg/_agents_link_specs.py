@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import hashlib
 import json
 import os
@@ -330,16 +331,14 @@ def link_specs(
             raise SystemExit(1)
         return
 
-    console.print(
-        f"[bold]agent spec links[/bold]  {payload['mode']}  "
-        f"git={identity['head']} dirty={str(identity['source_dirty']).lower()}"
-    )
+    render_rich(f"[bold]agent spec links[/bold]  {payload['mode']}  "
+        f"git={identity['head']} dirty={str(identity['source_dirty']).lower()}", __name__)
     for plan in plans:
-        console.print(f"  {plan.agent:<30} {plan.state}")
+        render_rich(f"  {plan.agent:<30} {plan.state}", __name__)
         if plan.backup:
-            console.print(f"    archive: {plan.backup}")
+            render_rich(f"    archive: {plan.backup}", __name__)
     if not apply:
-        console.print("[yellow]No paths changed. Re-run with --apply to install.[/yellow]")
+        render_rich("[yellow]No paths changed. Re-run with --apply to install.[/yellow]", __name__)
         if not payload["ok"]:
             raise SystemExit(1)
 

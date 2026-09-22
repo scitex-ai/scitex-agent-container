@@ -58,6 +58,7 @@ TRI-STATE, ALWAYS
 
 from __future__ import annotations
 
+from .._logging import write_stream
 import json
 import os
 import socket
@@ -234,12 +235,9 @@ def log_event(
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return True
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
-            f"[sac-events] FAILED to record {event} for "
+        write_stream(f"[sac-events] FAILED to record {event} for "
             f"{subsystem}/{subject or 'fleet'} at {target} — {exc}. The pass "
-            f"itself was UNAFFECTED, but this decision is now unrecorded.",
-            file=stream,
-        )
+            f"itself was UNAFFECTED, but this decision is now unrecorded.", stream)
         return False
 
 

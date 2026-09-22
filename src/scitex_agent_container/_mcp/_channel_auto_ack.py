@@ -23,7 +23,7 @@ inbox-event injection:
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 import time
 from collections import deque
@@ -32,7 +32,7 @@ from typing import Any
 from .._env import getenv as _sac_env
 from ..a2a._inbox_bus import DAEMON_SENDER
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "_AUTO_ACK_RATE_MAX_DEFAULT",

@@ -34,7 +34,7 @@ completes.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def should_prune_runtime(config: "AgentConfig") -> bool:

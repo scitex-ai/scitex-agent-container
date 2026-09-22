@@ -44,10 +44,10 @@ module follows the same convention.
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 from urllib.parse import urlparse
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # Refresh cadence matches the agent runner's heartbeat tick
 # (``_runners/_session_state.DEFAULT_TICK_SECONDS = 10.0``). Aligning

@@ -29,6 +29,7 @@ Design constraints (per the work item):
 
 from __future__ import annotations
 
+from .._logging import write_stream
 import json
 import subprocess
 import time
@@ -416,7 +417,7 @@ def warn_if_spec_source_drifted(
                 emit(line)
         else:
             for line in lines:
-                print(line, file=stream, flush=True)
+                write_stream(line, stream, flush=True)
     # Sibling-copy staleness — a DIFFERENT mechanism from git drift, and
     # deliberately INDEPENDENT of it: it must fire even when the spec
     # source is NOT_A_REPO (the deliberately-not-a-repo live layout is the

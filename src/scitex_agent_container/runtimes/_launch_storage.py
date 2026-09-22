@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 WARN_FREE_BYTES = 20 * 1024**3
 REFUSE_ROOT_FREE_BYTES = 5 * 1024**3

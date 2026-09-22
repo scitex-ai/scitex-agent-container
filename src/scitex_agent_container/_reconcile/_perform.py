@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import write_stream
 from ._blackout import blackout_detail, is_fleet_blackout
 from ._budget import Budget, save_history
 from ._report import AgentReport
@@ -145,7 +146,7 @@ def resolve_pending(
         server_present=server_present, restart_count=len(pending)
     ):
         detail = blackout_detail(len(pending), names)
-        print(f"[fleet-reconcile] {detail}", file=stream)
+        write_stream(f"[fleet-reconcile] {detail}", stream)
         return [
             AgentReport(
                 name,
@@ -183,10 +184,10 @@ def resolve_pending(
                 save_history(history_file, budget.history, now=now)
             except OSError as exc:
                 budget.spent = budget.pass_cap  # authorise no further restarts
-                print(
+                write_stream(
                     f"[fleet-reconcile] CANNOT RECORD restarts to "
                     f"{history_file} ({exc}) — halting this pass's restarts. "
                     f"An unrecordable restart is an unbounded one.",
-                    file=stream,
+                    stream,
                 )
     return reports

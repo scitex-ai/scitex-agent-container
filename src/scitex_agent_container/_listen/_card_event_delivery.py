@@ -48,13 +48,13 @@ returns the count of agents it delivered to.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import urllib.error
 import urllib.request
 from typing import Any, Iterable
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The card-event kinds this consumer recognises. Anything else — most
 # importantly sac's OWN liveness-tick anomaly events on the same bus, plus

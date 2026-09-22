@@ -60,12 +60,12 @@ once the turn completes, carrying ``final_response``, the thread id as
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ._harness_session import Message, NormalizedEvent, RunResult
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "CodexSession",

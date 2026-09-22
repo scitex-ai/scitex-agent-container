@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import scitex_logging as slogging
 import os
 import random
 from collections.abc import Awaitable, Callable, Mapping
@@ -23,7 +24,7 @@ from scitex_dev.status import Check, StatusCode
 
 from .._mcp._channel_wake import _wake_turn
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 DEFAULT_RECONCILE_INTERVAL_S = 2.0
 
 

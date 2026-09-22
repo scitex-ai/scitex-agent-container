@@ -21,7 +21,7 @@ import asyncio
 
 
 import json
-import logging
+import scitex_logging as slogging
 from typing import Any
 
 from starlette.requests import Request
@@ -51,7 +51,7 @@ from ._nodes import Broker, NodeRegistry
 # see that module's docstring for the split.
 __all__ = ["_forward_to_remote", "node_message_send", "node_inbox_stream"]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 async def node_message_send(request: Request) -> Response:

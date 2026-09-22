@@ -53,6 +53,33 @@ import sys
 from pathlib import Path
 
 
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+except ImportError:  # standalone copy without sac installed
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr.
+
+        Used only when ``scitex_logging`` is not importable (standalone
+        copy on agent $HOME / bare SIF). Diagnostics go to stderr —
+        never stdout, which carries protocol frames.
+        """
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
+
+
 def _try_git(*args: str, cwd: str) -> tuple[bool, str]:
     """Try ``git -C cwd <args>``; return (ok, stdout-or-stderr).
 
@@ -125,28 +152,25 @@ def main() -> int:
     if not raw.strip():
         # Contract violation, but nothing to remove and wedging SDK
         # teardown to flag a parser bug buys nothing. WARN + exit 0.
-        print(
+        log.error(
             "WorktreeRemove hook: empty stdin (expected JSON); "
-            "skipping cleanup (operator cron will catch any orphan).",
-            file=sys.stderr,
+            "skipping cleanup (operator cron will catch any orphan)."
         )
         return 0
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(
+        log.error(
             f"WorktreeRemove hook: stdin is not valid JSON ({exc}); "
-            f"skipping cleanup (operator cron will catch any orphan).",
-            file=sys.stderr,
+            f"skipping cleanup (operator cron will catch any orphan)."
         )
         return 0
 
     worktree_path = (payload.get("worktree_path") or "").strip()
     if not worktree_path:
-        print(
+        log.error(
             "WorktreeRemove hook: 'worktree_path' missing in input; "
-            "skipping cleanup (operator cron will catch any orphan).",
-            file=sys.stderr,
+            "skipping cleanup (operator cron will catch any orphan)."
         )
         return 0
 
@@ -173,10 +197,9 @@ def main() -> int:
             # but git itself refuses to remove it. This is a real
             # surface the operator should see (vs. env-drift WARNs
             # above which are recoverable via prune cron).
-            print(
+            log.error(
                 f"WorktreeRemove hook: 'git worktree remove' failed for "
-                f"{worktree_path!r}: {err}; force-remove also failed: {err2}",
-                file=sys.stderr,
+                f"{worktree_path!r}: {err}; force-remove also failed: {err2}"
             )
             return 2
     return 0

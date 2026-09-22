@@ -25,6 +25,7 @@ say:
 
 from __future__ import annotations
 
+from ..._logging import render_rich
 from typing import Any
 
 from rich.text import Text
@@ -119,13 +120,13 @@ def print_fleet_header(console: Any, listing: FleetListing) -> None:
     as a failure would train the operator to ignore it.
     """
     for line in resolution_echo(listing):
-        console.print(Text(line, style="cyan"))
+        render_rich(Text(line, style="cyan"), __name__)
     complete = listing.responded == listing.total and not listing.suppressed_reason
     colour = "green" if complete else "yellow"
-    console.print(Text(summary_line(listing), style=colour))
+    render_rich(Text(summary_line(listing), style=colour), __name__)
     instruments = instrument_line(listing)
     if instruments:
-        console.print(Text(instruments, style="dim"))
+        render_rich(Text(instruments, style="dim"), __name__)
 
 
 def hosts_payload(listing: FleetListing) -> dict:

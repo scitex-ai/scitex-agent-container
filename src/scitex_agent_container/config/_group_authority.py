@@ -94,7 +94,7 @@ that parsed into a mapping.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 from typing import Any, Callable
 
 __all__ = [
@@ -103,7 +103,7 @@ __all__ = [
     "spec_labels_for",
 ]
 
-_logger = logging.getLogger(__name__)
+_logger = slogging.getLogger(__name__)
 
 
 def _default_spec_path(name: str) -> str | None:

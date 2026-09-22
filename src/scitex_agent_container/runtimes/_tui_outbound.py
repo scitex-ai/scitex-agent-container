@@ -30,11 +30,11 @@ queryable communication state — not an ad-hoc side file.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 from pathlib import Path
 from typing import Any, Optional
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "record_dispatch",

@@ -72,7 +72,7 @@ alongside ``--a2a-port``).
 from __future__ import annotations
 
 import asyncio
-import logging
+import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -80,7 +80,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ._session_inbox import Envelope
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 # Default bounded wait for the SDK to drain one turn. Sized to outlast

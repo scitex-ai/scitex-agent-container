@@ -8,20 +8,17 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 import subprocess
 from typing import Any, Callable
 
 from ..hooks import run_hook
 
-# Module logger (stdlib, mirroring ._stop_escalate) so hook failures are
-# emitted at a proper WARNING LEVEL — rendered as scitex-logging's coloured
-# ``WARN:`` prefix by the root handler in production — instead of a bare
-# ``print`` with the severity baked into the message text as ``[WARN]``
-# (operator 2026-07-19: severity is DATA, not text). Stdlib ``getLogger`` is
-# free, so this does not tax the CLI import budget the way a top-level
-# ``scitex_logging`` import would (see config._config_logger).
-logger = logging.getLogger(__name__)
+# Module logger via scitex-logging so hook failures are emitted at a proper
+# WARNING LEVEL — rendered as scitex-logging's coloured ``WARN:`` prefix —
+# instead of a bare ``print`` with the severity baked into the message text
+# as ``[WARN]`` (operator 2026-07-19: severity is DATA, not text).
+logger = slogging.getLogger(__name__)
 
 
 def _fire_forget_hook(

@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import write_stream
 from .._reconcile._budget import Budget, DEFAULT_PASS_CAP, read_history, save_history
 from ._banner import observe_pane
 from ._resume import real_resume
@@ -293,7 +294,7 @@ def resume_pass(
     read = read_history(history_file)
     budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
     if budget is None:
-        print(f"[{SUBSYSTEM}] REFUSING to wake anything: {read.detail}", file=stream)
+        write_stream(f"[{SUBSYSTEM}] REFUSING to wake anything: {read.detail}", stream)
 
     # The model-switch remedy carries its OWN ledger, read only when the
     # remedy is armed. Two remedies sharing one flat ``{agent: [epoch, ...]}``
@@ -313,10 +314,10 @@ def resume_pass(
             else None
         )
         if switch_budget is None:
-            print(
+            write_stream(
                 f"[{SUBSYSTEM}] REFUSING to switch any model: "
                 f"{switch_read.detail}",
-                file=stream,
+                stream,
             )
 
     # A capture that RAISED is not an empty fleet. Carrying that distinction is
@@ -340,9 +341,9 @@ def resume_pass(
     except Exception as exc:
         sessions_readable = False
         captures = {}
-        print(
+        write_stream(
             f"[{SUBSYSTEM}] could not read the fleet's panes: {exc}",
-            file=stream,
+            stream,
         )
 
     reports: list[AgentReport] = []
@@ -444,10 +445,10 @@ def resume_pass(
                 save_history(history_file, budget.history, now=now)
             except OSError as exc:
                 budget.spent = budget.pass_cap
-                print(
+                write_stream(
                     f"[{SUBSYSTEM}] CANNOT RECORD resumes to {history_file}: {exc} "
                     f"— capping this pass so nothing is woken without memory",
-                    file=stream,
+                    stream,
                 )
         reports.append(report)
 

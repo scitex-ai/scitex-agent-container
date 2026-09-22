@@ -49,7 +49,7 @@ engine switch in both directions.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import shutil
 from pathlib import Path
@@ -57,7 +57,7 @@ from pathlib import Path
 from ._to_home_overlay import DEFAULT_CONTAINER_HOME
 from .onboarding import ensure_project_onboarding
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Sub-directory of the agent's state dir that backs the container config dir.
 HOST_DIRNAME = "provider-cfg"

@@ -26,6 +26,7 @@ failure class this guard exists for spent days looking green.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json
 
 import click
@@ -48,7 +49,7 @@ def _evidence(text: str) -> None:
     A wrapped absolute path is a path you cannot grep out of a cron log,
     and every line here exists to be read back later.
     """
-    console.print(text, soft_wrap=True)
+    render_rich(text, __name__)
 
 
 def _print_verdict(verdict: DistributionVerdict) -> None:
@@ -64,7 +65,7 @@ def _print_verdict(verdict: DistributionVerdict) -> None:
 
 
 def _print_report(report: InstallIntegrityReport, *, show_all: bool) -> None:
-    console.print(f"[bold]sac installation check[/bold]  {report.site_packages}\n")
+    render_rich(f"[bold]sac installation check[/bold]  {report.site_packages}\n", __name__)
     if report.note:
         _evidence(f"[yellow]note:[/yellow] {report.note}\n")
 
@@ -76,7 +77,7 @@ def _print_report(report: InstallIntegrityReport, *, show_all: bool) -> None:
     for verdict in shown:
         _print_verdict(verdict)
     if shown:
-        console.print("")
+        render_rich("", __name__)
 
     if report.import_resolution != IMPORTS_LIVE:
         _evidence(
@@ -191,12 +192,10 @@ def installation_check(
         raise SystemExit(code)
 
     _print_report(report, show_all=show_all)
-    console.print(f"[dim]{report.summary_line()}[/dim]")
+    render_rich(f"[dim]{report.summary_line()}[/dim]", __name__)
     if report.broken:
-        console.print(
-            "[dim]This command REPAIRS NOTHING on purpose — it is the guard the "
-            "repair is gated behind.[/dim]"
-        )
+        render_rich("[dim]This command REPAIRS NOTHING on purpose — it is the guard the "
+            "repair is gated behind.[/dim]", __name__)
     raise SystemExit(code)
 
 

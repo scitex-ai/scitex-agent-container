@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import click
 
 from . import _image_activation
@@ -29,7 +30,7 @@ def image_switch(version: str, layer: str) -> None:
     switched = _image_activation.switch_layer_version(
         containers_dir=ig._CONTAINERS_DIR, layer=layer, version=version
     )
-    console.print(f"[green]switched[/green] {layer} -> {switched}")
+    render_rich(f"[green]switched[/green] {layer} -> {switched}", __name__)
 
 
 @click.command("rollback")
@@ -52,7 +53,7 @@ def image_rollback(layer: str) -> None:
     previous = _image_activation.rollback_layer(
         containers_dir=ig._CONTAINERS_DIR, layer=layer
     )
-    console.print(f"[green]rolled back[/green] {layer} -> {previous}")
+    render_rich(f"[green]rolled back[/green] {layer} -> {previous}", __name__)
 
 
 __all__ = ["image_rollback", "image_switch"]

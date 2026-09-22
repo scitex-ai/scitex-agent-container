@@ -45,6 +45,7 @@ TWO SAFETY PROPERTIES THIS FILE EXISTS TO HOLD
 
 from __future__ import annotations
 
+from .._logging import render_rich
 import json as json_mod
 
 import click
@@ -284,11 +285,9 @@ def run_fleet_account_list(
         return
 
     print_fleet_header(console, listing)
-    console.print(
-        "[dim]passive read: freshness from each host's expiresAt, usage from "
+    render_rich("[dim]passive read: freshness from each host's expiresAt, usage from "
         "its cache. Nothing here refreshes a token (a refresh rotates a "
-        "single-use credential every other host is still using).[/dim]"
-    )
+        "single-use credential every other host is still using).[/dim]", __name__)
     rows = []
     for entry in listing.agents:
         rows.extend(rows_from_stored([entry], str(entry.get("host") or "—")))
@@ -304,15 +303,13 @@ def run_fleet_account_list(
             )
         else:
             missing = ", ".join(r.host for r in listing.unanswered)
-            console.print(
-                f"[yellow]No accounts on the host(s) that answered — but "
+            render_rich(f"[yellow]No accounts on the host(s) that answered — but "
                 f"{missing} did not answer, so this is NOT evidence that the "
-                f"fleet has none.[/yellow]"
-            )
+                f"fleet has none.[/yellow]", __name__)
         return
     if by_host:
-        console.print(render_stored_table(rows))
+        render_rich(render_stored_table(rows), __name__)
     else:
         from ._account_list_collapse import render_accounts_table
 
-        console.print(render_accounts_table(rows))
+        render_rich(render_accounts_table(rows), __name__)

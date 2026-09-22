@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 import signal
 import subprocess
@@ -21,7 +21,7 @@ from ._inbox_sidecar_reconcile import CURRENT_MODULE, CURRENT_ROLE
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 MODULE_PATH = CURRENT_MODULE
 PID_FILENAME = "channel-inbox-dispatcher.pid"
 LOG_FILENAME = "channel-inbox-dispatcher.log"

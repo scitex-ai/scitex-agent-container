@@ -319,11 +319,11 @@ def clear_compose_buffer(
     ACTUAL live box once it is gone. RESUMED sessions never show this banner
     (they render "Welcome back" instead), so this adds no latency there.
     """
-    import logging
+    import scitex_logging as slogging
 
     from . import prompts as _prompts
 
-    log = logging.getLogger(__name__)
+    log = slogging.getLogger(__name__)
 
     pane = capture_fn(name)
     if _prompts.has_esc_cancel_modal(pane):
@@ -512,7 +512,7 @@ def verify_submit_by_advancement(
     """
     import logging
 
-    log = logging.getLogger(__name__)
+    log = slogging.getLogger(__name__)
     phase = _SubmitPhase.WAITING_FOR_PASTE
 
     def _advanced() -> str:

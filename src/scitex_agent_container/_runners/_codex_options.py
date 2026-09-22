@@ -35,11 +35,11 @@ so the same mapping serves the start and the resume path.
 from __future__ import annotations
 
 import json
-import logging
+import scitex_logging as slogging
 import os
 from typing import Any, Sequence
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "SAC_CODEX_MODEL_ENV",

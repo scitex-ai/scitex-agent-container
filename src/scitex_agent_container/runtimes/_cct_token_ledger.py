@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .._logging import write_stream
+
 #: What :func:`record_token_claim_at_start` did, for tests and for a caller
 #: that wants to say so.
 CLAIM_RECORDED = "recorded"
@@ -95,13 +97,13 @@ def record_token_claim_at_start(
         )
         return CLAIM_RECORDED
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
+        write_stream(
             f"[cct-ledger] {getattr(config, 'name', '?')!r}: could not record "
             f"this agent's bot-token claim — {exc}. THE AGENT STARTS NORMALLY; "
             "only the ownership ledger is missing this claim, so "
             "'who holds this bot?' will have to be answered by scanning /proc "
             "(`sac doctor --pollers`) until the next successful start.",
-            file=stream,
+            stream,
         )
         return CLAIM_FAILED
 

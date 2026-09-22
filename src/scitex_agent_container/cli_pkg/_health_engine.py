@@ -41,6 +41,7 @@ TWO RULES THIS MODULE IS BUILT AROUND.
 
 from __future__ import annotations
 
+from .._logging import render_rich
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -263,26 +264,18 @@ def print_engine(console: Any, payload: dict) -> None:
     running = payload.get("running") or "?"
     scan = payload.get("scan") or {}
     if verdict == VERDICT_MATCH:
-        console.print(f"[{colour}]engine: {running} (matches spec)[/{colour}]")
+        render_rich(f"[{colour}]engine: {running} (matches spec)[/{colour}]", __name__)
         return
     if verdict == VERDICT_MISMATCH:
-        console.print(
-            f"[{colour}]engine: MISMATCH — spec selects {declared!r}, "
-            f"the running process was launched on {running!r}[/{colour}]"
-        )
-        console.print(
-            "[dim]  Fix: restart the agent so the declared engine is applied; "
+        render_rich(f"[{colour}]engine: MISMATCH — spec selects {declared!r}, "
+            f"the running process was launched on {running!r}[/{colour}]", __name__)
+        render_rich("[dim]  Fix: restart the agent so the declared engine is applied; "
             "a start that silently ran a different backend than the one "
-            "declared is worse than a start that did not happen.[/dim]"
-        )
+            "declared is worse than a start that did not happen.[/dim]", __name__)
         return
-    console.print(
-        f"[{colour}]engine: unknown — {payload.get('reason') or '?'}[/{colour}]"
-    )
+    render_rich(f"[{colour}]engine: unknown — {payload.get('reason') or '?'}[/{colour}]", __name__)
     if not scan.get("complete", True):
-        console.print(
-            f"[dim]  scan was PARTIAL: {scan.get('pids_matched')} matched of "
+        render_rich(f"[dim]  scan was PARTIAL: {scan.get('pids_matched')} matched of "
             f"{scan.get('pids_scanned')} scanned, {scan.get('pids_unreadable')} "
             f"unreadable, vantage={scan.get('vantage')}. Absence here is not "
-            f"evidence of absence — run this on the agent's host as its owner.[/dim]"
-        )
+            f"evidence of absence — run this on the agent's host as its owner.[/dim]", __name__)
