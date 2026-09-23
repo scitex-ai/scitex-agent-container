@@ -49,10 +49,11 @@ Hard guarantees:
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import signal
 from typing import Any, Callable, Iterable
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _default_iter_processes() -> Iterable[Any]:
     handled inside :func:`kill_orphan_mcp_children` rather than at
     module import — sac itself must import cleanly on minimal hosts.
     """
-    import psutil  # noqa: WPS433 — imported here so absence is defensive
+    import psutil
 
     return psutil.process_iter(["pid", "cmdline", "environ"])
 

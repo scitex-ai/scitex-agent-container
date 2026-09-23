@@ -20,7 +20,7 @@ From Source
 Requirements
 ------------
 
-- Python >= 3.10
+- Python >= 3.11
 - The harness your specs select, installed in the image: the Claude Code
   CLI for ``harness: anthropic`` (the default), the ``openai-agents``
   SDK for ``harness: openai``, the ``openai-codex`` SDK for
