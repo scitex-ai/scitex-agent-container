@@ -979,3 +979,21 @@ def test_tui_profile_disables_harness_approvals_even_without_autonomous_drive(
     rendered = (targets[0] / ".hermes" / "config.yaml").read_text(encoding="utf-8")
     # Assert
     assert "mode: 'off'" in rendered
+
+
+def test_cct_profile_env_mirrors_token_from_home_env(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text(
+        "CCT_AGENT_ID=scitex-apps-lead\nCCT_BOT_TOKEN=abc123\n", encoding="utf-8"
+    )
+    out = profile._cct_profile_env(home)
+    assert out == {"CCT_BOT_TOKEN": "abc123", "CCT_AGENT_ID": "scitex-apps-lead"}
+
+
+def test_cct_profile_env_empty_without_token(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text("SOME_OTHER_VAR=x\n", encoding="utf-8")
+    assert profile._cct_profile_env(home) == {}
+    assert profile._cct_profile_env(tmp_path / "missing") == {}

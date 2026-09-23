@@ -365,6 +365,31 @@ def _sac_profile_env(
     }
 
 
+def _cct_profile_env(home: Path) -> dict[str, str]:
+    """Mirror the CCT token + agent id into the Hermes profile env.
+
+    ``deploy_to_home`` wrote them to ``home/.env`` (the container
+    ``--env-file``); Hermes' tool-child secret scope reads only
+    ``<HERMES_HOME>/.env``. Returns {} when the rail is not materialised
+    (values never logged).
+    """
+    from ._secret_pool import _read_env_file
+
+    try:
+        materialised = _read_env_file(home / ".env")
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    token = (materialised.get("CCT_BOT_TOKEN") or "").strip()
+    if not token:
+        return {}
+    out["CCT_BOT_TOKEN"] = token
+    agent_id = (materialised.get("CCT_AGENT_ID") or "").strip()
+    if agent_id:
+        out["CCT_AGENT_ID"] = agent_id
+    return out
+
+
 def _write_profile_env(path: Path, values: dict[str, str]) -> None:
     for key, value in values.items():
         if "\n" in value or "\r" in value:
@@ -517,6 +542,14 @@ def materialize_hermes_tui_profile(
         plan.endpoint.auth_env: provider_key,
         **_sac_profile_env(config, servers),
         **cct_env,
+        # CCT rail: Hermes resolves tool-child env through the profile
+        # secret scope, which is built from <HERMES_HOME>/.env — i.e. THIS
+        # file — not from home/.env where deploy_to_home wrote the token.
+        # Mirror the token + agent id here so terminal.env_passthrough can
+        # actually resolve them (measured 2026-09-24: apps-lead Bash tool
+        # reported TOKEN-LEN=0 with the value present in home/.env and the
+        # Hermes process env but absent from the scope file).
+        **_cct_profile_env(home),
     }
     for target in targets:
         profile = target / ".hermes"
