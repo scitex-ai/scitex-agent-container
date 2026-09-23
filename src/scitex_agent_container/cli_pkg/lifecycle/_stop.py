@@ -43,7 +43,7 @@ from ..._state.state_store import now_iso, record_instance_stop
 from ..._state.state_store_comms_nodes import unregister_comms_node
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer

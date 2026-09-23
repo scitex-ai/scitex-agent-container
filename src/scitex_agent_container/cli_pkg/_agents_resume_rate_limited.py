@@ -27,7 +27,7 @@ import json
 import click
 
 from .._ratelimit import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, Verdict, resume_pass
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 #: Colour per verdict. Anything that leaves an agent parked is loud on purpose;
 #: magenta is reserved for "we could not determine this", which must never read

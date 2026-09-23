@@ -253,7 +253,6 @@ def run_build(
 
     import click
 
-    from ._helpers import console
 
     try:
         result = build_layer_reproducible(

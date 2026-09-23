@@ -28,7 +28,7 @@ from .._maintenance import (
     gc_repos,
     record_gc_results,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 def _evidence(text: str) -> None:

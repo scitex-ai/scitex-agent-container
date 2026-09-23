@@ -32,7 +32,6 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
 from .refresh_acl import _fleet_registry_dir
 
 

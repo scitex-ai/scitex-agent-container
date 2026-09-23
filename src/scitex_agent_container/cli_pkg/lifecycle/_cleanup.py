@@ -8,7 +8,6 @@ from ..._logging import render_rich
 import click
 
 from ..._state.registry import Registry
-from .._helpers import console
 
 
 @click.command(name="clean-registry")

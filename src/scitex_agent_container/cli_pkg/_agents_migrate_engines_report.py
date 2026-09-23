@@ -44,7 +44,6 @@ from __future__ import annotations
 from .._logging import render_rich
 from rich.markup import escape
 
-from ._helpers import console
 
 __all__ = [
     "plan_payload",

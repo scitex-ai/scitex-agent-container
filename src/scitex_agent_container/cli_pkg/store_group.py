@@ -27,7 +27,7 @@ from pathlib import Path
 import click
 
 from .._state.state_store import gc_dead_instances, import_legacy_registry
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 @click.group(

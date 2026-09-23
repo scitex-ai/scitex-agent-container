@@ -50,7 +50,6 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
 
 # Env override for the user-scope fleet registry dir. It lets the command be
 # pointed at an isolated on-disk registry (tests /

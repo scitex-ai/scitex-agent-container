@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from .._logging import render_rich
 from ._agents_migrate_engines_report import _lit
-from ._helpers import console
 
 __all__ = ["preflight_payload", "render_preflight"]
 

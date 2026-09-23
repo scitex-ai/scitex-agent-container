@@ -63,7 +63,7 @@ from ..runtimes._cct_token_collision import (
     check_token_collisions,
 )
 from ..runtimes._cct_token_collision import SCOPE_NOTE as COLLISION_SCOPE_NOTE
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 from ._image_venv_report import image_venv_lines, inspect_image_venv
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}

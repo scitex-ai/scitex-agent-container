@@ -26,7 +26,6 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
 
 
 @click.command("list")

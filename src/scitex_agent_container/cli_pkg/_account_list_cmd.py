@@ -147,7 +147,6 @@ def account_list(
         render_stored_table,
     )
     from ._account_openai import format_openai_account_block
-    from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
     # REFRESH THE QUOTA SNAPSHOT BEFORE READING IT.

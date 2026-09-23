@@ -53,7 +53,7 @@ from rich.markup import escape
 from .._maintenance._layers_migration_apply import apply_migration
 from .._maintenance._layers_migration_gate import fleet_arming_snapshot, gate_arming
 from .._maintenance._layers_migration_plan import already_declared, plan_migration
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1

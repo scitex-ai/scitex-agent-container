@@ -38,7 +38,7 @@ from .._maintenance import (
     inspect_install,
     install_integrity_exit_code,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _STATE_STYLE = {"ok": "green", "broken": "red", "unknown": "magenta"}
 

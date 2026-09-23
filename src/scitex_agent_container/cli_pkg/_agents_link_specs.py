@@ -13,7 +13,6 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
 
 _AGENTS_DIR_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
 

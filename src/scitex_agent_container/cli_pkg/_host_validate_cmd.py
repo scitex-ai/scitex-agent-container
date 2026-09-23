@@ -28,7 +28,7 @@ import click
 
 from .._state.host_config import load
 from .._state.host_config_diagnose import config_state_problems
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 @click.command("validate")

@@ -43,7 +43,6 @@ from typing import Callable
 import click
 
 from ..._sac_binary import sac_binary as _sac_binary
-from .._helpers import console
 
 
 @dataclass

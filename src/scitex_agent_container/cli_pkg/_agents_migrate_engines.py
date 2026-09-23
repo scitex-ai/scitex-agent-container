@@ -90,7 +90,7 @@ from ._agents_migrate_engines_report import (
     render_diffs,
     render_plan,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1

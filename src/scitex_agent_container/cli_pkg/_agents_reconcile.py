@@ -19,7 +19,7 @@ import json
 import click
 
 from .._reconcile import DEFAULT_PASS_CAP, Verdict, reconcile_pass
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 #: Colour per verdict. Anything that leaves an agent DOWN is loud on purpose.
 _STYLE = {

@@ -29,7 +29,6 @@ from .._state.registry import Registry
 from ..config import load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
-from ._helpers import console
 from ._priority_ssh import _SSH_PROBE_OPTS  # noqa: F401  (re-export)
 from ._priority_ssh import _SSH_START_TIMEOUT  # noqa: F401  (re-export)
 from ._priority_ssh import peer_ssh_argv, probe_ssh, ssh_start_agent

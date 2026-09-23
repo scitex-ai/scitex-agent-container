@@ -41,7 +41,7 @@ import sys
 
 import click
 
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 
 # The LOCAL leg (perform + verify + render) lives in ``_restart_local``;
 # cross-host dispatch + the host-listen broker live in ``_restart_remote``;

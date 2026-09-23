@@ -57,7 +57,7 @@ from ..runtimes._cct_rail_verdict import (
     materialised_home,
 )
 from ..runtimes._secret_pool import _pool_source_label, read_pool
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _STYLE = {
     RAIL_UP: ("UP", "green"),

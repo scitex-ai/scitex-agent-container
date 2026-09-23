@@ -41,7 +41,7 @@ from .._maintenance._scratch_migrate import (
     plan_scratch_migration,
 )
 from .._state.host_scratch import ScratchRootError, resolve_scratch_root
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1

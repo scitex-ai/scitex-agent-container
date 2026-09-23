@@ -223,7 +223,6 @@ def _render_table(data: dict) -> None:
     """Print the inventory as two rich tables + a summary footer."""
     from rich.table import Table
 
-    from ._helpers._console import console
 
     conflict_ports = {c["port"] for c in data["conflicts"]}
 

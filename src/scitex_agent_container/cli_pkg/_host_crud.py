@@ -23,7 +23,7 @@ import click
 
 from .._state.host_config import _default_config_path
 from .._state.host_config import load as _load_cfg
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 def _parse_via_csv(via: str | None) -> list[str]:

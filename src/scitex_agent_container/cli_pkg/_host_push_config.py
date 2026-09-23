@@ -50,7 +50,7 @@ from .._hostsync import (
 )
 from .._hostsync._token_state import DEFAULT_LISTEN_PORT
 from .._state.host_config import load as _load_cfg
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # Colour per verdict. Refusals and unknowns are loud on purpose.
 _STYLE = {

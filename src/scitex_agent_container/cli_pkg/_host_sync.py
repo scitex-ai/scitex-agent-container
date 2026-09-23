@@ -31,7 +31,7 @@ from .._hostsync import (
     syncable_peers,
 )
 from .._state.host_config import load as _load_cfg
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # Colour per outcome. Refusals and failures are loud on purpose.
 _STYLE = {

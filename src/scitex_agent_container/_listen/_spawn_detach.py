@@ -61,7 +61,6 @@ for it, not merely the reachable one.
 from __future__ import annotations
 
 import asyncio
-import logging
 import scitex_logging as slogging
 from typing import Any
 

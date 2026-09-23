@@ -75,7 +75,6 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
         click.echo(json.dumps(agents, ensure_ascii=False))
         return
 
-    from ._helpers import console
 
     if not agents:
         render_rich("[dim](no a2a peers)[/dim]", __name__)

@@ -36,7 +36,7 @@ from ..._lifecycle._launch_verify import (
     LaunchVerdict,
     verify_launch,
 )
-from .._helpers import console, system_msg
+from .._helpers import system_msg
 
 #: verdict status -> the ``--json`` ``status`` field. ``skipped`` maps to
 #: the historical ``started`` (nothing contradicts it and scripts keyed

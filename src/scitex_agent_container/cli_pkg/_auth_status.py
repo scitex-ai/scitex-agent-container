@@ -40,7 +40,7 @@ from rich.table import Table
 
 from .._runners._tmux._target import exact_target
 from .._runners._tmux.auth_status import evaluate, probe_to_state
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # The TUI runtime names its sessions ``tui-<agent>`` on the DEFAULT tmux server
 # (``runtimes/tui_session.session_name_for``) — NOT the ``-L sac`` server that

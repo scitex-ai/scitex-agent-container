@@ -10,7 +10,7 @@ import sys
 import click
 
 from ..config import load_config, resolve_config, validate_config
-from ._helpers import agent_name_complete, console
+from ._helpers import agent_name_complete
 
 
 @click.command()

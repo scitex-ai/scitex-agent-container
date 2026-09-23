@@ -19,7 +19,7 @@ import json
 
 import click
 
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 #: Colour per three-valued verdict. Anything that is not a measured
 #: success is loud on purpose.

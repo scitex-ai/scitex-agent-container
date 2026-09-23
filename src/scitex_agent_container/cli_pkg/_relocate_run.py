@@ -43,7 +43,6 @@ from .._lifecycle._relocate_execute import (
 )
 from .._lifecycle._relocate_phases import begin
 from .._state.relocation_pg import load_journal, save_journal
-from ._helpers import console
 
 __all__ = ["EXIT_INCOMPLETE", "EXIT_UNMEASURED", "run_relocation"]
 

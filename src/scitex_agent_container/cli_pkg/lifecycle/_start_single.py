@@ -30,7 +30,7 @@ from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
 from ...runtimes._apptainer_bind_guard import BindCapabilityError
-from .._helpers import console, system_msg
+from .._helpers import system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError

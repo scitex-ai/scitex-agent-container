@@ -22,7 +22,7 @@ from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.registry import Registry
 from ..._state.state_store import record_instance_stop
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 from ._dispatch import lookup_remote_peer
 
 

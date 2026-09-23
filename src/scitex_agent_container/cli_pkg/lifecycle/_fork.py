@@ -28,7 +28,7 @@ import sys
 
 import click
 
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 
 
 def _parse_ttl(raw: str) -> int:

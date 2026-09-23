@@ -13,7 +13,7 @@ import json
 import click
 
 from .._state.host_config import host_interfaces, load
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # Virtual interfaces hidden from ``host list`` by default — docker
 # bridges, k8s CNI bridges, VirtualBox, vEthernet pairs, tap devices.

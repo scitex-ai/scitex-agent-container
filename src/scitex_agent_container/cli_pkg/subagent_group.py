@@ -18,7 +18,7 @@ import json as json_mod
 import click
 
 from .._mcp._tools import _subagent
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 @click.group(
