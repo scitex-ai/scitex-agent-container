@@ -183,3 +183,20 @@ def test_materializer_publishes_exact_hermes_projection(tmp_path, env_save_resto
 
     # Assert
     assert text == "current instructions\n"
+
+
+def test_walk_never_escapes_root_through_symlink(tmp_path):
+    """A symlink pointing outside the tree must not be descended into."""
+    from scitex_agent_container.runtimes._prompt_projection_integrity import (
+        _walk_prompt_files,
+    )
+
+    outside = tmp_path / "outside"
+    (outside / "skills").mkdir(parents=True)
+    (outside / "skills" / "note.md").write_text("x")
+    root = tmp_path / "home"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("hi")
+    (root / "proj").symlink_to(tmp_path, target_is_directory=True)
+    found = [rel.as_posix() for rel, _ in _walk_prompt_files(root)]
+    assert found == ["AGENTS.md"]
