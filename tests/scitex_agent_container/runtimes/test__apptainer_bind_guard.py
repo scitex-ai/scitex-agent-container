@@ -157,9 +157,10 @@ def test_missing_gh_source_refuses_the_start(
     absent = tmp_path / "no-such-gh-dir"
     cfg = load_config(str(_write_spec(tmp_path, _gh_bind_yaml(absent))))
     # Act
-    build = lambda: build_run_argv(
-        cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
-    )
+    def build():
+        return build_run_argv(
+            cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+        )
     # Assert — refused loudly BEFORE any container is launched.
     with pytest.raises(BindCapabilityError):
         build()
@@ -173,9 +174,10 @@ def test_gh_source_without_hosts_yml_refuses_the_start(
     gh_dir = _gh_dir_without_hosts_yml(tmp_path)
     cfg = load_config(str(_write_spec(tmp_path, _gh_bind_yaml(gh_dir))))
     # Act
-    build = lambda: build_run_argv(
-        cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
-    )
+    def build():
+        return build_run_argv(
+            cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+        )
     # Assert
     with pytest.raises(BindCapabilityError):
         build()
@@ -297,7 +299,8 @@ def test_missing_credentials_file_bind_refuses(tmp_path: Path) -> None:
     binds = f"    binds:\n      - {absent}:/home/agent/.claude/.credentials.json:ro\n"
     cfg = load_config(str(_write_spec(tmp_path, binds)))
     # Act
-    check = lambda: validate_capability_binds(cfg, list(cfg.apptainer.binds))
+    def check():
+        return validate_capability_binds(cfg, list(cfg.apptainer.binds))
     # Assert
     with pytest.raises(BindCapabilityError):
         check()
@@ -318,7 +321,8 @@ def test_spec_binds_checked_refuses_empty_gh_dir(tmp_path: Path) -> None:
     gh_dir = _gh_dir_without_hosts_yml(tmp_path)
     cfg = load_config(str(_write_spec(tmp_path, _gh_bind_yaml(gh_dir))))
     # Act
-    read = lambda: spec_binds_checked(cfg)
+    def read():
+        return spec_binds_checked(cfg)
     # Assert
     with pytest.raises(BindCapabilityError):
         read()
@@ -332,7 +336,8 @@ def test_single_path_gh_bind_is_checked(tmp_path: Path) -> None:
     (gh_dir / "config.yml").write_text("version: 1\n", encoding="utf-8")
     cfg = load_config(str(_write_spec(tmp_path, "    binds: []\n")))
     # Act
-    check = lambda: validate_capability_binds(cfg, [str(gh_dir)])
+    def check():
+        return validate_capability_binds(cfg, [str(gh_dir)])
     # Assert
     with pytest.raises(BindCapabilityError):
         check()
@@ -344,7 +349,8 @@ def test_trailing_slash_destination_is_checked(tmp_path: Path) -> None:
     cfg = load_config(str(_write_spec(tmp_path, "    binds: []\n")))
     bind = f"{gh_dir}:/home/agent/.config/gh/:ro"
     # Act
-    check = lambda: validate_capability_binds(cfg, [bind])
+    def check():
+        return validate_capability_binds(cfg, [bind])
     # Assert
     with pytest.raises(BindCapabilityError):
         check()

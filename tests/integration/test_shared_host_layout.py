@@ -321,7 +321,8 @@ class TestHostnameSubstitution:
         # Arrange
         from scitex_agent_container.config._host import resolve_hostname
 
-        empty_gethostname = lambda: ""
+        def empty_gethostname():
+            return ""
         # Act
         ctx = pytest.raises(RuntimeError)
         # Assert

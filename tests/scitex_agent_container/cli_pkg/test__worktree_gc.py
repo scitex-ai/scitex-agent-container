@@ -90,7 +90,7 @@ def worktree(repo: Path, tmp_path: Path):
 
 def test_dry_run_reports_the_reapable_worktree(repo, worktree, event_log):
     # Arrange — a clean, merged worktree; --min-age-hours 0 clears the age gate.
-    path = worktree("reapable")
+    worktree("reapable")
     # Act
     result = CliRunner().invoke(
         worktree_gc, ["--repo", str(repo), "--min-age-hours", "0", "--no-alarm"]

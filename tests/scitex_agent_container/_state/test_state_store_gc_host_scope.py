@@ -170,7 +170,7 @@ def test_a_record_with_no_heartbeat_is_not_swept_by_this_branch(
 ) -> None:
     # Arrange — a NULL heartbeat is "we have no sample", not "the sample is
     # old". The old branch said ``last_heartbeat_at IS NOT NULL``.
-    instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
+    record_instance_start("alpha", host=_local(), pid=os.getpid())
     # Act
     counters = gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -349,7 +349,7 @@ def test_the_reboot_branch_stamps_the_boot_time_not_the_sweep_time(
 
 def test_a_dry_run_counts_without_writing(pg_schema: str) -> None:
     # Arrange
-    instance_id = record_instance_start("alpha", host=_local(), pid=4194303)
+    record_instance_start("alpha", host=_local(), pid=4194303)
     # Act
     counters = gc_dead_instances(dry_run=True)
     # Assert

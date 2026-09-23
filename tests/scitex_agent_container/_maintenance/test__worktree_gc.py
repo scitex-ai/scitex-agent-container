@@ -309,7 +309,7 @@ def test_locked_worktree_is_kept(repo, add_worktree, old_now, pr_no, no_cwds):
         check=True,
     )
     # Act
-    result = gc_repo(repo, apply=True, now=old_now, pr_merged=pr_no, cwd_scan=no_cwds)
+    gc_repo(repo, apply=True, now=old_now, pr_merged=pr_no, cwd_scan=no_cwds)
     # Assert
     assert path.is_dir()
 

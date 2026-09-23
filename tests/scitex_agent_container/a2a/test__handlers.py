@@ -177,7 +177,8 @@ def test_handle_claude_cli_not_found_raises(isolated_env: Path) -> None:
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(isolated_env / "does-not-exist")
     raises_ctx = pytest.raises(h.HandlerError, match="claude CLI not found")
     # Act
-    call = lambda: h.handle_claude_cli("alpha", "x")
+    def call():
+        return h.handle_claude_cli("alpha", "x")
     # Assert
     with raises_ctx:
         call()
@@ -194,7 +195,8 @@ def test_handle_claude_cli_timeout_raises(isolated_env: Path) -> None:
 
     importlib.reload(h)
     # Act
-    call = lambda: h.handle_claude_cli("alpha", "x")
+    def call():
+        return h.handle_claude_cli("alpha", "x")
     # Assert
     try:
         with pytest.raises(h.HandlerError, match="timeout"):
@@ -211,7 +213,8 @@ def test_handle_claude_cli_nonzero_rc_raises(isolated_env: Path) -> None:
     )
     os.environ["SAC_A2A_CLAUDE_BIN"] = str(bin_)
     # Act
-    call = lambda: h.handle_claude_cli("alpha", "x")
+    def call():
+        return h.handle_claude_cli("alpha", "x")
     # Assert
     with pytest.raises(h.HandlerError, match="rc=2"):
         call()
@@ -265,7 +268,8 @@ def test_agent_mcp_servers_and_cwd_unknown_agent_returns_empty(
 
 def test_handle_exec_requires_env_var(isolated_env: Path) -> None:
     # Arrange
-    call = lambda: h.handle_exec("alpha", "x")
+    def call():
+        return h.handle_exec("alpha", "x")
     # Act
     raises_ctx = pytest.raises(h.HandlerError, match="SAC_A2A_EXEC_COMMAND is not set")
     # Assert
@@ -277,7 +281,8 @@ def test_handle_exec_invalid_shell_word_raises(isolated_env: Path) -> None:
     # Arrange
     os.environ["SAC_A2A_EXEC_COMMAND"] = "unterminated 'quote"
     # Act
-    call = lambda: h.handle_exec("alpha", "x")
+    def call():
+        return h.handle_exec("alpha", "x")
     # Assert
     with pytest.raises(h.HandlerError, match="could not parse"):
         call()
@@ -307,7 +312,8 @@ def test_handle_exec_command_not_found(isolated_env: Path) -> None:
     # Arrange
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(isolated_env / "no-such-binary")
     # Act
-    call = lambda: h.handle_exec("alpha", "x")
+    def call():
+        return h.handle_exec("alpha", "x")
     # Assert
     with pytest.raises(h.HandlerError, match="exec command not found"):
         call()
@@ -322,7 +328,8 @@ def test_handle_exec_timeout(isolated_env: Path) -> None:
 
     importlib.reload(h)
     # Act
-    call = lambda: h.handle_exec("alpha", "x")
+    def call():
+        return h.handle_exec("alpha", "x")
     # Assert
     try:
         with pytest.raises(h.HandlerError, match="timeout"):
@@ -339,7 +346,8 @@ def test_handle_exec_nonzero_rc(isolated_env: Path) -> None:
     )
     os.environ["SAC_A2A_EXEC_COMMAND"] = str(bin_)
     # Act
-    call = lambda: h.handle_exec("alpha", "x")
+    def call():
+        return h.handle_exec("alpha", "x")
     # Assert
     with pytest.raises(h.HandlerError, match="rc=17"):
         call()
@@ -475,10 +483,12 @@ def test_claude_session_missing_sdk_raises_handler_error(
     isolated_env: Path, stub_claude_sdk_without_symbols
 ) -> None:
     # Arrange
-    call = lambda: h.handle_claude_session("alpha", "hi")
+    def call():
+        return h.handle_claude_session("alpha", "hi")
     raises_ctx = pytest.raises(h.HandlerError, match="claude-agent-sdk")
     # Act
-    invoke = lambda: call()
+    def invoke():
+        return call()
     # Assert
     with raises_ctx:
         invoke()
@@ -524,12 +534,14 @@ def test_claude_session_reads_model_env_for_options(isolated_env: Path) -> None:
     # Arrange: set the env knobs the handler reads.
     os.environ["SAC_A2A_CLAUDE_MODEL"] = "claude-sonnet-4"
     os.environ["SAC_A2A_CLAUDE_SYSTEM"] = "be terse"
-    call = lambda: h.handle_claude_session(
-        "never-registered-agent", "hi", channels=["server:sac"], a2a_port=None
-    )
+    def call():
+        return h.handle_claude_session(
+            "never-registered-agent", "hi", channels=["server:sac"], a2a_port=None
+        )
     raises_ctx = pytest.raises(h.HandlerError)
     # Act
-    invoke = lambda: call()
+    def invoke():
+        return call()
     # Assert: translated error proves env-config path was traversed.
     with raises_ctx:
         invoke()
@@ -546,11 +558,12 @@ def test_claude_session_a2a_port_forwarded_to_options(isolated_env: Path) -> Non
     traversed without exploding inside the sdk_extra packing branch.
     """
     # Arrange
-    call = lambda: h.handle_claude_session(
-        "never-registered-agent",
-        "noop",
-        a2a_port=7878,  # stx-allow: STX-NL001
-    )
+    def call():
+        return h.handle_claude_session(
+            "never-registered-agent",
+            "noop",
+            a2a_port=7878,  # stx-allow: STX-NL001
+        )
     # Act
     try:
         out = call()

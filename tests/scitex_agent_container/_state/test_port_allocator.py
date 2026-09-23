@@ -149,7 +149,8 @@ def test_claim_port_raises_runtime_error_when_range_exhausted(
     # Arrange — single-wide range fully claimed by another agent.
     pa.claim_port("a", range_=(21000, 21000))
     # Act
-    second_claim = lambda: pa.claim_port("b", range_=(21000, 21000))
+    def second_claim():
+        return pa.claim_port("b", range_=(21000, 21000))
     # Assert
     with pytest.raises(RuntimeError, match="no free a2a port"):
         second_claim()
@@ -199,7 +200,8 @@ def test_explicit_claim_collides_with_foreign_claim_raises_runtime_error(
     # Arrange — alpha already pinned 7901.
     pa.claim_port("alpha", explicit=7901)
     # Act
-    second_pin = lambda: pa.claim_port("beta", explicit=7901)
+    def second_pin():
+        return pa.claim_port("beta", explicit=7901)
     # Assert
     with pytest.raises(RuntimeError, match="already claimed"):
         second_pin()

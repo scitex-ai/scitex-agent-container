@@ -150,7 +150,7 @@ def test_ports_come_from_a_single_list_claims_call(tmp_path):
         port_allocator, "get_port", _fake_get_port
     ), _swap_probe(_running(True)):
         with _swap_attr(_al, "_discover_defined_agents", _no_discover):
-            out = get_agent_list_data(registry)
+            get_agent_list_data(registry)
     # Assert — exactly one bulk query for two agents; no per-agent get_port.
     assert calls == {"list_claims": 1, "get_port": 0}
 

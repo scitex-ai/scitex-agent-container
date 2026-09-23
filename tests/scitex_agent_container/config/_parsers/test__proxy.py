@@ -129,7 +129,8 @@ def test_parse_proxy_missing_block_raises_value_error() -> None:
     # Arrange
     raw: dict = {}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="spec.proxy is required"):
         action()
@@ -139,7 +140,8 @@ def test_parse_proxy_non_mapping_block_raises_value_error() -> None:
     # Arrange
     raw = {"proxy": "https://x"}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="must be a mapping"):
         action()
@@ -149,7 +151,8 @@ def test_parse_proxy_missing_upstream_raises_value_error() -> None:
     # Arrange
     raw = {"proxy": {"trust": "trusted"}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="upstream is required"):
         action()
@@ -159,7 +162,8 @@ def test_parse_proxy_empty_upstream_raises_value_error() -> None:
     # Arrange
     raw = {"proxy": {"upstream": ""}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="upstream is required"):
         action()
@@ -169,7 +173,8 @@ def test_parse_proxy_non_url_upstream_raises_value_error() -> None:
     # Arrange
     raw = {"proxy": {"upstream": "peer.local:8080"}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="http://"):
         action()
@@ -179,7 +184,8 @@ def test_parse_proxy_bad_trust_value_raises_value_error() -> None:
     # Arrange
     raw = {"proxy": {"upstream": "https://x", "trust": "totally-trusted"}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="trust"):
         action()
@@ -196,7 +202,8 @@ def test_parse_proxy_invalid_redact_raises_value_error(redact_value) -> None:
     # Arrange
     raw = {"proxy": {"upstream": "https://x", "redact": redact_value}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="redact"):
         action()
@@ -213,7 +220,8 @@ def test_parse_proxy_invalid_timeout_raises_value_error(timeout_value) -> None:
     # Arrange
     raw = {"proxy": {"upstream": "https://x", "timeout_s": timeout_value}}
     # Act
-    action = lambda: parse_proxy(raw, kind="AgentProxy")
+    def action():
+        return parse_proxy(raw, kind="AgentProxy")
     # Assert
     with pytest.raises(ValueError, match="timeout"):
         action()

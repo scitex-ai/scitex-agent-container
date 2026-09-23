@@ -176,7 +176,8 @@ class TestEveryCandidateFails:
         dead_b = _stale(expired_lead_home / "accounts" / "beta" / ".credentials.json")
         cfg = _pool_config("dotfiles", [dead_a, dead_b])
         # Act
-        action = lambda: check_spec_oauth_credentials(cfg, now=_FROZEN_NOW)
+        def action():
+            return check_spec_oauth_credentials(cfg, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(RuntimeError, match="every credential its spec declares"):
             action()
@@ -219,7 +220,8 @@ class TestEveryCandidateFails:
         # Arrange
         cfg = AgentConfig(name="unpinned")
         # Act
-        action = lambda: check_spec_oauth_credentials(cfg, now=_FROZEN_NOW)
+        def action():
+            return check_spec_oauth_credentials(cfg, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(RuntimeError, match=r"expired \d+ seconds ago"):
             action()

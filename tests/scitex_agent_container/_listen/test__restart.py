@@ -262,7 +262,7 @@ def test_force_flag_skips_term_and_uses_sigkill_immediately(tmp_path: Path) -> N
         _swap("_run_subprocess", subproc),
         _swap("_http_get", http),
     ):
-        result = restart_listen(
+        restart_listen(
             host="127.0.0.1",
             port=7878,
             lock_dir=tmp_path,
@@ -429,7 +429,7 @@ def test_systemd_path_calls_daemon_reload_before_restart(tmp_path: Path) -> None
     # FIRST then restart, in that order per design call (b).
     unit = tmp_path / "sac-listen.service"
     unit.write_text("[Unit]\n")
-    pid_file = tmp_path / "listen-7878.pid"
+    tmp_path / "listen-7878.pid"
     # is-enabled rc=0, daemon-reload rc=0, restart rc=0
     subproc = _SubprocessRecorder(returncodes=[0, 0, 0])
     kill = _KillRecorder(alive_script=[False])
@@ -751,7 +751,7 @@ def test_term_skipped_when_pid_dies_between_check_and_kill(tmp_path: Path) -> No
 def test_direct_spawn_filenotfound_reports_loud_error(tmp_path: Path) -> None:
     # Arrange — sac binary missing on $PATH; spawn must fail loudly
     # with the actionable error in ``result.error``.
-    pid_file = tmp_path / "listen-7878.pid"
+    tmp_path / "listen-7878.pid"
     kill = _KillRecorder(alive_script=[False])
 
     def _missing_sac(*args, **kwargs):

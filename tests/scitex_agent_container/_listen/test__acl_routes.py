@@ -55,7 +55,7 @@ def test_unblock_route_writes_comms_grants_row(isolated_state: Path, pg_schema: 
     app = create_app(token=_TOKEN)
     # Act
     with TestClient(app) as client:
-        r = client.post(
+        client.post(
             "/v1/acl/unblock",
             json={"sender": "alice", "target": "lead"},
             headers=_auth(),

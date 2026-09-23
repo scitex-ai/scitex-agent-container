@@ -312,7 +312,8 @@ class TestParseDefaultGateway:
 class TestProbeGateway:
     def test_no_default_route_marks_ok_false(self):
         # Arrange
-        reader = lambda: ""
+        def reader():
+            return ""
         # Act
         r = np.probe_gateway(ip_route_reader=reader)
         # Assert
@@ -320,7 +321,8 @@ class TestProbeGateway:
 
     def test_no_default_route_records_err_message(self):
         # Arrange
-        reader = lambda: ""
+        def reader():
+            return ""
         # Act
         r = np.probe_gateway(ip_route_reader=reader)
         # Assert
@@ -328,8 +330,10 @@ class TestProbeGateway:
 
     def test_reachable_gateway_marks_ok_true(self):
         # Arrange
-        reader = lambda: "default via 10.0.0.1 dev eth0\n"
-        connector = lambda addr, timeout: _FakeConn()
+        def reader():
+            return "default via 10.0.0.1 dev eth0\n"
+        def connector(addr, timeout):
+            return _FakeConn()
         # Act
         r = np.probe_gateway(ip_route_reader=reader, connector=connector)
         # Assert
@@ -337,8 +341,10 @@ class TestProbeGateway:
 
     def test_reachable_gateway_records_gateway_in_extra(self):
         # Arrange
-        reader = lambda: "default via 10.0.0.1 dev eth0\n"
-        connector = lambda addr, timeout: _FakeConn()
+        def reader():
+            return "default via 10.0.0.1 dev eth0\n"
+        def connector(addr, timeout):
+            return _FakeConn()
         # Act
         r = np.probe_gateway(ip_route_reader=reader, connector=connector)
         # Assert
@@ -346,7 +352,8 @@ class TestProbeGateway:
 
     def test_unreachable_gateway_marks_ok_false(self):
         # Arrange
-        reader = lambda: "default via 10.0.0.1 dev eth0\n"
+        def reader():
+            return "default via 10.0.0.1 dev eth0\n"
         connector = _raising(TimeoutError("timed out"))
         # Act
         r = np.probe_gateway(ip_route_reader=reader, connector=connector, timeout=0.1)
@@ -355,7 +362,8 @@ class TestProbeGateway:
 
     def test_unreachable_gateway_records_exception_type_in_err(self):
         # Arrange
-        reader = lambda: "default via 10.0.0.1 dev eth0\n"
+        def reader():
+            return "default via 10.0.0.1 dev eth0\n"
         connector = _raising(TimeoutError("timed out"))
         # Act
         r = np.probe_gateway(ip_route_reader=reader, connector=connector, timeout=0.1)
@@ -364,7 +372,8 @@ class TestProbeGateway:
 
     def test_unreachable_gateway_still_records_gateway_in_extra(self):
         # Arrange
-        reader = lambda: "default via 10.0.0.1 dev eth0\n"
+        def reader():
+            return "default via 10.0.0.1 dev eth0\n"
         connector = _raising(TimeoutError("timed out"))
         # Act
         r = np.probe_gateway(ip_route_reader=reader, connector=connector, timeout=0.1)

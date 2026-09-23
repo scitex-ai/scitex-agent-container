@@ -224,7 +224,7 @@ async def test_slow_tick_does_not_stack_a_second_probe_thread(tmp_path: Path):
 async def test_dropped_tick_leaves_the_live_instance_row_active(tmp_path: Path):
     # Arrange — a REAL state.db with a REAL active instance row for a live
     # agent (the scitex-hpc shape: tmux alive, a2a port listening).
-    db_path = tmp_path / "state.db"
+    tmp_path / "state.db"
     state_dir = _seeded_live_agent(tmp_path)
     record_instance_start(LIVE_AGENT, pid=4242, a2a_port=LIVE_PORT)
     # Act — a tick that wedges and gets ABANDONED.

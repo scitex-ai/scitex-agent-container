@@ -428,7 +428,7 @@ class TestResolveLiveness:
     ) -> None:
         # Arrange — the fleet's real shape: a pid-less active row + a fresh
         # heartbeat. The heartbeat is the proof of life the registry lost.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
@@ -443,7 +443,7 @@ class TestResolveLiveness:
     def test_a_live_registry_pid_still_resolves_live(self, home_at_tmp) -> None:
         # Arrange — the registry CAN still vouch for an agent; when it does,
         # that remains corroborating positive evidence.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x", pid=os.getpid())
         # Act
         out = mod.resolve_liveness(["agent-x"])
@@ -479,7 +479,7 @@ class TestResolveLiveness:
         # Arrange — a crashed agent's heartbeat.json PERSISTS with a frozen
         # mtime. That is a channel that would have shown life and does not, so
         # the owner stays KNOWN and real death is still detectable.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
