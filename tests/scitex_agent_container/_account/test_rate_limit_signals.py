@@ -16,6 +16,7 @@ assertion per test. No mocks.
 from __future__ import annotations
 
 import pytest
+
 from scitex_agent_container._account.rate_limit_signals import (
     DEFAULT_TEXTUAL_PATTERNS,
     RateLimitSignal,

@@ -54,13 +54,6 @@ from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
 from ._jobspec_helpers import _job, _split_command  # noqa: E402
 
 
-
-
-
-
-
-
-
 def test_provider_jobs_are_real_jobspecs() -> None:
     # Arrange — call the registered provider.
     # Act

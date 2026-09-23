@@ -17,8 +17,6 @@ collaborators are real:
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 import shutil
@@ -37,6 +35,7 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.a2a_group import _emit, a2a
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real local HTTP server -- serves whatever AgentCard the test asks for

@@ -18,6 +18,7 @@ import json
 import urllib.error
 
 import pytest
+
 from scitex_agent_container.cli_pkg._a2a_list_fetch import (
     A2aListError,
     fetch_agents,

@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scitex_agent_container.config._validation import validate_raw
 from scitex_agent_container._mcp._tools._template import (  # noqa: F401
     _derive_branch_short,
     _render,
     register_template_tools,
     template_render_contributor_spec,
 )
+from scitex_agent_container.config._validation import validate_raw
 
 
 @pytest.fixture
@@ -489,7 +489,10 @@ def test_the_mcp_layer_uses_the_public_scaffold_and_not_the_private_dict() -> No
 def test_the_public_scaffold_renderer_is_the_canonical_template() -> None:
     """`agents create` and the MCP layer must consume the SAME text."""
     # Arrange
-    from scitex_agent_container.cli_pkg._create_templates import _TEMPLATES, render_minimal_spec
+    from scitex_agent_container.cli_pkg._create_templates import (
+        _TEMPLATES,
+        render_minimal_spec,
+    )
 
     # Act
     rendered = render_minimal_spec(name="x", host="h")

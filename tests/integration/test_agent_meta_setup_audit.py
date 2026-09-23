@@ -232,7 +232,7 @@ def _rotation_file(home: Path) -> Path:
 
 
 def _nonempty_lines(path: Path) -> list[str]:
-    return [l for l in path.read_text().splitlines() if l.strip()]
+    return [line for line in path.read_text().splitlines() if line.strip()]
 
 
 @pytest.fixture

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import time
 
-
 import pytest
 
 from scitex_agent_container._state.state_store_blocks import (
@@ -23,7 +22,6 @@ from scitex_agent_container._state.state_store_blocks import (
     open_blocks_store,
     unblock_send,
 )
-
 
 # ---------------------------------------------------------------------------
 # block_send + has_block — basic persistence

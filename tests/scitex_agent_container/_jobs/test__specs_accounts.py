@@ -13,7 +13,6 @@ assertions pin the peer list and the copying verb, not just the cadence.
 
 from __future__ import annotations
 
-
 import pytest
 
 jobs_mod = pytest.importorskip(

@@ -22,13 +22,12 @@ from ._helpers import (
     HOOK_KEYS,
     MODEL_DISPLAY_NAMES,
     MODEL_ENV_KEY,
-    _parse_command_list,
     get_nested,
     interpolate_metadata,
     resolve_model_surface,
 )
 from ._hooks import parse_hooks
-from ._hosts import _VALID_SCHEDULING_MODES, parse_hosts_spec, parse_scheduling
+from ._hosts import parse_hosts_spec, parse_scheduling
 from ._listen import parse_listen
 from ._mcp import interpolate_mcp_servers
 from ._proxy import parse_proxy

@@ -27,6 +27,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 
 from __future__ import annotations
 
+import pytest
+
 from scitex_agent_container._events import SUBJECT_DEGRADED, read_events
 from scitex_agent_container._reconcile._alarm import SUBSYSTEM
 from scitex_agent_container._reconcile._budget import load_history
@@ -41,8 +43,6 @@ from tests.scitex_agent_container._reconcile._fleet import (
     verdict_of,
     write_spec,
 )
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

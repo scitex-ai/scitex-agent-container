@@ -36,10 +36,10 @@ these bounds are the only thing standing between the suite and the index.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 #: The lowest fastmcp the _mcp suite has ever been observed to pass on.
 #: Not a guess: 3.4.7 is what run 32184153812 resolved and passed with.

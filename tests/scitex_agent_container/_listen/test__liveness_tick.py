@@ -24,8 +24,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from scitex_agent_container._state.state_store_instances import record_instance_start
-
+# The blocking IO resolvers live beside the loop glue (``_liveness_tick`` is
+# the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
+from scitex_agent_container._listen import _liveness_tick_resolve as mod
 from scitex_agent_container._listen._liveness_tick import (
     DEFAULT_INTERVAL_S,
     DEFAULT_RENOTIFY_S,
@@ -35,10 +36,7 @@ from scitex_agent_container._listen._liveness_tick import (
     emit_anomaly,
     liveness_tick_reconciler_loop,
 )
-
-# The blocking IO resolvers live beside the loop glue (``_liveness_tick`` is
-# the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
-from scitex_agent_container._listen import _liveness_tick_resolve as mod
+from scitex_agent_container._state.state_store_instances import record_instance_start
 
 
 @pytest.fixture(autouse=True)

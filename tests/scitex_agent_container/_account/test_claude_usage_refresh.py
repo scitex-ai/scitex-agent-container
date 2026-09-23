@@ -12,7 +12,6 @@ from typing import Any
 
 from scitex_agent_container._account import claude_usage as cu
 
-
 # ---------------------------------------------------------------------------
 # Fakes — same pattern as test_claude_usage.py (kept local for clarity).
 # ---------------------------------------------------------------------------

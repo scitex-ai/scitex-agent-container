@@ -8,8 +8,6 @@ assert per test.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
-
 import json
 import os
 import shutil
@@ -19,6 +17,8 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
 
 # Module-level capability probe: the FD-held predicate is defence-in-
 # depth and relies on ``lsof``. When ``lsof`` is missing the predicate

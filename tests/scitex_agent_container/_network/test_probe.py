@@ -548,7 +548,7 @@ class TestAppendResult:
         # Act
         lines = (tmp_path / "a.jsonl").read_text().splitlines()
         # Assert
-        assert [json.loads(l) for l in lines] == [{"i": 1}, {"i": 2}]
+        assert [json.loads(line) for line in lines] == [{"i": 1}, {"i": 2}]
 
     def test_sanitises_slash_in_agent_name(self, tmp_path: Path):
         # Arrange

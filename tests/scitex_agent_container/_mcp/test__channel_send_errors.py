@@ -48,7 +48,6 @@ from scitex_agent_container._mcp._channel_send_errors import (  # noqa: E402
 )
 from scitex_agent_container._mcp._channel_tools import register_tools  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # A real loopback listen. Speaks just enough HTTP/1.1 to answer message:send
 # with a configurable publish reply — the same shape sac listen returns from

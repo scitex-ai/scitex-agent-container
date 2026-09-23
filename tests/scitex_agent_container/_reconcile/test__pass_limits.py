@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from scitex_agent_container._events import (
     PASS_COMPLETED,
     SUBJECT_DEGRADED,
@@ -44,8 +46,6 @@ from tests.scitex_agent_container._reconcile._fleet import (
     verdict_of,
     write_spec,
 )
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

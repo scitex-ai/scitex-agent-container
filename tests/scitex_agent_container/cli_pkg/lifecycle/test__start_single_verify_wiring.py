@@ -18,8 +18,6 @@ loopback HTTP listen. AAA markers, one assertion per test, 3+-word names.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 from pathlib import Path
@@ -30,6 +28,7 @@ import pytest
 from scitex_agent_container.cli_pkg.lifecycle._start_single import (
     run_single_targets,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 _SIF_KEYS = ("APPTAINER_CONTAINER", "SINGULARITY_CONTAINER")
 _LISTEN_KEYS = (

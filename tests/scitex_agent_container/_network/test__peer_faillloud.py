@@ -18,8 +18,6 @@ through ``resolve_config``. Conforms to STX-TQ002 (AAA markers), STX-TQ003
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import os
 from pathlib import Path
@@ -27,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._network.peer import PeerError, resolve_peer_url
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)

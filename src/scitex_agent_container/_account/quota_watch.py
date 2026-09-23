@@ -250,7 +250,7 @@ def check_and_rotate(
                 "message": "dry-run: would rotate",
             }
 
-        result = switch_account(
+        switch_account(
             next_acct["name"],
             store_dir=store_dir,
             home=home,

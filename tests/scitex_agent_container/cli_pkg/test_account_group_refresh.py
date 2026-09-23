@@ -20,7 +20,6 @@ from click.testing import CliRunner
 from scitex_agent_container._state.account_store import save_account
 from scitex_agent_container.cli_pkg.account_group import account
 
-
 # ---------------------------------------------------------------------------
 # Sandbox + helpers
 # ---------------------------------------------------------------------------
