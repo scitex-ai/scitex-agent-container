@@ -332,3 +332,12 @@ def test_background_review_refuses_non_boolean_values(value):
     # Assert
     with ctx:
         compile_hermes_config(plan, workdir="/work", background_review=value)
+
+
+def test_compiler_forwards_cct_token_into_tool_env():
+    # CCT rail: the agent's own bot token must reach its Bash tool env via
+    # terminal.env_passthrough (Hermes does not blocklist CCT_* names).
+    result = compile_hermes_config(_plan(), workdir="/work")
+    passthrough = result["terminal"].get("env_passthrough", [])
+    assert "CCT_BOT_TOKEN" in passthrough
+    assert "CCT_AGENT_ID" in passthrough

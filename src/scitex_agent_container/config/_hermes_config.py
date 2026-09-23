@@ -170,6 +170,11 @@ def compile_hermes_config(
             "backend": "local",
             "cwd": workspace,
             "auto_source_bashrc": False,
+            # CCT rail: the agent's own bot token + id must reach its Bash
+            # tool env. Hermes scrubs provider credentials from tool children
+            # but CCT_BOT_TOKEN/CCT_AGENT_ID are NOT blocklisted, so listing
+            # them in terminal.env_passthrough forwards the inherited values.
+            "env_passthrough": ["CCT_BOT_TOKEN", "CCT_AGENT_ID"],
         },
         "auxiliary": {
             "title_generation": {"enabled": False},
