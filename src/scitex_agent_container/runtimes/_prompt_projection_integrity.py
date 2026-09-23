@@ -34,13 +34,36 @@ def _is_prompt_path(relative: Path) -> bool:
 
 
 def _walk_prompt_files(root: Path) -> Iterable[tuple[Path, Path]]:
-    """Yield ``(relative, file)`` deterministically, following skill links."""
+    """Yield ``(relative, file)`` deterministically, following skill links.
+
+    Never escapes ``root``: a symlink (or bind) pointing outside the tree
+    is not descended into (pruned from ``dirnames``). Without this, an
+    agent home containing ``proj -> /home/ywatanabe/proj`` walks the
+    operator's entire project tree — including ``.old/`` archives and
+    nested worktree venvs — and the start hangs in this walker.
+    """
     if not root.is_dir():
+        return
+    try:
+        root_resolved = root.resolve()
+    except OSError:
         return
     seen: set[Path] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
         current = Path(dirpath)
-        resolved = current.resolve()
+        try:
+            resolved = current.resolve()
+        except OSError:
+            dirnames[:] = []
+            continue
+        try:
+            inside = resolved == root_resolved or resolved.is_relative_to(root_resolved)
+        except (OSError, ValueError):
+            inside = False
+        if not inside:
+            # Outside the tree (escaped via symlink/bind) — do not descend.
+            dirnames[:] = []
+            continue
         if resolved in seen:
             dirnames[:] = []
             continue
@@ -48,7 +71,10 @@ def _walk_prompt_files(root: Path) -> Iterable[tuple[Path, Path]]:
         dirnames[:] = sorted(dirnames)
         for filename in sorted(filenames):
             path = current / filename
-            relative = path.relative_to(root)
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
             if path.is_file() and _is_prompt_path(relative):
                 yield relative, path
 

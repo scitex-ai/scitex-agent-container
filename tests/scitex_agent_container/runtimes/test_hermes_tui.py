@@ -487,3 +487,44 @@ def test_stop_detaches_inbox_before_tmux_session():
         True,
         ["cct-stop", "inbox-stop", "recovery-stop", "tmux-stop"],
     )
+
+
+class FakeMux:
+    """Minimal tmux double: scripted panes, records sent keys."""
+
+    def __init__(self, panes):
+        self._panes = list(panes)
+        self.keys = []
+        self.name = "tui-ut"
+
+    def exists(self, name):
+        return True
+
+    def capture_content(self, name):
+        return self._panes.pop(0) if self._panes else self._panes[-1] if self._panes else ""
+
+    def send_keys(self, name, key):
+        self.keys.append(key)
+
+
+def test_drain_answers_contributor_tier_then_reports_ready():
+    """Regression (2026-09-23): the Hermes drain watched the [y/N] prompt
+    until timeout and reported SUCC over a corpse; the supervisor reaped
+    the agent minutes later. Now the shared prompt registry answers it."""
+    from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
+
+    boot_prompt = (
+        "This is Meta's contributor tier. Training on your data.\n"
+        "Use this model for this invocation? [y/N] !!! CONTRIBUTOR TIER"
+    )
+    ready_pane = "─ ready │ muse spark 1.3 contributor free ─ sac:ut…\n❯\n"
+    mux = FakeMux([boot_prompt, ready_pane])
+
+    rt = HermesTuiSessionRuntime.__new__(HermesTuiSessionRuntime)
+    rt._mux = mux
+
+    class Cfg:
+        name = "ut-agent"
+
+    assert rt._drain_at_boot(Cfg(), timeout_s=5, poll_s=0) is True
+    assert "y" in mux.keys and "Enter" in mux.keys

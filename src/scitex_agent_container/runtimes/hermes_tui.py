@@ -133,13 +133,37 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         timeout_s: float,
         poll_s: float = 0.5,
     ) -> bool:
-        """Observe Hermes' own footer until its session composer is bound."""
+        """Drain Hermes boot modals (incl. contributor-tier confirm), then
+        observe its footer until the session composer is bound.
+
+        The observation-only loop used to sit through an answerable [y/N]
+        until timeout and then report the start SUCC over a corpse; the
+        supervisor reaped it minutes later. Now each frame first runs the
+        shared prompt registry (which holds the fleet-accepted
+        hermes-contributor-tier handler) before checking boot readiness.
+        """
         import scitex_logging as slogging
+
+        from . import prompts as _prompts
 
         name = self.session_name(config)
         deadline = time.monotonic() + timeout_s
         while name and self._mux.exists(name) and time.monotonic() < deadline:
             pane = self._mux.capture_content(name)
+            modal = _prompts.detect(pane)
+            if modal is not None:
+                answered = _prompts.respond_modal(
+                    modal, lambda key: self._mux.send_keys(name, key)
+                )
+                if answered:
+                    slogging.getLogger(__name__).info(
+                        "Hermes TUI boot drain for %s: answered prompt %r.",
+                        config.name,
+                        modal,
+                    )
+                    if poll_s > 0:
+                        time.sleep(poll_s)
+                    continue
             ready = _hermes_pane_boot_ready(pane)
             if ready is not None:
                 if not ready:

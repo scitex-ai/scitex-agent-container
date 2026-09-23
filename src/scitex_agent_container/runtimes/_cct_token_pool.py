@@ -253,7 +253,32 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
 
     if resolution.source == SOURCE_ENV_FILE:
         # Hand-authored .envrc (or a prior deploy) already provided the
-        # token — authoritative. Only backfill the identity default.
+        # token — authoritative, UNLESS the pool now resolves a DECLARED slot
+        # for this agent (a stale truncated/rotated token from an earlier
+        # deploy must not pin the agent forever; measured 2026-09-23: three
+        # lead agents carried 23-char truncated tokens while the pool held
+        # the full 46-char values, and every start failed bot_token_valid).
+        # Only backfill the identity default otherwise.
+        declared = _declared_slot(config)
+        if declared:
+            try:
+                pool_value = (pool.env.get(f"{_POOL_PREFIX}{declared}", "") or "")
+            except Exception:
+                pool_value = ""
+            if pool_value and existing.get(_TOKEN_VAR) != pool_value:
+                existing[_TOKEN_VAR] = pool_value
+                existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
+                _write_env_file(env_file, existing)
+                _logger().warning(
+                    "cct: refreshed stale %s for agent %r from pool slot %s%s "
+                    "(value not logged) -> %s.",
+                    _TOKEN_VAR,
+                    agent_name,
+                    _POOL_PREFIX,
+                    declared,
+                    env_file,
+                )
+                return
         if not existing.get(_AGENT_ID_VAR):
             existing[_AGENT_ID_VAR] = _default_agent_id(agent_name, workdir)
             _write_env_file(env_file, existing)
