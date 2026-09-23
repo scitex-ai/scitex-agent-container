@@ -337,6 +337,22 @@ def _detect_codex_done(content: str) -> bool:
     return _CODEX_COMPOSER_MARKER in tail and _CODEX_FOOTER.search(tail) is not None
 
 
+def _detect_hermes_contributor_tier(content: str) -> bool:
+    """Hermes' Meta contributor-tier data-training confirmation (2026-09-23).
+
+    "CONTRIBUTOR TIER — TRAINS ON YOUR DATA ... Use this model for this
+    invocation? [y/N]" — Hermes asks this at TUI boot when the resolved
+    model is a Meta contributor tier. The fleet runs the contributor tier
+    deliberately (free, full authority, training accepted), so the
+    correct answer is always "y". Must out-rank everything except the
+    resume picker — it blocks boot the same way.
+    """
+    return (
+        "CONTRIBUTOR TIER" in content
+        and "Use this model for this invocation? [y/N]" in content
+    )
+
+
 def _detect_done(content: str) -> bool:
     """Check if the TUI is at its main input prompt (all prompts done).
 
@@ -352,6 +368,12 @@ def _detect_done(content: str) -> bool:
 # Detection uses numbered options + prompt text for reliability.
 # To add a new prompt, append a PromptHandler or call register_prompt().
 PROMPT_HANDLERS: list[PromptHandler] = [
+    PromptHandler(
+        name="hermes-contributor-tier",
+        detect=_detect_hermes_contributor_tier,
+        keys=["y", "Enter"],  # fleet runs the contributor tier deliberately
+        priority=1,
+    ),
     PromptHandler(
         name="codex-dir-trust",
         detect=_detect_codex_dir_trust,
