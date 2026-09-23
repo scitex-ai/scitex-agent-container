@@ -19,9 +19,9 @@ no `metadata.name` field).
 
 ## Quick links
 
-- Annotated full example: [`examples/agents/full-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml) — every supported field with inline comments
-- Minimal example: [`examples/agents/minimal-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml)
-- Quickstart with `startup_prompts`: [`examples/agents/hello-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml)
+- Annotated full example: [`examples/agents/full-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml) — every supported field with inline comments
+- Minimal example: [`examples/agents/minimal-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml)
+- Quickstart with `startup_prompts`: [`examples/agents/hello-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml)
 
 ## Top-level shape
 
@@ -496,14 +496,14 @@ Authoring contract:
   not enforce an apptainer `--net` policy.
 - Runs in `sac-proxy.sif` — see `containers/sac-proxy.def`.
 
-See [`examples/agents/proxy-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml)
+See [`examples/agents/proxy-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml)
 for a complete minimal example.
 
 ## Examples
 
-Copy from [`examples/agents/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents):
+Copy from [`examples/agents/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents):
 
-- [`full-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent) — annotated spec exercising every supported field (plus `to_home/` layout)
-- [`minimal-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent) — bare minimum, no `to_home`
-- [`hello-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/hello-agent) — quickstart with `startup_prompts`
-- [`proxy-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent) — `kind: AgentProxy` forwarder example
+- [`full-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/full-agent) — annotated spec exercising every supported field (plus `to_home/` layout)
+- [`minimal-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/minimal-agent) — bare minimum, no `to_home`
+- [`hello-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/hello-agent) — quickstart with `startup_prompts`
+- [`proxy-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/proxy-agent) — `kind: AgentProxy` forwarder example
