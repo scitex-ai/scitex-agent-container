@@ -448,6 +448,93 @@ versioning follows [SemVer](https://semver.org/).
   LIVE agent read as stopped and `preflight` let the rename proceed underneath
   it.
 
+## [0.28.2] - 2026-09-22
+
+**Three weeks, one theme: the fleet grows up.** Named engines let one spec
+declare several runtimes with one picked at start; the harness/engine split
+means any agent can run on Qwen, Codex, or Claude; and the GUI, the images,
+and the lifecycle all learned the same lesson — never let one slow or stale
+thing take down the whole fleet.
+
+### Added
+- One spec declares several named engines (`engines:` + `--engine`), with
+  start-time switching and a restart that refuses an unhonourable engine
+  BEFORE stopping the agent (#1287).
+- `sac agents migrate-engines`: writes HARNESS x ENGINE into every spec, and
+  `sac agents list` reports which engine an agent is ACTUALLY running on
+  (#1316, #1318).
+- Codex arrives as a first-class harness: TUI lifecycle, pane inherits the
+  Claude hooks, MCP servers inherit the pane's fleet environment, and an
+  explicit subscription-engine picker (#1298, #1300, #1303, #1305).
+- GUI: agent activity timeline with safe control surfaces, a scoped
+  browser-facing Agents dashboard, and a fleet shell that renders before any
+  inventory read so one slow control-plane read cannot lose the whole fleet
+  (#1505, #1330, #1512).
+- The agent-forking command is named `fork`, not `twin`, and paid models
+  route through a neutral egress gateway (#1519, #1347).
+- Monitoring: alarm when an agent's log is REPEATING, not working (#1525).
+- `sac doctor` reports image-frozen package identity (#1492).
+
+### Changed
+- **Requires Python >= 3.11**; the 3.10 support claim is dropped (#1523).
+- Images: reproducible builds with staged provenance, Hermes pinned in the
+  base image, Cards staged exactly, and `psutil` declared a runtime
+  dependency (#1337, #1466).
+- Lifecycle spec authority fails closed: starts refuse non-git/unreachable
+  sources, dirty repos, diverged live sources, and stale bypasses (#1473).
+- New agent state lives on scratch, owned worktrees are provisioned before
+  launch, and agent tasks gate on a neutral worktree policy (#1428, #1474).
+- A2A: scheduled fleet-wide reachability probe, nonce-bound agentic
+  feedback, and a cross-host forwarder that resolves peers from the host
+  registry — never a silent HTTP fallback (#1284, #1285, #1410).
+- Hermes hardening throughout: engine-scoped session identity, progress-aware
+  heartbeats, stale-provider recovery, neutral delegation policy, and prompt
+  projection provenance verification (#1422, #1475, #1499, #1518).
+- Protocol: asynchronous turn receipts, visible delivery binding, 202
+  handling, and bridges that refuse without a ledger ACL (#1385, #1398,
+  #1404).
+
+### Fixed
+- A malformed heartbeat event no longer makes the whole replay
+  unprojectable (#1524).
+- MCP fleet inventory is host-authoritative (#1481).
+- `sac agents delete` reaps a DANGLING spec link instead of reporting it not
+  found, and refuses cross-device spec archives (#1520, #1393).
+- Standalone hook/probe output routes through scitex-logging (#1473).
+- The store DSN no longer points at a READ-ONLY replica (no agent state was
+  written from 08-23 until this fix).
+
+## [0.28.1] - 2026-09-02
+
+### Fixed
+- The fleet-env injection test no longer encodes where scitex-dev's default
+  lands (0.58.1 moved it). Test-only fix; no runtime change (#1281).
+
+## [0.28.0] - 2026-09-01
+
+**SQLite is out.** Every agent-state table — instances, lineage, dispatches,
+channel_events, comms_nodes, comms_grants, diary, relocation trio — now lives
+in PostgreSQL, renamed by its own migration step with its own inverse. The
+storage engine, the one-shot carriers, the allowlists, and `DEFAULT_DB_PATH`
+are deleted, and the retired engine's name reaches zero outside `docs/adr`.
+
+### Added
+- Renaming an agent carries its ACL grants; `_rename_db` is deleted (#1273).
+- `sac agents roles`: 103 of 115 agents could not say what they are for, so
+  now they can (#1230).
+- Agents come back on their own after a rate wall lifts, and a Fable-capped
+  agent switches to opus instead of going silent (#1259, #1313).
+- The inbound_dispatches migration that was never written, plus
+  `--accept-post-cutover-replay` with a remedy that can be followed
+  (#1267, #1265).
+
+### Fixed
+- `create` births agents as `session:resume`, not null or continue (#1232).
+- The A2A rail stops fabricating `delivered_subscriber_count` and adopts the
+  shared StatusCode (#1264).
+- Three follow-ups an audit found in the merged migrations, and a diary
+  migration that could never write a row (#1246, #1237).
+
 ## [0.27.0] - 2026-08-26
 
 **A job that has nothing to do is not a job that failed.** The theme of this
