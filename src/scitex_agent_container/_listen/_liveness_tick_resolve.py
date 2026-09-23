@@ -29,11 +29,12 @@ OWN records outrank it:
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from datetime import timezone
 from pathlib import Path
 from typing import Iterable
+
+import scitex_logging as slogging
 
 from ._liveness_tick_detect import AgentLiveness, open_card_owners
 

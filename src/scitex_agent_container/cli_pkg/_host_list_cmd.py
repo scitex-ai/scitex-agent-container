@@ -7,11 +7,11 @@ cap; the command is attached onto the ``host`` group at import time via
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import host_interfaces, load
 from ._helpers import _json_flag
 

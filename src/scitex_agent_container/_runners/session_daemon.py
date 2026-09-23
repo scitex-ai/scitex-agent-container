@@ -63,11 +63,12 @@ declares a planned END, never an excuse.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 import signal
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config._residency_types import (
     AGENT_RESIDENCIES,

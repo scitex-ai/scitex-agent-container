@@ -47,12 +47,13 @@ not a registry implementation.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Literal
+
+import scitex_logging as slogging
 
 from .host_config import Config, LeadConfig, load
 

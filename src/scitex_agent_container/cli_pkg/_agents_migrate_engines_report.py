@@ -41,9 +41,9 @@ not only of the payload.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from rich.markup import escape
 
+from .._logging import render_rich
 
 __all__ = [
     "plan_payload",

@@ -21,8 +21,9 @@ agent learns of the verdict on its next heartbeat/poll regardless).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

@@ -28,10 +28,11 @@ empty ``commands/`` dir fabricated). Non-``*.md`` entries (e.g.
 from __future__ import annotations
 
 import hashlib
-import scitex_logging as slogging
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

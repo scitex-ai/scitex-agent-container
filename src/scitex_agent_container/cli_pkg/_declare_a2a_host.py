@@ -26,12 +26,12 @@ operation and deserves its own PR.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 from .refresh_acl import _fleet_registry_dir
 
 

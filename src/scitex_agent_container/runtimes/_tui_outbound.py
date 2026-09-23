@@ -30,9 +30,10 @@ queryable communication state — not an ad-hoc side file.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Any, Optional
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

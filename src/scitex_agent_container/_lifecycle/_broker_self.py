@@ -48,7 +48,6 @@ correct default.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import secrets
 import socket
@@ -61,6 +60,8 @@ import urllib.request
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Iterator
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

@@ -36,10 +36,11 @@ container and no spec; its AgentCard is synthesised by
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 from collections import deque
 from typing import Any
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

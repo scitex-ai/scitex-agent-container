@@ -29,12 +29,12 @@ Design constraints (per the work item):
 
 from __future__ import annotations
 
-from .._logging import write_stream
 import json
 import subprocess
 import time
 from pathlib import Path
 
+from .._logging import write_stream
 from ._sibling import warn_if_newer_sibling
 from ._status import DriftState, DriftStatus
 

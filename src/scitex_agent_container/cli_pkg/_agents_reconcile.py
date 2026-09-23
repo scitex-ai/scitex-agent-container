@@ -13,11 +13,11 @@ a failure nobody could see went unnoticed for hours.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._reconcile import DEFAULT_PASS_CAP, Verdict, reconcile_pass
 from ._helpers import _json_flag
 

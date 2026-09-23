@@ -41,11 +41,12 @@ health check is worse than none. See ``docs/mcp-load-resilience.md``.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import time
 from pathlib import Path
 from typing import Callable, Iterable
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

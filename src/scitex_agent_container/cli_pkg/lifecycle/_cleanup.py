@@ -4,9 +4,9 @@
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import click
 
+from ..._logging import render_rich
 from ..._state.registry import Registry
 
 

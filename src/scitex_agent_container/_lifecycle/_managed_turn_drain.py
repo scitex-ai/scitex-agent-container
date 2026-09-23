@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import math
 import time
 from dataclasses import dataclass
 from typing import Callable
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ..runtimes._hermes_tui_rpc import HermesTurnActivity, observe_turn_activity

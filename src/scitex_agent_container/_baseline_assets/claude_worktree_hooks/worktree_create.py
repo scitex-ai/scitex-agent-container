@@ -80,6 +80,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 try:
     import scitex_logging as slogging
 

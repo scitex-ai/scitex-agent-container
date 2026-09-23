@@ -58,8 +58,9 @@ content — see ``_to_home_errors.py`` for context.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp

@@ -44,10 +44,11 @@ avoid a duplicate/conflicting flag.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import re
 import shutil
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._state.host_scratch import (
     ScratchRootError,

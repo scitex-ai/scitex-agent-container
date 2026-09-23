@@ -77,8 +77,9 @@ it has always had.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import subprocess
+
+import scitex_logging as slogging
 
 __all__ = [
     "STATUS_MARKER",

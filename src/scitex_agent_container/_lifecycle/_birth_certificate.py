@@ -34,11 +34,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import scitex_logging as slogging
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

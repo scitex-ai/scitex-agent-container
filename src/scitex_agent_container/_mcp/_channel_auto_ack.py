@@ -23,11 +23,12 @@ inbox-event injection:
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import time
 from collections import deque
 from typing import Any
+
+import scitex_logging as slogging
 
 from .._env import getenv as _sac_env
 from ..a2a._inbox_bus import DAEMON_SENDER

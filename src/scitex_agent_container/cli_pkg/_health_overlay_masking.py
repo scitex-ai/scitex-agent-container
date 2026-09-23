@@ -6,8 +6,9 @@ Published NEXT TO ``healthy`` (never folded into the exit code), same as
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from typing import Any
+
+from .._logging import render_rich
 
 __all__ = ["overlay_masking_payload", "print_overlay_masking"]
 

@@ -110,8 +110,8 @@ def collect_checkout_state(
 
 def emit_collect(sac_version: str | None) -> int:
     """Worker-mode entry: print manifest JSON, return process exit code."""
-    from .._state.host_config import load as load_config
     from .._state.checkout_manifest import build_checkout_manifest
+    from .._state.host_config import load as load_config
 
     try:
         cfg = load_config()

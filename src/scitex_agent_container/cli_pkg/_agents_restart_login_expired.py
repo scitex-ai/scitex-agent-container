@@ -20,12 +20,12 @@ safe.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
 from .._authheal import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, auth_heal_pass
+from .._logging import render_rich
 from .._reconcile._rule import Verdict
 from ._helpers import _json_flag
 

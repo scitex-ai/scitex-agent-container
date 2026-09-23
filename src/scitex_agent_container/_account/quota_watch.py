@@ -12,11 +12,12 @@ Usage:
 from __future__ import annotations
 
 import logging
-import scitex_logging as slogging
 import os
 import sys
 import time
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._state.account_store import list_accounts, switch_account
 from .claude_usage import fetch_usage

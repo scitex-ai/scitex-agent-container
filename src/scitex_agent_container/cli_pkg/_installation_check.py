@@ -26,11 +26,11 @@ failure class this guard exists for spent days looking green.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._maintenance import (
     IMPORTS_LIVE,
     DistributionVerdict,

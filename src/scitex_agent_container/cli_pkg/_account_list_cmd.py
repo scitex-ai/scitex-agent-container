@@ -26,9 +26,9 @@ consumers.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import click
 
+from .._logging import render_rich
 from ._account_list_fleet import fleet_account_options, run_fleet_account_list
 
 

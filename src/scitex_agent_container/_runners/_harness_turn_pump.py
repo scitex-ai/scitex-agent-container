@@ -34,10 +34,11 @@ events), so it propagates to the daemon, whose done-callback records
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import sys
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._harness_session import Message
 from ._incarnation import WRITER_TURN_DRIVER

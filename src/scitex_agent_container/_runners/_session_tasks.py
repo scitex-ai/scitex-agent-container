@@ -31,9 +31,10 @@ a masked failure.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from dataclasses import dataclass, field
 from typing import Any
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

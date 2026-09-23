@@ -15,12 +15,12 @@ Design notes:
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import _default_config_path
 from .._state.host_config import load as _load_cfg
 from ._helpers import _json_flag

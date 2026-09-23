@@ -60,8 +60,9 @@ once the turn completes, carrying ``final_response``, the thread id as
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from typing import Any, AsyncIterator, Mapping, Sequence
+
+import scitex_logging as slogging
 
 from ._harness_session import Message, NormalizedEvent, RunResult
 

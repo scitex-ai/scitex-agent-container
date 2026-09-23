@@ -40,7 +40,6 @@ contract downstream consumers parse.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import os
 import time
 from dataclasses import dataclass
@@ -50,6 +49,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from .._logging import render_rich
 from ._account_list_format import (
     format_as_of_short,
     format_dt_local,

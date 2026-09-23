@@ -27,7 +27,6 @@ mutated. The probes are outbound TCP connects that touch nothing.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json as _json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +34,8 @@ from pathlib import Path
 from typing import Callable
 
 import click
+
+from .._logging import render_rich
 
 
 def _reference_map() -> list[dict]:

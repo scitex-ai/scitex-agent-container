@@ -56,9 +56,10 @@ fallback: a partial/stale view is never served.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 # Directory basenames pruned from the host walk (git worktrees etc.) — shared
 # with the rest of SAC's heavy walkers.

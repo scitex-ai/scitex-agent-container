@@ -32,8 +32,9 @@ error). No empty ``skills/`` dir is fabricated when nothing is deployed.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

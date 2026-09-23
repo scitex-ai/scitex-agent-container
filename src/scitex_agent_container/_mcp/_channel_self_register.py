@@ -44,8 +44,9 @@ module follows the same convention.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from urllib.parse import urlparse
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

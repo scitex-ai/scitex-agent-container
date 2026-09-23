@@ -31,17 +31,21 @@ hand.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-from .._logging import render_rich
 import json
 import subprocess
 from typing import Any
 
 import click
+import scitex_logging as slogging
 
-from .._state.host_config import Config, build_ssh_argv, load
+from .._logging import render_rich
 from .._state.checkout_manifest import diff_checkout_manifests
-from ._fleet_sync import _fail_loud_unreachable, _is_unresolvable, _fail_loud_unresolvable
+from .._state.host_config import Config, build_ssh_argv, load
+from ._fleet_sync import (
+    _fail_loud_unreachable,
+    _fail_loud_unresolvable,
+    _is_unresolvable,
+)
 from ._fleet_sync_code_collect import collect_checkout_state, emit_collect
 
 log = slogging.getLogger(__name__)

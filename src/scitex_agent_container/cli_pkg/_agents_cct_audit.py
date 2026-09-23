@@ -41,13 +41,13 @@ TOKEN VALUES ARE NEVER READ
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 from pathlib import Path
 
 import click
 from rich.table import Table
 
+from .._logging import render_rich
 from ..runtimes._cct_rail_verdict import (
     RAIL_DOWN,
     RAIL_NOT_REQUESTED,

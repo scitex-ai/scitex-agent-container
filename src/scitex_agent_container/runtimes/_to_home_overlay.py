@@ -30,8 +30,9 @@ specs are not the relaxed ``--home``-override pattern).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._to_home import deploy_to_home

@@ -8,8 +8,6 @@ Deliverables:
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-from .._logging import render_rich
 import importlib.resources
 import shutil
 import subprocess
@@ -17,7 +15,9 @@ import sys
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 
+from .._logging import render_rich
 from . import _installation_check
 
 # ---------------------------------------------------------------------------

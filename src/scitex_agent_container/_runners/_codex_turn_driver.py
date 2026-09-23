@@ -32,9 +32,10 @@ nothing to any vendor.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config._harness_registry import CODEX_SDK, HARNESS_DESCRIPTORS
 from ._harness_session import Message

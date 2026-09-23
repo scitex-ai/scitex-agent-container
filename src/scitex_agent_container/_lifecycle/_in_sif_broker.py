@@ -41,9 +41,10 @@ FAIL-LOUD invariants (ADR-0010 / handoff §0):
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 # Module level, NOT deferred into the function. The deferred ``_spawn_client``
 # import below is guarded by a "avoids a cycle if the spawn client ever grows

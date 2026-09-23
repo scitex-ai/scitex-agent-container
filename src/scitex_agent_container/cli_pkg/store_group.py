@@ -19,13 +19,13 @@ ship a delta to.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import os
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 from .._state.state_store import gc_dead_instances, import_legacy_registry
 from ._helpers import _json_flag
 

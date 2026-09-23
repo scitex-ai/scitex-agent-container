@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 import shutil
 import subprocess
 import time
 import uuid
 from typing import Any
+
+import scitex_logging as slogging
 
 from .._state.dispatch_ledger import get_dispatch
 from .._state.dispatch_nudges import (

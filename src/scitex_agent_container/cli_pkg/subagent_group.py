@@ -12,11 +12,11 @@ orchestrator); this surface returns the same facts that the
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json as json_mod
 
 import click
 
+from .._logging import render_rich
 from .._mcp._tools import _subagent
 from ._helpers import _json_flag
 

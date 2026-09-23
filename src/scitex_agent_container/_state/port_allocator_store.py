@@ -92,9 +92,10 @@ a forked child (the concurrency tests use ``multiprocessing``) never reuses
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import threading
 from typing import TYPE_CHECKING, Any
+
+import scitex_logging as slogging
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.store import Store

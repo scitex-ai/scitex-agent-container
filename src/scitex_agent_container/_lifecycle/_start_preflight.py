@@ -7,10 +7,10 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-from .._logging import write_stream
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .._logging import write_stream
 from ..config import AgentConfig
 
 

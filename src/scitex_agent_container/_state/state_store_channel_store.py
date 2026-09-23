@@ -91,7 +91,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import psycopg
-
     from scitex_dev.store import StoreTarget
 
 __all__ = [

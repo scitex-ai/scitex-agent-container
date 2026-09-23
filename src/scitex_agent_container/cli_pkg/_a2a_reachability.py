@@ -14,11 +14,11 @@ rendered as nothing is how a fleet with no peer tokens reads as healthy.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from ._helpers import _json_flag
 
 #: Colour per three-valued verdict. Anything that is not a measured

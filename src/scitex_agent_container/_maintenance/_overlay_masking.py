@@ -8,9 +8,10 @@ states report UNKNOWN, never clean. Vocabulary: :mod:`._overlay_masking_model`.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 from .._drift.versions import (
     DEFAULT_VENV,

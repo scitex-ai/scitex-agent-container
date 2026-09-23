@@ -28,9 +28,10 @@ else is string/AST work, so the shapes can be tested from literal text.
 from __future__ import annotations
 
 import ast
-import scitex_logging as slogging
 import re
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._install_integrity_model import (
     POINTER_FINDER,

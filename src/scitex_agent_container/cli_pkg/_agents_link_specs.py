@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import hashlib
 import json
 import os
@@ -13,6 +12,7 @@ from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 
 _AGENTS_DIR_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
 

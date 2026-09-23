@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import shutil
 import subprocess
 import sys
 
 import click
 
+from .._logging import render_rich
 from ..config import load_config, resolve_config, validate_config
 from ._helpers import agent_name_complete
 

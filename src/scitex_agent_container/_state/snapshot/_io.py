@@ -12,7 +12,6 @@ Kept deliberately stdlib-only: no psutil, no yaml, no new deps.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import platform
 import re
@@ -22,6 +21,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._diff import compute_diff_fields
 from ._lock import _snapshot_lock

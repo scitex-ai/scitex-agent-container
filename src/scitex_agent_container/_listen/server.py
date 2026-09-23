@@ -495,6 +495,7 @@ def create_app(
     # posts here so the writes land on the HOST listen's state.db
     # (rather than the silently-ineffective per-container copy).
     from ._acl_routes import acl_block, acl_grant, acl_unblock
+    from ._fleet_inventory import fleet_inventory
 
     # Arbitrary host-command bypass for developer + researcher agents (operator
     # directive 2026-07-01). Bearer-authed by the outer middleware; a group gate
@@ -512,7 +513,6 @@ def create_app(
     # a subscribed (containerized) agent receives it. Bearer-gated by the
     # ``BearerAuthMiddleware`` below (not in its ``PUBLIC_PATHS``).
     from ._notify import notify
-    from ._fleet_inventory import fleet_inventory
 
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),

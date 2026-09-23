@@ -35,10 +35,11 @@ must always emit valid JSON.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import subprocess
 from pathlib import Path
 from typing import Iterable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

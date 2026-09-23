@@ -107,10 +107,11 @@ the one command that makes both work again.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import socket
 from pathlib import Path
 from typing import Iterable, NamedTuple
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

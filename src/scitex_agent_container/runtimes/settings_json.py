@@ -51,9 +51,10 @@ Global seed (ensure_global_settings_json):
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 

@@ -33,7 +33,6 @@ IT NEVER RESTARTS ANYTHING
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import time
 
@@ -43,6 +42,7 @@ from rich.table import Table
 from .._authheal._journal import Journal, log_path
 from .._authheal._liveness import DEFAULT_OBSERVE_S, LIVE, corroborate
 from .._authheal._positional import ALIVE, DEAD, UNKNOWN, classify_positional
+from .._logging import render_rich
 from ._helpers import _json_flag
 
 _VERDICT_STYLE = {

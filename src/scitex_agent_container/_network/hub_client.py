@@ -25,11 +25,12 @@ NOT block agent_start / agent_stop.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from typing import Any
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
+
+import scitex_logging as slogging
 
 from .._env import getenv as _sac_env
 

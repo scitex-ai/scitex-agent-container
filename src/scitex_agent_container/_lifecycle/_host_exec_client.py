@@ -13,11 +13,12 @@ tests inject a hand-rolled fake so there is no monkeypatching of the transport.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
+
+import scitex_logging as slogging
 
 from ._listen_client_resolve import (
     _parse_body,

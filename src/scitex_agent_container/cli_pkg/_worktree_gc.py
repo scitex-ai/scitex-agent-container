@@ -13,11 +13,11 @@ product; the removals are the easy half.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._maintenance import (
     DEFAULT_CAP,
     DEFAULT_MIN_AGE_HOURS,

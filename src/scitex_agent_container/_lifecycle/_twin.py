@@ -39,8 +39,9 @@ IDENTITY SPLIT — safety-critical:
 from __future__ import annotations
 
 import copy
-import scitex_logging as slogging
 from typing import Any, Iterable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

@@ -61,9 +61,9 @@ failure → ``500`` with the reason. No silent drops.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from typing import Any
 
+import scitex_logging as slogging
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 

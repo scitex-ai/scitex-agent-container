@@ -31,7 +31,6 @@ value either.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
@@ -49,6 +48,7 @@ from .._hostsync import (
     syncable_peers,
 )
 from .._hostsync._token_state import DEFAULT_LISTEN_PORT
+from .._logging import render_rich
 from .._state.host_config import load as _load_cfg
 from ._helpers import _json_flag
 

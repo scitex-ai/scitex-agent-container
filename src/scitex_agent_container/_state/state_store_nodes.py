@@ -109,12 +109,6 @@ __all__ = [
 # cap beside everything else it carries. Same split, same reason, as
 # :mod:`.state_store_lineage_rel`. Re-exported here so every existing
 # ``from ..._state.state_store_nodes import record_lineage`` keeps resolving.
-from .state_store_lineage_group import (  # noqa: E402
-    derive_group,
-    record_lineage,
-)
-
-
 # ---------------------------------------------------------------------------
 # named groups (operator 2026-06-25) — a SECOND grouping axis layered on
 # top of the lineage-derived group mesh above. The group NAME is resolved
@@ -123,8 +117,6 @@ from .state_store_lineage_group import (  # noqa: E402
 # ACL-check time. Pure DB reads — the resolver itself is in
 # :mod:`scitex_agent_container.config._group_resolver`.
 # ---------------------------------------------------------------------------
-
-
 # ``resolve_group_name`` (the PRIMARY / mesh projection) and
 # ``same_named_group`` moved into the sibling group module alongside the
 # MULTI-value readers: both projections now resolve through the SPEC
@@ -132,8 +124,6 @@ from .state_store_lineage_group import (  # noqa: E402
 # keeping the two in one file is what stops them drifting onto different
 # sources again. Re-exported here so the long-standing import path
 # ``from ..._state.state_store_nodes import resolve_group_name`` keeps working.
-
-
 # The AUTHORITY predicates (``is_developer`` / ``is_researcher`` /
 # ``is_privileged``) are MULTI-value and live in a sibling module under
 # the per-file line cap. They ask "is <group> among this agent's named
@@ -147,6 +137,10 @@ from .state_store_groups import (  # noqa: E402
     resolve_group_name,
     resolve_group_names,
     same_named_group,
+)
+from .state_store_lineage_group import (  # noqa: E402
+    derive_group,
+    record_lineage,
 )
 
 # ---------------------------------------------------------------------------

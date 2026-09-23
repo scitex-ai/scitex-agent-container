@@ -21,9 +21,10 @@ of those names from this module keep resolving.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._rate_limit_reactive import handle_rate_limit_failure
 from ._session_dead_recovery import handle_dead_session_resume
@@ -33,8 +34,14 @@ from ._session_state import (
 )
 from ._session_supervisor_helpers import (
     _drain_failed_inbox as _drain_failed_inbox,
+)
+from ._session_supervisor_helpers import (
     _maybe_compact as _maybe_compact,
+)
+from ._session_supervisor_helpers import (
     _resume_candidate as _resume_candidate,
+)
+from ._session_supervisor_helpers import (
     _wake_on_inbound as _wake_on_inbound,
 )
 from ._session_tasks import (

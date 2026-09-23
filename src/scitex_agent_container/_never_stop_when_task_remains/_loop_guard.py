@@ -48,11 +48,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import scitex_logging as slogging
 import os
 import re
 import time
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._runtime_paths import runtime_base_dir
 

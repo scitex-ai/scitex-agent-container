@@ -31,17 +31,16 @@ the agent that would otherwise truthfully report "board clear". See
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import json
 import sys
 
 import click
+import scitex_logging as slogging
 
 from .._never_stop_when_task_remains._awaiting_operator import notice
 from .._never_stop_when_task_remains._decide import decide
 from .._never_stop_when_task_remains._detector import probe
 from .._never_stop_when_task_remains._identity import resolve_agent
-
 
 log = slogging.getLogger(__name__)
 

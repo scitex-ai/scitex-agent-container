@@ -33,8 +33,9 @@ is fast.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from . import _pane_acceptance
 from ._tui_compose import verify_submit_by_advancement

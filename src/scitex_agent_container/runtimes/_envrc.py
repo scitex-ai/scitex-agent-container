@@ -51,11 +51,12 @@ no-op, exactly as before).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import shlex
 import subprocess
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._to_home_text import _is_legacy_identity_var
 

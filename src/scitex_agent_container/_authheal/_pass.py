@@ -58,7 +58,6 @@ mocks.
 
 from __future__ import annotations
 
-from .._logging import write_stream
 import os
 import sys
 import time
@@ -67,6 +66,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._authevents import log_restart_attempted, log_restart_outcome
+from .._logging import write_stream
 from .._reconcile._budget import (
     DEFAULT_PASS_CAP,
     Budget,

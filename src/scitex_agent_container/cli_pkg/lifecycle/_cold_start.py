@@ -19,11 +19,12 @@ caller (:mod:`._start`); this module only decides "what did the operator mean?".
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..._logging import render_rich
 
 # Agent-name charset (mirrors cli_pkg._create validation): lowercase letters,
 # digits, hyphen, underscore; must start with a letter.

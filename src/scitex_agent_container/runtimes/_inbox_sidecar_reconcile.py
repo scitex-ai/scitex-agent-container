@@ -8,13 +8,14 @@ process metadata instead of trusting either generation's pidfile.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import signal
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

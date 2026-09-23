@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json as json_mod
 import os
 import sys
@@ -12,6 +11,7 @@ from rich.table import Table
 
 from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
+from .._logging import render_rich
 from .._state.registry import Registry
 from ..config import load_config
 from ._agents_list_fleet import fleet_list_options, run_fleet_list

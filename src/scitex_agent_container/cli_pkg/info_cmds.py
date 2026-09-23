@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-from .._logging import render_rich
 import importlib
 import inspect
 import json as json_mod
@@ -12,14 +10,15 @@ import sys
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 from rich.table import Table
 
+from .._logging import render_rich
 from .._reconcile._pass import fleet_agents_dir, fleet_spec_paths
 from .._state._remote_sac_hint import remote_sac_not_found_hint
 from ..config import load_config
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, agent_name_complete
-
 
 _console_out = slogging.getConsole(__name__)
 

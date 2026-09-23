@@ -23,7 +23,6 @@ notify-send, etc.).
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import shlex
 import subprocess
@@ -31,6 +30,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping
 from urllib import error as urlerror
 from urllib import request as urlrequest
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

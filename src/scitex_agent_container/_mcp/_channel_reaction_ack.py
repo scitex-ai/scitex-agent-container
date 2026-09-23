@@ -42,9 +42,10 @@ NEVER blocks delivery, and any failure is logged loudly).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from typing import Any
+
+import scitex_logging as slogging
 
 from .._env import getenv as _sac_env
 from ..a2a._inbox_bus import DAEMON_SENDER

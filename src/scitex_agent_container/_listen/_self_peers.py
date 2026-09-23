@@ -68,9 +68,10 @@ Out of scope (deferred follow-ups):
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Mapping, Sequence
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

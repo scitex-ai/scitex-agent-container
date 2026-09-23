@@ -61,7 +61,6 @@ import sys
 import time
 from pathlib import Path
 
-
 try:
     import scitex_logging as slogging
 

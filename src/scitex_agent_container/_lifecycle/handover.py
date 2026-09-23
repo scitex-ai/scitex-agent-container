@@ -26,7 +26,6 @@ Plus three lifecycle pieces:
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import signal
 import threading
@@ -34,6 +33,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
 import yaml
 
 from .._env import getenv as _sac_env

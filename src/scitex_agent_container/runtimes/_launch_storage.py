@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

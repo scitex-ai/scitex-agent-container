@@ -15,10 +15,10 @@ artifact events as output appears.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from abc import abstractmethod
 from typing import Any
 
+import scitex_logging as slogging
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater

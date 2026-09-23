@@ -44,11 +44,12 @@ receiving host").
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import time
 import urllib.error
 import urllib.request
 from typing import Any
+
+import scitex_logging as slogging
 
 __all__ = [
     "post_turn",

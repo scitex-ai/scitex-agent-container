@@ -13,10 +13,11 @@ Returns True if a key action was sent, False for no-op / escalate.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import subprocess
 import time
 from typing import Callable
+
+import scitex_logging as slogging
 
 from scitex_agent_container._notify.login_relay import (
     extract_oauth_url,

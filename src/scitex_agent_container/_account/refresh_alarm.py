@@ -41,7 +41,6 @@ and must never break the refresh run that feeds it.
 
 from __future__ import annotations
 
-from .._logging import write_stream
 import json
 import os
 import sys
@@ -50,6 +49,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._events import SUBJECT_DEGRADED, log_event
+from .._logging import write_stream
 
 STATE_FILENAME = "refresh-alarm-state.json"
 

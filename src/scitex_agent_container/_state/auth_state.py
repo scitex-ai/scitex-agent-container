@@ -56,9 +56,9 @@ A CACHE IS NOT TRUTH — IT HAS AN AGE
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-
 from datetime import datetime, timezone
+
+import scitex_logging as slogging
 
 from .state_store import now_iso
 

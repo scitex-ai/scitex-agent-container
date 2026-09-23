@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import scitex_logging as slogging
 import os
 import random
 from collections.abc import Awaitable, Callable, Mapping
@@ -20,6 +19,7 @@ from functools import partial
 from typing import Any
 from urllib.parse import urlsplit
 
+import scitex_logging as slogging
 from scitex_dev.status import Check, StatusCode
 
 from .._mcp._channel_wake import _wake_turn

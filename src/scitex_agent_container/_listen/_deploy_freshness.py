@@ -53,11 +53,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import scitex_logging as slogging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

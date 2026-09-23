@@ -41,11 +41,12 @@ Design rules
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import secrets
 import time
 from enum import Enum
 from typing import Callable, Optional
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

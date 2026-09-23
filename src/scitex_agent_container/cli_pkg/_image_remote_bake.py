@@ -41,13 +41,12 @@ from pathlib import Path
 
 import click
 
+from . import _remote_bake_core as core
 from ._bake_lock import (
     BakeAlreadyRunningError,
     acquire_bake_lock,
     release_bake_lock,
 )
-
-from . import _remote_bake_core as core
 from ._remote_bake_core import (
     BakeVerdict,
     PullVerdict,

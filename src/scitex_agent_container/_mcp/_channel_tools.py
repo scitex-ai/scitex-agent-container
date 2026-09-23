@@ -16,8 +16,9 @@ other way around at module load).
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from typing import Any
+
+import scitex_logging as slogging
 
 from .._listen._inbox_fault import FAULT_NOT_RUNNING
 from ..cli_pkg._send_status_code import publish_accepted_status_code

@@ -47,10 +47,11 @@ import json
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ._harness_session import Message, NormalizedEvent, RunResult, ToolSpec
-from ._openai_pg_session import PostgresAgentSession
+
 # Re-exported so callers have ONE import site for the harness, regardless of
 # which module the transport logic happens to live in.
 from ._openai_mcp import McpConfigError, build_mcp_server
+from ._openai_pg_session import PostgresAgentSession
 
 __all__ = [
     "OpenAISessionError",

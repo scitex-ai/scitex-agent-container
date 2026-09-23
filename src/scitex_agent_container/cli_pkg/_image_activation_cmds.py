@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import click
 
+from .._logging import render_rich
 from . import _image_activation
 
 

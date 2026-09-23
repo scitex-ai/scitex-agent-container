@@ -37,13 +37,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import scitex_logging as slogging
 import os
 import signal
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import scitex_logging as slogging
 
 from ._session_state import (
     DEFAULT_STATE_ROOT,

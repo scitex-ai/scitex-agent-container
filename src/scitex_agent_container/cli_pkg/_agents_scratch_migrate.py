@@ -28,12 +28,12 @@ Registered onto ``sac agents`` by :func:`register`, exactly as
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 from rich.markup import escape
 
+from .._logging import render_rich
 from .._maintenance._scratch_migrate import (
     ScratchPlan,
     apply_scratch_migration,

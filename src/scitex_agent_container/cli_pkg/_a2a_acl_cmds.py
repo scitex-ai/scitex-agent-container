@@ -17,10 +17,11 @@ never load a database driver. The same lazy pattern used by
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
+
+from .._logging import render_rich
 
 __all__ = [
     "a2a_block",

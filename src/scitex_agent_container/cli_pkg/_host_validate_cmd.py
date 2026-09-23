@@ -21,11 +21,11 @@ gap visible.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import load
 from .._state.host_config_diagnose import config_state_problems
 from ._helpers import _json_flag

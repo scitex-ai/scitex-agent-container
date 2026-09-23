@@ -44,12 +44,12 @@ Behaviour
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import os
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 
 # Env override for the user-scope fleet registry dir. It lets the command be
 # pointed at an isolated on-disk registry (tests /

@@ -29,7 +29,6 @@ and how old that evidence is.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json as json_mod
 import subprocess
 import sys
@@ -38,6 +37,7 @@ import time
 import click
 from rich.table import Table
 
+from .._logging import render_rich
 from .._runners._tmux._target import exact_target
 from .._runners._tmux.auth_status import evaluate, probe_to_state
 from ._helpers import _json_flag

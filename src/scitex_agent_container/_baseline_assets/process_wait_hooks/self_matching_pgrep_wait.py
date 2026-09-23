@@ -18,7 +18,6 @@ import re
 import shlex
 import sys
 
-
 try:
     import scitex_logging as slogging
 

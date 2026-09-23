@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import scitex_logging as slogging
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from .._mcp._channel_sse import _consume_sse
 from .._mcp.channel import _push_channel_event

@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._logging import write_stream
-from .._reconcile._budget import Budget, DEFAULT_PASS_CAP, read_history, save_history
+from .._reconcile._budget import DEFAULT_PASS_CAP, Budget, read_history, save_history
 from ._banner import observe_pane
 from ._resume import real_resume
 from ._rule import Verdict, decide

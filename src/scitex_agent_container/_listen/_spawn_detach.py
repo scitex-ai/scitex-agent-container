@@ -61,8 +61,9 @@ for it, not merely the reachable one.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from typing import Any
+
+import scitex_logging as slogging
 
 __all__ = ["detach_launch", "inflight_count"]
 

@@ -38,11 +38,12 @@ Everything here is pure + unit-testable with REAL sockets/processes
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import signal
 import socket
 from typing import Callable
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

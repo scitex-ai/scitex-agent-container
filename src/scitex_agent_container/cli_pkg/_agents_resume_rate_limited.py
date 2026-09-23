@@ -21,11 +21,11 @@ agent this pass touched gets a line saying what we concluded and WHY.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._ratelimit import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, Verdict, resume_pass
 from ._helpers import _json_flag
 

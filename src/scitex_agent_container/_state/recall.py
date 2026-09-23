@@ -29,7 +29,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
 
-
 # Records we treat as "conversational" rather than infrastructure noise.
 # attachment / queue-operation / permission-mode / file-history-snapshot
 # bloat the transcript without carrying user-facing intent.

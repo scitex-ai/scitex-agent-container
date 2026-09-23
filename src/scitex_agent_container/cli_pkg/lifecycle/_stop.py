@@ -26,7 +26,6 @@ locally with a misleading "not running".
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import json as _json
 import shlex
 import subprocess
@@ -36,6 +35,7 @@ from pathlib import Path
 import click
 
 from ..._lifecycle.lifecycle import agent_stop
+from ..._logging import render_rich
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config

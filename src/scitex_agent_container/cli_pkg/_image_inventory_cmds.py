@@ -19,13 +19,13 @@ commands).
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import datetime as _dt
 import json
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 
 
 @click.command("list")

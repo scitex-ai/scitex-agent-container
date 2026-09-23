@@ -18,7 +18,6 @@ Verbs:
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import sys
 from pathlib import Path
@@ -26,6 +25,7 @@ from pathlib import Path
 import click
 
 from .. import _build_priority
+from .._logging import render_rich
 from . import (
     _image_activation_cmds,
     _image_distribute_cmd,

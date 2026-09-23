@@ -55,8 +55,9 @@ Two rules inherited from :mod:`._reachability`, and not negotiable here
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any, Callable, Mapping
+
+import scitex_logging as slogging
 
 from ._reachability import UNKNOWN
 

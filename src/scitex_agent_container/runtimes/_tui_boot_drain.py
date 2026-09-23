@@ -24,6 +24,8 @@ import time
 from ..config import AgentConfig
 from ._tui_drain import (
     drain_modals_until_ready,
+)
+from ._tui_drain import (
     wait_until_input_ready as _wait_until_input_ready,
 )
 
