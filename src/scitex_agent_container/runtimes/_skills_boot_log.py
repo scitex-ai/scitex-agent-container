@@ -17,8 +17,9 @@ raises; a diagnostic must not abort a start.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 

@@ -510,7 +510,7 @@ def verify_submit_by_advancement(
     non-pending for ``proof_stable_s``.  Active ``sac agents deliver`` enables
     this stricter mode; boot retains its historical best-effort contract.
     """
-    import logging
+    import scitex_logging as slogging
 
     log = slogging.getLogger(__name__)
     phase = _SubmitPhase.WAITING_FOR_PASTE

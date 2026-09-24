@@ -31,11 +31,12 @@ a yaml file.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from .._env import getenv
 

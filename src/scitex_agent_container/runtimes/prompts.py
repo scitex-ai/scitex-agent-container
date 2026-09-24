@@ -11,10 +11,11 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import re
 from dataclasses import dataclass, field
 from typing import Callable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

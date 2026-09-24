@@ -27,9 +27,10 @@ deterministically without gh / network / state.db.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 from typing import Any
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

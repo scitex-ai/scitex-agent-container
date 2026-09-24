@@ -18,12 +18,10 @@ card responsibility that stays in ``server.py``.
 from __future__ import annotations
 
 import asyncio
-
-
 import json
-import scitex_logging as slogging
 from typing import Any
 
+import scitex_logging as slogging
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 

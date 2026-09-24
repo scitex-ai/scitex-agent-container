@@ -59,10 +59,11 @@ is logged, never silent.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._state.host_scratch import (
     SCRATCH_AGENTS_SUBDIR,

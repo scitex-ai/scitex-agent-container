@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-import scitex_logging as slogging
 import re
 import threading
 import time
 from pathlib import Path
+
+import scitex_logging as slogging
 
 # Import-depth note (Day-1 salvage, 2026-06-12):
 # This file moved from ``runtimes/claude_code.py`` to

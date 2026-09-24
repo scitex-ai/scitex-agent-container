@@ -23,7 +23,6 @@ so ``ERRO`` marks the verified failure and ``FAIL`` the failed check.
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 from typing import Any, Callable
 
 import click
@@ -36,7 +35,8 @@ from ..._lifecycle._launch_verify import (
     LaunchVerdict,
     verify_launch,
 )
-from .._helpers import console, system_msg
+from ..._logging import render_rich
+from .._helpers import system_msg
 
 #: verdict status -> the ``--json`` ``status`` field. ``skipped`` maps to
 #: the historical ``started`` (nothing contradicts it and scripts keyed

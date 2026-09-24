@@ -93,9 +93,6 @@ dependencies = [
     # public durable poll/confirm API and confirms only after terminal-visible
     # delivery.  This is a runtime dependency, not an optional MCP tool.
     "scitex-cards>=0.52.1",
-    # Typed validation at SAC's cross-process HTTP boundaries. Invalid turn
-    # payloads fail before entering a harness inbox.
-    "pydantic>=2.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
@@ -998,6 +995,16 @@ ignore = ["E501"]
 # A worked example shipped inside a skill for operators to copy and run; its
 # print is the example's output. Not a sac code path.
 "src/scitex_agent_container/_skills/scitex-agent-container/scitex_smoke_test.py" = ["T201"]
+
+# render_content() is the explicit content-rendering contract: exact bytes to
+# stdout for published outputs (statusline payload, sourced completion
+# script). A level prefix or stderr hop would corrupt the payload.
+"src/scitex_agent_container/_logging/_streams.py" = ["T201"]
+
+# emit_collect() is a worker-mode entry whose stdout IS the machine-readable
+# manifest JSON (exit code carries pass/fail). Logging it would corrupt the
+# frame the parent parses.
+"src/scitex_agent_container/cli_pkg/_fleet_sync_code_collect.py" = ["T201"]
 
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters

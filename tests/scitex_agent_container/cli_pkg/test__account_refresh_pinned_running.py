@@ -21,8 +21,6 @@ AAA marker comments; one assertion per test; ≥3-word names.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 from pathlib import Path
 from typing import Any, Iterator
@@ -36,6 +34,7 @@ from scitex_agent_container.cli_pkg._account_refresh_skip import (
     _resolve_registry_dir,
 )
 from scitex_agent_container.cli_pkg.account_group import account
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Sandbox + helpers

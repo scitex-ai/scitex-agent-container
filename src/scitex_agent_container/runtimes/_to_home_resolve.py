@@ -19,9 +19,10 @@ home by spec alone (see the two ``*_ENV_VAR`` constants).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._to_home_errors import UnknownToHomeLayer

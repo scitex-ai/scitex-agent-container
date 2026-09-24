@@ -10,7 +10,6 @@ delegates the per-target loop here. Mirrors the existing sibling
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import json as _json
 import os
 import sys
@@ -26,11 +25,12 @@ from ..._creds import NoHealthyAccountError
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
+from ..._logging import render_rich
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
 from ...runtimes._apptainer_bind_guard import BindCapabilityError
-from .._helpers import console, system_msg
+from .._helpers import system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError

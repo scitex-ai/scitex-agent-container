@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import scitex_logging as slogging
 import time
 from typing import Any, Iterable
+
+import scitex_logging as slogging
 
 from ._periodic_drive import PeriodicDriveEnvelope, _AgentState, sweep
 

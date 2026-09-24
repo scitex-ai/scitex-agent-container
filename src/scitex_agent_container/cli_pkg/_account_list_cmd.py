@@ -26,9 +26,9 @@ consumers.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import click
 
+from .._logging import render_rich
 from ._account_list_fleet import fleet_account_options, run_fleet_account_list
 
 
@@ -147,7 +147,6 @@ def account_list(
         render_stored_table,
     )
     from ._account_openai import format_openai_account_block
-    from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
     # REFRESH THE QUOTA SNAPSHOT BEFORE READING IT.

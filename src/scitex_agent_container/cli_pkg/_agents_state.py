@@ -20,7 +20,6 @@ Exit code is ONLY the summary — 0 / 1 / 2. Every raw signal is in ``--json``.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
@@ -32,7 +31,8 @@ from .._agentstate import (
     observe_fleet,
 )
 from .._agentstate._observe import DEFAULT_INTERVAL
-from ._helpers import _json_flag, console
+from .._logging import render_rich
+from ._helpers import _json_flag
 
 #: How a verdict renders. UNKNOWN is MAGENTA — grouped with nothing green, since
 #: the entire failure being fixed is an unread agent that looked like a fine one.

@@ -22,13 +22,13 @@ copies the parent's transcript and seeds the fork's session marker so its
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import json
 import sys
 
 import click
 
-from .._helpers import agent_name_complete, console
+from ..._logging import render_rich
+from .._helpers import agent_name_complete
 
 
 def _parse_ttl(raw: str) -> int:

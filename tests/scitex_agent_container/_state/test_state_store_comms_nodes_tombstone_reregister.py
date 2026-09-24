@@ -42,7 +42,6 @@ from scitex_agent_container._state.state_store_nodes import (
     unregister_comms_node,
 )
 
-
 #: A source host that CANNOT be this one, derived rather than written down.
 #:
 #: It was the literal "scitex-compute-04" until 2026-08-28, and that made

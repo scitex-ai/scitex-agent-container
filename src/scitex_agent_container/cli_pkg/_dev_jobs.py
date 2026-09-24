@@ -100,9 +100,9 @@ from ._dev_jobs_grammar import (
     _NAMED_VERBS,
     _VERB_SUMMARY,
     DEPRECATED_GROUPS,
-    Deprecation,
     GROUP_KINDS,
     GROUP_VERBS,
+    Deprecation,
 )
 
 

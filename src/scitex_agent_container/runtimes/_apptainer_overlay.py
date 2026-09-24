@@ -48,9 +48,10 @@ label ``container_creation_unknown``.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

@@ -21,7 +21,6 @@ from scitex_agent_container._state._lineage import (
 )
 from scitex_agent_container._state.state_store_nodes import record_lineage
 
-
 # ---------------------------------------------------------------------------
 # Empty / leaf cases
 # ---------------------------------------------------------------------------

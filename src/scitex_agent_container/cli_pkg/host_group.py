@@ -12,7 +12,6 @@ of ``sac network probe`` / ``sac installation boot``.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import shlex
 import subprocess
@@ -20,6 +19,7 @@ import sys
 
 import click
 
+from .._logging import render_rich
 from .._state._peer_resolve import peers_with_registry
 from .._state.host_config import (
     Config,
@@ -27,7 +27,7 @@ from .._state.host_config import (
     load,
     ssh_control_options_str,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 from ._host_list_cmd import host_list, register_list_command
 from ._host_validate_cmd import host_validate, register_validate_command
 

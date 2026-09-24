@@ -57,8 +57,9 @@ is a clean no-op: a container launched by an older sac must keep booting
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any, Mapping
+
+import scitex_logging as slogging
 
 from ._board_identity_env import assert_expanded
 

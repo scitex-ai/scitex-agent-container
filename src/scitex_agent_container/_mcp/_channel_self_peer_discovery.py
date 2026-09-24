@@ -63,11 +63,11 @@ the operator knows where to drop the file.
 
 from __future__ import annotations
 
-import logging
-import scitex_logging as slogging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

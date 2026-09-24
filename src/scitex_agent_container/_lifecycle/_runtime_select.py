@@ -30,8 +30,9 @@ container-engine selector to LAUNCH-MODE selector. Accepted values
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ..config._harness_registry import (

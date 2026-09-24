@@ -36,8 +36,6 @@ back via ``caplog`` (a real pytest log-capture fixture, not a mock).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import logging
 import os
 import pty
@@ -50,6 +48,7 @@ import pytest
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
 from scitex_agent_container.cli_pkg.lifecycle._start_single import run_single_targets
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # Full-plan-only markers: printed UNCONDITIONALLY by render_plan, never by
 # render_plan_summary.

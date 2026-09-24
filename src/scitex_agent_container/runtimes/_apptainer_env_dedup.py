@@ -57,8 +57,9 @@ until :mod:`._apptainer_secret_env` lifts secrets out of it.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from urllib.parse import urlsplit
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

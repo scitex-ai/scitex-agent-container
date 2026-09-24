@@ -266,7 +266,8 @@ def test_a_scitex_dsn_on_the_banned_port_is_refused() -> None:
     # Arrange — ADR-0022: port 5432 is never used for scitex, on any host.
     argv = ["--env", f"SCITEX_CARDS_DB={BANNED_DSN}"]
     # Act
-    check = lambda: assert_no_forbidden_scitex_dsn(argv)
+    def check():
+        return assert_no_forbidden_scitex_dsn(argv)
     # Assert
     with pytest.raises(ForbiddenScitexDsnError):
         check()
@@ -319,7 +320,8 @@ def test_a_scitex_dsn_with_no_port_is_refused_too() -> None:
     # Arrange — an omitted port IS 5432, the most invisible way to hit it.
     argv = ["--env", "SCITEX_CARDS_DB=postgresql://scitex_cards@127.0.0.1/scitex_cards"]
     # Act
-    check = lambda: assert_no_forbidden_scitex_dsn(argv)
+    def check():
+        return assert_no_forbidden_scitex_dsn(argv)
     # Assert
     with pytest.raises(ForbiddenScitexDsnError):
         check()
@@ -356,7 +358,8 @@ def test_a_scitex_database_name_is_enough_to_claim_the_dsn() -> None:
     # Arrange — the rule follows the SERVICE, not the variable's spelling.
     argv = ["--env", "BOARD_URL=postgresql://someone@127.0.0.1:5432/scitex_cards"]
     # Act
-    check = lambda: assert_no_forbidden_scitex_dsn(argv)
+    def check():
+        return assert_no_forbidden_scitex_dsn(argv)
     # Assert
     with pytest.raises(ForbiddenScitexDsnError):
         check()
@@ -435,7 +438,8 @@ def test_a_built_argv_never_carries_a_scitex_dsn_on_5432(
         spec_env=f"    env:\n      SCITEX_CARDS_DB: {BANNED_DSN}\n",
     )
     # Act
-    build = lambda: _build(tmp_path, spec)
+    def build():
+        return _build(tmp_path, spec)
     # Assert
     with pytest.raises(ForbiddenScitexDsnError):
         build()

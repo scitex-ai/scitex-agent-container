@@ -17,8 +17,9 @@ the rest of the to_home cascade ("higher layer wins on conflict").
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

@@ -32,7 +32,6 @@ one-shot / resume / dry-run / params-file) is in play.
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import subprocess
 import sys
 import time
@@ -42,8 +41,8 @@ from typing import Callable
 
 import click
 
+from ..._logging import render_rich
 from ..._sac_binary import sac_binary as _sac_binary
-from .._helpers import console
 
 
 @dataclass

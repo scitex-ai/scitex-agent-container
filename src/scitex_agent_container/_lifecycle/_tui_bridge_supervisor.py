@@ -47,9 +47,10 @@ an agent sac believes is RUNNING can have its bridge respawned.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

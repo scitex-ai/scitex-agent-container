@@ -40,11 +40,12 @@ does NOT crash the agent — the turn already completed; the hook returns
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

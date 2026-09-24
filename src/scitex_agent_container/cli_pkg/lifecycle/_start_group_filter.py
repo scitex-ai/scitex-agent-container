@@ -65,9 +65,9 @@ def resolve_group_targets(wanted: tuple[str, ...]) -> list[str]:
     if not normalized_wanted:
         return []
 
-    from .._helpers import _discover_defined_agents
     from ...config import load_config
     from ...config._group_resolver import all_named_groups
+    from .._helpers import _discover_defined_agents
 
     matched: set[str] = set()
     for name, spec_path in _discover_defined_agents():

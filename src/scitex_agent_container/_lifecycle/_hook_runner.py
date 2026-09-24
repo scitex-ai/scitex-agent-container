@@ -8,9 +8,10 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import subprocess
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from ..hooks import run_hook
 

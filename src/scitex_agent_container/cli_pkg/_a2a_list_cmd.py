@@ -7,10 +7,11 @@ onto it by :func:`register`, the same way :mod:`._host_sync` attaches to
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
+
+from .._logging import render_rich
 
 __all__ = ["a2a_list", "register"]
 
@@ -75,7 +76,6 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
         click.echo(json.dumps(agents, ensure_ascii=False))
         return
 
-    from ._helpers import console
 
     if not agents:
         render_rich("[dim](no a2a peers)[/dim]", __name__)

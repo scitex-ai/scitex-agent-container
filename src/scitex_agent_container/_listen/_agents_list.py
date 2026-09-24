@@ -16,10 +16,10 @@ re-imports :func:`list_agents` so route registration and the historical
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import scitex_logging as slogging
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 

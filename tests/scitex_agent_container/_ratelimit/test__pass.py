@@ -33,7 +33,6 @@ import pytest
 from scitex_agent_container._events import read_events
 from scitex_agent_container._ratelimit._pass import resume_pass
 from scitex_agent_container._ratelimit._rule import Verdict
-
 from tests.scitex_agent_container._reconcile._fleet import Recorder, write_spec
 
 #: The captured 2026-08-28 banner, in the pane position it really occupied:

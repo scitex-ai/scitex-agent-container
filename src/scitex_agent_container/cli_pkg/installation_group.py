@@ -8,8 +8,6 @@ Deliverables:
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-from .._logging import render_rich
 import importlib.resources
 import shutil
 import subprocess
@@ -17,7 +15,9 @@ import sys
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 
+from .._logging import render_rich
 from . import _installation_check
 
 # ---------------------------------------------------------------------------
@@ -388,7 +388,7 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
         if not already_present:
             render_rich("[dim]No post-merge-pull entry in crontab — nothing to remove.[/dim]", __name__)
             return
-        new_lines = [l for l in lines if _CRON_MARKER not in l]
+        new_lines = [line for line in lines if _CRON_MARKER not in line]
         _write_crontab(new_lines)
         render_rich("[green]Removed[/green] post-merge-pull from crontab.", __name__)
         return

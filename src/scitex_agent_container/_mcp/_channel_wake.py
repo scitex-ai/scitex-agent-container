@@ -18,12 +18,12 @@ import path.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+import scitex_logging as slogging
 from scitex_dev.status import StatusCode, is_exchange_id
 
 log = slogging.getLogger(__name__)

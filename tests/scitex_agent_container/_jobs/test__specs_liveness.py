@@ -16,7 +16,6 @@ lost ``--apply`` would put the fleet back to dying unnoticed.
 
 from __future__ import annotations
 
-
 import pytest
 
 jobs_mod = pytest.importorskip(

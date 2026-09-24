@@ -45,10 +45,11 @@ TWO SAFETY PROPERTIES THIS FILE EXISTS TO HOLD
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json as json_mod
 
 import click
+
+from .._logging import render_rich
 
 __all__ = ["fleet_account_options", "run_fleet_account_list", "rows_from_stored"]
 
@@ -250,8 +251,8 @@ def run_fleet_account_list(
     from ._helpers._agent_list_fleet import DEFAULT_HOST_TIMEOUT_S, collect_fleet
     from ._helpers._agent_list_fleet_model import UnknownHostFilter
     from ._helpers._agent_list_fleet_render import hosts_payload, print_fleet_header
-    from ._helpers._console import console
     from ._helpers._agent_list_host import _resolve_display_host
+    from ._helpers._console import console
 
     local_host = _resolve_display_host()
     try:

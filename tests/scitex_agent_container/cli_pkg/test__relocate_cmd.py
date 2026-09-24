@@ -20,10 +20,10 @@ from click.testing import CliRunner
 from scitex_agent_container._lifecycle._residency import current_host
 from scitex_agent_container._state.relocation_pg import record_residency
 from scitex_agent_container.cli_pkg._relocate_cmd import (
-    _residency_history,
     EXIT_REFUSED,
     EXIT_RETIRED_UNIMPLEMENTED,
     _required_ports,
+    _residency_history,
     declared_from_spec,
     register,
     relocate,

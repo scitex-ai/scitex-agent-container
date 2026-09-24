@@ -42,10 +42,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import scitex_logging as slogging
 import os
 import random
 from typing import Any
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

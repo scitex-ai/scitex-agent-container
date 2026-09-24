@@ -43,7 +43,6 @@ never eleven of either because one section failed.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import time
 
 import click
@@ -56,7 +55,7 @@ from .._lifecycle._relocate_probe_adapter import (
 )
 from .._lifecycle._relocate_render import render_dry_run
 from .._lifecycle._relocate_spec_reads import declared_groups_from_spec
-from ._helpers import console
+from .._logging import render_rich
 from ._relocate_readiness import PHASE_READINESS, readiness_notice
 
 #: Re-exported under their old private names so callers (and the tests written

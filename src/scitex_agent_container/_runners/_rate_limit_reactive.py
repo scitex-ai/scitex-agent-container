@@ -35,10 +35,11 @@ no-op in that case (no event emitted, no state mutated).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from .._account.backoff_agent import backoff_agent
 from .._account.quota_cache import read_quota_entry

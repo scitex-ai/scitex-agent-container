@@ -77,11 +77,12 @@ to monitor.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

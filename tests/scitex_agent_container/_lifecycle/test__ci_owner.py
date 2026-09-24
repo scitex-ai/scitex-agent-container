@@ -16,12 +16,11 @@ Conventions: one assertion per test (STX-TQ007); AAA markers; no mocks
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import contextlib
 from pathlib import Path
 
 from scitex_agent_container._lifecycle._ci_owner import resolve_owner, tracked_repos
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _write_spec(agents_dir: Path, agent_name: str, project: str) -> None:
@@ -181,8 +180,8 @@ def _seamed_probe(**kw):
     caches ``None`` as a meaningful value, so a leaked entry would make the
     next test read a verdict it never produced.
     """
-    from scitex_agent_container._lifecycle import _ci_owner as mod
     import scitex_agent_container._lifecycle._github_ci as ghmod
+    from scitex_agent_container._lifecycle import _ci_owner as mod
 
     mod._CANONICAL_CACHE.clear()
     real = ghmod._run_gh_probe

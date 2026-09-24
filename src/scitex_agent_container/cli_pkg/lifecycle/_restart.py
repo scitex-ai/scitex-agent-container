@@ -35,13 +35,13 @@ returned", never "the state changed".
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import json as _json
 import sys
 
 import click
 
-from .._helpers import agent_name_complete, console
+from ..._logging import render_rich
+from .._helpers import agent_name_complete
 
 # The LOCAL leg (perform + verify + render) lives in ``_restart_local``;
 # cross-host dispatch + the host-listen broker live in ``_restart_remote``;

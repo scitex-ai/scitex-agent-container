@@ -20,7 +20,6 @@ from scitex_agent_container._maintenance._scratch_migrate_measure import (
     verify_copy,
 )
 
-
 # ---------------------------------------------------------------------------
 # tree_size — the number in the preview
 # ---------------------------------------------------------------------------

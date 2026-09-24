@@ -17,9 +17,10 @@ under the line cap while remaining the single orchestrator:
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 from ._incarnation import (
     EXIT_CRASHED,

@@ -8,9 +8,10 @@ orchestrators declare their MCP servers explicitly in v2 YAML.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 

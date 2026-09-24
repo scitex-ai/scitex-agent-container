@@ -28,11 +28,11 @@ store.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import socket
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes

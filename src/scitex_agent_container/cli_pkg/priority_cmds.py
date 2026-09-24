@@ -18,21 +18,24 @@ Usage:
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import sys
 
 import click
 
 from .._lifecycle.lifecycle import agent_stop
+from .._logging import render_rich
 from .._state.registry import Registry
 from ..config import load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
-from ._helpers import console
-from ._priority_ssh import _SSH_PROBE_OPTS  # noqa: F401  (re-export)
-from ._priority_ssh import _SSH_START_TIMEOUT  # noqa: F401  (re-export)
-from ._priority_ssh import peer_ssh_argv, probe_ssh, ssh_start_agent
+from ._priority_ssh import (
+    _SSH_PROBE_OPTS,  # noqa: F401  (re-export)
+    _SSH_START_TIMEOUT,  # noqa: F401  (re-export)
+    peer_ssh_argv,
+    probe_ssh,
+    ssh_start_agent,
+)
 
 # Old private spellings, kept so existing imports and call sites resolve
 # unchanged after the ssh half moved to ._priority_ssh.

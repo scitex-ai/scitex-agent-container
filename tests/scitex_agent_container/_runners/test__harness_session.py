@@ -23,9 +23,9 @@ import asyncio
 from typing import AsyncIterator
 
 from scitex_agent_container._runners._harness_session import (
+    HarnessSession,
     Message,
     NormalizedEvent,
-    HarnessSession,
     RunResult,
     ToolSpec,
 )

@@ -191,7 +191,7 @@ def test_health_endpoint_skips_auth_entirely(client: TestClient):
 
 def test_token_rotation_invalidates_old_token():
     # Arrange
-    client_old = _build_client(token="old-token")
+    _build_client(token="old-token")
     client_new = _build_client(token="new-token")
     headers_old = {"Authorization": "Bearer old-token"}
     # Act

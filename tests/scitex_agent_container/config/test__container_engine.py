@@ -66,14 +66,14 @@ from scitex_agent_container.config._harness_registry import (
 from scitex_agent_container.config._types import ContainerSpec
 from scitex_agent_container.config._validation import validate_raw
 from scitex_agent_container.runtimes._apptainer_runtime import ApptainerContainerRuntime
+from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
 from scitex_agent_container.runtimes.claude_session import (
     _container_runtime_for as claude_container_runtime_for,
 )
-from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+from scitex_agent_container.runtimes.openai_session import OpenAISessionRuntime
 from scitex_agent_container.runtimes.openai_session import (
     _container_runtime_for as openai_container_runtime_for,
 )
-from scitex_agent_container.runtimes.openai_session import OpenAISessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
 #: The complete set of adapters the lifecycle layer may hand a launch to.

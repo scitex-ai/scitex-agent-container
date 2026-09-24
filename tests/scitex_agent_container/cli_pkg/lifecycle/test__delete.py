@@ -13,8 +13,6 @@ verified (TQ003-compatible), and each test asserts exactly one fact
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 import shutil
 from contextlib import contextmanager
@@ -27,6 +25,7 @@ from click.testing import CliRunner
 import scitex_agent_container._lifecycle.lifecycle as lifecycle_mod
 import scitex_agent_container.cli_pkg.lifecycle._delete as delete_mod
 from scitex_agent_container.cli_pkg.lifecycle._delete import delete
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)

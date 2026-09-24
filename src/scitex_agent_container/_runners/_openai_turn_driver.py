@@ -42,9 +42,10 @@ healthy endpoint into an opaque 404.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config._harness_registry import HARNESS_DESCRIPTORS, OPENAI_AGENTS
 from ._harness_turn_pump import drive_harness_turn

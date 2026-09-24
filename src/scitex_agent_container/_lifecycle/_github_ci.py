@@ -24,8 +24,9 @@ authenticated on the fleet hosts (repo + workflow scopes); no extra dep.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from typing import Callable, NamedTuple
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

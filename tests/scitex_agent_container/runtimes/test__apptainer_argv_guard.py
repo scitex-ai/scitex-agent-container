@@ -120,7 +120,8 @@ def test_overlay_missing_value_swallowing_fakeroot_raises() -> None:
     # Arrange — operator --overlay with no value, sac --fakeroot next.
     argv = ["apptainer", "exec", "--overlay", "--fakeroot", "/x.sif", "bash"]
     # Act
-    run = lambda: validate_flag_argv(argv)
+    def run():
+        return validate_flag_argv(argv)
     # Assert
     with pytest.raises(ApptainerArgvError):
         run()
@@ -130,7 +131,8 @@ def test_bind_missing_value_swallowing_next_flag_raises() -> None:
     # Arrange — --bind with no value, another flag (--cleanenv) next.
     argv = ["apptainer", "exec", "--bind", "--cleanenv", "/x.sif", "bash"]
     # Act
-    run = lambda: validate_flag_argv(argv)
+    def run():
+        return validate_flag_argv(argv)
     # Assert
     with pytest.raises(ApptainerArgvError):
         run()
@@ -204,9 +206,10 @@ def test_build_run_argv_overlay_no_value_before_fakeroot_raises(
     raw = "    raw_args:\n      - --overlay\n"
     cfg = load_config(str(_write_spec(tmp_path, raw)))
     # Act
-    build = lambda: build_run_argv(
-        cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
-    )
+    def build():
+        return build_run_argv(
+            cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+        )
     # Assert — refused loudly BEFORE any launch / file creation.
     with pytest.raises(ApptainerArgvError):
         build()

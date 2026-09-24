@@ -26,10 +26,11 @@ re-export, the test suite's direct ``_resume_candidate`` import, the
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._session_state import read_session_id, read_session_id_history
 

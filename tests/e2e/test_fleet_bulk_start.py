@@ -29,8 +29,6 @@ does not leak two long-lived agents into the operator's environment.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 import shutil
@@ -40,6 +38,8 @@ import uuid
 from pathlib import Path
 
 import pytest
+
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 pytestmark = [
     pytest.mark.e2e,

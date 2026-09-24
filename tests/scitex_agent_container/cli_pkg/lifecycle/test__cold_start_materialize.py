@@ -16,8 +16,6 @@ exercised through the production ``load_config`` / ``validate_config``).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 from pathlib import Path
 
 import pytest
@@ -27,6 +25,7 @@ from scitex_agent_container.cli_pkg.lifecycle._cold_start import (
     ColdStartTarget,
     materialize_cold_start,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _target(tmp_path: Path, label="figrecipe", host="ywata-note-win"):

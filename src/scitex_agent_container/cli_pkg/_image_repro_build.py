@@ -47,10 +47,10 @@ reassign to a real (no MagicMock) recording fake.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import render_rich
 from ._image_build_lock import image_build_lock
 from ._image_source_build import (
     stage_layer_build_context,
@@ -253,7 +253,6 @@ def run_build(
 
     import click
 
-    from ._helpers import console
 
     try:
         result = build_layer_reproducible(

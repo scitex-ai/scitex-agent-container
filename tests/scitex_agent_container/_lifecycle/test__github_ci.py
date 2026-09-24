@@ -22,8 +22,6 @@ from scitex_agent_container._lifecycle._github_ci import (
 )
 
 
-
-
 def _rest(check_runs=None, statuses=None, sha="deadbeef"):
     """A ``run`` double speaking the REST shapes ``pr_ci_conclusion`` now reads.
 

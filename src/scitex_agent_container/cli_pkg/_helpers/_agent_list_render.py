@@ -9,13 +9,13 @@ rendering lives here. ``_agent_list`` re-exports these names so existing
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import json as json_mod
 
 import click
 from rich.table import Table
 from rich.text import Text
 
+from ..._logging import render_rich
 from ..._state.registry import Registry
 from .._account_list_format import format_dt_display_tz
 from .._terminal_text import terminal_safe

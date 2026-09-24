@@ -29,10 +29,11 @@ it leaves the fleet in a state no one planned and no one can describe.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._layers_migration_model import MigrationPlan
 

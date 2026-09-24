@@ -13,7 +13,6 @@ its every-repo sweep, and ``spartan-sif-bake`` must stay in its confirmed form.
 
 from __future__ import annotations
 
-
 import pytest
 
 jobs_mod = pytest.importorskip(

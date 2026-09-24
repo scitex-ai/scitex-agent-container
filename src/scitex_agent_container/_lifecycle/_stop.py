@@ -6,13 +6,13 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import threading
 import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import scitex_logging as slogging
 import yaml
 
 from .._state.registry import Registry

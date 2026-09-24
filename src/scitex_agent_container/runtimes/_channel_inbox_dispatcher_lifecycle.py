@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import signal
 import subprocess
@@ -13,6 +12,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
+
+import scitex_logging as slogging
 
 from .._listen._config import listen_base_url
 from ..config import AgentConfig

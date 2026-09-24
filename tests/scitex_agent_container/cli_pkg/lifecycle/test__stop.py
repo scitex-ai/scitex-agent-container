@@ -614,7 +614,9 @@ def remote_row_for_clew(cross_host_state_store, pg_schema: str):
     write would resolve the unreachable guard DSN and raise.
     """
     from scitex_agent_container._state.state_store import record_instance_start
-    from scitex_agent_container._state.state_store_comms_nodes import register_comms_node
+    from scitex_agent_container._state.state_store_comms_nodes import (
+        register_comms_node,
+    )
 
     iid = record_instance_start(
         name="clew", host="peer-x", a2a_port=19500, bound_port=19500, remote=True

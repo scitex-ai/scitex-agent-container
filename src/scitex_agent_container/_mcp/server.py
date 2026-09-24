@@ -13,8 +13,9 @@ Usage::
 from __future__ import annotations
 
 import logging
-import scitex_logging as slogging
 import sys
+
+import scitex_logging as slogging
 
 # NOTE: ``register_all_tools`` is deliberately NOT imported at module top
 # level. Importing it here would pull in all nine tool modules (and their

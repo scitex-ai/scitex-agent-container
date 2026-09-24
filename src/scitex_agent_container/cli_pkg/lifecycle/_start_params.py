@@ -12,13 +12,12 @@ them identically. Pure helper — it validates, calls the production
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import sys
 from pathlib import Path
 
 import click
 
-from .._helpers import console
+from ..._logging import render_rich
 
 
 def classify_targets(

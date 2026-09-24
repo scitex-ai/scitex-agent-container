@@ -10,7 +10,6 @@ lead-side instances row + local spec/runtime/registry as usual.
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 import shlex
 import subprocess
 import sys
@@ -18,11 +17,12 @@ from pathlib import Path
 
 import click
 
+from ..._logging import render_rich
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.registry import Registry
 from ..._state.state_store import record_instance_stop
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 from ._dispatch import lookup_remote_peer
 
 

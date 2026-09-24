@@ -31,15 +31,15 @@ hand.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
-from .._logging import render_rich
 import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import click
+import scitex_logging as slogging
 
+from .._logging import render_rich
 from .._state.host_config import Config, build_ssh_argv, load
 from .._state.spec_manifest import build_manifest, diff_manifests
 

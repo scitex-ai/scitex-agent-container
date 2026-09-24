@@ -17,10 +17,11 @@ never load a database driver. The same lazy pattern used by
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
+
+from .._logging import render_rich
 
 __all__ = [
     "a2a_block",
@@ -57,7 +58,6 @@ def _do_unblock(sender: str, target: str, note: str | None) -> None:
         # operator sees a single-line stderr instead of a
         # traceback.
         raise click.ClickException(str(exc)) from exc
-    from ._helpers import console
 
     extras = []
     if result.get("unblocked"):
@@ -165,7 +165,6 @@ def a2a_block(sender: str, target: str, note: str | None) -> None:
         raise SystemExit(2) from exc
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
-    from ._helpers import console
 
     tail = (
         " [dim](cleared pending prompt)[/dim]" if result.get("cleared_pending") else ""
@@ -196,7 +195,6 @@ def a2a_revoke(sender: str, target: str) -> None:
         )
         raise SystemExit(2)
     from .._state.state_store_nodes import revoke_send
-    from ._helpers import console
 
     removed = revoke_send(sender=sender, target=target)
     if removed:
@@ -231,7 +229,6 @@ def a2a_grants(as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(rows, ensure_ascii=False))
         return
-    from ._helpers import console
 
     if not rows:
         render_rich("[dim](no grants)[/dim]", __name__)

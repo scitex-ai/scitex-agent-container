@@ -15,7 +15,6 @@ from scitex_agent_container.cli_pkg._fleet_sync_code_collect import (
     collect_checkout_state,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers (not tests).
 # ---------------------------------------------------------------------------

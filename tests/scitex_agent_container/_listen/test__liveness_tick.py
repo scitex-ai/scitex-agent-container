@@ -24,8 +24,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from scitex_agent_container._state.state_store_instances import record_instance_start
-
+# The blocking IO resolvers live beside the loop glue (``_liveness_tick`` is
+# the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
+from scitex_agent_container._listen import _liveness_tick_resolve as mod
 from scitex_agent_container._listen._liveness_tick import (
     DEFAULT_INTERVAL_S,
     DEFAULT_RENOTIFY_S,
@@ -35,10 +36,7 @@ from scitex_agent_container._listen._liveness_tick import (
     emit_anomaly,
     liveness_tick_reconciler_loop,
 )
-
-# The blocking IO resolvers live beside the loop glue (``_liveness_tick`` is
-# the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
-from scitex_agent_container._listen import _liveness_tick_resolve as mod
+from scitex_agent_container._state.state_store_instances import record_instance_start
 
 
 @pytest.fixture(autouse=True)
@@ -428,7 +426,7 @@ class TestResolveLiveness:
     ) -> None:
         # Arrange — the fleet's real shape: a pid-less active row + a fresh
         # heartbeat. The heartbeat is the proof of life the registry lost.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
@@ -443,7 +441,7 @@ class TestResolveLiveness:
     def test_a_live_registry_pid_still_resolves_live(self, home_at_tmp) -> None:
         # Arrange — the registry CAN still vouch for an agent; when it does,
         # that remains corroborating positive evidence.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x", pid=os.getpid())
         # Act
         out = mod.resolve_liveness(["agent-x"])
@@ -479,7 +477,7 @@ class TestResolveLiveness:
         # Arrange — a crashed agent's heartbeat.json PERSISTS with a frozen
         # mtime. That is a channel that would have shown life and does not, so
         # the owner stays KNOWN and real death is still detectable.
-        db = home_at_tmp / "state.db"
+        home_at_tmp / "state.db"
         record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"

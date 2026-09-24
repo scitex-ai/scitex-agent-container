@@ -13,11 +13,11 @@ product; the removals are the easy half.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._maintenance import (
     DEFAULT_CAP,
     DEFAULT_MIN_AGE_HOURS,
@@ -28,7 +28,7 @@ from .._maintenance import (
     gc_repos,
     record_gc_results,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 def _evidence(text: str) -> None:

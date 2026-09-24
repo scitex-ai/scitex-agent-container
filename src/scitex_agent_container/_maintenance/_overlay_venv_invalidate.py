@@ -48,13 +48,14 @@ refuse to run broken in-container.
 from __future__ import annotations
 
 import errno
-import scitex_logging as slogging
 import os
 import shutil
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._drift.versions import DEFAULT_VENV
 from ..runtimes._apptainer_overlay import (

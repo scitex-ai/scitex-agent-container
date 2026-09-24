@@ -143,7 +143,6 @@ def test_write_marker_creates_runtime_dir_if_missing(tmp_path: Path) -> None:
 
 def test_write_marker_returns_target_path(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -159,7 +158,6 @@ def test_write_marker_returns_target_path(tmp_path: Path) -> None:
 
 def test_marker_payload_has_schema_version(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -176,7 +174,6 @@ def test_marker_payload_has_schema_version(tmp_path: Path) -> None:
 
 def test_marker_payload_carries_phase(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -193,7 +190,6 @@ def test_marker_payload_carries_phase(tmp_path: Path) -> None:
 
 def test_marker_payload_carries_exit_code(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -228,7 +224,6 @@ def test_marker_payload_carries_runtime_dir(tmp_path: Path) -> None:
 
 def test_marker_payload_classifies_apptainer_fatal(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -245,7 +240,6 @@ def test_marker_payload_classifies_apptainer_fatal(tmp_path: Path) -> None:
 
 def test_marker_payload_uses_kind_override_when_given(tmp_path: Path) -> None:
     # Arrange — kind_override skips the auto-classifier.
-    runtime_dir = tmp_path
     # Act
     target = write_marker(
         tmp_path,
@@ -337,7 +331,6 @@ def test_write_marker_payload_is_valid_json(tmp_path: Path) -> None:
 
 def test_read_marker_returns_none_when_absent(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     result = read_marker(tmp_path)
     # Assert
@@ -371,7 +364,6 @@ def test_read_marker_handles_corrupt_payload(tmp_path: Path) -> None:
 
 def test_is_stillborn_false_when_no_marker(tmp_path: Path) -> None:
     # Arrange
-    runtime_dir = tmp_path
     # Act
     flag = is_stillborn(tmp_path)
     # Assert

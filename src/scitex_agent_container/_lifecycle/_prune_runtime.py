@@ -34,10 +34,11 @@ completes.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import scitex_logging as slogging
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..config import AgentConfig

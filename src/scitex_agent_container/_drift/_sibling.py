@@ -42,11 +42,12 @@ launch is a launch-killer wearing a warning's clothes.
 
 from __future__ import annotations
 
-from .._logging import write_stream
 import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
+
+from .._logging import write_stream
 
 # Operator-configurable list of ``.scitex`` tree roots (or their parents).
 # See the module docstring; entries are os.pathsep-separated.

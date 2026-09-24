@@ -70,13 +70,13 @@ that some process holds the port. See :mod:`...config._engine_reach`.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import datetime as _dt
 import json
 from pathlib import Path as _Path
 
 import click
 
+from .._logging import render_rich
 from .._maintenance._engines_floor import EngineFloor
 from .._maintenance._engines_migration import (
     apply_engines_migration,
@@ -90,7 +90,7 @@ from ._agents_migrate_engines_report import (
     render_diffs,
     render_plan,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1

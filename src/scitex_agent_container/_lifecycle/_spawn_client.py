@@ -46,10 +46,11 @@ request is a single one-shot POST — no streaming, no async.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

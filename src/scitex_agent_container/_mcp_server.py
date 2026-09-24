@@ -25,4 +25,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["get_server", "mcp", "run_server"]
+__all__ = ["get_server", "mcp", "run_server"]  # noqa: F822 — "mcp" served by __getattr__ above (PEP 562 lazy)

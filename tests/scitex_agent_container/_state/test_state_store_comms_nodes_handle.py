@@ -33,7 +33,6 @@ has to reach in and rewrite a module global.
 
 from __future__ import annotations
 
-
 from scitex_agent_container._state.state_store_comms_nodes import (
     CommsNodeConflictError,
     lookup_comms_node,

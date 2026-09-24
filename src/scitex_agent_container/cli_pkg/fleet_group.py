@@ -21,18 +21,18 @@ transport.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import subprocess
 from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import build_ssh_argv, load
 from ._fleet_notify import fleet_notify as _fleet_notify_cmd
-from ._fleet_sync_code import fleet_sync_code
 from ._fleet_sync import fleet_sync
-from ._helpers import _json_flag, console
+from ._fleet_sync_code import fleet_sync_code
+from ._helpers import _json_flag
 
 
 @click.group(

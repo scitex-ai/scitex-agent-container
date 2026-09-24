@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import re
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 

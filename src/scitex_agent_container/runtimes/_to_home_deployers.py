@@ -19,13 +19,14 @@ basename class:
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import re
 import shutil
 import stat
 from datetime import datetime
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._mcp_merge import merge_mcp_json

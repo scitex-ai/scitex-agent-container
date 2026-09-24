@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import scitex_logging as slogging
 import os
 import re
 import signal
@@ -27,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig, load_config
 from ._hermes_tui_rpc import HermesSlashReceipt, HermesTurnOutcome, HermesTurnProgress

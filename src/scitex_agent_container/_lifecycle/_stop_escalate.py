@@ -56,11 +56,12 @@ fail loud instead of guessing.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import signal
 import time
 from typing import Any, Callable, Optional
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig, load_config
 from ._runtime_select import _get_runtime

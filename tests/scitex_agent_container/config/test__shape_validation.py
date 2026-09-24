@@ -11,7 +11,6 @@ from scitex_agent_container.config._shape_validation import (
     validate_proxy_coupling,
 )
 
-
 # ---------------------------------------------------------------------------
 # validate_autonomous
 # ---------------------------------------------------------------------------

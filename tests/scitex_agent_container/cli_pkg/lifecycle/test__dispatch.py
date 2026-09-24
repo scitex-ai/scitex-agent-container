@@ -450,7 +450,7 @@ class TestDispatchHandoffFailures:
         # Arrange
         sk = dict(peer_manifest="", landed_manifest="", extract_exit=0)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert _phase_count(shim_bin, "sac agents start") == 0
 

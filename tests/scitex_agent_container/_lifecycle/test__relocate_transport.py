@@ -422,7 +422,8 @@ def test_the_move_aside_destination_keeps_the_directory_name() -> None:
 def test_a_path_with_no_parent_cannot_be_moved_aside() -> None:
     # Arrange: there is nowhere beside it to move it to, and inventing somewhere
     # would put the only copy of a conversation where nobody would look.
-    call = lambda: move_aside_destination("/", "S")
+    def call():
+        return move_aside_destination("/", "S")
     # Act
     attempt = call
     # Assert

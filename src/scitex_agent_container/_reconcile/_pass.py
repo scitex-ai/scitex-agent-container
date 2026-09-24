@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .._logging import write_stream
 from .._events import EmitOutcome
+from .._logging import write_stream
 from ._alarm import (
     record_pass_completed,
     record_reports,

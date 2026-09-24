@@ -38,9 +38,10 @@ See: ywatanabe1989/todo#396 ; fresh-agent boot reliability (2026-06-19).
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

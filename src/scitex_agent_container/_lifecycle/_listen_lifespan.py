@@ -24,9 +24,10 @@ The lifespan:
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 from contextlib import asynccontextmanager
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 
@@ -39,20 +40,38 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
     CLI passes the port it hands to ``uvicorn.run``; in-process tests may
     omit it (no watchdog) or pass a real bound port.
     """
-    from .._listen._liveness_tick import (
-        DEFAULT_INTERVAL_S as DEFAULT_LIVENESS_TICK_INTERVAL_S,
-        DEFAULT_RENOTIFY_S as DEFAULT_LIVENESS_TICK_RENOTIFY_S,
-        DEFAULT_STALE_S as DEFAULT_LIVENESS_TICK_STALE_S,
-        ENV_INTERVAL_S as LIVENESS_TICK_ENV_INTERVAL_S,
-        ENV_RENOTIFY_S as LIVENESS_TICK_ENV_RENOTIFY_S,
-        ENV_STALE_S as LIVENESS_TICK_ENV_STALE_S,
-        liveness_tick_reconciler_loop,
-    )
     from .._listen._deploy_freshness import (
         DEFAULT_INTERVAL_S as DEFAULT_DEPLOY_FRESHNESS_INTERVAL_S,
+    )
+    from .._listen._deploy_freshness import (
         ENV_DISABLED as DEPLOY_FRESHNESS_ENV_DISABLED,
+    )
+    from .._listen._deploy_freshness import (
         ENV_INTERVAL_S as DEPLOY_FRESHNESS_ENV_INTERVAL_S,
+    )
+    from .._listen._deploy_freshness import (
         deploy_freshness_loop,
+    )
+    from .._listen._liveness_tick import (
+        DEFAULT_INTERVAL_S as DEFAULT_LIVENESS_TICK_INTERVAL_S,
+    )
+    from .._listen._liveness_tick import (
+        DEFAULT_RENOTIFY_S as DEFAULT_LIVENESS_TICK_RENOTIFY_S,
+    )
+    from .._listen._liveness_tick import (
+        DEFAULT_STALE_S as DEFAULT_LIVENESS_TICK_STALE_S,
+    )
+    from .._listen._liveness_tick import (
+        ENV_INTERVAL_S as LIVENESS_TICK_ENV_INTERVAL_S,
+    )
+    from .._listen._liveness_tick import (
+        ENV_RENOTIFY_S as LIVENESS_TICK_ENV_RENOTIFY_S,
+    )
+    from .._listen._liveness_tick import (
+        ENV_STALE_S as LIVENESS_TICK_ENV_STALE_S,
+    )
+    from .._listen._liveness_tick import (
+        liveness_tick_reconciler_loop,
     )
     from ._bind_watchdog import bind_watchdog_loop
     from ._github_ci_poll_loop import (

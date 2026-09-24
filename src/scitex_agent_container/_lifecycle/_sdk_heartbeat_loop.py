@@ -46,7 +46,6 @@ leaves the last-known-good heartbeat intact.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 import threading
 import time
@@ -54,6 +53,8 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as _FuturesTimeout
 from pathlib import Path
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from ..config._harness_registry import host_probed_runtime_spellings
 

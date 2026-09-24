@@ -147,7 +147,7 @@ def test_a_failed_verification_keeps_the_overlay_copy(
 ) -> None:
     # Arrange — plan the move, then grow the source so the copy taken from
     # it can no longer match: verification must veto the delete.
-    source = _write_agent(fleet, "alpha", uvwork={"bin/uv": "payload"})
+    _write_agent(fleet, "alpha", uvwork={"bin/uv": "payload"})
     plan = plan_scratch_migration(scratch, agents_root=fleet, liveness=STOPPED)
     row = plan.movable[0]
     dest = row.dest

@@ -21,9 +21,10 @@ managed keys (skip-permissions / statusLine / event-ring hooks) on top.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._layer_merge import deep_merge_layers
 from ._to_home_errors import WorkspaceSettingsMergeError

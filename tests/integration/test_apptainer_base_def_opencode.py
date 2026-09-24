@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RECIPE = ROOT / "src" / "scitex_agent_container" / "containers" / "apptainer-base.def"
 

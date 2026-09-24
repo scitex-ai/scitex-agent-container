@@ -72,10 +72,11 @@ alongside ``--a2a-port``).
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import scitex_logging as slogging
 
 if TYPE_CHECKING:
     from ._session_inbox import Envelope

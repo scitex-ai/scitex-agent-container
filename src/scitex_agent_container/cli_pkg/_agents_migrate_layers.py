@@ -43,17 +43,17 @@ be trusted about what it did.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import datetime as _dt
 import json
 
 import click
 from rich.markup import escape
 
+from .._logging import render_rich
 from .._maintenance._layers_migration_apply import apply_migration
 from .._maintenance._layers_migration_gate import fleet_arming_snapshot, gate_arming
 from .._maintenance._layers_migration_plan import already_declared, plan_migration
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1

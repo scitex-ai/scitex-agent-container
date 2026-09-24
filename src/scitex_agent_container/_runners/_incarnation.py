@@ -59,10 +59,11 @@ next to the birth certificate.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import time
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 from ._atomic import atomic_write_text
 

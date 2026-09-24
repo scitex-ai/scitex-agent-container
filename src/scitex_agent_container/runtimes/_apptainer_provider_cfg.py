@@ -49,10 +49,11 @@ engine switch in both directions.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import shutil
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._to_home_overlay import DEFAULT_CONTAINER_HOME
 from .onboarding import ensure_project_onboarding

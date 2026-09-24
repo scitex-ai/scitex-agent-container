@@ -26,7 +26,6 @@ from .conftest import (
     run_hook,
 )
 
-
 # --- result fixtures (run the hook once; each test asserts one thing) --
 
 

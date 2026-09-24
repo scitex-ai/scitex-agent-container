@@ -41,9 +41,10 @@ TWO RULES THIS MODULE IS BUILT AROUND.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
+
+from .._logging import render_rich
 
 __all__ = ["EngineScan", "engine_payload", "print_engine"]
 

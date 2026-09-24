@@ -34,9 +34,10 @@ The completion payload the requester receives is the JSON object
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import uuid
 from typing import Any, Optional
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

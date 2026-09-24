@@ -59,10 +59,11 @@ labels, paths, and the endpoint/status ``reason`` sentence
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import time
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 

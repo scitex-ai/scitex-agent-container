@@ -58,7 +58,6 @@ TRI-STATE, ALWAYS
 
 from __future__ import annotations
 
-from .._logging import write_stream
 import json
 import os
 import socket
@@ -67,6 +66,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from .._logging import write_stream
 
 __all__ = [
     "EVENT_LOG_ENV",

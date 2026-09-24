@@ -18,7 +18,6 @@ Verbs:
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 import sys
 from pathlib import Path
@@ -26,6 +25,7 @@ from pathlib import Path
 import click
 
 from .. import _build_priority
+from .._logging import render_rich
 from . import (
     _image_activation_cmds,
     _image_distribute_cmd,
@@ -34,7 +34,7 @@ from . import (
     _image_repro_build,
     _image_source_build,
 )
-from ._helpers import HelpRecursiveGroup, console
+from ._helpers import HelpRecursiveGroup
 from ._helpers._console import logger
 
 # Module-level overridable reference for the source-bundled build path.

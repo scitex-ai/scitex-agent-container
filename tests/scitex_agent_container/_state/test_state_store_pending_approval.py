@@ -18,8 +18,6 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-from tests._store_isolation import pg_endpoint_port
-
 import pytest
 
 from scitex_agent_container._state.state_store_pending_approval import (
@@ -27,7 +25,7 @@ from scitex_agent_container._state.state_store_pending_approval import (
     has_pending_prompt,
     record_pending_prompt,
 )
-
+from tests._store_isolation import pg_endpoint_port
 
 # ---------------------------------------------------------------------------
 # record_pending_prompt — first-wins flag semantics

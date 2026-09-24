@@ -42,8 +42,9 @@ DESIGN
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Iterable, Mapping
+
+import scitex_logging as slogging
 
 log = slogging.getLogger(__name__)
 

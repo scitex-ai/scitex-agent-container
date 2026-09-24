@@ -32,12 +32,13 @@ sac's neutrality rule — logic never names a consumer — holds.
 from __future__ import annotations
 
 import getpass
-import scitex_logging as slogging
 import os
 import stat
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import unquote, urlsplit
+
+import scitex_logging as slogging
 
 from ._board_identity_env import raw_args_env
 

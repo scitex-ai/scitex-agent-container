@@ -22,8 +22,9 @@ instead of two large gated blocks (and re-passes the line ceiling).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._channel_auto_ack import (
     _auto_ack_enabled,

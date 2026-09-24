@@ -49,10 +49,10 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.config import load_config
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 from scitex_agent_container.runtimes import tui_session as _tui
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # The ``_shared`` baseline ``settings.local.json`` the consuming project ships
 # (scripts/harness/to_home/.claude/settings.local.json): the honest-grounding

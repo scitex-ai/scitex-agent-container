@@ -17,16 +17,15 @@ attributes — mirroring the sibling ``test__agent_list`` conventions.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+import pytest
+
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
-from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
     get_agent_list_data,
     print_agent_list,
@@ -36,8 +35,8 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_host import (
     _host_display_for,
     _resolve_display_host,
 )
-
-import pytest
+from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)

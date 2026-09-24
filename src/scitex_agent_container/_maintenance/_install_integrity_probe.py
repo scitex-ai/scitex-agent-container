@@ -16,9 +16,10 @@ inside it.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import sysconfig
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._install_integrity_model import (
     IMPORTS_LIVE,

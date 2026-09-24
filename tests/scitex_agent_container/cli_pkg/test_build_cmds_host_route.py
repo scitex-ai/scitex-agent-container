@@ -46,7 +46,6 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.build_cmds import check
-
 from tests.scitex_agent_container._helpers.explicit_spec import (
     explicitize_yaml as _explicitize_yaml,
 )

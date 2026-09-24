@@ -35,9 +35,10 @@ so the same mapping serves the start and the resume path.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 from typing import Any, Sequence
+
+import scitex_logging as slogging
 
 logger = slogging.getLogger(__name__)
 

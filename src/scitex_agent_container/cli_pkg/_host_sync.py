@@ -15,7 +15,6 @@ checkout go unnoticed until someone looked by hand.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
@@ -30,8 +29,9 @@ from .._hostsync import (
     sync_peer,
     syncable_peers,
 )
+from .._logging import render_rich
 from .._state.host_config import load as _load_cfg
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # Colour per outcome. Refusals and failures are loud on purpose.
 _STYLE = {

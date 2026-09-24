@@ -40,10 +40,11 @@ criticals in the first place.
 from __future__ import annotations
 
 import asyncio
-import scitex_logging as slogging
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+import scitex_logging as slogging
 
 from ._liveness_tick_detect import (  # re-exported public surface
     AgentLiveness,

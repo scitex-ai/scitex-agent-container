@@ -45,10 +45,10 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
-import scitex_logging as slogging
 from dataclasses import dataclass
 from typing import Any
 
+import scitex_logging as slogging
 from starlette.responses import JSONResponse, Response
 
 __all__ = [

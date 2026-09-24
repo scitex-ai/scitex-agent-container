@@ -70,12 +70,13 @@ to leak.
 from __future__ import annotations
 
 import json
-import scitex_logging as slogging
 import os
 import re
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
+
+import scitex_logging as slogging
 
 from .._runners._atomic import atomic_write_text
 

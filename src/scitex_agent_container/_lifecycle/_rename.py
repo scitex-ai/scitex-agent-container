@@ -72,14 +72,19 @@ from .._state.state_store_grants_rename import (
     rename_comms_grants,
     undo_rename_comms_grants,
 )
-from .._state.state_store_lineage_rename import rename_lineage
 from .._state.state_store_instances_rename import (
     InstancesRenameUndo,
     rename_instance_rows,
     undo_rename_instance_rows,
 )
-from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
-from ._rename_cards import migrate_cards, undo_migrate_cards
+from .._state.state_store_lineage_rename import rename_lineage
+from ._rename_cards import (
+    CardMigration,
+    CardMigrationError,
+    find_owned_cards,
+    migrate_cards,
+    undo_migrate_cards,
+)
 from ._rename_plan import (
     Layout,
     Move,

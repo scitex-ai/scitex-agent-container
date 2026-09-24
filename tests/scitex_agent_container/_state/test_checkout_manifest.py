@@ -31,7 +31,6 @@ from scitex_agent_container._state.checkout_manifest import (
     diff_checkout_manifests,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers (not tests).
 # ---------------------------------------------------------------------------

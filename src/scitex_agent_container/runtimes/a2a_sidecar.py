@@ -49,7 +49,6 @@ pre-keying sidecar is left strictly alone.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import os
 import signal
 import subprocess
@@ -57,6 +56,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
 import yaml
 
 from scitex_agent_container.config import AgentConfig

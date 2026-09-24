@@ -21,14 +21,13 @@ preflight) reads ``$HOME`` on linux, so the redirect is honoured.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 from pathlib import Path
 
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Helpers

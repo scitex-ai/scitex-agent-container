@@ -62,7 +62,6 @@ import argparse
 import errno
 import hashlib
 import json
-import scitex_logging as slogging
 import os
 import re
 import signal
@@ -72,6 +71,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Callable
 
+import scitex_logging as slogging
 from scitex_dev.status import Check, StatusCode
 
 from ..config import AgentConfig

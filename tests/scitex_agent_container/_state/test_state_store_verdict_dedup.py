@@ -48,8 +48,6 @@ and the point is that the REAL resolver reads the REAL variable.
 
 from __future__ import annotations
 
-from tests._store_isolation import pg_endpoint_port
-
 import psycopg
 
 from scitex_agent_container._state.state_store_verdict_dedup import (
@@ -66,6 +64,7 @@ from scitex_agent_container._state.state_store_verdict_dedup import (
 #: from all four sites at once; importing removes the chance of a fifth copy
 #: drifting. ``tests/_store_isolation.py`` owns the value and the identity.
 from tests._store_isolation import PG_BASE_DSN as _BASE_DSN  # noqa: E402
+from tests._store_isolation import pg_endpoint_port
 
 
 def _tables_in(schema: str) -> set[str]:

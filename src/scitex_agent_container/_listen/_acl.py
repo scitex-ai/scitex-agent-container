@@ -36,9 +36,9 @@ forwarder's side — see :mod:`_listen.peer_tokens`).
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Literal
 
+import scitex_logging as slogging
 from starlette.responses import JSONResponse
 
 from .._state.state_store_nodes import (

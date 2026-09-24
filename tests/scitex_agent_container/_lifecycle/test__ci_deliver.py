@@ -58,7 +58,7 @@ def test_already_delivered_verdict_is_skipped():
     # Arrange
     seams, posts, _ = _seams(already=True)
     # Act
-    result = deliver_verdict("o/r", 1, "sha", "success", **seams)
+    deliver_verdict("o/r", 1, "sha", "success", **seams)
     # Assert
     assert posts == []
 

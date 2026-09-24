@@ -32,7 +32,6 @@ stopped-because-something-could-not-be-measured.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import time
 
 from .._lifecycle._relocate_effects import adapters_for, build_effects
@@ -42,8 +41,8 @@ from .._lifecycle._relocate_execute import (
     execute,
 )
 from .._lifecycle._relocate_phases import begin
+from .._logging import render_rich
 from .._state.relocation_pg import load_journal, save_journal
-from ._helpers import console
 
 __all__ = ["EXIT_INCOMPLETE", "EXIT_UNMEASURED", "run_relocation"]
 

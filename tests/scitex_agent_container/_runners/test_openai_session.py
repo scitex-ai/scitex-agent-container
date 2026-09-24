@@ -41,9 +41,9 @@ from typing import Any
 import pytest
 
 from scitex_agent_container._runners._harness_session import (
+    HarnessSession,
     Message,
     NormalizedEvent,
-    HarnessSession,
     ToolSpec,
 )
 from scitex_agent_container._runners._openai_pg_session import PostgresAgentSession

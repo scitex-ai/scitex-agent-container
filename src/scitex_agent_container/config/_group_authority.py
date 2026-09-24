@@ -94,8 +94,9 @@ that parsed into a mapping.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 __all__ = [
     "group_name_from_spec",

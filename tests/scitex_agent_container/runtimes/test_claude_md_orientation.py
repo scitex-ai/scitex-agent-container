@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config import load_config
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 from scitex_agent_container.config._types import AgentConfig
 from scitex_agent_container.runtimes.claude_md import (
     ORIENTATION_MAX_LINES,
     build_orientation_lines,
     setup_claude_md,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # Mirrors examples/agents/minimal-agent/spec.yaml (every REQUIRED field,
 # nothing more) + the identity labels the orientation block renders.

@@ -27,8 +27,6 @@ never touched. Real store, real database, no mocks (PA-306), one assert each
 
 from __future__ import annotations
 
-from tests._store_isolation import pg_endpoint_port
-
 from functools import partial
 
 import pytest
@@ -46,6 +44,7 @@ from scitex_agent_container._state.relocation_pg import (
     save_journal,
     save_lease,
 )
+from tests._store_isolation import pg_endpoint_port
 
 #: A real phase name. The vocabulary is closed and 'begin' is NOT in it —
 #: Relocation rejects an unknown phase in __post_init__.

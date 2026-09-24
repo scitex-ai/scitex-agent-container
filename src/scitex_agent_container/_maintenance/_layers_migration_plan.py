@@ -40,8 +40,9 @@ first ``": "``.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import load_config
 from ..config._to_home_layers_line import insert_to_home_layers

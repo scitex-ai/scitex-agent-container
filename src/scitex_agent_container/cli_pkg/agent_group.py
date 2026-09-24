@@ -24,11 +24,11 @@ from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
 from .lifecycle import forget as _forget_impl
+from .lifecycle import fork as _fork_impl
 from .lifecycle import rename as _rename_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
-from .lifecycle import fork as _fork_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl

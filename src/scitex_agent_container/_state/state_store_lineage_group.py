@@ -19,9 +19,10 @@ Re-exported from :mod:`.state_store_nodes`, so every existing
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import time
 from typing import Any
+
+import scitex_logging as slogging
 
 from .state_store_acl_policy import read_comms_policy
 

@@ -26,11 +26,11 @@ failure class this guard exists for spent days looking green.
 
 from __future__ import annotations
 
-from .._logging import render_rich
 import json
 
 import click
 
+from .._logging import render_rich
 from .._maintenance import (
     IMPORTS_LIVE,
     DistributionVerdict,
@@ -38,7 +38,7 @@ from .._maintenance import (
     inspect_install,
     install_integrity_exit_code,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _STATE_STYLE = {"ok": "green", "broken": "red", "unknown": "magenta"}
 

@@ -12,11 +12,12 @@ Usage:
 from __future__ import annotations
 
 import logging
-import scitex_logging as slogging
 import os
 import sys
 import time
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._state.account_store import list_accounts, switch_account
 from .claude_usage import fetch_usage
@@ -249,7 +250,7 @@ def check_and_rotate(
                 "message": "dry-run: would rotate",
             }
 
-        result = switch_account(
+        switch_account(
             next_acct["name"],
             store_dir=store_dir,
             home=home,

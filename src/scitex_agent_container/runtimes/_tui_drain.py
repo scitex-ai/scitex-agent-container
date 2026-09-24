@@ -26,9 +26,10 @@ Three boot fixes live here (card
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import time
 from typing import Callable
+
+import scitex_logging as slogging
 
 from . import prompts as _prompts
 from ._pane_context_log import log_pane_fault

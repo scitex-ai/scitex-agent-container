@@ -16,9 +16,10 @@ responder.
 
 from __future__ import annotations
 
-import scitex_logging as slogging
 import re
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from .email import send_email
 

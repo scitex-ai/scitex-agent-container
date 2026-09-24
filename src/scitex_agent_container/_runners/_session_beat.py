@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import scitex_logging as slogging
 import shutil
 import time
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ._atomic import atomic_write_text
 from ._session_quota import read_quota

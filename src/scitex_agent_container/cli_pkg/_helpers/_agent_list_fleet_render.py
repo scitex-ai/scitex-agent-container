@@ -25,11 +25,11 @@ say:
 
 from __future__ import annotations
 
-from ..._logging import render_rich
 from typing import Any
 
 from rich.text import Text
 
+from ..._logging import render_rich
 from .._terminal_text import terminal_safe
 from ._agent_list_fleet_model import NOT_QUERIED, FleetListing
 

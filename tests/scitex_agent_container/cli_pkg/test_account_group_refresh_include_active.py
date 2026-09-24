@@ -127,7 +127,7 @@ def test_include_active_writes_fresh_token_to_snapshot_file(
     # Arrange — the snapshot file agents :ro-read must carry the fresh
     # access_token after the refresh (this is the load-bearing invariant:
     # the timer's refresh must update the file agents consume).
-    creds_a = _seed_account(sandbox_home, "alpha", email="alpha@x.io")
+    _seed_account(sandbox_home, "alpha", email="alpha@x.io")
     _set_active_login(sandbox_home, email="alpha@x.io")
     runner = CliRunner()
     # Act

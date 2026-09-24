@@ -24,8 +24,9 @@ bool alone. Two reasons it is additive rather than a replacement:
 
 from __future__ import annotations
 
-from .._logging import render_rich
 from typing import Any
+
+from .._logging import render_rich
 
 __all__ = [
     "health_summary",
