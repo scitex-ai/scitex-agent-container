@@ -67,6 +67,8 @@ mounted) so the per-row links are correct in both modes.
     {% if can_launch %}
     <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
     {% endif %}
+    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
+    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
   </div>
 
   {% if agents %}
@@ -97,7 +99,34 @@ mounted) so the per-row links are correct in both modes.
         </td>
         <td class="c-host">{{ a.host }}</td>
         <td class="c-port">{% if a.a2a_port %}{{ a.a2a_port }}{% else %}<span class="dim">—</span>{% endif %}</td>
-        <td class="row-actions"><a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a></td>
+        <td class="row-actions">
+          <a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>
+          {% comment %}
+          Per-row quick actions: the same Start/Restart/Stop POSTs the detail
+          page offers (same <name>/action route, same operator gate), plus a
+          one-line message POST to <name>/message. Gate mirrors the POST
+          handlers exactly: own-scope rows need the lifecycle-operator list
+          (`can_launch`), cross-host rows need the cross-host list
+          (`can_control_crosshost`, decided once per render, not per row).
+          {% endcomment %}
+          {% if a.cross_host and can_control_crosshost or not a.cross_host and can_launch %}
+          <span class="quick-actions">
+            <form method="post" action="{{ url_base }}/{{ a.name }}/action" class="qa-form">
+              {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+              <button type="submit" name="action" value="start" class="btn qa good" title="Start {{ a.name }}">Start</button>
+              <button type="submit" name="action" value="restart" class="btn qa" title="Restart {{ a.name }}">Restart</button>
+              <button type="submit" name="action" value="stop" class="btn qa bad" title="Stop {{ a.name }}">Stop</button>
+            </form>
+            <form method="post" action="{{ url_base }}/{{ a.name }}/message" class="qa-form qa-msg">
+              {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+              <label class="visually-hidden" for="qa-msg-{{ a.name }}">Message {{ a.name }}</label>
+              <input id="qa-msg-{{ a.name }}" type="text" name="message" maxlength="4000" required
+                     placeholder="Message…" autocomplete="off">
+              <button type="submit" class="btn qa" title="Send a message to {{ a.name }}">Send</button>
+            </form>
+          </span>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
