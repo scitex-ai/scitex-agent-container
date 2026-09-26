@@ -27,5 +27,8 @@
       "scitex-app",
       "scitex-ui"
     ]
+  },
+  "mount_policy": {
+    "login_required": true
   }
 }
