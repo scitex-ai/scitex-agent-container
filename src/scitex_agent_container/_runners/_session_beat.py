@@ -23,15 +23,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import shutil
 import time
 from pathlib import Path
 
+import scitex_logging as slogging
+
 from ._atomic import atomic_write_text
 from ._session_quota import read_quota
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # State-machine vocabulary used by both the runner and the runtime
 # adapter's ``status`` surface. Keep tight: each value must mean exactly
@@ -63,7 +64,7 @@ _DIARY_WARN_EVERY = 100
 
 
 class _DefaultDBWriter:
-    """Production writer that forwards to ``_state.state_db_diary``.
+    """Production writer that forwards to ``_state.state_store_diary``.
 
     Imports lazily so test environments (which may not have the
     container venv fully wired) don't pay the import cost. The
@@ -88,7 +89,7 @@ class _DefaultDBWriter:
     """
 
     def __init__(self) -> None:
-        self._log = logging.getLogger(__name__ + "._DefaultDBWriter")
+        self._log = slogging.getLogger(__name__ + "._DefaultDBWriter")
 
     def _best_effort(self, kind: str, write):
         """Run one diary write, absorbing any failure into a log line.
@@ -124,7 +125,7 @@ class _DefaultDBWriter:
 
     def record_heartbeat(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_heartbeat
+            from .._state.state_store_diary import record_heartbeat
 
             return record_heartbeat(**kwargs)
 
@@ -132,15 +133,23 @@ class _DefaultDBWriter:
 
     def record_turn(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_turn
+            from .._state.state_store_diary import record_turn
 
             return record_turn(**kwargs)
 
         return self._best_effort("turn", _write)
 
+    def record_instance_heartbeat(self, instance_id: str, heartbeat: dict) -> None:
+        def _write():
+            from .._state.state_store_instances import record_instance_heartbeat
+
+            return record_instance_heartbeat(instance_id, heartbeat)
+
+        self._best_effort("instance-heartbeat", _write)
+
     def record_error(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_error
+            from .._state.state_store_diary import record_error
 
             return record_error(**kwargs)
 
@@ -237,6 +246,7 @@ def write_heartbeat(
     ts: float | None = None,
     db_writer=None,
     writer: str | None = None,
+    authoritative_fields: dict | None = None,
 ) -> None:
     """Atomically write the heartbeat record to ``heartbeat.json``
     AND append a row to ``state.db.heartbeats`` (diary).
@@ -260,8 +270,9 @@ def write_heartbeat(
     when ``None`` (the SDK-runner default) the current wall-clock is
     used. The TUI heartbeat writer passes the agent's tmux pane-activity
     epoch here so ``heartbeat_at`` reflects the SAME liveness signal
-    ``TuiSessionRuntime.is_running`` keys off (rather than the moment
-    the centralized loop happened to observe it).
+    ``TuiSessionRuntime.is_running`` keys off. Hermes instead passes the fresh
+    projection observation time for liveness and carries the older, independent
+    event activity time in ``hermes_activity_at``.
 
     When the container tmpfs is probeable it also carries
     ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
@@ -288,9 +299,10 @@ def write_heartbeat(
     payload = {"ts": beat_ts, "pid": pid, "state": state}
     from ._incarnation import incarnation_beat_fields
 
+    previous_heartbeat = read_heartbeat(state_dir)
     payload.update(
         incarnation_beat_fields(
-            state_dir, prev_beat=read_heartbeat(state_dir), writer=writer
+            state_dir, prev_beat=previous_heartbeat, writer=writer
         )
     )
     payload.update(_heartbeat_usage_fields(state_dir, now))
@@ -309,10 +321,89 @@ def write_heartbeat(
 
     payload.update(heartbeat_jsonl_fields(state_dir, now))
     payload.update(heartbeat_progress_fields(state_dir))
+    if authoritative_fields:
+        # Harness-native instruments may replace fields whose generic source
+        # does not exist for that harness.  Hermes, for example, has no SDK
+        # quota.json: its session event replay is the authority for completed
+        # turns.  Keep the heartbeat envelope owned here so callers cannot
+        # rewrite liveness identity or ordering accidentally.
+        protected = {"ts", "pid", "state", "seq", "writer", "incarnation_id"}
+        overlap = protected.intersection(authoritative_fields)
+        if overlap:
+            raise ValueError(
+                "authoritative heartbeat fields cannot replace envelope keys: "
+                f"{sorted(overlap)!r}"
+            )
+        payload.update(authoritative_fields)
+    resident_heartbeat = None
+    if writer == "hermes-session-events" and authoritative_fields:
+        required = (
+            "agent_id",
+            "spec_id",
+            "host",
+            "runtime",
+            "harness",
+            "engine",
+            "model",
+            "session_id",
+            "boot_id",
+            "progress_at",
+            "progress_seq",
+        )
+        if all(authoritative_fields.get(key) not in {None, ""} for key in required):
+            resident_state = "active" if state == STATE_BUSY else "idle"
+            if str(payload.get("current_phase") or "").lower() == "blocked":
+                resident_state = "blocked"
+            resident_heartbeat = {
+                key: authoritative_fields[key] for key in required
+            }
+            prior_resident = (
+                previous_heartbeat.get("authoritative_heartbeat")
+                if isinstance(previous_heartbeat, dict)
+                else None
+            )
+            publication_seq = 1
+            if (
+                isinstance(prior_resident, dict)
+                and prior_resident.get("boot_id") == resident_heartbeat["boot_id"]
+                and type(prior_resident.get("seq")) is int
+            ):
+                publication_seq = int(prior_resident["seq"]) + 1
+            resident_heartbeat.update(
+                {
+                    "seq": publication_seq,
+                    "monotonic_ns": time.monotonic_ns(),
+                    "observed_at": beat_ts,
+                    "state": resident_state,
+                    "lease_expires_at": beat_ts + 90.0,
+                    "card_id": str(authoritative_fields.get("card_id") or ""),
+                    "card_role": str(authoritative_fields.get("card_role") or ""),
+                }
+            )
+            from .._state.authoritative_heartbeat import validate_heartbeat
+
+            resident_heartbeat = validate_heartbeat(
+                resident_heartbeat,
+                expected_agent=str(resident_heartbeat["agent_id"]),
+                expected_host=str(resident_heartbeat["host"]),
+                now=now,
+                previous=(
+                    prior_resident if isinstance(prior_resident, dict) else None
+                ),
+            )
+            payload["authoritative_heartbeat"] = resident_heartbeat
     atomic_write_text(state_dir / "heartbeat.json", json.dumps(payload))
     if name and host:
         db = _resolve_db_writer(db_writer)
-        db.record_heartbeat(name=name, host=host, pid=pid, state=state, ts=payload["ts"])
+        record = {"name": name, "host": host, "pid": pid, "state": state, "ts": payload["ts"]}
+        db.record_heartbeat(**record)
+        if resident_heartbeat is not None:
+            from ._session_state import read_instance_id
+
+            instance_id = read_instance_id(state_dir)
+            instance_writer = getattr(db, "record_instance_heartbeat", None)
+            if instance_id and callable(instance_writer):
+                instance_writer(instance_id, resident_heartbeat)
 
 
 def report_sdk_error(
@@ -436,7 +527,7 @@ async def heartbeat_loop(
                 writer=writer,
             )
         except Exception as exc:  # noqa: BLE001 - best-effort beat
-            logging.getLogger(__name__).warning(
+            slogging.getLogger(__name__).warning(
                 "heartbeat write failed (continuing, best-effort): %s", exc
             )
 

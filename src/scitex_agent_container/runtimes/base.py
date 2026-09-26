@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from ..config import AgentConfig
 
@@ -67,7 +68,7 @@ class RuntimeBase(ABC):
         TUI agent's launcher spawns a tmux session and exits within
         seconds, so recording it would store a pid that is dead almost
         immediately, and every consumer probing it (``os.kill(pid, 0)``
-        in :func:`_state.state_db_gc.gc_dead_instances`,
+        in :func:`_state.state_store_gc.gc_dead_instances`,
         :func:`_lifecycle._stale_lease.clear_stale_instance_lease`,
         :func:`cli_pkg._send_diagnosis.diagnose_send_failure`) would
         report a LIVE agent as dead.
@@ -111,5 +112,29 @@ class RuntimeBase(ABC):
         this ``None``. ``None`` reads downstream as "cannot verify", which
         is honest; a guessed name would read as a verified one.
         """
+        del config
+        return None
+
+    def control_state(self, config: AgentConfig) -> dict[str, Any] | None:
+        """Return an optional, harness-neutral turn-admission observation.
+
+        Most runtimes have no additional control-plane state beyond liveness,
+        so absence is the honest default.  Adapters may publish states such as
+        ``stale_latched`` without teaching SAC status about harness internals.
+        """
+        del config
+        return None
+
+    def recover_turn_admission(self, config: AgentConfig) -> bool | None:
+        """Ask an adapter to recover its current session in place.
+
+        ``None`` means unsupported.  Implementations must not restart the
+        process or replace session/incarnation identity.
+        """
+        del config
+        return None
+
+    def disable_periodic_turns(self, config: AgentConfig) -> bool | None:
+        """Remove adapter-owned periodic admission; ``None`` if unsupported."""
         del config
         return None

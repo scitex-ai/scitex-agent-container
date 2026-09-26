@@ -138,15 +138,6 @@ def test_sub_env_value_still_rewrites_the_legacy_board_identity():
     assert result == NEW
 
 
-def test_sub_env_value_rewrites_the_state_db_path_component():
-    # Arrange
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    # Act
-    result = sub_env_value(key, f"/state/{OLD}/state.db", OLD, NEW)
-    # Assert
-    assert result == f"/state/{NEW}/state.db"
-
-
 def test_sub_env_value_ignores_an_env_var_that_is_not_an_identity():
     """``GIT_AUTHOR_NAME=scitex-todo`` would be a coincidence, not an identity."""
     # Arrange
@@ -197,15 +188,6 @@ def test_rewrite_updates_the_overlay_path_inside_flat_raw_args(raw_args: list):
     overlay = raw_args[idx]
     # Assert
     assert overlay == f"/home/tester/.scitex/agent-container/containers/overlays/{NEW}/"
-
-
-def test_rewrite_updates_the_state_db_env(raw_args: list):
-    # Arrange
-    prefix = "SCITEX_AGENT_CONTAINER_STATE_DB="
-    # Act
-    entry = next(a for a in raw_args if a.startswith(prefix))
-    # Assert
-    assert entry == f"{prefix}/state/{NEW}/state.db"
 
 
 def test_rewrite_updates_the_board_identity_env(raw_args: list):

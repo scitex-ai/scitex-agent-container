@@ -141,7 +141,23 @@ class ApptainerContainerRuntime(RuntimeBase):
             return None
         cache_dir = self._image_cache_dir(config)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        return _resolve_sif(config, cache_dir)
+        resolved = _resolve_sif(config, cache_dir)
+        self._resolved_sif_path = resolved
+        return resolved
+
+    def resolved_image_identity(self) -> dict[str, str] | None:
+        """Exact immutable artifact selected for this runtime's last launch."""
+        path = getattr(self, "_resolved_sif_path", None)
+        if path is None:
+            return None
+        from ._apptainer_image_ref import image_artifact_identity
+
+        return image_artifact_identity(path)
+
+    def resolved_storage_identity(self) -> dict[str, str] | None:
+        """Exact write-heavy paths selected for this runtime's last launch."""
+        value = getattr(self, "_resolved_launch_storage", None)
+        return dict(value) if value is not None else None
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -219,6 +235,24 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         verify_tmpfs_headroom(config, state_dir)
 
+        from ._launch_storage import launch_storage_identity, verify_launch_storage
+
+        verify_launch_storage(argv)
+        self._resolved_launch_storage = launch_storage_identity(argv)
+
+        # /uvwork LIVES ON SCRATCH (ADR-0024) — create the bind source, and
+        # REFUSE when this host has nowhere to put it.
+        #
+        # HERE for the same reason as the two neighbours: `build_run_argv`
+        # emitted the bind read-only (it is reached by `sac agents explain`
+        # and by the dry-run path above), so the mkdir and the refusal both
+        # belong past the dry_run return. The directory created is the one
+        # THIS argv mounts — the source is read back out of `argv` — so a
+        # spec that declared its own /uvwork bind is left to its owner.
+        from ._apptainer_scratch import ensure_uvwork_for_launch
+
+        ensure_uvwork_for_launch(config, argv)
+
         # OVERLAY VENV INVALIDATION CONTRACT — an image rebuild must invalidate
         # the `venv-sac` slice of this agent's overlay, or the overlay's stale
         # site-packages shadow the new image forever. Contract, measurement and
@@ -251,6 +285,9 @@ class ApptainerContainerRuntime(RuntimeBase):
         from ._apptainer_host_env import host_cargo_bin_append_env
 
         launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
+        from ._cct_env_contract import scrub_retired_cct_env
+
+        scrub_retired_cct_env(launch_env)
 
         # Jailed-capsule guardrail: strip the apptainer/singularity bind
         # env vars from the launch environment so NO env-injected bind

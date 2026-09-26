@@ -416,7 +416,7 @@ def test_single_failure_exits_nonzero_prints_error(single_failure_result):
 
 
 @pytest.fixture
-def cross_host_state_db(tmp_path):
+def cross_host_state_store(tmp_path):
     """Per-test state.db at tmp_path; SCITEX_AGENT_CONTAINER_STATE_DB +
     module reload so the env override actually takes effect.
     """
@@ -433,9 +433,9 @@ def cross_host_state_db(tmp_path):
         "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
     )
     os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -448,13 +448,13 @@ def cross_host_state_db(tmp_path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 @pytest.fixture
-def remote_row_for_zeta(cross_host_state_db):
+def remote_row_for_zeta(cross_host_state_store):
     """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     iid = record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     return iid
@@ -538,7 +538,7 @@ def test_cross_host_stop_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_sh
 
 def test_cross_host_stop_updates_lead_side_row(remote_row_for_zeta, ssh_shim):
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act
@@ -604,7 +604,7 @@ def ssh_shim_unreachable(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_clew(cross_host_state_db, pg_schema: str):
+def remote_row_for_clew(cross_host_state_store, pg_schema: str):
     """Seed an active singleton row for ``clew`` on the unreachable
     peer ``peer-x`` AND the matching comms_nodes pin so the test can
     verify BOTH stores are cleared on force-release.
@@ -613,8 +613,10 @@ def remote_row_for_clew(cross_host_state_db, pg_schema: str):
     in the local file and the directory entry is PostgreSQL. Without it the directory
     write would resolve the unreachable guard DSN and raise.
     """
-    from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container._state.state_db_comms_nodes import register_comms_node
+    from scitex_agent_container._state.state_store import record_instance_start
+    from scitex_agent_container._state.state_store_comms_nodes import (
+        register_comms_node,
+    )
 
     iid = record_instance_start(
         name="clew", host="peer-x", a2a_port=19500, bound_port=19500, remote=True
@@ -638,7 +640,7 @@ def test_force_release_tombstones_instance_row(
     remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act
@@ -654,7 +656,7 @@ def test_force_release_clears_comms_nodes_binding(
     # Arrange — the federated comms_nodes pin must ALSO clear, otherwise
     # subsequent a2a routing still tries the unreachable peer even after
     # the instances row is closed.
-    from scitex_agent_container._state.state_db_comms_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_comms_nodes import lookup_comms_node
 
     runner = CliRunner()
     # Act
@@ -708,7 +710,7 @@ def test_no_force_on_unreachable_peer_leaves_instance_row(
 ):
     # Arrange — without --force, the binding MUST remain so the
     # operator can investigate before discarding it.
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act

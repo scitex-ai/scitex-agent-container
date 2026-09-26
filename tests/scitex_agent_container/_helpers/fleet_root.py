@@ -12,24 +12,14 @@ Two escape routes exist and both are closed:
    (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``) are
    computed from ``$HOME`` at IMPORT time, so a fixture that only sets
    ``$HOME`` CANNOT redirect them — it would read and write the live fleet
-   while looking isolated. (``state_db.DEFAULT_DB_PATH`` was a third until
+   while looking isolated. (``state_store.DEFAULT_DB_PATH`` was a third until
    2026-08-30, when it was deleted with the storage engine.)
 
-2. **The board.** Every scitex-cards call takes an explicit ``store=``.
-   That explicit argument is the PRIMARY isolation and it is what these
-   tests actually rely on.
-
-   Belt and braces, :func:`isolated_board` ALSO points
-   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so a call that
-   forgot to pass ``store=`` would land in the tmp file rather than on the
-   real board. WARNING, 2026-08-16: that second net is now INERT —
-   scitex_cards does not read ``SCITEX_TODO_TASKS_YAML_SHARED`` (its axis
-   is ``SCITEX_CARDS_DB``), so a forgotten ``store=`` would no longer be
-   caught. The env var is left as-is rather than renamed on a guess:
-   pointing it at the right variable without checking what scitex_cards
-   actually resolves would restore the APPEARANCE of a safety net while a
-   forgotten ``store=`` reached the live board. Verify the resolution
-   first, then re-arm it.
+2. **The board.** ``$SCITEX_CARDS_DB`` points at a throwaway PostgreSQL
+   schema and every scitex-cards call also receives that store explicitly.
+   ``$SCITEX_DIR`` redirects Cards' separate local-state root, including
+   the non-card ``tasks.yaml`` sidecar. A call that omits either explicit
+   path therefore remains inside the test root.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
 and writes, and the store is real, with the real schema.
@@ -69,7 +59,7 @@ spec:
   workdir: {home}/proj/{name}
 
   apptainer:
-    image: {home}/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     binds:
       - {home}:{home}:rw
@@ -253,11 +243,11 @@ def make_fleet(
     return layout
 
 
-# ``make_state_db`` was here until 2026-08-29. It called sac's own
-# ``init_schema`` on ``Layout.state_db`` so the rename suites walked the
+# ``make_state_store`` was here until 2026-08-29. It called sac's own
+# ``init_schema`` on ``Layout.state_store`` so the rename suites walked the
 # production schema rather than a hand-rolled one. Both halves of that
 # sentence stopped being true: ``init_schema`` issues ZERO ``CREATE TABLE``,
-# and ``Layout.state_db`` is gone with ``_lifecycle/_rename_db.py`` — there is
+# and ``Layout.state_store`` is gone with ``_lifecycle/_rename_db.py`` — there is
 # no state.db path for a rename to touch, so there is nothing for a helper to
 # create. Its only surviving caller went with it.
 #
@@ -290,23 +280,23 @@ def seed_identity_and_history(name: str) -> None:
     then ``instances.name`` — which left the same day for the shared store
     as well. It is written here through ``record_instance_start``, the same
     verb ``sac agents start`` uses, and carried by
-    ``state_db_instances_rename.rename_instance_rows`` as its own step in
+    ``state_store_instances_rename.rename_instance_rows`` as its own step in
     ``_rename.apply_plan``.
 
     The history half moved four times: ``turns`` (the diary trio, to
     per-host PostgreSQL), then ``attempts`` (deleted, zero writers), then
     ``channel_events.target``, now ``sac_channel_events`` in the shared
     PostgreSQL (ADR-0023). It is written through the real ``persist_event``
-    and carried by ``state_db_channel.rename_channel_events``.
+    and carried by ``state_store_channel.rename_channel_events``.
 
     The AUTHORISATION half was the last of the three to need seeding: it rode
     inside ``_rename_db``'s ``comms_grants`` pairs until 2026-08-29, which is
     to say it was not carried at all once the table moved. It is written
     through the real ``grant_send`` and carried by
-    ``state_db_grants_rename.rename_comms_grants``.
+    ``state_store_grants_rename.rename_comms_grants``.
 
     NO ``layout`` ARGUMENT, and no ``state.db``. It took one only to build
-    that file, ``Layout.state_db`` was deleted on 2026-08-29 with the rename
+    that file, ``Layout.state_store`` was deleted on 2026-08-29 with the rename
     step that was its last reader, and a parameter kept past its last use is
     the shape that made ``_open_instance_pid`` answer "not running" for a live
     agent. Nothing here is rooted on disk any more; every record it writes is
@@ -315,9 +305,9 @@ def seed_identity_and_history(name: str) -> None:
     CALLERS MUST TAKE ``pg_schema``: all three write to a real PostgreSQL
     schema, so a caller without it resolves the unreachable DSN and fails.
     """
-    from scitex_agent_container._state.state_db_channel import persist_event
-    from scitex_agent_container._state.state_db_grants import grant_send
-    from scitex_agent_container._state.state_db_instances import (
+    from scitex_agent_container._state.state_store_channel import persist_event
+    from scitex_agent_container._state.state_store_grants import grant_send
+    from scitex_agent_container._state.state_store_instances import (
         record_instance_start,
     )
 
@@ -364,18 +354,16 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     opt-out, not a mock — the code paths stay exactly as they ship; the
     test simply does not ride them.
 
-    * **the store** — ``$SCITEX_TODO_TASKS_YAML_SHARED`` points at a tmp
-      YAML file, so even a call that forgot ``store=`` lands in tmp rather
-      than on the live 1,400-card board.
+    * **the local state root** — ``$SCITEX_DIR`` points at a tmp root, so
+      Cards' non-card YAML sidecar, pidfiles and delivery state cannot land
+      below the real user's home.
 
-    * **the mirror shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
-      ``$SCITEX_TODO_DB``) points at a tmp DB. This one is not belt-and-
-      braces, it is load-bearing, and its absence destroyed the live board
-      on 2026-07-20: the dual-write mirror resolves its own path and
-      RECONCILES, so isolating only the YAML meant a five-card tmp doc
-      deleted 2,772 real cards. See the inline note below.
+    * **the Cards store** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
+      ``$SCITEX_TODO_DB``) points at the throwaway PostgreSQL schema supplied
+      by ``pg_schema``. This is load-bearing: Cards 0.52.0 no longer accepts
+      an on-disk SQLite shadow, and the live board must never be the fallback.
 
-    * **the notification rail** — sac registers a ``scitex_todo.hooks``
+    * **the notification rail** — sac registers a ``scitex_cards.hooks``
       consumer (``_listen._card_event_delivery``), so every real
       ``reassign_task`` emits a ``reassigned`` event which that consumer
       turns into an HTTP POST to the LOCAL ``sac listen`` daemon on
@@ -392,18 +380,23 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
 
     Generator — call from a fixture with ``yield from``.
     """
-    store = tmp_path / "board" / "tasks.yaml"
+    scitex_dir = tmp_path / ".scitex"
+    store = scitex_dir / "cards" / "tasks.yaml"
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text("tasks: []\n")
-    cards_db = tmp_path / "board" / "cards.db"
-    _materialise_cards_db(cards_db)
+    cards_store = os.environ.get("SCITEX_STORE_DSN")
+    if not cards_store or not cards_store.startswith(("postgresql://", "postgres://")):
+        raise RuntimeError(
+            "isolated_board requires pg_schema to provide a throwaway PostgreSQL DSN"
+        )
+    _materialise_cards_db(cards_store)
 
     yield from _yield_value(
         store,
         _env_overrides(
             {
-                "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
-                # *** THE MIRROR SHADOW — isolating the YAML IS NOT ENOUGH. ***
+                "SCITEX_DIR": str(scitex_dir),
+                # *** THE CARDS STORE — isolating the YAML IS NOT ENOUGH. ***
                 #
                 # Redirecting the store above protects the YAML and nothing
                 # else. scitex-cards mirrors every write into a shadow database
@@ -425,13 +418,14 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
                 # test using this helper is isolated even if the floor is not
                 # there (a bare `pytest` from another rootdir, a subprocess
                 # with a scrubbed env, a future refactor of conftest).
-                "SCITEX_CARDS_DB": str(cards_db),
+                "SCITEX_CARDS_DB": cards_store,
                 # Pre-rename name of the same knob, still honoured by
                 # `resolve_db_path` for direct callers that never imported the
                 # scitex_cards root. Set both — this is the variable whose
                 # absence destroyed the board; do not bet on a transition
                 # window closing cleanly.
-                "SCITEX_TODO_DB": str(cards_db),
+                "SCITEX_TODO_DB": cards_store,
+                "SCITEX_CARDS_AGENT_ID": "sac-test",
                 "SAC_CARD_EVENT_DELIVERY_DISABLED": "1",
                 "SCITEX_TODO_STORE_GIT_AUTOCOMMIT": "0",
                 # `list_tasks(scope=None)` falls back to this. A stray value
@@ -443,20 +437,11 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     )
 
 
-def _materialise_cards_db(cards_db: Path) -> None:
-    """Create the tmp cards store, schema and all, before any test touches it.
+def _materialise_cards_db(cards_store: str) -> None:
+    """Initialize the throwaway PostgreSQL Cards schema before tests use it.
 
-    Pointing ``$SCITEX_CARDS_DB`` at a path is no longer enough. scitex-cards
-    REFUSES a target that does not exist rather than creating one, and says why:
-    the exporter answers a missing database with an empty document, and that
-    empty document is written back as the WHOLE store — every card replaced by
-    nothing. Refusing is the correct behaviour and it is the direct lesson of
-    2026-07-20, when this fixture's own five seeded cards replaced ~2,777 real
-    ones. See the long note on ``$SCITEX_CARDS_DB`` above.
-
-    So the isolation now has to build a real store, not merely name one:
-    ``open_db`` resolves, connects, and runs ``init_schema`` (a no-op on an
-    existing file).
+    ``open_db`` resolves, connects, and initializes the schema selected by the
+    DSN's search path. The caller must already hold the ``pg_schema`` fixture.
 
     A MISSING scitex-cards IS THE ONE SAFE FAILURE, and it is caught NARROWLY.
     The CI SIF does not install scitex-cards (`ModuleNotFoundError: No module
@@ -477,7 +462,7 @@ def _materialise_cards_db(cards_db: Path) -> None:
     except ImportError:
         return
 
-    open_db(cards_db).close()
+    open_db(cards_store).close()
 
 
 def _yield_value(value, guard: Iterator[None]) -> Iterator:

@@ -54,12 +54,10 @@ facts to report and they do not deserve the same volume:
 
 * RESOLUTION failed (:func:`ensure_cct_bot_token`) — a scitex-logging
   WARNING names the pool source, the tried slot names, and the fixes. The
-  start itself proceeds — Telegram is a comms rail, not a boot dependency —
-  so the absence is loud but never silent, and never DRESSED UP AS A STARTUP
-  FAILURE. It used to log at ERROR, which made every brand-new agent (no bot
-  yet, by definition) look stillborn in its boot log next to the genuinely
-  fatal lines; WARNING + an explicit "the agent starts normally" sentence
-  keeps the signal without the false alarm.
+  resolution itself remains non-fatal. A selected Hermes CCT rail is stricter
+  downstream: its profile validator refuses to start without the token, MCP,
+  and turn URL that the spec requested. Other harnesses retain the degraded
+  post-start alarm behavior.
 * A DECLARED mapping is broken (:func:`prune_tokenless_telegrammer_mcp`) —
   ERROR. Different fact, rarer, severe in consequence (the rail is REMOVED,
   not merely quiet), so it earns the loud level without reopening the
@@ -181,7 +179,7 @@ def _slot_candidates(name: str, workdir: str) -> list[str]:
 
 
 def _channel_requested(config) -> bool:
-    """True iff ``spec.claude.channels`` asks for the telegrammer rail.
+    """True iff ``spec.comms.channels`` asks for the telegrammer rail.
 
     Read by :func:`ensure_cct_bot_token` (whether to resolve at all) and by
     :func:`prune_tokenless_telegrammer_mcp` (whether resolution was even
@@ -214,10 +212,10 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     cascade fold, so an explicit hand-authored mapping always wins. No-op
     when the spec does not request ``server:claude-code-telegrammer``.
     Never raises for a missing token — it WARNs (scitex-logging) with the
-    pool path and the fixes instead, and says in so many words that the
-    agent starts normally: a missing bot token degrades one comms rail, it
-    does not fail a boot. The token VALUE is never logged; only slot names,
-    paths, and the agent name appear.
+    pool path and the fixes instead. The selected Hermes profile validator
+    separately fails a requested incomplete rail; other harnesses may start
+    degraded. The token VALUE is never logged; only slot names, paths, and the
+    agent name appear.
 
     WHICH token is not decided here. That is
     :func:`._cct_token_resolution.resolve_cct_token`, which this function is
@@ -255,7 +253,32 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
 
     if resolution.source == SOURCE_ENV_FILE:
         # Hand-authored .envrc (or a prior deploy) already provided the
-        # token — authoritative. Only backfill the identity default.
+        # token — authoritative, UNLESS the pool now resolves a DECLARED slot
+        # for this agent (a stale truncated/rotated token from an earlier
+        # deploy must not pin the agent forever; measured 2026-09-23: three
+        # lead agents carried 23-char truncated tokens while the pool held
+        # the full 46-char values, and every start failed bot_token_valid).
+        # Only backfill the identity default otherwise.
+        declared = _declared_slot(config)
+        if declared:
+            try:
+                pool_value = (pool.env.get(f"{_POOL_PREFIX}{declared}", "") or "")
+            except Exception:
+                pool_value = ""
+            if pool_value and existing.get(_TOKEN_VAR) != pool_value:
+                existing[_TOKEN_VAR] = pool_value
+                existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
+                _write_env_file(env_file, existing)
+                _logger().warning(
+                    "cct: refreshed stale %s for agent %r from pool slot %s%s "
+                    "(value not logged) -> %s.",
+                    _TOKEN_VAR,
+                    agent_name,
+                    _POOL_PREFIX,
+                    declared,
+                    env_file,
+                )
+                return
         if not existing.get(_AGENT_ID_VAR):
             existing[_AGENT_ID_VAR] = _default_agent_id(agent_name, workdir)
             _write_env_file(env_file, existing)
@@ -297,9 +320,11 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
 
     candidates = list(resolution.candidates)
     _logger().warning(
-        "cct: no Telegram bot token for agent %r although spec.claude.channels "
-        "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "
-        "STARTS NORMALLY — this is NOT a startup failure; only the Telegram "
+        "cct: no Telegram bot token for agent %r although spec.comms.channels "
+        "requests %r. Tried pool slot(s) %s against the pool (%s). Token "
+        "resolution itself is non-fatal. THE AGENT STARTS NORMALLY for "
+        "non-Hermes harnesses; a selected Hermes CCT profile instead refuses "
+        "this incomplete rail. The Telegram "
         "rail is down, and it is down in BOTH directions: the telegrammer MCP "
         "entry is REMOVED from the materialised .mcp.json (a server that "
         "cannot start is worse than an absent one), so this agent is MUTE and "
@@ -309,7 +334,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
         "(canonical pool; restart `sac listen` afterwards if it provides the "
         "env), (2) set spec.apptainer.env %s: <existing-slot> to reuse "
         "another project's bot, or (3) export %s via the project's .envrc "
-        "(%s/.envrc). Or drop %r from spec.claude.channels if this agent "
+        "(%s/.envrc). Or drop %r from spec.comms.channels if this agent "
         "needs no Telegram rail.",
         agent_name,
         _TELEGRAMMER_CHANNEL,

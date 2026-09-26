@@ -23,6 +23,7 @@ restore it on teardown — no ``monkeypatch``, per the ecosystem rule.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -31,7 +32,9 @@ from scitex_agent_container.config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
     CODEX_SDK,
+    CODEX_TUI,
     HARNESS_DESCRIPTORS,
+    HERMES_TUI,
     OPENAI_AGENTS,
     UnmappableHarnessError,
     known_harnesses,
@@ -140,15 +143,13 @@ def test_codex_runner_module_is_the_codex_session_entrypoint(codex_descriptor):
     assert module == "scitex_agent_container._runners.codex_session"
 
 
-def test_codex_does_not_claim_any_runtime_spelling(codex_descriptor):
-    # Arrange — the runtime axis spells ANTHROPIC launch modes, so a
-    # sole-entry family must not widen it (a claimed spelling here would
-    # collide with the Claude entries and trip _check_registry).
+def test_codex_claims_the_vendor_neutral_headless_runtime(codex_descriptor):
+    # Arrange
     descriptor = codex_descriptor
     # Act
     spellings = descriptor.spec_runtimes
     # Assert
-    assert spellings == frozenset()
+    assert spellings == frozenset({"headless"})
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +162,8 @@ def test_resolve_maps_the_codex_harness_to_its_key():
     spec = {"harness": "codex"}
     # Act
     key = resolve_harness_key(spec)
-    # Assert
-    assert key == CODEX_SDK
+    # Assert -- since 2026-09-05 the family's default is the pane, as for Claude.
+    assert key == CODEX_TUI
 
 
 def test_resolve_honours_the_legacy_provider_alias_for_codex():
@@ -172,7 +173,7 @@ def test_resolve_honours_the_legacy_provider_alias_for_codex():
     # Act
     key = resolve_harness_key(spec)
     # Assert
-    assert key == CODEX_SDK
+    assert key == CODEX_TUI
 
 
 def test_resolve_accepts_a_loaded_config_codex_harness():
@@ -181,13 +182,14 @@ def test_resolve_accepts_a_loaded_config_codex_harness():
     # Act
     key = resolve_harness_key(config)
     # Assert
-    assert key == CODEX_SDK
+    assert key == CODEX_TUI
 
 
 def test_resolve_refuses_the_registry_key_spelling_as_a_harness_name():
     # Arrange — the new family must not have widened the door: the KEY
     # spelling is not a spec.harness value and must still raise.
     spec = {"harness": "codex-sdk"}
+
     # Act
     def resolve():
         return resolve_harness_key(spec)
@@ -215,9 +217,9 @@ def test_unknown_harness_error_lists_codex_among_the_known_families():
 # ---------------------------------------------------------------------------
 
 
-def test_known_harnesses_now_includes_codex():
+def test_known_harnesses_includes_registered_families():
     # Arrange
-    expected = ("anthropic", "codex", "openai")
+    expected = ("anthropic", "codex", "hermes", "openai")
     # Act
     families = known_harnesses()
     # Assert
@@ -251,16 +253,25 @@ def test_provider_modules_harness_set_also_derived_the_new_family():
 def test_adding_codex_did_not_widen_the_runtime_spellings():
     # Arrange — the runtime axis is untouched by a new harness family;
     # a regression here would mean the row leaked into launch modes.
-    expected = frozenset({"", "apptainer", "claude-agent-sdk", "tui"})
+    expected = frozenset({"", "apptainer", "claude-agent-sdk", "headless", "tui"})
     # Act
     spellings = valid_runtime_spellings()
     # Assert
     assert spellings == expected
 
 
-def test_the_registry_holds_exactly_the_four_known_harness_keys():
+def test_the_registry_holds_exactly_the_six_known_harness_keys():
     # Arrange
-    expected = sorted([CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK])
+    expected = sorted(
+        [
+            CLAUDE_CODE_TUI,
+            CLAUDE_AGENT_SDK,
+            OPENAI_AGENTS,
+            CODEX_SDK,
+            CODEX_TUI,
+            HERMES_TUI,
+        ]
+    )
     # Act
     keys = sorted(HARNESS_DESCRIPTORS)
     # Assert
@@ -294,7 +305,7 @@ def test_codex_env_flags_bind_the_codex_home_directory(
     # Act
     argv = codex_env.codex_env_flags(config, tmp_path)
     # Assert
-    assert f"{codex_home}:{codex_env.CONTAINER_CODEX_HOME}" in argv
+    assert f"{codex_home}:{codex_env.container_codex_home('t')}" in argv
 
 
 def test_codex_env_flags_export_the_in_container_codex_home(
@@ -306,7 +317,7 @@ def test_codex_env_flags_export_the_in_container_codex_home(
     # Act
     argv = codex_env.codex_env_flags(config, tmp_path)
     # Assert
-    assert f"{codex_env.CODEX_HOME_ENV}={codex_env.CONTAINER_CODEX_HOME}" in argv
+    assert f"{codex_env.CODEX_HOME_ENV}={codex_env.container_codex_home('t')}" in argv
 
 
 @pytest.fixture
@@ -366,6 +377,42 @@ def test_codex_env_flags_omit_routing_vars_that_are_unset(
     assert not any(a.startswith("SAC_CODEX_MODEL=") for a in argv)
 
 
+def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
+    # Arrange
+    config = AgentConfig(
+        name="t",
+        harness="codex",
+        runtime="headless",
+        model="qwen38-27b",
+    )
+    config.claude.provider = type(
+        "P", (), {"base_url": "http://qwen.example", "auth_token_env": "QWEN_KEY"}
+    )()
+    previous = os.environ.get("QWEN_KEY")
+    os.environ["QWEN_KEY"] = "test-key"
+    try:
+        # Act
+        argv = codex_env.codex_env_flags(config, tmp_path)
+    finally:
+        if previous is None:
+            os.environ.pop("QWEN_KEY", None)
+        else:
+            os.environ["QWEN_KEY"] = previous
+
+    encoded = next(
+        value.split("=", 1)[1]
+        for value in argv
+        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_JSON=")
+    )
+    overrides = json.loads(encoded)
+    # Assert
+    assert (
+        "SAC_CODEX_MODEL=qwen38-27b" in argv,
+        "SAC_CODEX_MODEL_PROVIDER=sac" in argv,
+        'model_providers.sac.base_url="http://qwen.example/v1"' in overrides,
+    ) == (True, True, True)
+
+
 def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(
     tmp_path, codex_config_with_claude_provider
 ):
@@ -373,6 +420,7 @@ def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(
     # spec.claude.provider: codex is an INFERENCE backend (Claude Code
     # still drives), spec.harness: codex is a HARNESS (codex drives).
     config = codex_config_with_claude_provider
+
     # Act
     def render():
         return codex_env.codex_env_flags(config, tmp_path)
@@ -411,3 +459,32 @@ def test_the_two_axis_refusal_message_names_the_harness_axis(
         message = str(exc)
     # Assert
     assert "spec.harness: codex" in message
+
+
+def test_codex_env_flags_create_the_codex_home_when_absent(
+    tmp_path, no_harness_override
+):
+    # Arrange -- a host that has never run codex: the bind source is absent
+    # (no CODEX_HOME override, so the agent's own state-dir home is used).
+    previous = os.environ.pop(codex_env.CODEX_HOME_ENV, None)
+    config = AgentConfig(name="t", harness="codex")
+    # Act
+    try:
+        codex_env.codex_env_flags(config, tmp_path)
+    finally:
+        if previous is not None:
+            os.environ[codex_env.CODEX_HOME_ENV] = previous
+    # Assert
+    assert (tmp_path / "codex-home").is_dir()
+
+
+def test_codex_env_flags_bind_into_tmp_where_the_image_has_a_mount_point(
+    tmp_path, no_harness_override, codex_home
+):
+    # Arrange -- apptainer refuses a bind whose destination is absent in the
+    # image; /tmp exists, /home/agent/.codex did not (handyman-01, 08:59Z).
+    config = AgentConfig(name="hm", harness="codex")
+    # Act
+    argv = codex_env.codex_env_flags(config, tmp_path)
+    # Assert
+    assert argv[argv.index("--bind") + 1].endswith(":/tmp/sac-hm-codex-home")

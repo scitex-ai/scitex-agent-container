@@ -25,14 +25,20 @@ from ..._creds import NoHealthyAccountError
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
+from ..._logging import render_rich
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
 from ...runtimes._apptainer_bind_guard import BindCapabilityError
-from .._helpers import console, system_msg
+from .._helpers import system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
+
+
+def should_preflight_claude_resume(config, resume_id: str | None) -> bool:
+    """Use the Claude transcript preflight only for Claude-family IDs."""
+    return bool(resume_id) and str(getattr(config, "harness", "")).lower() != "hermes"
 
 
 def should_preview_and_require_yes(
@@ -67,6 +73,8 @@ def run_single_targets(
     force: bool,
     resume_id: str | None,
     session_mode: str | None,
+    engine: str | None = None,
+    probe_engine: bool | None = None,
     dry_run: bool,
     as_json: bool,
     foreground: bool,
@@ -118,6 +126,15 @@ def run_single_targets(
     safety net — a real interactive operator invocation never has
     this env var set.
 
+    ``engine`` / ``probe_engine`` (``--engine`` / ``--probe-engine``):
+    forwarded to ``agent_start`` as ``engine_override`` /
+    ``probe_engine``. ``engine`` selects one entry of the spec's
+    ``engines:`` block for THIS start; an unknown key or an engine that
+    cannot be honoured RAISES out of ``agent_start`` and lands in the
+    per-target error branch below — it never degrades to the default.
+    ``probe_engine`` is the opt-in live reachability probe (``None``
+    defers to ``SAC_ENGINE_PROBE``, default off).
+
     ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
     ``--resume`` preflight's candidate listing — how many trailing
     transcript messages to preview per resumable conversation
@@ -148,7 +165,7 @@ def run_single_targets(
     with broker_ctx:
         for target_idx, raw_target in enumerate(single_targets):
             if target_idx > 0 and not as_json:
-                console.print()  # blank line between agents
+                render_rich("", __name__)  # blank line between agents
 
             # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
             try:
@@ -187,6 +204,9 @@ def run_single_targets(
                         peers,
                         dry_run=dry_run,
                         force=force,
+                        engine=engine,
+                        session_mode=session_mode,
+                        resume_id=resume_id,
                     ):
                         continue
                 if skip:
@@ -200,9 +220,7 @@ def run_single_targets(
                             }
                         )
                     else:
-                        console.print(
-                            f"[yellow]Skipping '{config.name}': {skip}[/yellow]"
-                        )
+                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__)
                     continue
                 # Location reads as `host@<host-workdir>:<container-workdir>`.
                 host = resolve_hostname() or "local"
@@ -283,7 +301,11 @@ def run_single_targets(
                 # + informative (lists resumable conversations) so the choice is
                 # explicit — never a silent fresh start. Skipped on --no-preflight
                 # and dry-run.
-                if resume_id and not no_preflight and not dry_run:
+                if (
+                    should_preflight_claude_resume(config, resume_id)
+                    and not no_preflight
+                    and not dry_run
+                ):
                     from ._resume_preflight import preflight_resume_id
 
                     try:
@@ -314,6 +336,8 @@ def run_single_targets(
                     dry_run=dry_run,
                     session_override=session_mode,
                     resume_id_override=resume_id,
+                    engine_override=engine,
+                    probe_engine=probe_engine,
                     foreground=foreground,
                     one_shot=one_shot,
                     assume_yes=effective_yes,

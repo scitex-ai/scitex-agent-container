@@ -42,7 +42,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from scitex_agent_container._lifecycle._off_loop import run_blocking
-from scitex_agent_container._state.state_db_channel import (
+from scitex_agent_container._state.state_store_channel import (
     list_since_id,
     list_undelivered,
     mark_delivered,
@@ -86,6 +86,7 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
     if name not in ctx.yamls:
         return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
 
+    explicit_ack = request.query_params.get("ack") == "explicit"
     last_event_id_raw = request.headers.get("last-event-id")
     last_event_id: int | None = None
     if last_event_id_raw is not None:
@@ -157,7 +158,8 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
                 )
                 # ``target=`` is REQUIRED: ids are per-target since the move
                 # to PostgreSQL, so id-only would mark another agent's row.
-                await run_blocking(mark_delivered, [row_id], target=name)
+                if not explicit_ack:
+                    await run_blocking(mark_delivered, [row_id], target=name)
 
             beat_s = keepalive_interval_s()
             while True:
@@ -195,9 +197,10 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
                     yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                         "utf-8"
                     )
-                    await run_blocking(
-                        mark_delivered, [int(row_id)], target=name
-                    )
+                    if not explicit_ack:
+                        await run_blocking(
+                            mark_delivered, [int(row_id)], target=name
+                        )
                 else:
                     # No row id means the event was injected by a path that did
                     # NOT persist (lifecycle fan-out, ACL-reject notice, …).

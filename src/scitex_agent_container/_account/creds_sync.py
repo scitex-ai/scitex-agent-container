@@ -36,14 +36,15 @@ store's credential must always authenticate as that store's own account.
 from __future__ import annotations
 
 import json
-import logging
 import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 
 class LiveCredInvalidError(RuntimeError):

@@ -32,16 +32,18 @@ nothing to any vendor.
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
+
 from ..config._harness_registry import CODEX_SDK, HARNESS_DESCRIPTORS
+from ._harness_session import Message
 from ._harness_turn_pump import drive_harness_turn
 from ._session_state import append_session_message, report_sdk_error
 from ._session_supervisor_helpers import _drain_failed_inbox
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["run_codex_conversation"]
 
@@ -96,12 +98,16 @@ async def run_codex_conversation(
     turn-driver contract but unused: the app-server subprocess is owned
     by the SDK, and a mid-session crash surfaces as a turn-ending error
     event rather than something this driver can respawn around.
-    ``channels`` names Claude-SDK channel adapters this harness does not
-    implement; a spec that asks for them gets a LOUD warning.
+    ``channels`` is the agent-level ``spec.comms.channels`` declaration.  Its
+    source-specific adapters run upstream of the harness and normalize every
+    admitted message into this daemon's shared inbox.  The Codex driver must
+    therefore neither reinterpret nor reject the declaration: native Codex
+    delivery begins at the inbox boundary (``turn/start`` while idle,
+    ``turn/steer`` while a turn is active).
     """
     from ._session_inbox import ShutdownEnvelope, TurnEnvelope
 
-    del max_restarts, restart_backoff_s, a2a_port  # contract params; see docstring
+    del max_restarts, restart_backoff_s, a2a_port, channels  # see docstring
 
     descriptor = HARNESS_DESCRIPTORS[CODEX_SDK]
     if resume_session_id and not descriptor.can_resume:
@@ -118,14 +124,6 @@ async def run_codex_conversation(
         _drain_failed_inbox(inbox, RuntimeError(detail))
         return
 
-    if channels:
-        logger.warning(
-            "codex harness has no channel adapters; --channels %r ignored "
-            "for agent %s (channel wiring is Claude-SDK-specific)",
-            channels,
-            name,
-        )
-
     factory = session_factory if session_factory is not None else _default_session_factory()
     try:
         session = factory(name, thread_id=resume_session_id)
@@ -141,13 +139,62 @@ async def run_codex_conversation(
         return
 
     try:
-        while True:
-            env = await inbox.get()
-            if isinstance(env, ShutdownEnvelope):
-                return
-            if not isinstance(env, TurnEnvelope):
-                continue
-            await drive_harness_turn(
+        await _drain_codex_inbox(
+            session,
+            inbox,
+            state_dir=state_dir,
+            pid=pid,
+            stop=stop,
+            print_stream=print_stream,
+            name=name,
+            host=host,
+            shutdown_type=ShutdownEnvelope,
+            turn_type=TurnEnvelope,
+        )
+        # The drain owns turn lifetime, but not vendor-process lifetime.
+        # Keeping those scopes separate preserves one app-server process and
+        # one Codex thread across every envelope in this resident daemon.
+        # It also leaves one unconditional close site for all terminal paths:
+        # shutdown envelope, one-shot completion, stop event, or exception.
+        # Do not move close into the drain helper; doing so would couple inbox
+        # policy to SDK resource ownership and make later source adapters
+        # responsible for vendor teardown.  The session object is constructed
+        # above this try, so it is always valid when the finally block runs.
+        # Conversely, a construction/start failure returns before entering
+        # this try and is drained through the explicit open-failure path.
+        # These boundaries match the other persistent session drivers and
+        # keep teardown from changing the already-observed turn outcome.
+    finally:
+        try:
+            await session.close()
+        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; a failed close here leaks a codex app-server subprocess, so it is logged loudly rather than raised over the real result)
+            logger.error("codex session close failed for %s: %s", name, exc)
+
+
+async def _drain_codex_inbox(
+    session: Any,
+    inbox: Any,
+    *,
+    state_dir: Path,
+    pid: int,
+    stop: asyncio.Event,
+    print_stream: bool,
+    name: str,
+    host: str | None,
+    shutdown_type: type,
+    turn_type: type,
+) -> None:
+    """Drain neutral envelopes, steering arrivals into an active Codex turn."""
+    pending_env: Any | None = None
+    while True:
+        env = pending_env if pending_env is not None else await inbox.get()
+        pending_env = None
+        if isinstance(env, shutdown_type):
+            return
+        if not isinstance(env, turn_type):
+            continue
+        turn_task = asyncio.create_task(
+            drive_harness_turn(
                 session,
                 env,
                 state_dir=state_dir,
@@ -158,13 +205,96 @@ async def run_codex_conversation(
                 host=host,
                 harness=CODEX_SDK,
             )
-            if env.exit_after:
-                stop.set()
+        )
+        steered_envs: list[Any] = []
+
+        # Race the native turn against the non-destructive inbox event. Plain
+        # asyncio.Queue fixtures and old sessions retain serial behavior.
+        can_wake = callable(getattr(inbox, "wait_for_item", None))
+        can_steer = callable(getattr(session, "steer", None))
+        while can_wake and can_steer and not turn_task.done():
+            wake_task = asyncio.create_task(inbox.wait_for_item())
+            done, _ = await asyncio.wait(
+                {turn_task, wake_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if turn_task in done:
+                wake_task.cancel()
+                await asyncio.gather(wake_task, return_exceptions=True)
+                break
+
+            incoming = await inbox.get()
+            if isinstance(incoming, shutdown_type):
+                interrupt = getattr(session, "interrupt", None)
+                active_id = getattr(session, "active_turn_id", None)
+                if callable(interrupt) and active_id:
+                    await interrupt(expected_turn_id=active_id)
+                await turn_task
                 return
-            if stop.is_set():
-                return
-    finally:
+            if not isinstance(incoming, turn_type):
+                continue
+
+            active_id = getattr(session, "active_turn_id", None)
+            if not active_id:
+                # The turn completed between wake and precondition read.
+                pending_env = incoming
+                break
+            try:
+                acknowledged_id = await session.steer(
+                    Message(role="user", content=incoming.text),
+                    expected_turn_id=active_id,
+                )
+            except Exception as exc:
+                # A native RPC attempt is authoritative. Never replay an
+                # ambiguous failure as a fresh turn and risk duplicate input.
+                append_session_message(
+                    state_dir,
+                    {
+                        "type": "error",
+                        "kind": "native-steer",
+                        "detail": str(exc),
+                        "message_id": incoming.dispatch_id,
+                    },
+                )
+                if not incoming.response.done():
+                    incoming.response.set_exception(exc)
+                continue
+            append_session_message(
+                state_dir,
+                {
+                    "type": "user",
+                    "text": incoming.text,
+                    "delivery": "native-steer",
+                    "codex_turn_id": acknowledged_id,
+                    "message_id": incoming.dispatch_id,
+                },
+            )
+            steered_envs.append(incoming)
+
         try:
-            await session.close()
-        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; a failed close here leaks a codex app-server subprocess, so it is logged loudly rather than raised over the real result)
-            logger.error("codex session close failed for %s: %s", name, exc)
+            await turn_task
+        except BaseException as exc:
+            # Resolve every accepted steer with the active turn's real crash.
+            for steered in steered_envs:
+                if not steered.response.done():
+                    if isinstance(exc, asyncio.CancelledError):
+                        steered.response.cancel()
+                    else:
+                        steered.response.set_exception(exc)
+            raise
+        # One terminal result includes all accepted steering input.
+        for steered in steered_envs:
+            steered.session_id = env.session_id
+            if not steered.response.done():
+                if env.response.cancelled():
+                    steered.response.cancel()
+                else:
+                    failure = env.response.exception()
+                    if failure is not None:
+                        steered.response.set_exception(failure)
+                    else:
+                        steered.response.set_result(env.response.result())
+        if env.exit_after:
+            stop.set()
+            return
+        if stop.is_set():
+            return

@@ -16,10 +16,12 @@ other way around at module load).
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
+import scitex_logging as slogging
+
 from .._listen._inbox_fault import FAULT_NOT_RUNNING
+from ..cli_pkg._send_status_code import publish_accepted_status_code
 from ._channel_send_errors import (
     SendError,
     delivery_error,
@@ -39,9 +41,7 @@ from ._channel_target_lookup import (
 from ._channel_tool_defs import build_tool_list
 from .channel import _recent
 
-from ..cli_pkg._send_status_code import publish_accepted_status_code
-
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def register_tools(
@@ -68,7 +68,7 @@ def register_tools(
 
     def _ledger_record(
         *, to_agent: str, content: str, conversation_id: str | None
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Mint + record an outbound dispatch row; return its dispatch_id.
 
         Ledger writes are observability — a store hiccup must not break the
@@ -82,6 +82,7 @@ def register_tools(
         question and cannot stand in for it.
         """
         did = new_dispatch_id()
+        recorded = False
         try:
             record_dispatch(
                 agent=agent_name,
@@ -91,9 +92,10 @@ def register_tools(
                 conversation_id=conversation_id,
                 dispatch_id=did,
             )
+            recorded = True
         except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a DB write failure must not break the a2a send — logged loudly, never silent)
             log.warning("dispatch-ledger record (a2a_send) failed: %s", exc)
-        return did
+        return did, recorded
 
     def _ledger_update(dispatch_id: str, status: str) -> None:
         # Same owner _ledger_record stamped, so the keyed update addresses the
@@ -283,6 +285,13 @@ def register_tools(
                 return ev
         return None
 
+    def _find_dispatch(dispatch_id: str) -> dict[str, Any] | None:
+        """Exact inbound nonce lookup; absence means wrong or stale."""
+        for ev in reversed(_recent):
+            if ev.get("dispatch_id") == dispatch_id:
+                return ev
+        return None
+
     def _wrap_message_send(content: str, **extra: Any) -> dict[str, Any]:
         # sac-extension fields (from_agent, conversation_id, ...) live
         # under ``params.metadata`` per A2A v1 — the SDK's strict proto
@@ -342,7 +351,7 @@ def register_tools(
             target = arguments["target"]
             content = arguments["content"]
             conversation_id = arguments.get("conversation_id") or _uuid.uuid4().hex
-            dispatch_id = _ledger_record(
+            dispatch_id, ledger_recorded = _ledger_record(
                 to_agent=target,
                 content=content,
                 conversation_id=conversation_id,
@@ -362,6 +371,17 @@ def register_tools(
                 _ledger_update(dispatch_id, STATUS_FAILED)
                 return error_result(exc)
             _ledger_update(dispatch_id, STATUS_DELIVERED)
+            if ledger_recorded:
+                try:
+                    from ._channel_nudge_worker import schedule_dispatch_nudge
+
+                    schedule_dispatch_nudge(
+                        agent=agent_name,
+                        dispatch_id=dispatch_id,
+                        target=target,
+                    )
+                except Exception as exc:  # stx-allow: fallback (reason: nudge persistence is observability/control state; log loudly without turning a delivered message into a transport failure)
+                    log.warning("agentic-ACK nudge scheduling failed: %s", exc)
             # ADR-0007: attach the honest StatusCode alongside the raw
             # response — http/202, final=False. A REAL measured count (the
             # publish's own fan-out), never fabricated; absent for a
@@ -371,6 +391,16 @@ def register_tools(
             count = body.get("delivered_subscriber_count") if isinstance(body, dict) else None
             if isinstance(count, int):
                 res["status_code"] = publish_accepted_status_code(target, count).to_dict()
+            res.update(
+                dispatch_id=dispatch_id,
+                dispatch_status="delivered_unacknowledged",
+                understanding_proven=False,
+                hint=(
+                    "Transport delivery is visible, but recipient understanding is "
+                    "unproven until the model invokes a2a_agentic_ack with this exact "
+                    "dispatch_id nonce."
+                ),
+            )
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":
@@ -415,6 +445,43 @@ def register_tools(
             except SendError as exc:
                 return error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_agentic_ack":
+            dispatch_id = arguments["dispatch_id"]
+            orig = _find_dispatch(dispatch_id)
+            if orig is None:
+                return lookup_error_result(
+                    f"unknown or stale dispatch_id {dispatch_id} (inbox window)"
+                )
+            from ._channel_feedback_tools import send_agentic_ack
+
+            return await send_agentic_ack(
+                arguments,
+                orig,
+                wrap=_wrap_message_send,
+                send=_send_or_raise,
+            )
+
+        if name == "a2a_progress":
+            dispatch_id = arguments["dispatch_id"]
+            orig = _find_dispatch(dispatch_id)
+            if orig is None:
+                return lookup_error_result(
+                    f"unknown or stale dispatch_id {dispatch_id} (inbox window)"
+                )
+            from ._channel_feedback_tools import send_progress
+
+            return await send_progress(
+                arguments,
+                orig,
+                wrap=_wrap_message_send,
+                send=_send_or_raise,
+            )
+
+        if name == "a2a_dispatch_status":
+            from ._channel_feedback_tools import read_dispatch_status
+
+            return read_dispatch_status(arguments, agent=agent_name)
 
         if name == "a2a_peers":
             # No trailing slash: sac listen registers `/agents` and a GET to

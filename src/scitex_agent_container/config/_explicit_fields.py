@@ -200,7 +200,7 @@ def _top_level_fields() -> list[RequiredField]:
         RequiredField(
             "startup_prompts",
             "list[str]",
-            "[] (empty inherits the generic boot kick)",
+            "[] (no startup turn)",
             [],
         ),
         RequiredField("listen", "list", "[]", []),

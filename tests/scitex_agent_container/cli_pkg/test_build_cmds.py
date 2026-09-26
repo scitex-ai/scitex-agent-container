@@ -385,13 +385,14 @@ def test_check_with_canonical_srv_bind_target_exits_zero(tmp_path, _runtime_shim
 
 
 def test_check_with_home_mirroring_bind_target_emits_warning(tmp_path, _runtime_shims):
-    # Arrange — Rich may wrap the warning across lines; normalise whitespace.
+    # Arrange — the warning travels as one levelled console record, so Rich
+    # no longer wraps it across lines; the level tag may repeat mid-record.
     spec = _write_spec_with_binds(tmp_path, ["/home/me/proj:/home/me/proj:ro"])
     runner = CliRunner()
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
-    assert "mirrors a host path" in " ".join(result.output.split())
+    assert "mirrors host path" in result.output.replace("\n", " ")
 
 
 def test_check_with_home_mirroring_bind_target_still_exits_zero(
@@ -421,7 +422,7 @@ def test_check_with_three_bad_targets_emits_three_warnings(tmp_path, _runtime_sh
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
-    assert " ".join(result.output.split()).count("mirrors a host path") == 3
+    assert " ".join(result.output.split()).count("mirrors host path") == 3
 
 
 def test_check_with_mixed_bad_and_canonical_targets_still_exits_zero(

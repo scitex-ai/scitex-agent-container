@@ -15,7 +15,9 @@ Environment facts surveyed (injection sites, for the record):
 * ``SAC_NAME`` — agent self-name (``runtimes/_apptainer_listen_env.py``);
   ``SCITEX_AGENT_CONTAINER_AGENT`` / ``CLAUDE_AGENT_ID`` — the same name
   via the spec auto-env (``config/_loaders.py``).
-* ``SCITEX_TODO_AGENT_ID`` — board identity (authored in ``spec.env``).
+* ``SCITEX_CARDS_AGENT_ID`` — board identity (authored in ``spec.env``);
+  its retired predecessor ``SCITEX_TODO_AGENT_ID`` is read only as a
+  fallback, for a container still launched from an old-name spec.
 * ``SCITEX_AGENT_CONTAINER_MODEL`` — display model (spec auto-env).
 * ``SAC_LISTEN_BASE_URL`` / ``SAC_LISTEN_BEARER`` — host control-plane
   URL + bearer (``_apptainer_listen_env.py``). The bearer's VALUE is
@@ -23,8 +25,6 @@ Environment facts surveyed (injection sites, for the record):
 * ``SCITEX_AGENT_CONTAINER_YAML_DIRS`` — the spec search path that makes
   the HOST-side ``spec.yaml`` resolvable in-container (the host home is
   bind-visible even though ``$HOME`` differs).
-* ``SCITEX_AGENT_CONTAINER_STATE_DB`` — per-agent state DB
-  (``runtimes/_apptainer_build_argv.py``).
 * ``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER`` — image path, set
   by apptainer itself.
 
@@ -218,6 +218,22 @@ def _role_from_spec(raw: dict) -> dict:
 # collection
 # ---------------------------------------------------------------------------
 
+# Board identity, CANONICAL FIRST. ``SCITEX_TODO_AGENT_ID`` is the retired
+# predecessor: reading only it printed ``board-id: None`` in every container
+# launched from a current spec (measured 2026-09-06: 22 of 26 agent
+# processes). It stays as a fallback so a container still running an
+# old-name spec keeps answering, and goes away with the legacy shim.
+_BOARD_ID_ENVS = ("SCITEX_CARDS_AGENT_ID", "SCITEX_TODO_AGENT_ID")
+
+
+def _board_identity() -> tuple[str | None, str]:
+    """Return ``(board id or None, the env var it was read from)``."""
+    for var in _BOARD_ID_ENVS:
+        value = os.environ.get(var)
+        if value:
+            return value, var
+    return None, _BOARD_ID_ENVS[0]
+
 
 def collect_whoami() -> dict:
     """Gather every fact into the ``--json`` shape (None = unknown)."""
@@ -238,7 +254,7 @@ def collect_whoami() -> dict:
     a2a_raw = spec.get("a2a") if isinstance(spec.get("a2a"), dict) else {}
     a2a_port = a2a_raw.get("port", "auto") if raw is not None else None
 
-    board_id = os.environ.get("SCITEX_TODO_AGENT_ID") or None
+    board_id, board_id_env = _board_identity()
     listen_url = _env_pair("LISTEN_BASE_URL")
 
     role = _role_from_spec(raw) if raw else {}
@@ -253,6 +269,7 @@ def collect_whoami() -> dict:
         "identity": {
             "agent": name,
             "board_id": board_id,
+            "board_id_env": board_id_env,
             "hostname": socket.gethostname(),
             "canonical_host": canonical,
         },
@@ -269,9 +286,6 @@ def collect_whoami() -> dict:
             "listen_url": listen_url,
             "listen_bearer": "set" if _env_pair("LISTEN_BEARER") else "unset",
             "a2a_port": a2a_port,
-            "state_db": _env_pair("STATE_DB")
-            or os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-            or None,
         },
         "role": {**role, "source": role_source},
         "howto": _howto_lines(board_id),
@@ -314,7 +328,7 @@ def render_whoami_text(facts: dict) -> str:
 
     lines: list[str] = ["IDENTITY"]
     lines.append(_kv("agent:", identity["agent"], "SAC_NAME"))
-    lines.append(_kv("board-id:", identity["board_id"], "SCITEX_TODO_AGENT_ID"))
+    lines.append(_kv("board-id:", identity["board_id"], identity["board_id_env"]))
     lines.append(_kv("hostname:", identity["hostname"]))
     lines.append(_kv("host:", identity["canonical_host"], "canonical"))
 
@@ -350,8 +364,6 @@ def render_whoami_text(facts: dict) -> str:
     elif a2a_port is None and execution["spec_path"]:
         a2a_port = "disabled"
     lines.append(_kv("a2a-port:", a2a_port))
-    lines.append(_kv("state-db:", execution["state_db"]))
-
     lines.append("ROLE")
     if role.get("role") or role.get("purpose"):
         source = role.get("source") or ""

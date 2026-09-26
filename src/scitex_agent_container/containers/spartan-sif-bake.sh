@@ -69,6 +69,10 @@ WORKDIR="/data/gpfs/projects/punim2354/ywatanabe/sac-sif-bake"
 LEASE_NAME="spartan-cpu-32-cores-64-ram"
 REPO_URL="https://github.com/ywatanabe1989/scitex-agent-container.git"
 BRANCH="develop"
+HERMES_REPO_URL="https://github.com/ywatanabe1989/hermes-agent.git"
+HERMES_COMMIT="9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
+CARDS_REPO_URL="https://github.com/scitex-ai/scitex-cards.git"
+CARDS_COMMIT="6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
 RETAIN=3
 MIN_FREE_GB=40
 MIN_FREE_INODES=100000
@@ -104,6 +108,27 @@ fail() {
     exit 1
 }
 
+skip() {
+    # skip <reason> [detail...] — emit the SKIPPED verdict and exit ZERO.
+    #
+    # A bake that DECLINES to run is a no-op, not a failure. The distinction is
+    # not cosmetic: this script is driven by a systemd timer, and `fail` renders
+    # the unit `failed`. Since a bake can run for hours and the timer fires on
+    # its own schedule, an overlap is NORMAL and would paint the unit red every
+    # time -- burying real failures among expected ones.
+    #
+    # SKIPPED is already an ok verdict to the caller
+    # (_remote_bake_core: `if self.verdict in (BakeVerdict.BAKED,
+    # BakeVerdict.SKIPPED)`), so this needs no change on the reading side and no
+    # SuccessExitStatus= on the unit. A blanket SuccessExitStatus is the wrong
+    # tool here: it would swallow the REAL failures too.
+    local reason="$1"; shift || true
+    echo "SKIP[$STEP]: $reason $*" >&2
+    printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","step":"%s","reason":"%s"}\n' \
+        "${LAYER:-unset}" "$STEP" "$reason"
+    exit 0
+}
+
 case "$LAYER" in
     base|scitex) : ;;
     *) fail "bad-layer" "--layer must be base|scitex, got '${LAYER}'" ;;
@@ -121,6 +146,7 @@ SQUEUE="$(command -v squeue)" || fail "squeue-missing"
 SRUN="$(command -v srun)" || fail "srun-missing"
 APPTAINER="$(command -v apptainer)" || fail "apptainer-missing"
 GIT="$(command -v git)" || fail "git-missing"
+PYTHON="$(command -v python3)" || fail "python3-missing"
 
 # ---------------------------------------------------------------------------
 # workdir + single-flight lock
@@ -130,7 +156,7 @@ mkdir -p "$WORKDIR"/{store,state,build-context,apptainer-cache,logs} \
     || fail "workdir-create" "$WORKDIR"
 STORE="$WORKDIR/store"
 exec 9>"$WORKDIR/state/bake-$LAYER.lock"
-flock -n 9 || fail "already-running" "another bake of layer=$LAYER holds the lock"
+flock -n 9 || skip "already-running" "another bake of layer=$LAYER holds the lock"
 
 # ---------------------------------------------------------------------------
 # lease: resolve BY NAME, require RUNNING. Never sbatch.
@@ -177,19 +203,31 @@ echo "clone: $REPO at $HEAD_SHA (origin/$BRANCH)"
 STEP="skip-check"
 STATE_FILE="$WORKDIR/state/$LAYER.last"
 BASE_LIVE=""
+BASE_SHA256=""
 if [ "$LAYER" = "scitex" ]; then
     BASE_LIVE="$(readlink -f "$STORE/sac-base.sif" 2>/dev/null || true)"
     [ -n "$BASE_LIVE" ] && [ -f "$BASE_LIVE" ] \
         || fail "missing-base" "no live sac-base.sif in $STORE — bake base first"
+    BASE_SHA256="$(awk 'NR==1 {print $1}' "$BASE_LIVE.sha256" 2>/dev/null || true)"
+    [ -n "$BASE_SHA256" ] \
+        || fail "missing-base-provenance" "$BASE_LIVE.sha256 has no checksum — cannot prove the scitex dependency"
 fi
-STATE_KEY="$HEAD_SHA:$(basename "${BASE_LIVE:-none}")"
+BASE_KEY="none"
+if [ "$LAYER" = "scitex" ]; then
+    # The filename is useful to humans but is not content identity. Including
+    # the checksum prevents SKIPPED from relabelling an older scitex artifact
+    # with the provenance of different bytes later placed under the same name.
+    BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"
+fi
+STATE_KEY="$HEAD_SHA:$BASE_KEY"
 if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
     read -r LAST_KEY LAST_SIF < "$STATE_FILE" || true
     if [ "${LAST_KEY:-}" = "$STATE_KEY" ] && [ -f "${LAST_SIF:-/nonexistent}" ]; then
         echo "skip: source unchanged since last successful bake ($STATE_KEY)"
-        printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","head":"%s","sif":"%s","sha256":"%s","reason":"source-unchanged"}\n' \
+        printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","head":"%s","sif":"%s","sha256":"%s","base_sif":"%s","base_sha256":"%s","reason":"source-unchanged"}\n' \
             "$LAYER" "$HEAD_SHA" "$LAST_SIF" \
-            "$(cat "${LAST_SIF}.sha256" 2>/dev/null | awk '{print $1}')"
+            "$(cat "${LAST_SIF}.sha256" 2>/dev/null | awk '{print $1}')" \
+            "${BASE_LIVE:-}" "${BASE_SHA256:-}"
         exit 0
     fi
 fi
@@ -201,16 +239,69 @@ fi
 # ---------------------------------------------------------------------------
 STEP="stage"
 CTX="$WORKDIR/build-context/$LAYER"
-rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/src" || fail "stage-mkdir"
+rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/scripts" || fail "stage-mkdir"
 DEF_SRC="$REPO/src/scitex_agent_container/containers/apptainer-$LAYER.def"
 [ -f "$DEF_SRC" ] || fail "def-missing" "$DEF_SRC"
 cp -f "$DEF_SRC" "$CTX/" || fail "stage-def"
 cp -f "$REPO/pyproject.toml" "$REPO/README.md" "$CTX/scitex-agent-container-src/" \
     || fail "stage-pyproject"
-cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
+cp -f "$REPO/scripts/hatch_build.py" "$CTX/scitex-agent-container-src/scripts/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
+cp -rf "$REPO/src/_scitex_agent_container_bootstrap" \
+    "$CTX/scitex-agent-container-src/src/" \
+    || fail "stage-console-bootstrap"
+# The staged tree is intentionally gitless. Stamp it with the checkout HEAD
+# explicitly before PEP-517 sees it; otherwise hatch can inherit a stale
+# generated _build_info.py, or truthfully-but-uselessly report commit=unknown.
+# Delete first so the env-provided commit is the only authority.
+rm -f "$CTX/scitex-agent-container-src/src/scitex_agent_container/_provenance/_build_info.py" \
+    || fail "stage-provenance-reset"
+SAC_BUILD_COMMIT="$HEAD_SHA" "$PYTHON" \
+    "$CTX/scitex-agent-container-src/scripts/hatch_build.py" --write < /dev/null \
+    || fail "stage-provenance" "$HEAD_SHA"
+if [ "$LAYER" = "base" ] || [ "$LAYER" = "scitex" ]; then
+    # Both runtime layers install Cards. Export the immutable source commit
+    # rather than asking PyPI for a release that predates the required fix.
+    CARDS_CACHE="$WORKDIR/upstream/scitex-cards.git"
+    mkdir -p "$(dirname "$CARDS_CACHE")" || fail "stage-cards-cache-mkdir"
+    if [ ! -d "$CARDS_CACHE" ]; then
+        "$GIT" init --bare "$CARDS_CACHE" || fail "stage-cards-cache-init"
+    fi
+    if ! "$GIT" -C "$CARDS_CACHE" cat-file -e "$CARDS_COMMIT^{commit}" 2>/dev/null; then
+        "$GIT" -C "$CARDS_CACHE" fetch --depth 1 "$CARDS_REPO_URL" "$CARDS_COMMIT" \
+            || fail "stage-cards-fetch" "$CARDS_COMMIT"
+    fi
+    mkdir -p "$CTX/scitex-cards-src" || fail "stage-cards-mkdir"
+    "$GIT" -C "$CARDS_CACHE" archive "$CARDS_COMMIT" \
+        | tar -x -C "$CTX/scitex-cards-src" \
+        || fail "stage-cards-export" "$CARDS_COMMIT"
+    printf '%s\n' "$CARDS_COMMIT" > "$CTX/scitex-cards-src/SAC_UPSTREAM_COMMIT" \
+        || fail "stage-cards-marker"
+fi
+if [ "$LAYER" = "base" ]; then
+    # apptainer-base.def installs Hermes from a sibling %files input. Fetch
+    # and export the same immutable commit as cli_pkg/_hermes_source.py; a
+    # remote bake that stages only SAC otherwise dies at %files.
+    HERMES_CACHE="$WORKDIR/upstream/hermes-agent.git"
+    mkdir -p "$(dirname "$HERMES_CACHE")" || fail "stage-hermes-cache-mkdir"
+    if [ ! -d "$HERMES_CACHE" ]; then
+        "$GIT" init --bare "$HERMES_CACHE" || fail "stage-hermes-cache-init"
+    fi
+    if ! "$GIT" -C "$HERMES_CACHE" cat-file -e "$HERMES_COMMIT^{commit}" 2>/dev/null; then
+        "$GIT" -C "$HERMES_CACHE" fetch --depth 1 "$HERMES_REPO_URL" "$HERMES_COMMIT" \
+            || fail "stage-hermes-fetch" "$HERMES_COMMIT"
+    fi
+    mkdir -p "$CTX/hermes-agent-src" || fail "stage-hermes-mkdir"
+    "$GIT" -C "$HERMES_CACHE" archive "$HERMES_COMMIT" \
+        | tar -x -C "$CTX/hermes-agent-src" \
+        || fail "stage-hermes-export" "$HERMES_COMMIT"
+    printf '%s\n' "$HERMES_COMMIT" > "$CTX/hermes-agent-src/SAC_UPSTREAM_COMMIT" \
+        || fail "stage-hermes-marker"
+    printf '%s\n' "$HERMES_REPO_URL" > "$CTX/hermes-agent-src/SAC_UPSTREAM_REPOSITORY" \
+        || fail "stage-hermes-repository-marker"
+fi
 if [ "$LAYER" = "scitex" ]; then
     ln -s "$BASE_LIVE" "$CTX/sac-base.sif" || fail "stage-base-sif"
 fi
@@ -291,6 +382,39 @@ cat > "$PROBE" <<'PYEOF'
 """Artifact gate: assert BY SYMBOL that this SIF is fresh and whole."""
 
 import sys
+from importlib import import_module
+
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+    plain = slogging.getPlainConsole(__name__)
+except ImportError:  # SIF without sac on the probe path
+    class _PlainFallback:
+        """Verbatim stdout writer for the OK verdict line."""
+
+        @staticmethod
+        def emit(message: str) -> None:
+            sys.stdout.write(f"{message}\n")
+            sys.stdout.flush()
+
+    plain = _PlainFallback()
+
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr."""
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
 
 # noqa placement is deliberate: this import LOOKS unused and is not. The
 # probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
@@ -298,7 +422,18 @@ import sys
 # it as dead because nothing references the name, and removing it on that
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
+
+# SAC's inbox sidecar reconciliation and Hermes stale-session recovery import
+# this symbol on the clean-start path.  Probe that exact runtime capability in
+# the built artifact so dependency metadata alone cannot make a broken SIF
+# appear healthy.
+from psutil import process_iter as _psutil_process_iter  # noqa: F401
 from scitex_cards._throughput import WIP_STATUSES
+
+canonical_agent_identity = import_module(
+    "scitex_cards._messaging"
+).canonical_agent_identity
+_doorbell_status = import_module("scitex_cards._notification_watch")._doorbell_status
 
 # scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
 # Through 0.48.0, comment_task / update_task rebuilt a card from the doc the
@@ -319,7 +454,7 @@ from scitex_cards._throughput import WIP_STATUSES
 # So the FLOOR is what excludes the broken release; this import only catches
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.
-from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: E402,F401
 
 # scitex-dev 0.56.6: the bounded (origin, seq) oplog-allocation retry.
 # Through 0.56.5, Store._append read MAX(seq) ONCE and then inserted, so a
@@ -338,19 +473,26 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 # upstream may rename or inline it with no deprecation, and that would land
 # here as a dead bake far from scitex-dev's repo. If this line is what broke
 # the build, read scitex_dev/store/_store.py before suspecting the image.
-from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: E402,F401
 
 if "in_progress" not in WIP_STATUSES:
-    print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+    log.error(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+    sys.exit(1)
+
+# scitex-cards #1003: scoped DM recipients must resolve to the durable bare
+# identity SAC subscribes under, and startup must carry the cross-connection
+# doorbell probe instead of treating LISTEN success as delivery evidence.
+if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
+    log.error("FATAL: scitex-cards #1003 DM recipient canonicalization is absent")
     sys.exit(1)
 
 # Newer than any published sac release => proves the %files-staged source
 # tree won the install (no transitive PyPI sac wheel overwrote it).
-from scitex_agent_container.runtimes._apptainer_overlay import (
-    ensure_overlay_dirs,  # noqa: F401,E402
+from scitex_agent_container.runtimes._apptainer_overlay import (  # noqa: E402
+    ensure_overlay_dirs,  # noqa: F401
 )
 
-print("OK: artifact symbol probe passed")
+plain.emit("OK: artifact symbol probe passed")
 PYEOF
 # --input=none: see the STDIN RULE at the top of this file. The probe is a
 # FILE argument; this task has no use for stdin.
@@ -402,5 +544,6 @@ for sif in $(ls -1 "$LAYER_DIR"/sac-"$LAYER"-*.sif 2>/dev/null | sort -r); do
 done
 
 DURATION=$(( $(date +%s) - START_EPOCH ))
-printf 'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"%s","ts":"%s","head":"%s","sif":"%s","sha256":"%s","pruned":"%s","duration_sec":%s}\n' \
-    "$LAYER" "$TS" "$HEAD_SHA" "$FINAL_SIF" "$SHA256" "${PRUNED# }" "$DURATION"
+printf 'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"%s","ts":"%s","head":"%s","sif":"%s","sha256":"%s","base_sif":"%s","base_sha256":"%s","pruned":"%s","duration_sec":%s}\n' \
+    "$LAYER" "$TS" "$HEAD_SHA" "$FINAL_SIF" "$SHA256" \
+    "${BASE_LIVE:-}" "${BASE_SHA256:-}" "${PRUNED# }" "$DURATION"

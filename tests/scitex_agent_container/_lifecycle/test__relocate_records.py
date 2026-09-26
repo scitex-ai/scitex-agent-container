@@ -164,7 +164,7 @@ def test_a_relocation_outcome_is_a_legal_state_record() -> None:
     assert record["phase"] == "done"
 
 
-def test_writing_a_declaration_into_the_state_db_is_refused() -> None:
+def test_writing_a_declaration_into_the_state_store_is_refused() -> None:
     # Arrange: `runtime` is what a human declared; it is not an observation.
     call = lambda: state_record(  # noqa: E731
         agent=AGENT, from_host=SRC, to_host=DST, runtime="apptainer"

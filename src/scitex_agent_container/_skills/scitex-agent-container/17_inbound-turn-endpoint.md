@@ -30,7 +30,7 @@ the SDK runner is invoked inside the SIF). Enable the endpoint with
 spec:
   runtime: apptainer
   apptainer:
-    image: /home/me/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
   a2a:
     port: 18888         # int, or "auto" (default) — set to enable inbound HTTP

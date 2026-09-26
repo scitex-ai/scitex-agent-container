@@ -34,7 +34,6 @@ from starlette.routing import Route
 
 from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
-from ..config import load_config
 from ..config._resolve import AmbiguousRegistryScope, resolve_config
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
@@ -73,6 +72,46 @@ from ._agents_list import (  # noqa: E402,F401
 )
 
 
+def _runtime_liveness(cfg, *, runtime_factory=None) -> tuple[bool, str, dict[str, Any]]:
+    """Observe runtime liveness before granting launch-record authority."""
+    try:
+        if runtime_factory is None:
+            from .._lifecycle._runtime_select import _get_runtime
+
+            runtime_factory = _get_runtime
+        running = bool(runtime_factory(cfg).is_running(cfg))
+    except Exception as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
+        return (
+            False,
+            "unknown",
+            {
+                "verdict": "unknown",
+                "evidence": [
+                    {
+                        "source": "runtime",
+                        "verdict": "unknown",
+                        "detail": f"runtime liveness probe failed: {type(exc).__name__}: {exc}",
+                    }
+                ],
+            },
+        )
+    verdict = "alive" if running else "dead"
+    return (
+        running,
+        "running" if running else "stopped",
+        {
+            "verdict": verdict,
+            "evidence": [
+                {
+                    "source": "runtime",
+                    "verdict": verdict,
+                    "detail": "runtime adapter is_running observation",
+                }
+            ],
+        },
+    )
+
+
 async def agent_status(request: Request) -> JSONResponse:
     """GET /agents/<name>/status — the fleet's authoritative "does X exist".
 
@@ -104,8 +143,9 @@ async def agent_status(request: Request) -> JSONResponse:
     """
     name = request.path_params["name"]
     try:
-        spec_path = resolve_config(name)
-        cfg = load_config(spec_path)
+        from ._agent_status_spec import StatusSpecUnreadable, load_status_config
+
+        spec_path, cfg = load_status_config(name)
     except AmbiguousRegistryScope as exc:
         # Two registries claim this name. The agent may well exist; we cannot
         # say WHICH spec is meant, so this is UNKNOWN, never "no such agent".
@@ -119,7 +159,7 @@ async def agent_status(request: Request) -> JSONResponse:
             {"error": str(exc), "kind": "unknown_agent", "name": name},
             status_code=404,
         )
-    except OSError as exc:
+    except (OSError, StatusSpecUnreadable) as exc:
         # The spec was found but could not be read (permissions, I/O). The
         # agent exists as far as we know — reporting 404 would be a lie.
         return JSONResponse(
@@ -133,13 +173,34 @@ async def agent_status(request: Request) -> JSONResponse:
         )
     sd = state_dir_for(name)
     sid = read_session_id(sd)
+    running, runtime_status, liveness = _runtime_liveness(cfg)
     body: dict[str, Any] = {
         "name": name,
         "spec_path": str(spec_path),
         "workdir": cfg.expanded_workdir,
         "session_id": sid,
         "state_dir": str(sd),
+        "status": runtime_status,
+        "liveness": liveness,
     }
+    # Selection/auth identity comes from the active incarnation's immutable
+    # birth certificate when available; the current spec is a labelled fallback.
+    from .._lifecycle._status import _runtime_identity
+
+    body.update(_runtime_identity(name, cfg, running=running))
+    # Additive, harness-neutral turn-admission state. Runtime adapters own
+    # their detection mechanism; this route and its GUI consumers do not.
+    try:
+        from .._lifecycle._runtime_select import _get_runtime
+
+        control = _get_runtime(cfg).control_state(cfg)
+    except Exception:  # stx-allow: fallback (reason: optional runtime observation must not turn status into a 500)
+        control = None
+    if control is not None:
+        body["runtime_control"] = control
+    from ._activity_projection import activity_projection
+
+    body["activity"] = activity_projection(sd, runtime_control=control)
     # PR-1 — stillborn surface. If the runtime dir has a
     # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
     # session), echo it so callers don't have to also poll a separate
@@ -163,7 +224,10 @@ async def agent_status(request: Request) -> JSONResponse:
     # same endpoint shape ``GET /agents`` does.
     from ._registry_endpoints import enrich_row
 
-    body = enrich_row(body)
+    body = enrich_row(body, identity_spec_path=spec_path)
+    from .._lifecycle._status import _a2a_status
+
+    body["a2a"] = _a2a_status(name, cfg)
     # …and the same inbox-subscriber OBSERVATION ``GET /agents`` carries, so
     # a single-agent status poll can also tell REGISTERED from REACHABLE. A
     # running session_id + a live pid say nothing about whether this agent's
@@ -198,9 +262,9 @@ async def _annotate_status_reachability(
         counts = await request.app.state.inbox.subscriber_counts()
         local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
-        import logging
+        import scitex_logging as slogging
 
-        logging.getLogger(__name__).warning(
+        slogging.getLogger(__name__).warning(
             "agent_status: could not read inbox broker (reporting reachability "
             "as %r, NOT as unreachable): %s",
             UNKNOWN,
@@ -221,6 +285,7 @@ async def _annotate_status_reachability(
 # unchanged.
 from ._agent_exec import (  # noqa: E402
     _find_claude_binary,  # noqa: F401  (re-exported for tests)
+    agent_exchange,
     agent_send,
     agents_start,
 )
@@ -318,6 +383,7 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # re-imported here so route registration (:func:`_v1_agent_routes`) and
 # the historical ``from ..._listen.server import agent_delete`` import
 # path keep working unchanged.
+from ..a2a._inbox_ack import inbox_ack_route  # noqa: E402
 from ._agent_delete import agent_delete  # noqa: E402
 
 # ``agent_restart`` (POST /agents/<name>/restart) is the container-side
@@ -348,6 +414,11 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        Route(
+            f"{prefix}/{{name}}/exchanges/{{exchange_id}}",
+            agent_exchange,
+            methods=["GET"],
+        ),
         Route(f"{prefix}/{{name}}/restart", agent_restart, methods=["POST"]),
         # WI-3 — node-identity-keyed inbox endpoints.
         Route(
@@ -360,6 +431,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
             node_inbox_stream,
             methods=["GET"],
         ),
+        inbox_ack_route(f"{prefix}/{{name}}/inbox/ack"),
         Route(
             f"{prefix}/{{name}}/.well-known/agent-card.json",
             agent_card,
@@ -396,7 +468,7 @@ def create_app(
     inside :func:`node_message_send`. ``local_host`` configures the
     name this app sees as "itself" so the resolver can tell
     local-vs-remote targets apart. When omitted, falls back to
-    :func:`state_db._resolve_host` (env + config + hostname chain).
+    :func:`state_store._resolve_host` (env + config + hostname chain).
     Passing the value explicitly matters for in-process multi-host
     tests where the env is shared.
 
@@ -423,6 +495,7 @@ def create_app(
     # posts here so the writes land on the HOST listen's state.db
     # (rather than the silently-ineffective per-container copy).
     from ._acl_routes import acl_block, acl_grant, acl_unblock
+    from ._fleet_inventory import fleet_inventory
 
     # Arbitrary host-command bypass for developer + researcher agents (operator
     # directive 2026-07-01). Bearer-authed by the outer middleware; a group gate
@@ -450,6 +523,7 @@ def create_app(
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
         Route("/v1/host_exec", host_exec, methods=["POST"]),
         Route("/v1/host_exec/inflight", host_exec_inflight, methods=["GET"]),
+        Route("/v1/fleet/inventory", fleet_inventory, methods=["GET"]),
     ]
     routes += _v1_agent_routes("/agents")
     # Q4 (lead a2a c8b64f298b8a...): on listen startup, persist every

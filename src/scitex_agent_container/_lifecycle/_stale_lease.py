@@ -84,7 +84,7 @@ def clear_stale_instance_lease(
 
     The two collaborator seams (``instances_oracle`` /
     ``stop_writer``) default to the real state.db helpers. Tests pass
-    a real on-disk ``state.db`` via the ``isolated_state_db`` fixture
+    a real on-disk ``state.db`` via the ``isolated_state_store`` fixture
     so the defaults exercise the real code path — no mocks.
 
     Cleanup contract for the caller (see :func:`._start.agent_start`):
@@ -99,13 +99,13 @@ def clear_stale_instance_lease(
       "verify-pid + close" primitive.
     """
     if instances_oracle is None:
-        from .._state.state_db import list_active_instances as _list
+        from .._state.state_store import list_active_instances as _list
 
         def instances_oracle():  # type: ignore[no-redef]
             return _list(host=None)
 
     if stop_writer is None:
-        from .._state.state_db import record_instance_stop as _stop
+        from .._state.state_store import record_instance_stop as _stop
 
         def stop_writer(row_id: str, reason: str) -> bool:  # type: ignore[no-redef]
             return _stop(row_id, exit_reason=reason)

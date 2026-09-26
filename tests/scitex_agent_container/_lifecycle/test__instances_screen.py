@@ -46,7 +46,7 @@ def db_path(tmp_path: Path):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -103,7 +103,7 @@ class _ExplodingRuntime(_SessionRuntime):
 
 
 def _row_for(name: str) -> dict:
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     return [r for r in list_active_instances() if r["name"] == name][0]
 

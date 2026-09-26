@@ -56,11 +56,11 @@ A CACHE IS NOT TRUTH — IT HAS AN AGE
 
 from __future__ import annotations
 
-import logging
-
 from datetime import datetime, timezone
 
-from .state_db import now_iso
+import scitex_logging as slogging
+
+from .state_store import now_iso
 
 __all__ = [
     "STALE_AFTER_S",
@@ -82,7 +82,7 @@ __all__ = [
 # (the fleet's green then honestly reads "unverified" instead of "fine").
 STALE_AFTER_S = 900.0
 
-# Matches ``state_db.now_iso()`` and the registry's ``started_at`` — the same
+# Matches ``state_store.now_iso()`` and the registry's ``started_at`` — the same
 # second-resolution ISO-8601 UTC 'Z' stamp, so the two are directly comparable
 # in :func:`verdict_for`'s SUPERSEDED check.
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -92,9 +92,9 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 #: PostgreSQL, so two hosts' rows live in two different databases: the per-host
 #: database IS the isolation, and a host field would add a failure mode while
 #: buying nothing until federation exists. This matches the closest precedent,
-#: `state_db_acl_deny_notify` (explicitly "a per-host rate-limit ledger", which
+#: `state_store_acl_deny_notify` (explicitly "a per-host rate-limit ledger", which
 #: also keeps its original key and carries no host column).
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 STORE_NAME = "auth_state"
 

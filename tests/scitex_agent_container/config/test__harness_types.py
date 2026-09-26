@@ -19,10 +19,11 @@ import dataclasses
 import pytest
 import yaml
 
-from scitex_agent_container.config import load_config
+from scitex_agent_container.config import AgentConfig, load_config
 from scitex_agent_container.config._explicit_validation import (
     explicit_spec_defaults,
 )
+from scitex_agent_container.config._harness_registry import CODEX_TUI
 from scitex_agent_container.config._harness_types import (
     DEFAULT_AGENT_HARNESS,
     V4_HARNESS_DISPATCH_CARD,
@@ -204,14 +205,47 @@ def test_spec_carrying_both_keys_is_not_flagged_as_legacy():
 
 
 def test_the_harness_registry_is_exactly_anthropic_openai_and_codex():
-    # Arrange — the set is DERIVED from config._harness_registry, so
+    # Arrange — the FAMILIES are DERIVED from config._harness_registry, so
     # "codex" appearing here is the fourth row's doing, not an edit of
     # the harness-types module (that derivation is the point).
-    expected = {"anthropic", "openai", "codex"}
+    from scitex_agent_container.config._harness_registry import known_harnesses
+
+    expected = {"anthropic", "openai", "codex", "hermes"}
+    # Act
+    names = set(known_harnesses())
+    # Assert
+    assert names == expected
+
+
+def test_list_harnesses_also_offers_the_program_name_spellings():
+    """``anthropic`` is a VENDOR word standing in for a PROGRAM, and this
+    axis names programs. Both spellings are accepted for the migration
+    window, so the "unknown harness" error must name both — an error that
+    listed only the vendor words would exclude spellings the loader
+    happily accepts."""
+    # Arrange
+    expected = {
+        "anthropic",
+        "claude",
+        "claude-code",
+        "codex",
+        "hermes",
+        "openai",
+        "openai-agents",
+    }
     # Act
     names = set(list_harnesses())
     # Assert
     assert names == expected
+
+
+def test_a_program_name_spelling_resolves_to_its_family():
+    # Arrange
+    spec = {"harness": "claude-code"}
+    # Act
+    resolved = resolve_spec_harness(spec)
+    # Assert
+    assert resolved == "anthropic"
 
 
 def test_list_harnesses_returns_sorted_order():
@@ -475,3 +509,52 @@ def test_the_guard_passes_an_anthropic_spec_untouched(tmp_path):
     exc = _refusal(config)
     # Assert
     assert exc is None
+
+
+# ---------------------------------------------------------------------------
+# The guard learns which entry the caller launches (codex-tui, 2026-09-05)
+# ---------------------------------------------------------------------------
+
+
+def test_guard_passes_a_codex_spec_headed_for_the_codex_tui():
+    # Arrange
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    outcome = ensure_harness_matches_claude_launch(
+        config,
+        launching="the interactive codex TUI",
+        launching_key=CODEX_TUI,
+        log=False,
+    )
+    # Assert
+    assert outcome is None
+
+
+def test_guard_still_refuses_a_codex_spec_headed_for_a_claude_launch():
+    # Arrange -- the same spec on a Claude code path is the wrong-vendor case.
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    try:
+        ensure_harness_matches_claude_launch(
+            config, launching="the interactive claude TUI", log=False
+        )
+        message = ""
+    except HarnessRuntimeMismatchError as exc:
+        message = str(exc)
+    # Assert
+    assert "codex" in message
+
+
+def test_guard_refuses_an_openai_spec_even_when_told_codex_tui():
+    # Arrange -- the early return is keyed on the harness AND the entry.
+    config = AgentConfig(name="oa", runtime="", workdir="/tmp/oa", harness="openai")
+    # Act
+    try:
+        ensure_harness_matches_claude_launch(
+            config, launching="x", launching_key=CODEX_TUI, log=False
+        )
+        raised = None
+    except HarnessRuntimeMismatchError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)

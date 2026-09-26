@@ -125,15 +125,32 @@ def build_ssh_argv(
     *,
     ssh_binary: str = "ssh",
     extra_opts: list[str] | None = None,
+    login: bool = False,
 ) -> list[str]:
     """Render the ssh argv that runs ``command`` on ``peer_name``.
+
+    ``login=True`` runs the command under ``bash -lc`` on a peer WITHOUT an
+    ``env_preamble``, so the remote user's login profile is sourced first.
+    A bare ``ssh host cmd`` sources neither .bash_profile nor .bashrc, and
+    on this fleet that profile is the ONLY carrier of the secrets in
+    ``~/.bash.d/secrets`` -- measured 2026-09-05 on scitex-compute-01: 0
+    ``CCT_*`` variables and no gateway key under a bare ssh command, all
+    of them under ``bash -lc``. An agent START on a peer needs those (the
+    engine's ``auth_token_env``, the bot tokens), so the two lifecycle
+    dispatchers ask for it; probes and file copies do not. A peer WITH a
+    preamble keeps the ``bash -c`` wrapper unless its entry says
+    ``login_shell: true`` -- the compute hosts, whose preamble only fixes
+    PATH and whose profile carries the secrets -- because the HPC bashrc
+    kill described below is what the default protects against.
 
     Multi-hop is handled via OpenSSH's ``-J`` (ProxyJump) flag, which
     chains intermediate hosts without sac needing its own ssh tunnel
     code. ``via: [mba, spartan]`` becomes ``-J <mba.ssh>,<spartan.ssh>``.
 
     Conservative defaults pick: ``-o BatchMode=yes`` (no interactive
-    password / known-hosts prompts), ``-o ConnectTimeout=10``
+    password / known-hosts prompts), ``-o ClearAllForwardings=yes`` (a
+    control-plane command must not inherit unrelated user ``LocalForward``
+    entries whose bind collisions can consume the whole timeout), ``-o ConnectTimeout=10``
     (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
     so a wedged middle-hop is detectable).
 
@@ -168,6 +185,8 @@ def build_ssh_argv(
     argv += [
         "-o",
         "BatchMode=yes",
+        "-o",
+        "ClearAllForwardings=yes",
         "-o",
         "ConnectTimeout=10",
         "-o",
@@ -235,7 +254,18 @@ def build_ssh_argv(
         # two agree is the fix; quoting here and not there is what made a
         # peer's behaviour depend on whether it happened to carry a preamble.
         inner = f"{preamble} && {' '.join(command)}"
-        argv.append(f"bash -c {shlex.quote(inner)}")
+        # A preamble peer sources its login profile only when BOTH the
+        # caller asks (login=True: an agent start needs the fleet secrets)
+        # AND the peer says its profile is safe (login_shell: true in
+        # config.yaml). HPC peers never set it -- see the docstring.
+        flag = "-lc" if (login and peer.login_shell) else "-c"
+        argv.append(f"bash {flag} {shlex.quote(inner)}")
+    elif login:
+        # Same single-element, space-joined contract as the preamble branch
+        # (see above for why the join is a space, never shlex.join); only the
+        # shell flag differs, and it differs on purpose: -l sources the
+        # remote login profile, which is where the fleet keeps its secrets.
+        argv.append(f"bash -lc {shlex.quote(' '.join(command))}")
     else:
         argv += list(command)
     return argv

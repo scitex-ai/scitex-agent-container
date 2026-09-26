@@ -11,14 +11,15 @@ Throttling rules:
 
 from __future__ import annotations
 
-import logging
 import os
 import signal
 import time
 from pathlib import Path
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 _DEFAULT_TICK_S = 60
 _MIN_SEND_INTERVAL_S = 5

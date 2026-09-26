@@ -61,6 +61,32 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+except ImportError:  # standalone copy without sac installed
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr.
+
+        Used only when ``scitex_logging`` is not importable (standalone
+        copy on agent $HOME / bare SIF). Diagnostics go to stderr —
+        never stdout, which carries protocol frames.
+        """
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
+
 # Default age threshold. The operator's card explicitly calls out the
 # 24h window — anything younger is in-flight and must not be touched.
 DEFAULT_AGE_HOURS = 24
@@ -290,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 skipped += 1
 
-    print(_summarize(reaped, skipped, roots), file=sys.stderr)
+    log.error(_summarize(reaped, skipped, roots))
     return 0
 
 

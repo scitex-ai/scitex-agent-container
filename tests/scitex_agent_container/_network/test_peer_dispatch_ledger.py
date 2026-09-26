@@ -2,7 +2,9 @@
 
 ``post_turn_to_url`` mints a dispatch_id, records a ``sent`` row before
 the POST, stamps the id into the request body, and transitions the row
-to ``delivered`` / ``timeout`` / ``failed`` once the round-trip resolves.
+to ``delivered`` / ``timeout`` / ``failed`` once a synchronous round-trip
+resolves. A validated non-final 202 remains ``sent`` until exchange finality is
+reconciled elsewhere.
 
 No mocks: a real ``http.server`` on loopback mimics ``/v1/turn`` and the ledger
 lives in a real, throwaway PostgreSQL schema (the ``pg_schema`` fixture). The
@@ -26,6 +28,8 @@ import threading
 
 from scitex_agent_container._network.peer import PeerError, post_turn_to_url
 
+_EXCHANGE_ID = "xch_20260913T000000Z_dispatch_abcdef"
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -43,18 +47,46 @@ def _start_server(handler_cls):
 
 
 def _echo_handler(captured: list[dict]):
-    """A /v1/turn handler that records the request body and echoes text."""
+    """A /v1/turn handler with canonical receipt and final exchange."""
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8"))
             captured.append(body)
+            self.send_response(202)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "exchange_id": _EXCHANGE_ID,
+                        "status_code": {
+                            "kind": "http",
+                            "code": 202,
+                            "message": (
+                                f"accepted; poll `/v1/exchanges/{_EXCHANGE_ID}`"
+                            ),
+                        },
+                    }
+                ).encode("utf-8")
+            )
+
+        def do_GET(self):  # noqa: N802
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(
-                json.dumps({"text": f"echo:{body.get('text', '')}"}).encode("utf-8")
+                json.dumps(
+                    {
+                        "exchange_id": _EXCHANGE_ID,
+                        "status_code": {
+                            "kind": "http",
+                            "code": 200,
+                            "message": "delivery accepted",
+                        },
+                    }
+                ).encode("utf-8")
             )
 
         def log_message(self, *a, **kw):
@@ -116,6 +148,28 @@ def test_post_turn_marks_clean_roundtrip_delivered(pg_schema: str):
         thread.join(timeout=2.0)
     # Assert
     assert rows[0]["status"] == "delivered"
+
+
+def test_nonblocking_post_keeps_ledger_sent_not_delivered(pg_schema: str):
+    # Arrange
+    from scitex_agent_container._state.dispatch_ledger import list_dispatches
+
+    server, thread, port = _start_server(_echo_handler([]))
+    try:
+        # Act
+        post_turn_to_url(
+            f"http://127.0.0.1:{port}/v1/turn",
+            "hi",
+            timeout_s=5.0,
+            wait_for_final=False,
+        )
+        rows = list_dispatches()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+    # Assert — responder admission is not final delivery evidence.
+    assert rows[0]["status"] == "sent"
 
 
 def test_post_turn_stamps_dispatch_id_into_request_body(pg_schema: str):
@@ -193,7 +247,7 @@ def test_post_turn_marks_unreachable_failed(pg_schema: str):
     assert rows[0]["status"] == "failed"
 
 
-def test_post_turn_still_returns_reply_when_ledger_records(pg_schema: str):
+def test_post_turn_returns_canonical_delivery_confirmation(pg_schema: str):
     # Arrange — the dispatch itself must succeed regardless of ledger.
     server, thread, port = _start_server(_echo_handler([]))
     try:
@@ -206,4 +260,4 @@ def test_post_turn_still_returns_reply_when_ledger_records(pg_schema: str):
         server.server_close()
         thread.join(timeout=2.0)
     # Assert
-    assert reply == "echo:hi"
+    assert _EXCHANGE_ID in reply and "delivery, not agent completion" in reply

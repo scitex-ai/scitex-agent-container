@@ -72,15 +72,16 @@ alongside ``--a2a-port``).
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import scitex_logging as slogging
+
 if TYPE_CHECKING:
     from ._session_inbox import Envelope
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 # Default bounded wait for the SDK to drain one turn. Sized to outlast
@@ -231,7 +232,10 @@ async def serve_inbound(
         logger.error("inbound HTTP requires starlette+uvicorn: %s", exc)
         return
 
+    from pydantic import ValidationError
+
     from ._session_inbox import TurnEnvelope
+    from ._turn_schema import TurnRequest
 
     # Resolve the effective bounded-wait once per serve_inbound() call.
     # Per-request override via env would be racy and rarely useful — the
@@ -241,38 +245,36 @@ async def serve_inbound(
     async def post_turn(request: Request) -> JSONResponse:
         try:
             body = await request.json()
-        except ValueError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated; surfaced as 400)
+        except ValueError as exc:  # stx-allow: fallback (reason: malformed JSON returned to the HTTP caller in a 400 JSON response)
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
-        text = body.get("text") if isinstance(body, dict) else None
-        if not isinstance(text, str) or not text.strip():
-            return JSONResponse(
-                {"error": "missing or empty 'text' field"}, status_code=400
+        try:
+            turn = TurnRequest.model_validate(body)
+        except ValidationError as exc:
+            errors = exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
             )
-        exit_after = bool(body.get("exit_after", False))
-        # Sender-minted dispatch-ledger id (optional). Threaded onto the
-        # envelope so the receiver side can correlate this turn back to
-        # the originating dispatch row. Tolerated-absent: legacy callers
-        # that don't mint a dispatch_id simply leave it None.
-        dispatch_id = body.get("dispatch_id") if isinstance(body, dict) else None
-        if not isinstance(dispatch_id, str) or not dispatch_id:
-            dispatch_id = None
-        # Requester identity (optional). The peer that dispatched this
-        # turn — threaded onto the envelope so the Stop hook can PUSH a
-        # completion report back to it. Generalizes to ANY peer; the lead
-        # is not special-cased. Tolerated-absent: a mission boot turn or a
-        # legacy caller leaves it None and the Stop hook simply has nobody
-        # to address.
-        from_agent = body.get("from_agent") if isinstance(body, dict) else None
-        if not isinstance(from_agent, str) or not from_agent:
-            from_agent = None
+            text_invalid = any(error.get("loc") == ("text",) for error in errors)
+            return JSONResponse(
+                {
+                    "error": (
+                        "missing or invalid 'text' field"
+                        if text_invalid
+                        else "invalid turn request"
+                    ),
+                    "validation_errors": errors,
+                },
+                status_code=400,
+            )
 
         loop = asyncio.get_running_loop()
         env = TurnEnvelope(
-            text=text,
+            text=turn.text,
             response=loop.create_future(),
-            exit_after=exit_after,
-            dispatch_id=dispatch_id,
-            from_agent=from_agent,
+            exit_after=turn.exit_after,
+            dispatch_id=turn.dispatch_id,
+            from_agent=turn.from_agent,
         )
         await inbox.put(env)
         try:
@@ -307,7 +309,7 @@ async def serve_inbound(
             {
                 "text": reply,
                 "session_id": env.session_id,
-                "exit_after": exit_after,
+                "exit_after": turn.exit_after,
                 "metadata": {"timeout_s": effective_turn_timeout_s},
             }
         )

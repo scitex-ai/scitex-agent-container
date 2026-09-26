@@ -11,11 +11,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.28.1"
+version = "0.28.2"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Yusuke Watanabe", email = "ywatanabe@scitex.ai" },
 ]
@@ -33,7 +33,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -56,6 +55,10 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Fleet inventory crosses a process/version boundary (the in-container MCP
+    # client -> the host listen authority).  Keep that wire contract explicit
+    # and validated instead of accepting arbitrary JSON from a stale daemon.
+    "pydantic>=2.10,<3",
     # Two distinct uses:
     #   1. `scitex_config._ecosystem.local_state` — canonical local-state
     #      directory helper (project-scope override + auto runtime/ seed
@@ -85,6 +88,11 @@ dependencies = [
     "scitex-container>=0.4.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
+    # Hermes cannot consume Claude Code's notifications/claude/channel
+    # extension.  SAC's host-side Hermes inbox bridge therefore reads Cards'
+    # public durable poll/confirm API and confirms only after terminal-visible
+    # delivery.  This is a runtime dependency, not an optional MCP tool.
+    "scitex-cards>=0.52.1",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
@@ -93,6 +101,9 @@ dependencies = [
     # (replaces the legacy `claude_cli` / `claude --print` path).
     "claude-agent-sdk>=0.1.0",
     "uvicorn>=0.27",
+    # Hermes' official TUI and SAC share one gateway session over JSON-RPC.
+    "websockets>=15,<16",
+    "psutil>=5.9",
     # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
     # validate_proto_required_fields still references — pin until upstream
     # adopts the descriptor pool API. See CI failure 2026-04-27.
@@ -122,7 +133,7 @@ mcp = [
     "mcp>=1.29,<2",
 ]
 telegram = [
-    "claude-code-telegrammer>=0.1.0",
+    "claude-code-telegrammer>=0.6.1",
 ]
 notify = [
     # Operator notification surface for the OAuth login-relay (emails the
@@ -188,6 +199,19 @@ codex-sdk = [
     # extra; see the note there. 0.144.4 floor: the first release carrying the
     # AsyncCodex/thread_resume surface the runner is written against.
     "openai-codex>=0.144.4",
+]
+gui = [
+    # Browser-facing Agents dashboard (`sac gui`, the `_django` app). The
+    # app renders under the shared scitex-ui shell and boots through
+    # scitex-app's embed launcher, so it depends on all three. OPTIONAL: a
+    # bare install stays server-only — every import in the dashboard is
+    # deferred (the CLI resolves `scitex_app.embed` on first `gui` use and
+    # raises a clear install hint when absent), and the `[gui]` extra is
+    # what a deployment adds. The dashboard is a PROJECTION of the host
+    # control plane; it adds no state store and no second lifecycle path.
+    "django>=4.2",
+    "scitex-app>=0.11.0",
+    "scitex-ui>=0.13.0",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -350,7 +374,19 @@ dev = [
     # admits silent write loss on exactly the path the migration depends on.
     # The container recipes gate this BY SYMBOL (_SEQ_ALLOCATION_ATTEMPTS) —
     # see apptainer-scitex.def; this specifier is the base layer's half.
-    "scitex-dev>=0.56.6",
+    #
+    # RAISED TO 0.60.0 on 2026-09-12. SAC now gates TUI launch on the public,
+    # lock-protected ``Store.ensure_declared_fields`` API so an existing
+    # central instances store can add the nullable exact-ownership fields
+    # before any new incarnation starts. Earlier releases do not expose that
+    # schema-evolution contract and therefore cannot make launch safe.
+    # RAISED TO 0.60.1 on 2026-09-13. Managed PostgreSQL deployments now make
+    # application Store() construction refuse missing DDL with the public
+    # StoreProvisionError instead of creating shared tables under the first
+    # agent login. The turn exchange bridge maps that refusal to the authorized
+    # provision_store_acl migration path; admitting 0.60.0 would bypass the
+    # launch gate and recreate the ownership race this floor is meant to close.
+    "scitex-dev>=0.60.1",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
@@ -410,6 +446,14 @@ dev = [
     # more (`cli_pkg/mcp_group._list_tools` branches on hasattr).
     "fastmcp>=3.0,<4",
     "mcp>=1.29,<2",
+    # PS-210 §2 (dev-extras-incomplete) mirror of `[gui]`: the dashboard's
+    # tests import django / scitex_app / scitex_ui unguarded, so a fresh
+    # `pip install -e .[dev]` must carry them to run the full suite — exactly
+    # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
+    # `[gui]` extra so the two cannot drift.
+    "django>=4.2",
+    "scitex-app>=0.11.0",
+    "scitex-ui>=0.13.0",
 ]
 docs = [
     "sphinx>=7.0",
@@ -448,13 +492,20 @@ all = [
     # un-closing `all`. Do NOT try a leading-underscore "private extra"
     # either — PEP 508/685 forbids the name outright.
     "scitex-agent-container[codex-sdk]",
+    # `gui` is closed under `all` by the SAME PS-221 §3 rule as every other
+    # public extra: an extra omitted here silently under-installs for anyone
+    # who ran the documented "give me everything" install. It is lightweight
+    # (django + scitex-app + scitex-ui, no native binaries) and its Django
+    # dashboard tests must run under a fresh `[all,dev]` install, so it is a
+    # natural member of `all` — not a cost like `codex-sdk`'s 285 MB wheel.
+    "scitex-agent-container[gui]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]
 
 [project.scripts]
-scitex-agent-container = "scitex_agent_container.cli:cli_entry_point"
-sac = "scitex_agent_container.cli:cli_entry_point"
+scitex-agent-container = "_scitex_agent_container_bootstrap:cli_entry_point"
+sac = "_scitex_agent_container_bootstrap:cli_entry_point"
 sac-statusline = "scitex_agent_container.statusline:main"
 
 [project.entry-points."scitex_dev.docs"]
@@ -506,7 +557,7 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 # not privileged.
 #
 # The declaration is the deliverable because sac's previous cross-host path
-# was unsafe in a way that was invisible: state_db_export.import_state did
+# was unsafe in a way that was invisible: state_store_export.import_state did
 # INSERT OR IGNORE, so a row that CONTRADICTED the local one and a
 # byte-identical duplicate both returned rowcount 0. The success value was
 # also the didn't-happen value, and two hosts could disagree forever with
@@ -530,45 +581,18 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # a2a port is unreachable inbound) still receives it. The consumer
 # filters for the card-event kinds and ignores everything else, incl.
 # sac's OWN liveness-tick anomaly events on the same bus. Bus-only
-# contract: no import of scitex_todo.
-# DECLARED IN BOTH GROUPS, and the duplication is the correct migration
-# state — not an oversight to tidy up later.
+# contract: no import of scitex_cards.
 #
-# MEASURED 2026-08-20 by scitex-cards: this consumer has NEVER been invoked in
-# production. The running notify daemon executes scitex-cards 0.42.0, whose
-# `_hooks/_plugins.py` reads `scitex_cards.hooks` and has ZERO references to
-# the retired group. sac was registered only under the retired name, so every
-# card event was dispatched to an EMPTY SET — succeeded, reported success,
-# called nobody. Corroborating symptoms, all explained by that one fact:
-#
-#     notifyd-liveness.json  last_delivery_at: null   never delivered, ever
-#     local inbox            150 rows, all unseen     enqueued, never pushed
-#     agents still get cards                          the PULL rail is separate
-#
-# Nothing anywhere reported a failure. That is the signature of this defect
-# class, and scitex-cards' own docstring recorded the identical state on
-# 2026-08-17 — the fix shipped in 0.48.0 and has never executed, because the
-# unit whose Description reads "supervised so a package upgrade actually
-# reaches it" points ExecStart at a hand-made venv that `pip install -U` never
-# touches.
-#
-# WHY BOTH RATHER THAN A MOVE. 0.42.0 (running now) reads only the new group,
-# so adding it revives delivery immediately. 0.48.0 reads both and dedupes, so
-# nothing double-fires. And leaving the retired entry in place preserves the
-# fleet's only registration under that name, which is what lets scitex-cards
-# verify the alias actually works when 0.48.0 finally runs — deleting it would
-# make "the alias works" indistinguishable from "nobody was left".
-#
-# THE NAME AND THE DOTTED PATH MUST STAY BYTE-IDENTICAL between the two
-# blocks. 0.48.0 dedupes on the tuple `(ep.name, ep.value)`:
-#
-#     seen  = {(ep.name, ep.value) for ep in current}
-#     extra = [ep for ep in retired if (ep.name, ep.value) not in seen]
-#
-# so renaming the entry or moving the callable on one side only turns the
-# alias meant to FIX delivery into a double-delivery bug. A migration is
-# exactly when tidying a name is tempting; do not, until the retired block
-# goes away entirely.
+# HISTORY. Until 2026-09-05 this consumer was ALSO registered under the retired
+# group name `scitex_todo.hooks`: scitex-cards 0.42.0 read only the new group
+# (so the new block revived delivery), and 0.46.0+ read both and deduped on
+# `(ep.name, ep.value)`, so the duplicate dispatched exactly once per event
+# while giving scitex-cards a live registration to verify the alias against.
+# scitex-cards confirmed on 2026-09-05 that the alias had been exercised on
+# every card event for three weeks and declared the retired group closed, so
+# the duplicate was removed. Do not re-add it: a second registration whose
+# name or dotted path drifts from this one turns the dedupe into a
+# double-delivery bug.
 #
 # C10 — sac's consumer on the shared card-event bus. When the board emits a
 # card-event (commented / created / reassigned / status_changed / completed /
@@ -581,13 +605,6 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # anomaly events on the same bus. Bus-only contract: no import of the board
 # package.
 [project.entry-points."scitex_cards.hooks"]
-scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
-
-# The retired spelling, kept deliberately. See the note above: it is the
-# fleet's only registration under this group and therefore the only way to
-# verify the 0.48.0 alias when it runs. Remove it only once that verification
-# has happened and scitex-cards says the group is closed.
-[project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
 # Claude Code hook RULES sac declares about its own surfaces. sac owns the
@@ -701,7 +718,15 @@ mcp_parity_exempt = true
 env_allowlist = ["SAC_", "CODEX_HOME"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scitex_agent_container"]
+packages = ["src/scitex_agent_container", "src/_scitex_agent_container_bootstrap"]
+
+[tool.scitex-agent-container.harnesses.hermes]
+package = "hermes-agent"
+version = "0.21.2"
+repository = "https://github.com/ywatanabe1989/hermes-agent.git"
+commit = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
+installation = "local-staged-source"
+environment = "/opt/hermes-agent/.venv"
 
 # Stamp the commit + a content hash of the tree into the artifact, as
 # `_provenance/_build_info.py`. An installed copy has no `.git`, so build
@@ -716,10 +741,10 @@ packages = ["src/scitex_agent_container"]
 # rather than clobbering it with "unknown". Register only the wheel target
 # and every published wheel ships an unknown commit.
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "src/hatch_build.py"
+path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.sdist.hooks.custom]
-path = "src/hatch_build.py"
+path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 # NEVER ship .git. In a plain clone `.git` is a directory and hatchling
@@ -765,16 +790,16 @@ exclude = [".git"]
 "README.md" = "scitex_agent_container/_bundled/README.md"
 # ...and hatch_build.py, for the same reason and no other. The bundled
 # pyproject above DECLARES this file
-# (``[tool.hatch.build.targets.*.hooks.custom] path = "src/hatch_build.py"``)
+# (``[tool.hatch.build.targets.*.hooks.custom] path = "scripts/hatch_build.py"``)
 # and hatchling resolves that path against the tree being built — which,
 # in a SIF build, is the STAGED tree. Ship the pyproject without the hook
 # it names and every `sac image build` dies in %post before reading a line
-# of source: ``OSError: Build script does not exist: src/hatch_build.py``.
+# of source: ``OSError: Build script does not exist: scripts/hatch_build.py``.
 # It lands in the inert ``_bundled/`` data dir (no ``__init__.py``), so it
 # is still NOT importable as ``scitex_agent_container.*`` — hatch_build.py's
 # own rule (never put an ``import hatchling`` module on the runtime path)
 # holds. Bundled ≠ packaged.
-"src/hatch_build.py" = "scitex_agent_container/_bundled/hatch_build.py"
+"scripts/hatch_build.py" = "scitex_agent_container/_bundled/hatch_build.py"
 
 [tool.pytest.ini_options]
 # THE PACKAGE UNDER TEST IS THIS CHECKOUT, NOT WHATEVER IS INSTALLED.
@@ -929,11 +954,6 @@ ignore = ["E501"]
 # DIAGNOSTIC, you want the logger instead; these exemptions exist only where
 # stdout/stderr IS the interface.
 [tool.ruff.lint.per-file-ignores]
-# The build hook runs under hatch during wheel/sdist construction, before the
-# package (and therefore scitex_logging) is importable at all. Its prints are
-# build-log progress; a logger here would be a circular dependency.
-"src/hatch_build.py" = ["T201"]
-
 # Claude Code WorktreeCreate hook, executed as a standalone script from the
 # agent's own $HOME after being copied out of _baseline_assets. STDOUT IS THE
 # PROTOCOL: the SDK reads the created worktree path from it (`print(policy_path)`),
@@ -949,6 +969,11 @@ ignore = ["E501"]
 # Same deal: a standalone SessionStart hook copied into the agent's $HOME. Its
 # one print is the reap summary the SDK surfaces to the operator.
 "src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/session_start_reap_stale.py" = ["T201"]
+
+# Standalone Claude Code PreToolUse hook copied into the agent's HOME. Stderr
+# is the SDK's refusal channel and the deployment cannot assume that the sac
+# package or scitex_logging remains importable beside the copied script.
+"src/scitex_agent_container/_baseline_assets/process_wait_hooks/self_matching_pgrep_wait.py" = ["T201"]
 
 # `sac never-stop-when-task-remains` is a Claude Code Stop hook whose STDOUT IS
 # A JSON DECISION FRAME (tests/.../test_never_stop_when_task_remains_cmds.py
@@ -970,6 +995,16 @@ ignore = ["E501"]
 # A worked example shipped inside a skill for operators to copy and run; its
 # print is the example's output. Not a sac code path.
 "src/scitex_agent_container/_skills/scitex-agent-container/scitex_smoke_test.py" = ["T201"]
+
+# render_content() is the explicit content-rendering contract: exact bytes to
+# stdout for published outputs (statusline payload, sourced completion
+# script). A level prefix or stderr hop would corrupt the payload.
+"src/scitex_agent_container/_logging/_streams.py" = ["T201"]
+
+# emit_collect() is a worker-mode entry whose stdout IS the machine-readable
+# manifest JSON (exit code carries pass/fail). Logging it would corrupt the
+# frame the parent parses.
+"src/scitex_agent_container/cli_pkg/_fleet_sync_code_collect.py" = ["T201"]
 
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters

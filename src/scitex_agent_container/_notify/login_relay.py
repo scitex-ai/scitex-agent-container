@@ -16,13 +16,14 @@ responder.
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any, Callable
 
+import scitex_logging as slogging
+
 from .email import send_email
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 # A Claude OAuth authorize URL (claude.ai or console.anthropic.com). tmux
 # captures the pane with ``-J`` (join wrapped lines), so the long URL arrives

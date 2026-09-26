@@ -66,7 +66,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
 from typing import Any, Callable
 
 from ._launch_fatal import apptainer_fatal
@@ -179,8 +178,8 @@ def _resolve_state_dir(config: Any) -> Path:
     ``ApptainerContainerRuntime._state_dir`` / ``tui_session.
     state_dir_for_config``), else the home-scope default.
     """
-    from ..runtimes._provider_common import project_runtime_root
     from .._runners._session_state import state_dir_for
+    from ..runtimes._provider_common import project_runtime_root
 
     return state_dir_for(config.name, root=project_runtime_root(config))
 

@@ -52,6 +52,7 @@ def _pane_section(text: str) -> str:
     """The pane-capture block of a specimen file, verbatim."""
     start = text.index("--- pane capture")
     start = text.index("\n", start) + 1
+    # This frozen pre-migration specimen retains its historical label.
     return text[start : text.index("--- state.db row ---")]
 
 

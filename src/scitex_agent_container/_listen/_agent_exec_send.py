@@ -14,21 +14,21 @@ import asyncio
 import json as _json
 import os
 import shutil
-import subprocess
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import JSONResponse, Response
 
-from .._runners._session_state import read_session_id, state_dir_for
+from .._runners._session_state import state_dir_for
 from ..config import load_config
 from ..config._resolve import resolve_config
-from ._forward import forward_to_live_runner
+from ._forward import forward_exchange_from_live_runner, forward_to_live_runner
 
 __all__ = [
     "_find_claude_binary",
     "_sse_frame",
     "_stream_claude",
     "agent_send",
+    "agent_exchange",
 ]
 
 
@@ -90,12 +90,8 @@ async def agent_send(request: Request) -> Response:
     Back-compat (this commit only): a body without ``type`` is treated
     as ``{type: "prompt", ...}`` so existing callers keep working.
 
-    Routing for ``type: prompt``:
-        1. If the agent has ``spec.a2a.port`` set and its inbound HTTP
-           is reachable, forward the turn into the live in-memory
-           runner inbox.
-        2. Otherwise fall back to ``claude --resume <sid> -p`` —
-           short-lived re-launch against the persisted session.jsonl.
+    Routing for ``type: prompt``: require the agent's live canonical
+    ``/v1/turn`` endpoint. There is no process-resume or tmux fallback.
 
     Routing for ``type: key``:
         SIGINT the live runner pid (best-effort). ESC / C-c / SIGINT
@@ -171,105 +167,36 @@ async def agent_send(request: Request) -> Response:
     if live is not None:
         return live
 
-    # 2) Fall back to short-lived re-launch.
-    sd = state_dir_for(name)
-    sid = read_session_id(sd)
-    if not sid:
-        return JSONResponse(
-            {"error": f"no session_id recorded for {name!r}"}, status_code=409
-        )
-
-    try:
-        claude_bin = _find_claude_binary()
-    except RuntimeError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-
-    argv = [claude_bin, "--resume", sid, "-p", prompt]
-    if "model" in options:
-        argv += ["--model", str(options["model"])]
-    if "max_turns" in options:
-        argv += ["--max-turns", str(options["max_turns"])]
-
-    workdir = cfg.expanded_workdir or os.getcwd()
-
-    # SSE branch: client opted in via Accept: text/event-stream. Stream
-    # claude's stdout line-by-line as SSE frames.
-    accept = request.headers.get("accept", "")
-    if "text/event-stream" in accept:
-        argv += ["--output-format", "stream-json", "--include-partial-messages"]
-        return StreamingResponse(
-            _stream_claude(argv, workdir, name, sid),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    # Buffered branch (default): run to completion, return one JSON blob.
-    #
-    # BOUNDED ON PURPOSE. This ran with no timeout at all, so a claude
-    # invocation that never returned held the request open forever while
-    # every caller absorbed the wait privately and then blamed its own
-    # 30s client deadline on a `sac listen` outage. An unbounded wait on
-    # a subprocess is not patience, it is a hang with no upper bound and
-    # no signal — the daemon looked healthy the whole time because, on
-    # every other route, it was.
-    try:
-        timeout_s = _resume_timeout_s()
-    except ValueError as exc:
-        # Misconfiguration, not a transport fault — say so, and say which
-        # variable, rather than dying as a bodyless ASGI 500.
-        return JSONResponse(
-            {"name": name, "kind": "bad_config", "error": str(exc)},
-            status_code=500,
-        )
-    try:
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            argv,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # subprocess.run kills the child before raising, so we are not
-        # leaking a claude process here.
-        return JSONResponse(
-            {
-                "name": name,
-                "session_id": sid,
-                "kind": "resume_timeout",
-                "timeout_s": timeout_s,
-                "error": (
-                    f"the `claude --resume` re-launch for {name!r} did not "
-                    f"finish within {timeout_s:g}s and was killed. The agent "
-                    f"itself is untouched — this bounds the RE-LAUNCH, not "
-                    f"the agent."
-                ),
-                "hint": (
-                    f"Raise the bound with SAC_LISTEN_RESUME_TIMEOUT_S if "
-                    f"long turns are expected here. If {name!r} is actually "
-                    f"running, prefer its live rail instead of a re-launch: "
-                    f"`sac a2a send {name} ...`."
-                ),
-                "stdout_tail": (exc.stdout or "")[-2_000:]
-                if isinstance(exc.stdout, str)
-                else "",
-                "stderr_tail": (exc.stderr or "")[-2_000:]
-                if isinstance(exc.stderr, str)
-                else "",
-            },
-            status_code=504,
-        )
+    # Public prompt delivery has exactly one transport. A missing live endpoint
+    # is a refusal, never permission to launch a second Claude process against
+    # the session store or to type into a tmux pane.
     return JSONResponse(
         {
             "name": name,
-            "session_id": sid,
-            "returncode": proc.returncode,
-            "stdout": proc.stdout,
-            "stderr": proc.stderr,
-        }
+            "kind": "no_live_turn_endpoint",
+            "error": (
+                "public send requires the running agent's canonical /v1/turn "
+                "exchange endpoint; no port is registered. SAC will not run "
+                "claude --resume or inject tmux input as a fallback"
+            ),
+            "hint": (
+                f"start or repair the agent, then verify `sac agents status {name}` "
+                "reports a2a_port before resending"
+            ),
+        },
+        status_code=409,
     )
+
+
+async def agent_exchange(request: Request) -> Response:
+    """Proxy a canonical exchange lookup for an in-SIF send client."""
+    name = request.path_params["name"]
+    exchange_id = request.path_params["exchange_id"]
+    try:
+        cfg = load_config(resolve_config(name))
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    return await forward_exchange_from_live_runner(cfg, name, exchange_id)
 
 
 def _sse_frame(event: str | None, data: str) -> bytes:

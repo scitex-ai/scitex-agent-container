@@ -27,7 +27,7 @@ the prompt came through.
 Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac
 claims a free port from `~/.scitex/agent-container/config.yaml`'s
 `a2a.port_range` (default `[19000, 19999]`) at start time and persists
-it in `state.db`. Operators see the assigned port via `sac agents list`.
+it in the shared PostgreSQL store. Operators see the assigned port via `sac agents list`.
 Most agents need no `a2a` block at all:
 
 ```yaml
@@ -218,7 +218,7 @@ kind: AgentProxy
 
 spec:
   runtime: apptainer
-  apptainer: { image: ~/.scitex/agent-container/containers/sac-proxy.sif }
+  apptainer: { image: sac-proxy }
   proxy:
     upstream: https://peer.example.com
     trust: local-mesh

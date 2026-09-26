@@ -3,9 +3,8 @@
 The bug
 -------
 Inside an apptainer SIF, ``$HOME`` is ``/home/agent`` (not the operator's
-home) and ``SCITEX_AGENT_CONTAINER_STATE_DB`` points at a PER-AGENT bridge
-DB (e.g. ``/state/<name>/state.db``). So ``open_db(None)`` resolves to a
-private, effectively empty store that holds NO rows for any other agent.
+home). The retired SQLite design resolved that to a private, effectively
+empty store that held NO rows for any other agent.
 
 Every local-DB read in the send path therefore comes back empty, and the
 caller renders that emptiness as *death*. Measured 2026-07-14 from inside

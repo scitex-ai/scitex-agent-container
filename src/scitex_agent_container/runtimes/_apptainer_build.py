@@ -159,6 +159,19 @@ def resolve_sif(config: AgentConfig, cache_dir: Path) -> Path | None:
     if not image:
         return None
 
+    # SAC-owned images are declared by logical name.  The name is portable;
+    # each host's atomically switched live link selects the installed build.
+    # Timestamped build paths are launch state, not source configuration.
+    from ._apptainer_image_ref import managed_image_path
+
+    managed = managed_image_path(image)
+    if managed is not None:
+        try:
+            target = managed.resolve(strict=True)
+        except OSError:
+            return None
+        return target if target.is_file() else None
+
     if image.endswith(".sif"):
         sif_path = Path(image).expanduser().resolve()
         return sif_path if sif_path.is_file() else None

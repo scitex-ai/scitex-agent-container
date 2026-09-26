@@ -1,8 +1,6 @@
 """Fleet-default bind helpers.
 
-Two classes of fleet-wide bind live here today:
-
-* **single-shared-store** — every agent's apptainer container mounts
+Every agent's apptainer container mounts
   the host copy of a shared store, so a resolver keying off the
   AGENT's ``$HOME=/home/agent`` reaches the SAME data fleet-wide.
   Today that is ``~/.scitex/cards`` and
@@ -25,16 +23,6 @@ Two classes of fleet-wide bind live here today:
   stated exception. See card
   ``sac-remove-implicit-fleet-default-binds-20260819``.
 
-* **2026-06-13 SAC overlay stopgap** — bind the host's working
-  ``scitex_agent_container`` source over the in-SIF install so
-  agents pick up new CLI surface (e.g., ``sac pytest spartan run``
-  from PR #375) WITHOUT a 30-minute SIF rebuild. Read-only because
-  the host-side tree is the source of truth; nothing inside the
-  container should mutate it. Lead a2a ``b6f3916cdf3544a9`` opened
-  this as the fast-path for the spartan-pytest hook rollout.
-  Removable: delete the overlay entry once a SIF rebuild folds the
-  new package version back into the canonical install.
-
 Mechanism — see :func:`apply_default_binds`:
   * The list of default binds is :data:`_FLEET_DEFAULT_BINDS` —
     extend cautiously, every entry adds a host directory bind
@@ -44,9 +32,7 @@ Mechanism — see :func:`apply_default_binds`:
     wins; we de-dupe by destination, not by full string).
   * Missing host source dir → SKIP that default silently. The
     operator may not have a ``~/.scitex/cards/`` yet (clean
-    install, fresh laptop), or a fresh deploy host may not have
-    the canonical ``~/proj/scitex-agent-container/`` checkout —
-    we don't create either from sac code.
+    install, fresh laptop); we don't create it from sac code.
 
 This module is intentionally tiny so the sites that consume the
 default-bind list (``_apptainer_runtime.py``) stay under the
@@ -129,29 +115,6 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # subdir cct creates on first boot lands on the host rather than in the
     # overlay; a bind of a not-yet-existing leaf would skip silently.
     "~/.scitex/claude-code-telegrammer:/home/agent/.scitex/claude-code-telegrammer:rw",
-    # 2026-06-13 STOPGAP (lead a2a b6f3916c) — bind the host's working
-    # ``scitex_agent_container`` source over the in-SIF install so
-    # agents pick up new CLI surface (e.g., ``sac pytest spartan run``
-    # from PR #375) WITHOUT a 30-minute SIF rebuild. Read-only because
-    # the host-side tree is the source of truth; nothing inside the
-    # container should mutate it.
-    #
-    # Removable: delete this entry once a SIF rebuild folds the new
-    # package version back into the canonical install. The
-    # ``default_binds_for_host`` skip-if-missing filter makes the
-    # entry a no-op on hosts that don't carry the canonical repo
-    # path (e.g., a fresh deploy box). Per-agent spec overrides via
-    # ``apptainer.binds`` for the SAME destination still win
-    # through ``apply_default_binds``'s de-dup-by-destination merge.
-    #
-    # Pinned to python3.12 because every SAC SIF def
-    # (apptainer-base.def + apptainer-scitex.def) uses ``/opt/venv-sac``
-    # with Python 3.12 today; the bind silently skips if a future SIF
-    # moves to 3.13 (the destination dir won't exist inside that SIF,
-    # apptainer surfaces a benign warning) — operator notices and
-    # either updates the entry or drops it after the SIF refresh.
-    "~/proj/scitex-agent-container/src/scitex_agent_container"
-    ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro",
     # HAZARD — a dev-source bind MUST target a destination that EXISTS
     # in the SIF. ``default_binds_for_host`` filters ONLY by host-source
     # existence; it cannot see inside the SIF. apptainer normally
@@ -169,10 +132,9 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # bind targeted a nonexistent destination and FATAL-killed every boot
     # whose overlay was contended (proj-paper-scitex-clew died instantly
     # 3× while neurovista, winning the same race, came up). Removed
-    # 2026-06-23. The ``/opt/venv-sac`` bind above already covers the
-    # canonical install. If a future SIF reintroduces a second venv
-    # prefix, add its bind ONLY after confirming the destination dir
-    # exists in that SIF.
+    # 2026-06-23. If a future SIF reintroduces a second venv prefix,
+    # add an explicit per-agent bind ONLY after confirming the destination
+    # directory exists in that SIF.
     #
     # Operator handoff path (card sac-bind-host-tmp-emacs-handoff) — under
     # ``--containall`` the host ``/tmp`` is isolated, so agents cannot read

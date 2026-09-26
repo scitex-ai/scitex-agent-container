@@ -31,6 +31,18 @@ sac image build scitex    # :scitex SIF (FROM :base + scitex[all], ~10-20 min)
 sac image build --sandbox # writable sandbox dir instead of frozen SIF
 ```
 
+Image builds have a stricter source-authority check than read-only commands.
+When SAC is editable-installed from one checkout but ``PYTHONPATH`` would load
+another, the console entry point stops before importing the build command or
+creating its artifact directory. The error prints both observed roots. Unset
+the stale override, or deliberately select the canonical editable checkout:
+
+```bash
+unset PYTHONPATH
+# or, when an explicit source path is required:
+PYTHONPATH=/path/to/canonical/checkout/src uv run sac image build base -y
+```
+
 ## Sandbox / freeze workflow
 
 Sandbox once, refresh when you want, freeze when stable:
@@ -38,14 +50,38 @@ Sandbox once, refresh when you want, freeze when stable:
 ```bash
 sac image build scitex --sandbox        # one-time: writable sandbox
 sac image update sandbox/               # any time: pip install --upgrade scitex[all]
-sac image freeze sandbox/ scitex-2.28.15.sif   # bake to immutable SIF
-sac image switch 2.28.15               # atomic flip (previous remembered)
-sac image rollback                     # restore previous version
+sac image freeze sandbox/ candidate.sif # bake an explicit immutable SIF
+
+# Managed timestamped artifacts already under the SAC layer store:
+sac image switch 2026-0914-152140 --layer base  # atomic dual-link flip
+sac image rollback --layer base                  # restore previous version
 sac image snapshot -o env.json         # full reproducibility capsule
 ```
 
-The build / sandbox / version / rollback verbs all delegate to
+Build, sandbox, and freeze delegate their container operations to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
+Switch and rollback operate on SAC's layered `sac-<layer>-<version>.sif`
+store and update both stable links together.
+
+## Distributing one verified artifact to a fleet
+
+The cross-host publication command requires an exact local SIF, a logical
+layer, and an explicit list of peers from SAC's ``config.yaml``:
+
+```bash
+sac image distribute ./sac-base-2026-0914-120000.sif \
+  --layer base --host compute-01 --host compute-02 \
+  --receipt ./base-distribution.json
+```
+
+There is no ``--all``. ``--dry-run --json`` hashes the resolved source and
+prints the complete plan without opening SSH connections. On a real run, each
+host receives a content-addressed ``sac-base-sha256-<sha>.sif`` through an
+explicit temporary path. Size and SHA-256 are checked before atomic rename and
+again at the final path on every host. Only then are the live links switched.
+If a link switch fails part-way through, already-switched hosts are restored to
+their preflight link states. Old artifacts are never pruned, and the structured
+``sac.image.distribution-receipt/v1`` output records every host's evidence.
 
 ## Pinning a custom image
 
@@ -54,7 +90,7 @@ Set `spec.apptainer.image` in your `spec.yaml`:
 ```yaml
 spec:
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base/sac-base.sif
+    image: sac-base
 ```
 
 Or use a relative path (resolved relative to `spec.yaml`):

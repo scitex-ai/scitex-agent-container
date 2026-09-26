@@ -15,13 +15,16 @@ import sys
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 
+from .._logging import render_rich
 from . import _installation_check
-from ._helpers import console
 
 # ---------------------------------------------------------------------------
 # Shared constants
 # ---------------------------------------------------------------------------
+
+log = slogging.getLogger(__name__)
 
 _SHARED_DIRS = [
     "~/.scitex/agent-container/agents",
@@ -115,17 +118,14 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     # ------------------------------------------------------------------
     venv_dir = Path("~/.venv-3.11").expanduser()
     if venv_dir.exists():
-        console.print(f"{tag}venv [green]already exists[/green]: {venv_dir}")
+        render_rich(f"{tag}venv [green]already exists[/green]: {venv_dir}", __name__)
     else:
         python = _find_python311()
         if python is None:
-            console.print(
-                "[red]Error:[/red] python3.11+ not found on PATH. "
-                "Install it via your package manager (e.g. apt install python3.11).",
-                err=True,
-            )
+            log.error("Error: python3.11+ not found on PATH. "
+                "Install it via your package manager (e.g. apt install python3.11).")
             sys.exit(1)
-        console.print(f"{tag}Creating venv at {venv_dir} with {python}…")
+        render_rich(f"{tag}Creating venv at {venv_dir} with {python}…", __name__)
         if not dry_run:
             subprocess.run([python, "-m", "venv", str(venv_dir)], check=True)
 
@@ -135,10 +135,10 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     sac_src = _find_sac_src()
     pip = venv_dir / "bin" / "pip"
     if not dry_run and venv_dir.exists():
-        console.print(f"{tag}Installing sac into venv…")
+        render_rich(f"{tag}Installing sac into venv…", __name__)
         subprocess.run([str(pip), "install", "--quiet", "-e", str(sac_src)], check=True)
     else:
-        console.print(f"{tag}Would run: {pip} install -e {sac_src}")
+        render_rich(f"{tag}Would run: {pip} install -e {sac_src}", __name__)
 
     # ------------------------------------------------------------------
     # Step 3 — PATH injection
@@ -151,9 +151,9 @@ def boot(dry_run: bool) -> None:  # noqa: C901
             continue
         content = rc_path.read_text()
         if bin_dir in content:
-            console.print(f"{tag}PATH already set in {rc_path}")
+            render_rich(f"{tag}PATH already set in {rc_path}", __name__)
         else:
-            console.print(f"{tag}Adding {bin_dir} to {rc_path}…")
+            render_rich(f"{tag}Adding {bin_dir} to {rc_path}…", __name__)
             if not dry_run:
                 rc_path.write_text(content + path_line)
 
@@ -161,18 +161,16 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     # Step 4 — tmux check
     # ------------------------------------------------------------------
     if shutil.which("tmux") is None:
-        console.print(
-            "[yellow]WARNING:[/yellow] tmux not found on PATH. "
+        render_rich("[yellow]WARNING:[/yellow] tmux not found on PATH. "
             "Install it with your package manager:\n"
             "  Ubuntu/Debian: sudo apt install tmux\n"
             "  macOS:         brew install tmux\n"
-            "  RHEL/Rocky:    sudo dnf install tmux"
-        )
+            "  RHEL/Rocky:    sudo dnf install tmux", __name__)
     else:
         tmux_ver = subprocess.run(
             ["tmux", "-V"], capture_output=True, text=True
         ).stdout.strip()
-        console.print(f"{tag}tmux [green]OK[/green]: {tmux_ver}")
+        render_rich(f"{tag}tmux [green]OK[/green]: {tmux_ver}", __name__)
 
     # ------------------------------------------------------------------
     # Step 5 — shared dirs
@@ -180,9 +178,9 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     for d in _SHARED_DIRS:
         p = Path(d).expanduser()
         if p.exists():
-            console.print(f"{tag}dir [green]exists[/green]: {p}")
+            render_rich(f"{tag}dir [green]exists[/green]: {p}", __name__)
         else:
-            console.print(f"{tag}Creating {p}…")
+            render_rich(f"{tag}Creating {p}…", __name__)
             if not dry_run:
                 p.mkdir(parents=True, exist_ok=True)
 
@@ -200,7 +198,7 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     # Step 8 — summary
     # ------------------------------------------------------------------
     if dry_run:
-        console.print("[dim]dry-run complete — no changes were made.[/dim]")
+        render_rich("[dim]dry-run complete — no changes were made.[/dim]", __name__)
     else:
         try:
             sac_bin = venv_dir / "bin" / "sac"
@@ -209,10 +207,8 @@ def boot(dry_run: bool) -> None:  # noqa: C901
             ).stdout.strip()
         except Exception:
             ver = "(version unavailable)"
-        console.print(f"[green bold]boot OK[/green bold] — {ver}")
-        console.print(
-            "[dim]Re-source your shell or open a new terminal to pick up the PATH change.[/dim]"
-        )
+        render_rich(f"[green bold]boot OK[/green bold] — {ver}", __name__)
+        render_rich("[dim]Re-source your shell or open a new terminal to pick up the PATH change.[/dim]", __name__)
 
 
 def _apply_declared_jobs_step(dry_run: bool, tag: str) -> None:
@@ -239,36 +235,32 @@ def _apply_declared_jobs_step(dry_run: bool, tag: str) -> None:
     """
     from ._dev_jobs_apply import apply_declared_jobs
 
-    console.print(f"{tag}Applying + arming declared jobs…")
+    render_rich(f"{tag}Applying + arming declared jobs…", __name__)
     try:
         report = apply_declared_jobs(
             yes=not dry_run,
             dry_run=dry_run,
-            echo=lambda line: console.print(f"{tag}{line}"),
+            echo=lambda line: render_rich(f"{tag}{line}", __name__),
         )
     except Exception as exc:  # noqa: BLE001 — see NEVER FATAL above
-        console.print(
-            f"[yellow]WARNING:[/yellow] could not apply declared jobs: {exc}\n"
+        render_rich(f"[yellow]WARNING:[/yellow] could not apply declared jobs: {exc}\n"
             "  Steps 1-6 completed. Re-run `sac installation boot` once "
             "scitex-dev is healthy, or apply by hand with "
-            "`sac dev timer install --yes && sac dev timer enable --yes`."
-        )
+            "`sac dev timer install --yes && sac dev timer enable --yes`.", __name__)
         return
 
-    console.print(f"{tag}jobs: {report.summary()}")
+    render_rich(f"{tag}jobs: {report.summary()}", __name__)
     for line in report.skipped:
-        console.print(f"[yellow]WARNING:[/yellow] skipped {line}")
+        render_rich(f"[yellow]WARNING:[/yellow] skipped {line}", __name__)
     for step in report.failed:
-        console.print(f"[red]FAILED:[/red] {step}")
+        render_rich(f"[red]FAILED:[/red] {step}", __name__)
     if report.failed:
         # Naming the remedy matters more than the failure: `install`
         # refusing because a supervisor already exists is a SAFE outcome,
         # while `enable` failing means the job genuinely will not fire.
-        console.print(
-            "[dim]  `install` may refuse when a supervisor already exists — "
+        render_rich("[dim]  `install` may refuse when a supervisor already exists — "
             "that is safe. A failed `enable` is not: the job will not "
-            "fire.[/dim]"
-        )
+            "fire.[/dim]", __name__)
 
 
 def _find_python311() -> str | None:
@@ -318,16 +310,13 @@ def _deploy_cron_script(dry_run: bool, tag: str) -> None:
         src_path = Path(__file__).parent.parent / "cron" / _CRON_SCRIPT_NAME
 
     if not src_path.exists():
-        console.print(
-            f"[red]Error:[/red] bundled {_CRON_SCRIPT_NAME} not found at {src_path}",
-            err=True,
-        )
+        log.error(f"Error: bundled {_CRON_SCRIPT_NAME} not found at {src_path}")
         return
 
     if dest.exists() and dest.read_bytes() == src_path.read_bytes():
-        console.print(f"{tag}cron script [green]up-to-date[/green]: {dest}")
+        render_rich(f"{tag}cron script [green]up-to-date[/green]: {dest}", __name__)
     else:
-        console.print(f"{tag}Deploying {_CRON_SCRIPT_NAME} → {dest}…")
+        render_rich(f"{tag}Deploying {_CRON_SCRIPT_NAME} → {dest}…", __name__)
         if not dry_run:
             shutil.copy2(str(src_path), str(dest))
             dest.chmod(0o755)
@@ -388,7 +377,7 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
     # Read current crontab.
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     if result.returncode not in (0, 1):
-        console.print(f"[red]Error reading crontab:[/red] {result.stderr.strip()}")
+        render_rich(f"[red]Error reading crontab:[/red] {result.stderr.strip()}", __name__)
         sys.exit(1)
     current = result.stdout if result.returncode == 0 else ""
     lines = current.splitlines(keepends=True)
@@ -397,36 +386,32 @@ def install_post_merge_cron(dry_run: bool, uninstall: bool, yes: bool) -> None:
 
     if uninstall:
         if not already_present:
-            console.print(
-                "[dim]No post-merge-pull entry in crontab — nothing to remove.[/dim]"
-            )
+            render_rich("[dim]No post-merge-pull entry in crontab — nothing to remove.[/dim]", __name__)
             return
-        new_lines = [l for l in lines if _CRON_MARKER not in l]
+        new_lines = [line for line in lines if _CRON_MARKER not in line]
         _write_crontab(new_lines)
-        console.print("[green]Removed[/green] post-merge-pull from crontab.")
+        render_rich("[green]Removed[/green] post-merge-pull from crontab.", __name__)
         return
 
     if dry_run:
-        console.print("[bold]Would add to crontab:[/bold]")
+        render_rich("[bold]Would add to crontab:[/bold]", __name__)
         click.echo(cron_line)
         if already_present:
-            console.print("[dim](line already present — would be a no-op)[/dim]")
+            render_rich("[dim](line already present — would be a no-op)[/dim]", __name__)
         return
 
     if already_present:
-        console.print("[dim]post-merge-pull already in crontab — no-op.[/dim]")
+        render_rich("[dim]post-merge-pull already in crontab — no-op.[/dim]", __name__)
         return
 
     # Ensure cron script is executable.
     if not _CRON_SCRIPT_DEST.exists():
-        console.print(
-            f"[yellow]WARNING:[/yellow] {_CRON_SCRIPT_DEST} not found. "
-            "Run `sac install boot` first to deploy the script."
-        )
+        render_rich(f"[yellow]WARNING:[/yellow] {_CRON_SCRIPT_DEST} not found. "
+            "Run `sac install boot` first to deploy the script.", __name__)
 
     new_content = current.rstrip("\n") + ("\n" if current else "") + cron_line + "\n"
     _write_crontab_str(new_content)
-    console.print(f"[green]Added[/green] to crontab:\n  {cron_line}")
+    render_rich(f"[green]Added[/green] to crontab:\n  {cron_line}", __name__)
 
 
 def _write_crontab(lines: list[str]) -> None:
@@ -441,7 +426,7 @@ def _write_crontab_str(content: str) -> None:
         capture_output=True,
     )
     if proc.returncode != 0:
-        console.print(f"[red]Error writing crontab:[/red] {proc.stderr.strip()}")
+        render_rich(f"[red]Error writing crontab:[/red] {proc.stderr.strip()}", __name__)
         sys.exit(1)
 
 

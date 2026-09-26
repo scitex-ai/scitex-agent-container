@@ -12,8 +12,6 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import subprocess
 from pathlib import Path
 
@@ -27,6 +25,7 @@ from scitex_agent_container._drift import (
     spec_source_repo,
     warn_if_spec_source_drifted,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _git(repo: Path, *args: str) -> None:

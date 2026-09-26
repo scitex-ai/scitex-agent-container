@@ -92,7 +92,7 @@ spec:
       CCT_BOT_TOKEN: ""                    # (b) tokenless BY DECLARATION
 ```
 
-or (c) drop `server:claude-code-telegrammer` from `spec.claude.channels`.
+or (c) drop `server:claude-code-telegrammer` from `spec.comms.channels`.
 
 Then re-run — it must read `ok`. sac does not choose for you and **does not
 refuse the start**: both checks are detectors. Enforcement is a separate change
@@ -110,7 +110,7 @@ misses ones that do.
 ## The ownership ledger
 
 At every start each agent records its claim into the per-host PostgreSQL store
-`cct_token_owner` (`_state/state_db_token_owner.py`):
+`cct_token_owner` (`_state/state_store_token_owner.py`):
 
 ```
 (token_fp, host, agent)  ->  pid, started_at, source, slot

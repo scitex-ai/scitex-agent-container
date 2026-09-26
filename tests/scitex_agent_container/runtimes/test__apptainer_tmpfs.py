@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.host_scratch import (
+    resolve_scratch_root,
+    scratch_agent_dir,
+)
 from scitex_agent_container.config._types import ApptainerSpec
 from scitex_agent_container.runtimes._apptainer_tmpfs import (
     TmpfsSpaceError,
@@ -75,7 +79,14 @@ class _Cfg:
     """Minimal config stand-in exposing only ``apptainer``."""
 
     def __init__(self, apptainer: ApptainerSpec | None) -> None:
+        self.name = "alpha"
         self.apptainer = apptainer
+
+
+def _managed_workdir() -> Path:
+    scratch = resolve_scratch_root()
+    assert scratch.root is not None
+    return scratch_agent_dir(scratch.root, "alpha") / "apptainer-workdir"
 
 
 def test_flags_default_emits_workdir(tmp_path: Path) -> None:
@@ -84,16 +95,18 @@ def test_flags_default_emits_workdir(tmp_path: Path) -> None:
     # Act
     flags = tmpfs_workdir_flags(cfg, tmp_path)
     # Assert
-    assert flags == ["--workdir", str(tmp_path / "tmp-scratch")]
+    assert flags == ["--workdir", str(_managed_workdir())]
 
 
-def test_flags_creates_scratch_dir(tmp_path: Path) -> None:
+def test_flags_leave_scratch_creation_to_real_launch(tmp_path: Path) -> None:
     # Arrange
     cfg = _Cfg(ApptainerSpec())
+    target = _managed_workdir()
+    existed_before = target.exists()
     # Act
     tmpfs_workdir_flags(cfg, tmp_path)
-    # Assert
-    assert (tmp_path / "tmp-scratch").is_dir()
+    # Assert — argv construction has not changed host state either way.
+    assert target.exists() is existed_before
 
 
 def test_flags_empty_size_opts_out(tmp_path: Path) -> None:
@@ -111,7 +124,7 @@ def test_flags_no_apptainer_block_still_defaults(tmp_path: Path) -> None:
     # Act
     flags = tmpfs_workdir_flags(cfg, tmp_path)
     # Assert
-    assert flags == ["--workdir", str(tmp_path / "tmp-scratch")]
+    assert flags == ["--workdir", str(_managed_workdir())]
 
 
 def test_flags_skips_when_operator_declares_workdir(tmp_path: Path) -> None:
@@ -156,7 +169,7 @@ def test_flags_do_not_check_space_even_when_it_is_insufficient(
     # Act
     flags = tmpfs_workdir_flags(cfg, tmp_path)
     # Assert — emits the workdir, raises nothing
-    assert flags == ["--workdir", str(tmp_path / "tmp-scratch")]
+    assert flags == ["--workdir", str(_managed_workdir())]
 
 
 def test_flags_propagates_parse_error_on_bad_size(tmp_path: Path) -> None:

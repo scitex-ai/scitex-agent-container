@@ -83,16 +83,6 @@ printf '%s\\n' "$@" > "{argv_file}"
 exit 0
 """
 
-# Restores the pre-fix scratch line: unconditional GPFS APPTAINER_TMPDIR.
-_MUTATE_SCRATCH = (
-    'if [ -d "$GPFS_PROJECT" ]; then\n'
-    '    export APPTAINER_TMPDIR="$GPFS_PROJECT/ywatanabe/ci/apptainer-tmp"\n'
-    "else\n"
-    '    export APPTAINER_TMPDIR="$HOME/.cache/scitex-ci/apptainer-tmp"\n'
-    "fi",
-    'export APPTAINER_TMPDIR="$GPFS_PROJECT/ywatanabe/ci/apptainer-tmp"',
-)
-
 # Restores the pre-fix bind: unconditional --bind of the GPFS tree.
 _MUTATE_BIND = (
     'if [ -d "$GPFS_PROJECT" ]; then\n    APPTAINER_ARGV+=(--bind "$GPFS_PROJECT")',
@@ -292,13 +282,6 @@ def spartan(tmp_path_factory, shim_text) -> _Outcome:
 
 
 @pytest.fixture(scope="module")
-def mutant_scratch_on_compute(tmp_path_factory, shim_text) -> _Outcome:
-    _require_namespace()
-    text = _mutate(shim_text, _MUTATE_SCRATCH)
-    return _case(tmp_path_factory.mktemp("mut_scratch"), text, gpfs=False)
-
-
-@pytest.fixture(scope="module")
 def mutant_bind_on_compute(tmp_path_factory, shim_text) -> _Outcome:
     _require_namespace()
     text = _mutate(shim_text, _MUTATE_BIND)
@@ -349,7 +332,10 @@ def test_compute_shape_runs_to_the_exec(compute):
 
 def test_compute_shape_reports_the_gpfs_absent_profile(compute):
     # Arrange
-    expected = f"exec-in-sif: {_GPFS} absent (scratch under $HOME, no GPFS bind)"
+    expected = (
+        f"exec-in-sif: {_GPFS} absent "
+        "(no GPFS bind; test scratch resolved independently)"
+    )
     # Act
     stdout = compute.result.stdout
     # Assert
@@ -362,15 +348,16 @@ def test_compute_shape_omits_the_gpfs_bind(compute):
     # Act
     argv = outcome.sandbox.argv()
     # Assert
-    assert "--bind" not in argv, (
-        "a --bind survived where GPFS is absent; apptainer refuses a bind whose "
-        f"source does not exist. argv={argv}"
+    binds = [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--bind"]
+    assert binds == [str(outcome.sandbox.tmproot)], (
+        "compute CI must bind exactly its provisioned scratch root; "
+        f"argv={argv}"
     )
 
 
-def test_compute_shape_puts_scratch_under_home(compute):
+def test_compute_shape_uses_the_explicit_provisioned_scratch(compute):
     # Arrange
-    expected = compute.sandbox.home / ".cache" / "scitex-ci" / "apptainer-tmp"
+    expected = compute.sandbox.tmproot / "apptainer-tmp"
     # Act
     stdout = compute.result.stdout
     # Assert
@@ -379,7 +366,7 @@ def test_compute_shape_puts_scratch_under_home(compute):
 
 def test_compute_shape_actually_creates_that_scratch(compute):
     # Arrange
-    expected = compute.sandbox.home / ".cache" / "scitex-ci" / "apptainer-tmp"
+    expected = compute.sandbox.tmproot / "apptainer-tmp"
     # Act
     created = expected.is_dir()
     # Assert
@@ -396,7 +383,7 @@ def test_compute_shape_still_execs_the_sif(compute):
 
 
 # --------------------------------------------------------------------------
-# Spartan shape: GPFS made present. Unchanged behaviour is the requirement.
+# Spartan shape: GPFS is bound while scratch remains independently provisioned.
 # --------------------------------------------------------------------------
 
 
@@ -411,16 +398,19 @@ def test_spartan_shape_runs_to_the_exec(spartan):
 
 def test_spartan_shape_reports_the_gpfs_present_profile(spartan):
     # Arrange
-    expected = f"exec-in-sif: {_GPFS} present (scratch on GPFS, punim0264 bound)"
+    expected = (
+        f"exec-in-sif: {_GPFS} present "
+        "(punim0264 bound; test scratch resolved independently)"
+    )
     # Act
     stdout = spartan.result.stdout
     # Assert
     assert expected in stdout, f"the taken profile was not reported:\n{stdout}"
 
 
-def test_spartan_shape_keeps_scratch_on_gpfs(spartan):
+def test_spartan_shape_uses_the_explicit_provisioned_scratch(spartan):
     # Arrange
-    expected = f"exec-in-sif: APPTAINER_TMPDIR={_GPFS}/ywatanabe/ci/apptainer-tmp"
+    expected = f"exec-in-sif: APPTAINER_TMPDIR={spartan.sandbox.tmproot}/apptainer-tmp"
     # Act
     stdout = spartan.result.stdout
     # Assert
@@ -452,31 +442,6 @@ def test_the_two_host_shapes_produce_different_argv(compute, spartan):
 # --------------------------------------------------------------------------
 # Mutation controls: put the defect back and watch it kill the job.
 # --------------------------------------------------------------------------
-
-
-def test_mutant_unconditional_gpfs_scratch_aborts_on_compute(mutant_scratch_on_compute):
-    """The pre-fix scratch line restored: `mkdir -p` on GPFS under `set -e`."""
-    # Arrange
-    outcome = mutant_scratch_on_compute
-    # Act
-    rc = outcome.result.returncode
-    # Assert
-    assert rc != 0, (
-        "the unconditional GPFS scratch SURVIVED where GPFS is absent — then the "
-        "conditional in the real shim is not what makes it work, and every "
-        f"passing test above is measuring the wrong thing:\n{outcome.output}"
-    )
-
-
-def test_mutant_unconditional_gpfs_scratch_never_reaches_the_exec(
-    mutant_scratch_on_compute,
-):
-    # Arrange
-    outcome = mutant_scratch_on_compute
-    # Act
-    argv = outcome.sandbox.argv()
-    # Assert
-    assert not argv, f"the mutant reached the exec; it should die at mkdir: {argv}"
 
 
 def test_mutant_unconditional_bind_is_passed_where_gpfs_is_absent(

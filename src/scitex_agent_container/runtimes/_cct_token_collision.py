@@ -213,7 +213,7 @@ class TokenCollisionVerdict:
                 "with CCT_BOT_TOKEN_SLOT under spec.apptainer.env, (b) set "
                 "CCT_BOT_TOKEN to an empty value under spec.apptainer.env so it "
                 "is tokenless BY DECLARATION (the handyman pattern), or (c) drop "
-                "'server:claude-code-telegrammer' from spec.claude.channels if "
+                "'server:claude-code-telegrammer' from spec.comms.channels if "
                 "it needs no Telegram rail. Then re-run: it must read ok. sac "
                 "does not choose for you and does not refuse the start — this is "
                 "a detector."

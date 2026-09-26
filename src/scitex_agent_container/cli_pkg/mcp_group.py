@@ -164,23 +164,39 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
         "does not advance an idle agent's turn."
     ),
 )
-def mcp_channel(name: str | None, listen_url: str | None, turn_url: str | None) -> None:
+@click.option(
+    "--send-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Expose SAC A2A tools without subscribing to inbound events. Managed "
+        "agents use this because their daemon owns the one durable subscriber."
+    ),
+)
+def mcp_channel(
+    name: str | None,
+    listen_url: str | None,
+    turn_url: str | None,
+    send_only: bool,
+) -> None:
     """Run the sac push channel adapter as a stdio MCP subprocess.
 
-    Intended to be spawned by Claude Code via
-    ``--dangerously-load-development-channels server:sac`` — see
-    ``docs/adr/0008-sac-node-transport-boundary.md``. Streams inbox events from sac listen
-    as ``notifications/claude/channel`` so the running session sees
-    ``<channel source="..." msg_id="...">`` tags in real time, and (when
-    ``--turn-url`` is set) WAKES the session by POSTing each event to the
-    agent's own ``/v1/turn`` so an idle agent processes it immediately.
+    Without ``--send-only`` this is the legacy Claude Code channel adapter:
+    it streams SAC inbox events as ``notifications/claude/channel``. Managed
+    agents pass ``--send-only`` so their daemon is the sole durable subscriber
+    while the harness retains the outbound ``a2a_*`` MCP tools.
 
     \b
     Example (manual):
       $ sac mcp channel --name lead
     """
     _channel_main = _load_channel_main()
-    _channel_main(name=name, listen_url=listen_url, turn_url=turn_url)
+    _channel_main(
+        name=name,
+        listen_url=listen_url,
+        turn_url=turn_url,
+        send_only=send_only,
+    )
 
 
 @mcp.command("healthcheck")
@@ -248,7 +264,11 @@ def mcp_doctor() -> None:
     Example:
       $ sac mcp doctor
     """
+    from ._image_venv_report import image_venv_lines, inspect_image_venv
+
     click.secho("Checking MCP dependencies...", fg="cyan")
+    for line in image_venv_lines(inspect_image_venv()):
+        click.echo(line)
     try:
         version = _load_fastmcp_version()
         click.secho("  OK ", fg="green", nl=False)

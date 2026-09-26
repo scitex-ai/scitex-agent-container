@@ -11,7 +11,7 @@ WHAT IT TOUCHES (and nothing else):
 
   1. pyproject.toml — the SINGLE column-0 ``version = \"X.Y.Z\"`` line in the
      ``[project]`` table. This is byte-for-byte the line
-     ``src/hatch_build.py::_declared_version()`` parses (``line.startswith
+     ``scripts/hatch_build.py::_declared_version()`` parses (``line.startswith
      (\"version\")``) and the value hatchling bakes into the wheel at the tagged
      commit. Indented dependency constraints (``\"click>=8.0\"``), ``requires-
      python``, and ``[tool.ruff] target-version`` all start with whitespace or a

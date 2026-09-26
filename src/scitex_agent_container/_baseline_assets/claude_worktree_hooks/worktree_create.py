@@ -81,6 +81,47 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+    plain = slogging.getPlainConsole(__name__)
+except ImportError:  # standalone copy without sac installed
+    class _PlainFallback:
+        """Verbatim stdout writer for protocol frames (the worktree path).
+
+        Used only when ``scitex_logging`` is not importable. Writes the
+        path with no level prefix — the SDK parses stdout as the path.
+        """
+
+        @staticmethod
+        def emit(message: str) -> None:
+            sys.stdout.write(f"{message}\n")
+            sys.stdout.flush()
+
+    plain = _PlainFallback()
+
+    class _StderrFallback:
+        """Minimal log-surface writing verbatim lines to stderr.
+
+        Used only when ``scitex_logging`` is not importable (standalone
+        copy on agent $HOME / bare SIF). Diagnostics go to stderr —
+        never stdout, which carries protocol frames.
+        """
+
+        @staticmethod
+        def _write(message: str) -> None:
+            sys.stderr.write(f"{message}\n")
+            sys.stderr.flush()
+
+        def error(self, message: str) -> None:
+            self._write(message)
+
+        warning = error
+        info = error
+
+    log = _StderrFallback()
+
 
 def _run_git(*args: str, cwd: str) -> str:
     """Run ``git -C cwd <args>``; return stdout stripped. Raises CalledProcessError on non-zero exit."""
@@ -237,12 +278,21 @@ def _stamp_owner(worktree_path: str) -> None:
     ``<checkout>/.git`` for a primary checkout) is OUTSIDE the working
     tree, so git never stages it.
 
-    Owner id = ``$SCITEX_TODO_AGENT_ID`` (the agent's board identity,
-    which equals its ``config.name``). Best-effort: a failure here must
-    NEVER break worktree creation, whose SDK contract is to echo the
-    path. An empty/unset agent id is left UNSTAMPED.
+    Owner id = ``$SCITEX_CARDS_AGENT_ID`` (the agent's board identity,
+    which equals its ``config.name``), falling back to the RETIRED
+    ``$SCITEX_TODO_AGENT_ID`` only for a container still launched from an
+    old-name spec. Canonical FIRST: reading the retired name alone left the
+    stamp unwritten in every container that carries only the current one.
+    Best-effort: a failure here must NEVER break worktree creation, whose
+    SDK contract is to echo the path. An empty/unset agent id is left
+    UNSTAMPED.
     """
-    owner = os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
+    owner = (
+        os.environ.get("SCITEX_CARDS_AGENT_ID", "").strip()
+        # Retired predecessor — kept ONLY so a container still launched from
+        # an old-name spec keeps stamping. Drop with the shim.
+        or os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
+    )
     if not owner:
         return
     try:
@@ -269,22 +319,22 @@ def main() -> int:
     """
     raw = sys.stdin.read()
     if not raw.strip():
-        print("WorktreeCreate hook: empty stdin (expected JSON)", file=sys.stderr)
+        log.error("WorktreeCreate hook: empty stdin (expected JSON)")
         return 2
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(f"WorktreeCreate hook: stdin is not valid JSON: {exc}", file=sys.stderr)
+        log.error(f"WorktreeCreate hook: stdin is not valid JSON: {exc}")
         return 2
 
     name = (payload.get("name") or "").strip()
     cwd = (payload.get("cwd") or "").strip()
     if not name:
-        print("WorktreeCreate hook: 'name' missing in input", file=sys.stderr)
+        log.error("WorktreeCreate hook: 'name' missing in input")
         return 2
     if not cwd or not os.path.isdir(cwd):
-        print(
-            f"WorktreeCreate hook: 'cwd' missing or not a dir: {cwd!r}", file=sys.stderr
+        log.error(
+            f"WorktreeCreate hook: 'cwd' missing or not a dir: {cwd!r}"
         )
         return 2
 
@@ -292,16 +342,15 @@ def main() -> int:
     # it as a path segment and reject any traversal/separator nasties
     # so the hook can never write outside the worktree roots.
     if "/" in name or ".." in name.split("."):
-        print(
-            f"WorktreeCreate hook: invalid 'name' (path-traversal): {name!r}",
-            file=sys.stderr,
+        log.error(
+            f"WorktreeCreate hook: invalid 'name' (path-traversal): {name!r}"
         )
         return 2
 
     policy_path = _try_policy_target(name, cwd)
     if policy_path is not None:
         _stamp_owner(policy_path)
-        print(policy_path)
+        plain.emit(policy_path)
         return 0
 
     # Policy failed — fall back to SDK default so the Agent spawn still
@@ -310,21 +359,19 @@ def main() -> int:
     fallback_path = _try_sdk_default_fallback(name, cwd)
     if fallback_path is not None:
         _stamp_owner(fallback_path)
-        print(
+        log.error(
             f"WorktreeCreate hook: policy target .worktrees/{name} failed; "
             f"falling back to SDK default {fallback_path} so the Agent "
-            f"spawn proceeds (operator F-CS8 audit + prune cron applies).",
-            file=sys.stderr,
+            f"spawn proceeds (operator F-CS8 audit + prune cron applies)."
         )
-        print(fallback_path)
+        plain.emit(fallback_path)
         return 0
 
-    print(
+    log.error(
         f"WorktreeCreate hook: BOTH policy target .worktrees/{name} AND "
         f"SDK fallback .claude/worktrees/{name} failed; no plausible "
         f"recovery. cwd={cwd!r}. Check git availability + write "
-        f"permissions on both candidate paths.",
-        file=sys.stderr,
+        f"permissions on both candidate paths."
     )
     return 2
 

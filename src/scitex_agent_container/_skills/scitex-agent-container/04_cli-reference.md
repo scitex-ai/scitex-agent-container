@@ -48,18 +48,18 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 | `sac image update SANDBOX [-p PKG]` | Refresh packages inside a sandbox via `pip install --upgrade`. Default: `scitex[all]`. |
 | `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
 | `sac image list` | Installed SIF versions on disk. |
-| `sac image switch <version>` | Atomically switch the active SIF symlink to a different version. |
-| `sac image rollback` | Restore the previous active version. |
+| `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |
+| `sac image rollback [--layer base]` | Restore the immediately older image for one SAC layer. |
 | `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
 | `sac image snapshot [-o env.json]` | Reproducibility capsule: pip + apt + conda + git + active SIF hash. |
 
 Typical "scitex updates often" cycle:
 
 ```
-sac image build scitex --sandbox       # one-time
-sac image update sandbox/              # any time
-sac image freeze sandbox/ scitex-X.sif # when stable
-sac image switch X
+sac image build base -y                # create a managed timestamped artifact
+sac image status                       # read its active version
+sac image switch 2026-0914-152140 --layer base
+sac image rollback --layer base
 ```
 
 ## Account / quota (`sac accounts`)
@@ -87,6 +87,7 @@ sac image switch X
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
 | `sac a2a doctor AGENT` | Probe an agent's A2A AgentCard endpoint and report health. |
+| `sac agents reconcile-turn-bridge AGENT [--apply]` | Resolve an existing TUI agent's `a2a.port: auto` from authoritative live registry/claim state and reload only its turn bridge. Dry-run by default; never starts or restarts the TUI. |
 
 ## Fleet (`sac fleet`)
 
@@ -99,7 +100,7 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac db clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `db clean` replaces the legacy `registry clean`. |
+| `sac store clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `db clean` replaces the legacy `registry clean`. |
 | `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
 | `sac event ingest` | Append a Claude Code hook event to the per-agent ring buffer. |
 
@@ -115,7 +116,7 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). Also runs the poller-singleton check. |
+| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). The default local report also identifies the SIF build and every `scitex-*` version baked into image-frozen `/opt/venv-sac`; it explicitly says that venv is not a published-release verification target. |
 | `sac doctor --pollers` | Is more than one live Telegram poller holding the same bot token on this host? Read-only; `ok` / `violation` / `unknown`, never a token value. |
 | `sac subagent get-state` | Pure state data for every matching Claude Code Agent-tool subagent (Type 2). |
 | `sac mcp list-tools` | Local MCP introspection (no MCP server bundled — sac agents spawn their own via `to_home/.mcp.json`). |

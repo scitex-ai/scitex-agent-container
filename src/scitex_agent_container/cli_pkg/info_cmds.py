@@ -10,14 +10,17 @@ import sys
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 from rich.table import Table
 
-from ..config import load_config
+from .._logging import render_rich
 from .._reconcile._pass import fleet_agents_dir, fleet_spec_paths
-from ._api_tree import get_api_tree
-from ._helpers import _json_flag, agent_name_complete, console
 from .._state._remote_sac_hint import remote_sac_not_found_hint
+from ..config import load_config
+from ._api_tree import get_api_tree
+from ._helpers import _json_flag, agent_name_complete
 
+_console_out = slogging.getConsole(__name__)
 
 @click.command()
 @click.argument("capability")
@@ -88,7 +91,7 @@ def find(
         return
 
     if not matches:
-        console.print(f"[dim]No agents found with capability '{capability}'[/dim]")
+        render_rich(f"[dim]No agents found with capability '{capability}'[/dim]", __name__)
         return
 
     table = Table(title=f"Agents with capability: {capability}")
@@ -103,7 +106,7 @@ def find(
             ",".join(m["capabilities"]),
             m["config"],
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 @click.command(name="tail")
@@ -171,17 +174,15 @@ def _tail_one(
 
     entry = Registry().get(name)
     if entry is None:
-        console.print(f"[red]Agent '{name}' not found in registry[/red]")
+        render_rich(f"[red]Agent '{name}' not found in registry[/red]", __name__)
         return False
 
     # state-dir layout: ~/.scitex/agent-container/runtime/<name>/session.jsonl
     state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name
     transcript = state_root / "session.jsonl"
     if not transcript.is_file():
-        console.print(
-            f"[red]No transcript at {transcript}. Agent may not have started a "
-            "session yet, or runs in a non-default state-root.[/red]"
-        )
+        render_rich(f"[red]No transcript at {transcript}. Agent may not have started a "
+            "session yet, or runs in a non-default state-root.[/red]", __name__)
         return False
 
     raw_lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -225,7 +226,7 @@ def _tail_one(
         elif kind == "error":
             out.append(f"{tag}[error] {str(r)[:300]}")
     for line in out[-lines:]:
-        console.print(line, markup=False, highlight=False)
+        _console_out.info(line)
     return True
 
 
@@ -260,7 +261,7 @@ def _tail_one_remote(
     peers = _load_host_config().peers
     if peer not in peers:
         raise RuntimeError(
-            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"Agent {name!r} active on peer {peer!r} per the shared store, but "
             f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
             f"peers: section. Cannot tail cross-host. Add the peer entry."
         )
@@ -507,7 +508,7 @@ def roles(
         return
 
     if not rows:
-        console.print(f"[dim]No agent specs under {search_path}[/dim]")
+        render_rich(f"[dim]No agent specs under {search_path}[/dim]", __name__)
         return
 
     title = "Agents missing a description" if only_missing else "Agent roles"
@@ -523,10 +524,10 @@ def roles(
             cells.append(r["description"] or "[dim]— undeclared —[/dim]")
         cells.append(r["machine"])
         table.add_row(*cells)
-    console.print(table)
+    render_rich(table, __name__)
     tail = (
         ""
         if described == total
         else "  —  `sac agents roles --missing` lists the rest"
     )
-    console.print(f"[dim]{described}/{total} agents declare a description{tail}[/dim]")
+    render_rich(f"[dim]{described}/{total} agents declare a description{tail}[/dim]", __name__)

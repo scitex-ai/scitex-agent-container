@@ -21,6 +21,7 @@ class MultiplexerProtocol(Protocol):
         workdir: str,
         env_exports: str = "",
         venv: str = "",
+        session_env: dict[str, str] | None = None,
     ) -> bool: ...
 
     @staticmethod
@@ -40,10 +41,10 @@ class MultiplexerProtocol(Protocol):
 
     @staticmethod
     def send_text_literal(session_name: str, text: str) -> None:
-        """Paste ``text`` into the pane LITERALLY (``send-keys -l``) WITHOUT
-        submitting. See :meth:`TmuxManager.send_text_literal` — the ``-l`` flag
-        is REQUIRED or the containerized Ink/React ``claude`` TUI silently drops
-        the keystrokes. The SUBMIT is a separate idle-gated named ``Enter``.
+        """Atomically bracket-paste ``text`` without submitting.
+
+        See :meth:`TmuxManager.send_text_literal`; the submit remains a
+        separate idle-gated and verified named ``Enter``.
         """
         ...
 

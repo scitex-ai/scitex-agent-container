@@ -38,13 +38,14 @@ Everything here is pure + unit-testable with REAL sockets/processes
 
 from __future__ import annotations
 
-import logging
 import os
 import signal
 import socket
 from typing import Callable
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 # Bounded waits (seconds). ``_STOP_SIGTERM_GRACE_S`` — how long
 # ``stop_turn_bridge`` waits for a SIGTERM'd bridge to release the port

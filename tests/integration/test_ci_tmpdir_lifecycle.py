@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -35,8 +36,11 @@ _REPO = Path(__file__).resolve().parents[2]
 _CI = _REPO / ".github" / "ci"
 _LIB = _CI / "tmpdir-lib.sh"
 _CLEAN = _CI / "clean-tmpdir.sh"
+_PREPARE_BARE = _CI / "prepare-bare-scratch.sh"
 _EXEC = _CI / "exec-in-sif.sh"
 _WORKFLOWS = _REPO / ".github" / "workflows"
+_DOCS_WORKFLOW = _WORKFLOWS / "rtd-sphinx-build-on-ubuntu-latest.yml"
+_IMPORT_WORKFLOW = _WORKFLOWS / "import-smoke-on-ubuntu-py3-12.yml"
 
 # The run identity the sandbox pretends to be running under.
 _RUN_ID = "77770001"
@@ -80,6 +84,18 @@ def _bash(script: str, root: Path, lib: Path | None = None):
         capture_output=True,
         text=True,
         env=_env(root),
+    )
+
+
+def _bash_without_configured_root(script: str, **over: str):
+    env = dict(os.environ)
+    env.pop("SAC_CI_TMPDIR_ROOT", None)
+    env.update(over)
+    return subprocess.run(
+        ["bash", "-c", f'set -uo pipefail; . "{_LIB}"\n{script}'],
+        capture_output=True,
+        text=True,
+        env=env,
     )
 
 
@@ -150,12 +166,87 @@ def test_path_is_the_name_the_scripts_already_used(path_result):
     assert got == expected
 
 
+@pytest.fixture
+def default_root_result():
+    """Resolve the default only where this host exposes a provisioned root."""
+    user = os.environ.get("USER")
+    local = Path("/scratch") / user if user else None
+    gpfs = Path("/data/gpfs/projects/punim0264")
+    inherited = os.environ.get("TMPDIR", "")
+    runner_tmp = inherited.startswith(("/tmp/", "/var/tmp/")) and os.access(
+        inherited, os.W_OK
+    )
+    if not (
+        runner_tmp
+        or (local and local.is_dir() and os.access(local, os.W_OK))
+        or gpfs.is_dir()
+    ):
+        pytest.skip("this host has no provisioned compute/HPC scratch root")
+    return _bash_without_configured_root("_ci_tmpdir_root")
+
+
+def test_default_root_resolution_succeeds(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    return_code = result.returncode
+    # Assert
+    assert return_code == 0, result.stderr
+
+
+def test_default_root_is_provisioned_scratch(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    root = result.stdout
+    # Assert
+    assert root.startswith(("/tmp/", "/var/tmp/", "/scratch/", "/data/gpfs/projects/"))
+
+
+def test_default_root_is_not_unscoped_tmp(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    root = result.stdout
+    # Assert
+    assert root != "/tmp"
+
+
+@pytest.fixture
+def runner_local_root_result():
+    with tempfile.TemporaryDirectory(prefix="sac-ci-runner-", dir="/tmp") as root:
+        result = _bash_without_configured_root("_ci_tmpdir_root", TMPDIR=root)
+        yield Path(root), result
+
+
+def test_runner_provisioned_node_local_tmp_wins_over_gpfs(runner_local_root_result):
+    # Arrange
+    root, result = runner_local_root_result
+    # Act
+    selected = result.stdout
+    # Assert
+    assert result.returncode == 0 and selected == str(root), result.stderr
+
+
+def test_library_has_no_tmp_or_home_fallback():
+    # Arrange
+    forbidden = ('${SAC_CI_TMPDIR_ROOT:-/tmp}', '.cache/scitex-ci')
+    # Act
+    source = _LIB.read_text(encoding="utf-8")
+    # Assert
+    assert not any(item in source for item in forbidden)
+
+
 @pytest.mark.parametrize(
     ("inner", "prefix"),
     [
         ("run-in-sif.sh", "ci"),
         ("build-in-sif.sh", "build"),
         ("publish-in-sif.sh", "publish"),
+        ("docs", "docs"),
+        ("import-smoke", "import"),
+        ("lint", "lint"),
+        ("runner-guard", "guard"),
         ("autobump-in-sif.sh", ""),
         ("not-a-script.sh", ""),
     ],
@@ -408,7 +499,9 @@ def test_prune_tolerates_a_missing_root(tmp_path: Path):
     assert "rc=0" in res.stdout, res.stderr
 
 
-@pytest.mark.parametrize("prefix", ["ci", "build", "publish"])
+@pytest.mark.parametrize(
+    "prefix", ["ci", "build", "publish", "docs", "import", "lint", "guard"]
+)
 def test_prune_covers_every_leaking_prefix(root: Path, prefix: str):
     """One fix, all three leaking scripts — build and publish leak once per
     release, which is slower to notice, not less of a leak."""
@@ -780,6 +873,181 @@ def test_every_cleanup_step_is_guarded_by_always(wiring):
             unguarded.append(f"{where} ({inner} {args})")
     # Assert
     assert not unguarded, f"cleanup steps not guarded by `if: always()`: {unguarded}"
+
+
+def _docs_steps() -> list[dict]:
+    doc = yaml.safe_load(_DOCS_WORKFLOW.read_text(encoding="utf-8"))
+    return doc["jobs"]["sphinx"]["steps"]
+
+
+def test_docs_job_places_cache_temp_and_venv_in_managed_scratch():
+    # Arrange
+    prepare = next(
+        step for step in _docs_steps() if step.get("name") == "Prepare job-scoped docs scratch"
+    )
+    run = str(prepare.get("run", "")).strip()
+    # Act
+    expected = "bash .github/ci/prepare-bare-scratch.sh docs 3.12 DOCS_VENV"
+    # Assert
+    assert run == expected
+
+
+def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
+    # Arrange
+    cleanup = next(
+        step for step in _docs_steps() if step.get("name") == "Remove this job's docs scratch"
+    )
+    # Act
+    condition = str(cleanup.get("if", ""))
+    command = str(cleanup.get("run", "")).strip()
+    # Assert
+    assert ("always()" in condition, command) == (
+        True,
+        "bash .github/ci/clean-tmpdir.sh docs 3.12",
+    )
+
+
+def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
+    # Arrange
+    docs = _mkdir(
+        root, f"docs-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
+    )
+    sibling = _mkdir(root, f"docs-scitex_agent_container-{_RUN_ID}-2-3.12")
+    # Act
+    result = _run_clean(root, "docs", "3.12")
+    # Assert
+    assert (result.returncode, docs.exists(), sibling.is_dir()) == (0, False, True), (
+        result.stderr
+    )
+
+
+def _import_steps() -> list[dict]:
+    doc = yaml.safe_load(_IMPORT_WORKFLOW.read_text(encoding="utf-8"))
+    return doc["jobs"]["install-check"]["steps"]
+
+
+def test_import_job_places_cache_temp_and_venv_in_managed_scratch():
+    # Arrange
+    prepare = next(
+        step
+        for step in _import_steps()
+        if step.get("name") == "Prepare job-scoped import scratch"
+    )
+    run = str(prepare.get("run", "")).strip()
+    # Act
+    expected = (
+        "bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV"
+    )
+    # Assert
+    assert run == expected
+
+
+def test_import_job_removes_its_exact_scratch_scope_even_after_failure():
+    # Arrange
+    cleanup = next(
+        step
+        for step in _import_steps()
+        if step.get("name") == "Remove this job's import scratch"
+    )
+    # Act
+    condition = str(cleanup.get("if", ""))
+    command = str(cleanup.get("run", "")).strip()
+    # Assert
+    assert ("always()" in condition, command) == (
+        True,
+        "bash .github/ci/clean-tmpdir.sh import-smoke 3.12",
+    )
+
+
+def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
+    # Arrange
+    current = _mkdir(
+        root, f"import-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
+    )
+    sibling = _mkdir(root, f"import-scitex_agent_container-{_RUN_ID}-2-3.12")
+    # Act
+    result = _run_clean(root, "import-smoke", "3.12")
+    # Assert
+    assert (result.returncode, current.exists(), sibling.is_dir()) == (
+        0,
+        False,
+        True,
+    ), result.stderr
+
+
+@pytest.mark.parametrize(
+    ("scope", "prefix", "venv_key"),
+    [
+        ("docs", "docs", "DOCS_VENV"),
+        ("import-smoke", "import", "IMPORT_VENV"),
+        ("lint", "lint", "LINT_VENV"),
+        ("runner-guard", "guard", "GUARD_VENV"),
+    ],
+)
+def test_bare_scratch_helper_exports_managed_job_paths(
+    root: Path, tmp_path: Path, scope: str, prefix: str, venv_key: str
+):
+    # Arrange
+    github_env = tmp_path / "github.env"
+    env = _env(root, GITHUB_ENV=str(github_env))
+    expected_root = root / (
+        f"{prefix}-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
+    )
+    # Act
+    result = subprocess.run(
+        ["bash", str(_PREPARE_BARE), scope, "3.12", venv_key],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    exported = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
+    # Assert
+    assert (
+        result.returncode,
+        f"TMPDIR={expected_root}/tmp\n" in exported,
+        f"UV_CACHE_DIR={expected_root}/uv-cache\n" in exported,
+        f"{venv_key}={expected_root}/venv\n" in exported,
+    ) == (0, True, True, True), result.stderr
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "prepare_name", "prepare_command", "cleanup_command"),
+    [
+        (
+            _WORKFLOWS / "lint.yml",
+            "ruff",
+            "Prepare job-scoped lint scratch",
+            "bash .github/ci/prepare-bare-scratch.sh lint 3.12 LINT_VENV",
+            "bash .github/ci/clean-tmpdir.sh lint 3.12",
+        ),
+        (
+            _WORKFLOWS / "no-hosted-runners-guard-on-self-hosted.yml",
+            "no-hosted-runners",
+            "Prepare job-scoped runner-guard scratch",
+            "bash .github/ci/prepare-bare-scratch.sh runner-guard 3.12 GUARD_VENV",
+            "bash .github/ci/clean-tmpdir.sh runner-guard 3.12",
+        ),
+    ],
+)
+def test_other_self_hosted_uv_jobs_use_managed_scratch_and_cleanup(
+    workflow: Path,
+    job: str,
+    prepare_name: str,
+    prepare_command: str,
+    cleanup_command: str,
+):
+    # Arrange
+    doc = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    steps = doc["jobs"][job]["steps"]
+    prepare = next(step for step in steps if step.get("name") == prepare_name)
+    cleanup = next(
+        step for step in steps if str(step.get("run", "")).strip() == cleanup_command
+    )
+    # Act
+    actual_prepare = str(prepare.get("run", "")).strip()
+    condition = str(cleanup.get("if", ""))
+    # Assert
+    assert (actual_prepare, "always()" in condition) == (prepare_command, True)
 
 
 def test_exec_wrapper_sources_the_lifecycle_library():

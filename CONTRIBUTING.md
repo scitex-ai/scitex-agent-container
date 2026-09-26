@@ -126,8 +126,8 @@ CONTRIBUTING, examples/, mirror tests), Python API exports.
   runner translates it at the SDK transport boundary. Do not synthesise
   `ANTHROPIC_API_KEY` on the host side — that's the operator's choice.
 - **State**: per-host PostgreSQL, reached through `scitex_dev.store`; the
-  `_state/state_db*.py` modules are the accessors. JSON registry support
-  exists only via `sac db migrate` for legacy import.
+  `_state/state_store*.py` modules are the accessors. JSON registry support
+  exists only via `sac store migrate` for legacy import.
 - **Comments**: write *why*, never *what*. No comments on simple lines.
 
 ## Filing changes

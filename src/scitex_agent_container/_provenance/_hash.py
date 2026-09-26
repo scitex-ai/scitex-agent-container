@@ -17,6 +17,10 @@ Two rules make the build-time and runtime digests comparable:
 
 * **Exclude ``_build_info.py``.** It is generated *from* this hash, so
   including it would make the build-time digest unmatchable by definition.
+* **Exclude ``_bundled/``.** It contains inert build inputs force-included
+  into wheels so a wheel-installed SAC can reconstruct a source build. In
+  particular, hatchling adds ``_bundled/hatch_build.py`` after the build hook
+  computes this digest; it is not importable runtime package code.
 * **Hash only content and POSIX-relative paths** — never mtimes, absolute
   paths, or ``.pyc``. The digest must be reproducible on another machine.
 """
@@ -31,7 +35,7 @@ __all__ = ["EXCLUDED_NAMES", "code_hash", "iter_py_files"]
 
 # Generated at build time from the hash itself — see the module docstring.
 EXCLUDED_NAMES = frozenset({"_build_info.py"})
-_EXCLUDED_DIRS = frozenset({"__pycache__"})
+_EXCLUDED_DIRS = frozenset({"__pycache__", "_bundled"})
 _DIGEST_SIZE = 16
 
 

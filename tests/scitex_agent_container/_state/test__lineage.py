@@ -19,8 +19,7 @@ from scitex_agent_container._state._lineage import (
     ancestors_to_root,
     descendants_of,
 )
-from scitex_agent_container._state.state_db_nodes import record_lineage
-
+from scitex_agent_container._state.state_store_nodes import record_lineage
 
 # ---------------------------------------------------------------------------
 # Empty / leaf cases

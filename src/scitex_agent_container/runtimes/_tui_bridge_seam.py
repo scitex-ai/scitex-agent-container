@@ -8,7 +8,7 @@ are best-effort: a bridge spawn/teardown failure must never wedge start/stop.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 
@@ -38,7 +38,7 @@ class TurnBridgeSeamMixin:
         try:
             fn(config)
         except Exception as exc:  # stx-allow: fallback (reason: a bridge spawn failure must never wedge agent start — the agent still runs, only wake-on-push is degraded; logged for the operator)
-            logging.getLogger(__name__).warning(
+            slogging.getLogger(__name__).warning(
                 "TuiSessionRuntime: A2A turn bridge failed to start for %s: %s",
                 getattr(config, "name", "?"),
                 exc,
@@ -54,7 +54,7 @@ class TurnBridgeSeamMixin:
         try:
             fn(config)
         except Exception as exc:  # stx-allow: fallback (reason: bridge teardown is best-effort; a failure must not block stop())
-            logging.getLogger(__name__).warning(
+            slogging.getLogger(__name__).warning(
                 "TuiSessionRuntime: A2A turn bridge failed to stop for %s: %s",
                 getattr(config, "name", "?"),
                 exc,

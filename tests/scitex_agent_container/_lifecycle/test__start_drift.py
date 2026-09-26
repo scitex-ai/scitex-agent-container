@@ -5,14 +5,9 @@ in tmp_path); a real hand-rolled fake runtime/handover capture whether
 ``start`` was reached. HOME + SCITEX_DIR are redirected into tmp_path so
 the drift fetch-cache and Path.home() never touch the developer's home.
 
-Covers:
-  * DEFAULT (2026-08-10 operator ruling) → a STALE source REFUSES to start,
-    raising SpecSourceDriftError BEFORE the runtime is touched.
-  * --allow-stale-spec / SAC_ALLOW_STALE_SPEC → starts anyway, loudly.
-  * AHEAD (unpushed local commits) is NOT staleness → still starts by default.
-  * env SAC_ALLOW_STALE_SPEC / legacy SAC_STRICT_DRIFT honoured by
-    ``_resolve_strict_drift`` (an explicit arg wins over both).
-  * a clean (current) source launches normally.
+Covers the fail-closed lifecycle policy: stale, ahead and attempted legacy
+bypasses all refuse before runtime dispatch; only a clean/current authority
+source launches.
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 """
@@ -26,7 +21,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from scitex_agent_container._drift import SpecSourceDriftError
+from scitex_agent_container._drift import SpecAuthorityError
 from scitex_agent_container._lifecycle._start import _resolve_strict_drift, agent_start
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
@@ -159,7 +154,7 @@ def registry(tmp_path: Path) -> Registry:
 
 
 # ---------------------------------------------------------------------------
-# default lenient vs strict block
+# fail-closed lifecycle authority
 # ---------------------------------------------------------------------------
 
 
@@ -168,7 +163,7 @@ def test_stale_source_blocks_by_default(tmp_path, registry):
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
-    ctx = pytest.raises(SpecSourceDriftError)
+    ctx = pytest.raises(SpecAuthorityError)
     # Assert
     with ctx:
         _start(spec, registry, runtime)
@@ -181,10 +176,21 @@ def test_stale_source_does_not_reach_runtime_by_default(tmp_path, registry):
     # Act
     try:
         _start(spec, registry, runtime)
-    except SpecSourceDriftError:
+    except SpecAuthorityError:
         pass
     # Assert — start() never ran.
     assert runtime.started == []
+
+
+def test_dry_run_cannot_bypass_stale_source(tmp_path, registry):
+    # Arrange — dry-run validates the same authority a real launch would use.
+    spec = _make_spec_repo(tmp_path, drifted=True)
+    runtime = _FakeRuntime()
+    # Act
+    ctx = pytest.raises(SpecAuthorityError)
+    # Assert
+    with ctx:
+        _start(spec, registry, runtime, dry_run=True)
 
 
 def test_stale_source_banner_says_error_not_warning(tmp_path, registry, capsys):
@@ -194,71 +200,88 @@ def test_stale_source_banner_says_error_not_warning(tmp_path, registry, capsys):
     # Act
     try:
         _start(spec, registry, runtime)
-    except SpecSourceDriftError:
+    except SpecAuthorityError:
         pass
     # Assert
-    assert "sac-drift ERROR" in capsys.readouterr().err
+    assert "spec authority refused launch" in capsys.readouterr().err
 
 
-def test_refusal_names_the_named_override(tmp_path, registry, capsys):
-    # Arrange — one flag per condition; never a blanket --force.
+def test_refusal_names_no_bypass(tmp_path, registry, capsys):
+    # Arrange
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
     try:
         _start(spec, registry, runtime)
-    except SpecSourceDriftError:
+    except SpecAuthorityError:
         pass
     # Assert
-    assert "--allow-stale-spec" in capsys.readouterr().err
+    assert "allow-stale-spec" not in capsys.readouterr().err
 
 
-def test_allow_stale_spec_starts_the_agent(pg_schema: str, tmp_path, registry):
-    # Arrange — the escape hatch, passed the way --allow-stale-spec passes it.
+def test_false_strict_argument_cannot_bypass(pg_schema: str, tmp_path, registry):
+    # Arrange — retained API input must not weaken lifecycle authority.
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
-    _start(spec, registry, runtime, strict_drift=False)
+    refused = False
+    try:
+        _start(spec, registry, runtime, strict_drift=False)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert len(runtime.started) == 1
+    assert refused and runtime.started == []
 
 
-def test_allow_stale_spec_env_starts_the_agent(pg_schema: str, tmp_path, registry, env_save_restore):
-    # Arrange — same override, env transport (what the parallel path inherits).
+def test_allow_stale_env_cannot_bypass(
+    pg_schema: str, tmp_path, registry, env_save_restore
+):
+    # Arrange — a stale shell export from the old contract is inert.
     env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
-    _start(spec, registry, runtime)
+    refused = False
+    try:
+        _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert len(runtime.started) == 1
+    assert refused and runtime.started == []
 
 
-def test_unpushed_local_commits_still_start(pg_schema: str, tmp_path, registry):
-    # Arrange — AHEAD is not staleness: the spec here IS the newest that
-    # exists. Hosts like spartan legitimately carry local commits.
+def test_unpushed_local_commits_are_refused(pg_schema: str, tmp_path, registry):
+    # Arrange
     spec = _make_spec_repo(tmp_path, drifted=False)
     (spec.parent / "local.txt").write_text("local only")
     _git(spec.parent.parent.parent, "add", "-A")
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
     # Act
-    _start(spec, registry, runtime)
+    refused = False
+    try:
+        _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert len(runtime.started) == 1
+    assert refused and runtime.started == []
 
 
-def test_unpushed_local_commits_still_warn(pg_schema: str, tmp_path, registry, capsys):
-    # Arrange — not refusing is not the same as staying quiet.
+def test_unpushed_local_commits_fail_loud(pg_schema: str, tmp_path, registry, capsys):
+    # Arrange
     spec = _make_spec_repo(tmp_path, drifted=False)
     (spec.parent / "local.txt").write_text("local only")
     _git(spec.parent.parent.parent, "add", "-A")
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
     # Act
-    _start(spec, registry, runtime)
+    refused = False
+    try:
+        _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert "sac-drift WARNING" in capsys.readouterr().err
+    assert refused and "spec authority refused launch" in capsys.readouterr().err
 
 
 def test_clean_source_starts_normally(pg_schema: str, tmp_path, registry):
@@ -272,7 +295,7 @@ def test_clean_source_starts_normally(pg_schema: str, tmp_path, registry):
 
 
 # ---------------------------------------------------------------------------
-# _resolve_strict_drift — arg-wins / env-fallback
+# _resolve_strict_drift — compatibility inputs cannot weaken policy
 # ---------------------------------------------------------------------------
 
 
@@ -285,33 +308,32 @@ def test_explicit_true_arg_wins_over_env(env_save_restore):
     assert resolved is True
 
 
-def test_explicit_false_arg_wins_over_env(env_save_restore):
-    # Arrange — what --allow-stale-spec passes; a stale export must not undo it.
+def test_explicit_false_arg_stays_strict(env_save_restore):
+    # Arrange
     env_save_restore.set("SAC_STRICT_DRIFT", "1")
     # Act
     resolved = _resolve_strict_drift(False)
     # Assert
-    assert resolved is False
+    assert resolved is True
 
 
-def test_allow_stale_env_disables_strict(env_save_restore):
+def test_allow_stale_env_stays_strict(env_save_restore):
     # Arrange
     env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
     # Act
     resolved = _resolve_strict_drift(None)
     # Assert
-    assert resolved is False
+    assert resolved is True
 
 
-def test_legacy_strict_drift_zero_still_disables_strict(env_save_restore):
-    # Arrange — an existing SAC_STRICT_DRIFT=0 meant "do not block me"; the
-    # flipped default must not silently turn that export into a no-op.
+def test_legacy_strict_zero_stays_strict(env_save_restore):
+    # Arrange — an old bypass export must no longer weaken authority.
     env_save_restore.delete("SAC_ALLOW_STALE_SPEC")
     env_save_restore.set("SAC_STRICT_DRIFT", "0")
     # Act
     resolved = _resolve_strict_drift(None)
     # Assert
-    assert resolved is False
+    assert resolved is True
 
 
 def test_env_unset_now_defaults_to_strict(env_save_restore):

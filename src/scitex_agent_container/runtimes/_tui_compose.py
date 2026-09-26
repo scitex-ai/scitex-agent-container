@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import time
+from enum import Enum, auto
 from typing import Callable
 
 from ._pane_context_log import log_pane_fault
@@ -42,6 +43,8 @@ from ._pane_context_log import pane_tail as _pane_tail
 __all__ = [
     "clear_compose_buffer",
     "is_fresh_boot_welcome_screen",
+    "composer_holds_fragment",
+    "fragment_tail",
     "verify_submit_by_advancement",
 ]
 
@@ -63,6 +66,25 @@ _COMPOSE_PROMPT_RE = re.compile(r"❯[ \t\xa0]+\S")
 _COMPOSE_CLEAR_KEYS: tuple[str, ...] = ("Escape", "Escape")
 
 
+class _SubmitPhase(Enum):
+    """Observable phases of a verified submit attempt.
+
+    Keeping these states explicit prevents a clear-looking render frame from
+    being silently promoted to ``submitted``.  In particular, ``ESCAPED`` may
+    advance only after the pane is re-proven to be the same idle Claude
+    composer, and ``ENTERED`` may advance only on durable/turn evidence.
+    """
+
+    WAITING_FOR_PASTE = auto()
+    WAITING_FOR_IDLE = auto()
+    ESCAPED = auto()
+    ENTERED = auto()
+    PROVING = auto()
+    SUBMITTED = auto()
+    REFUSED = auto()
+    FAILED = auto()
+
+
 def _compose_pending_live(pane: str) -> bool:
     """True iff the LIVE compose box holds pasted-but-unsent text.
 
@@ -80,6 +102,76 @@ def _compose_pending_live(pane: str) -> bool:
         if "❯" in row:
             return bool(_COMPOSE_PROMPT_RE.search(row))
     return False
+
+
+#: Compose-box markers, by harness. Claude Code's Ink TUI renders "❯";
+#: Codex's composer renders "›" (U+203A). The live box is the BOTTOM-MOST
+#: row carrying either.
+_CLAUDE_COMPOSE_MARKER = "❯"
+_CODEX_COMPOSE_MARKER = "›"
+_COMPOSE_MARKERS = (_CLAUDE_COMPOSE_MARKER, _CODEX_COMPOSE_MARKER)
+
+_WS_RUN_RE = re.compile(r"[\s\xa0]+")
+
+#: How much of the pasted text to look for. The composer wraps and can
+#: scroll its TOP away, so the TAIL is the part reliably on screen.
+FRAGMENT_TAIL_CHARS = 60
+
+
+def _squeeze(text: str) -> str:
+    """Drop every whitespace character (NBSP included).
+
+    Not "collapse to one space": the pane is captured with ``capture-pane
+    -p`` and NO ``-J``, so a long composer line arrives HARD-WRAPPED and the
+    wrap can fall mid-word ("...is NO" / "T in this session"). Collapsing
+    would leave that split as a space and the payload would not match its
+    own text. Removing whitespace entirely makes the comparison indifferent
+    to where the terminal chose to break, and to the two-space indent Codex
+    puts on continuation rows.
+    """
+    return _WS_RUN_RE.sub("", text or "")
+
+
+def fragment_tail(text: str, limit: int = FRAGMENT_TAIL_CHARS) -> str:
+    """The trailing, whitespace-free slice of a pasted payload."""
+    return _squeeze(text)[-limit:]
+
+
+def composer_holds_fragment(pane: str, fragment: str) -> bool:
+    """True iff ``fragment`` is sitting in the LIVE compose box, unsent.
+
+    Scoped from the bottom-most compose marker downwards, which is what
+    separates "still in the composer" from "already submitted": a Codex
+    pane renders a SUBMITTED message into the transcript with its own
+    "›" marker and then shows the composer below it, so an unscoped
+    substring test would report a delivered message as forever pending.
+
+    Why a fragment at all. :func:`_compose_pending_live` recognises only
+    Claude's "❯" box, so on a Codex pane it answers False no matter what
+    is in the composer, and :func:`verify_submit_by_advancement` reads
+    that as "nothing to submit" and returns True. Measured on
+    handyman-01 (2026-09-05 11:31 UTC): `sac agents deliver` reported
+    "DELIVERED and SUBMITTED", exit 0, while the payload sat in the
+    Codex composer unsent — a single Enter by hand then started the
+    turn. A caller that knows what it pasted can say so, and the check
+    stops depending on which TUI drew the box.
+    """
+    fragment = _squeeze(fragment)
+    if not fragment:
+        return False
+    rows = (pane or "").splitlines()
+    for index in range(len(rows) - 1, -1, -1):
+        if any(marker in rows[index] for marker in _COMPOSE_MARKERS):
+            return fragment in _squeeze("".join(rows[index:]))
+    # No marker we recognise. Returning False here would be the very trap
+    # this function exists to remove, one level down: a pane whose composer
+    # is drawn by a THIRD TUI would again answer "nothing pending" and the
+    # caller would again read that as "submitted". So answer with what can
+    # still be seen -- our own text anywhere on screen. The cost of being
+    # wrong is now an Enter into an idle pane and, if it truly never
+    # advances, a LOUD failure with the pane dumped; the cost of the old
+    # answer was a silent success over a message nobody received.
+    return fragment in _squeeze(pane)
 
 
 def _pane_is_input_idle(pane: str) -> bool:
@@ -227,11 +319,11 @@ def clear_compose_buffer(
     ACTUAL live box once it is gone. RESUMED sessions never show this banner
     (they render "Welcome back" instead), so this adds no latency there.
     """
-    import logging
+    import scitex_logging as slogging
 
     from . import prompts as _prompts
 
-    log = logging.getLogger(__name__)
+    log = slogging.getLogger(__name__)
 
     pane = capture_fn(name)
     if _prompts.has_esc_cancel_modal(pane):
@@ -345,10 +437,15 @@ def verify_submit_by_advancement(
     *,
     capture_fn: Callable[[str], str],
     send_keys_fn: Callable[[str], None],
+    pending_fragment: str | None = None,
     max_resends: int = 8,
     poll_s: float = 0.6,
     appear_timeout_s: float = 5.0,
     idle_wait_s: float = 30.0,
+    escape_before_enter: bool = False,
+    escape_settle_s: float = 1.0,
+    proof_stable_s: float = 1.0,
+    require_submission_proof: bool = False,
     sleep_fn: Callable[[float], None] = time.sleep,
     time_fn: Callable[[], float] = time.monotonic,
 ) -> bool:
@@ -371,8 +468,8 @@ def verify_submit_by_advancement(
       1. **Wait for the paste to RENDER** as ``compose-pending-unsent``
          (``capture_fn`` → :func:`prompts.detect`). A multi-line paste
          takes a beat. If it never renders within ``appear_timeout_s``
-         the turn was either submitted instantly or there was nothing to
-         submit → return ``True`` (nothing to force).
+         historical boot callers retain the best-effort "nothing to force"
+         result. Strict delivery callers require transcript evidence instead.
       2. For up to ``max_resends`` attempts:
          a. **Wait for input-idle** (:func:`_pane_is_input_idle`): no
             spinner AND the compose input present. Bounded by
@@ -381,8 +478,8 @@ def verify_submit_by_advancement(
             return ``True``. Do NOT send Enter while busy.
          b. **Send one Enter** (only once idle + still pending).
          c. **Verify advancement**: poll a short settle; if the buffer is
-            no longer ``compose-pending-unsent`` the Enter landed →
-            return ``True``.
+            require transcript/turn evidence or a durably clear composer;
+            one clear render frame is not submission proof.
          d. Otherwise adaptive back-off (settle grows each attempt) and
             retry — re-checking idle from scratch so the next Enter again
             only fires into a non-busy pane.
@@ -390,18 +487,77 @@ def verify_submit_by_advancement(
          ``tmux attach`` guidance) and return ``False`` (never a silent
          give-up).
 
-    Returns ``True`` if the buffer was observed to advance (or never
-    rendered as pending), ``False`` if it stayed pending after all
-    bounded attempts.
-    """
-    import logging
+    ``pending_fragment`` is what the caller just pasted. Claude's "❯"
+    box is still the primary signal; the fragment is consulted in
+    ADDITION, for a pane whose composer :func:`_compose_pending_live`
+    cannot see at all — a Codex pane, where the absence of "❯" made
+    phase 1 conclude "nothing to submit" and return True over a payload
+    that was sitting there unsent. Consulting both keeps Claude's
+    behaviour byte-for-byte (its large pastes collapse to "[Pasted text
+    #1 …]", so the fragment alone would not be visible) while giving
+    Codex a signal that is true of its composer.
 
-    log = logging.getLogger(__name__)
+    ``escape_before_enter`` enables the Claude Code 2.1.197 recovery gesture:
+    one Escape, a one-second settle, then Enter.  Escape is sent only when the
+    pane positively proves all of: Claude's live composer holds the payload,
+    Claude's idle status cue is present, no busy marker is present, and no
+    cancelable modal is present.  The same facts are checked again after the
+    settle; a changed/busy pane is refused rather than receiving Enter.
+
+    When ``require_submission_proof`` is true, one transient clear frame is
+    never success.  Success requires a new transcript/user-turn observation,
+    an idle-to-busy transition after Enter, or a non-pending pane that remains
+    non-pending for ``proof_stable_s``.  Active ``sac agents deliver`` enables
+    this stricter mode; boot retains its historical best-effort contract.
+    """
+    import scitex_logging as slogging
+
+    log = slogging.getLogger(__name__)
+    phase = _SubmitPhase.WAITING_FOR_PASTE
 
     def _advanced() -> str:
         """Capture once; return pane text. Buffer 'advanced' iff the
         returned text no longer detects as compose-pending-unsent."""
         return capture_fn(name)
+
+    tail = fragment_tail(pending_fragment or "")
+
+    def _fragment_in_transcript(pane: str) -> bool:
+        """Our unique payload is visible, but not in the live composer."""
+        return (
+            bool(tail)
+            and tail in _squeeze(pane)
+            and not composer_holds_fragment(pane, tail)
+        )
+
+    def _pending(pane: str) -> bool:
+        """Is the pasted turn still sitting in the live compose box?
+
+        Claude's own box decides whenever it is on screen at all, so this
+        is byte-for-byte the old behaviour for every Claude pane. The
+        fragment is consulted ONLY where the marker test is structurally
+        blind -- a pane that draws no Claude marker anywhere, which is
+        exactly the Codex case that read as "nothing to submit".
+        """
+        if _compose_pending_live(pane):
+            return True
+        if _CLAUDE_COMPOSE_MARKER in (pane or ""):
+            return False
+        return composer_holds_fragment(pane, tail)
+
+    def _input_idle(pane: str) -> bool:
+        """Safe to submit an Enter into?
+
+        :func:`_pane_is_input_idle` proves the compose input is present by
+        Claude's cues, so a Codex pane could never satisfy it and the Enter
+        was never sent. A composer visibly holding OUR payload is the same
+        proof, and it still has to pass the shared busy check.
+        """
+        if _pane_is_input_idle(pane):
+            return True
+        from .._lifecycle.liveness_probe import pane_is_busy
+
+        return _pending(pane) and not pane_is_busy(pane)
 
     # Phase 1 — wait for the pasted text to appear as an unsent buffer.
     appear_deadline = time_fn() + appear_timeout_s
@@ -409,16 +565,22 @@ def verify_submit_by_advancement(
     last_pane = ""
     while time_fn() < appear_deadline:
         last_pane = _advanced()
-        if _compose_pending_live(last_pane):
+        if _pending(last_pane):
             saw_pending = True
             break
         if poll_s > 0:
             sleep_fn(poll_s)
     if not saw_pending:
-        return True
+        if not require_submission_proof:
+            return True
+        # Literal paste cannot create a transcript row.  If the unique token
+        # is already outside the composer, another actor submitted it and that
+        # is positive evidence; otherwise absence is UNKNOWN, never success.
+        return _fragment_in_transcript(last_pane)
 
     # Phase 2 — bounded resend loop: wait-for-idle, send Enter, verify.
     for attempt in range(max_resends):
+        phase = _SubmitPhase.WAITING_FOR_IDLE
         # 2a — wait for input-idle (no spinner), bounded by idle_wait_s.
         # Bail early on advancement (a prior Enter, or the operator,
         # already submitted) so we never send a stray Enter into the
@@ -427,9 +589,11 @@ def verify_submit_by_advancement(
         idle = False
         while time_fn() < idle_deadline:
             last_pane = _advanced()
-            if not _compose_pending_live(last_pane):
-                return True
-            if _pane_is_input_idle(last_pane):
+            if not _pending(last_pane):
+                if not require_submission_proof:
+                    return True
+                return _fragment_in_transcript(last_pane)
+            if _input_idle(last_pane):
                 idle = True
                 break
             if poll_s > 0:
@@ -440,35 +604,106 @@ def verify_submit_by_advancement(
             # the final failure path below reports loudly if it persists.
             continue
 
+        # Claude Code 2.1.197 can leave a literal paste visible after a bare
+        # Enter while remaining idle.  A measured single-Escape, settle,
+        # Enter sequence submits reliably.  This is deliberately *not* a
+        # generic Escape: Codex/Hermes and Claude modals never enter this arm.
+        if escape_before_enter and _compose_pending_live(last_pane):
+            from . import prompts as _prompts
+
+            if _prompts.has_esc_cancel_modal(last_pane):
+                phase = _SubmitPhase.REFUSED
+                continue
+            # ``❯`` is shared by other TUIs.  Claude's status cue is the
+            # positive discriminator; without it, retain the ordinary guarded
+            # Enter path and never speculate with Escape.
+            if _prompts.is_ready(last_pane):
+                send_keys_fn("Escape")
+                phase = _SubmitPhase.ESCAPED
+                if escape_settle_s > 0:
+                    sleep_fn(escape_settle_s)
+                last_pane = _advanced()
+                # Re-prove the exact safe state after Escape.  Do not press
+                # Enter into a modal, a newly-busy pane, or a buffer Escape
+                # cleared.
+                if (
+                    not _pending(last_pane)
+                    or not _compose_pending_live(last_pane)
+                    or not _input_idle(last_pane)
+                    or not _prompts.is_ready(last_pane)
+                    or _prompts.has_esc_cancel_modal(last_pane)
+                ):
+                    phase = _SubmitPhase.REFUSED
+                    continue
+
         # 2b — idle + still pending: send exactly one Enter.
+        pane_before_enter = last_pane
         send_keys_fn("Enter")
+        phase = _SubmitPhase.ENTERED
 
         # 2c — verify advancement with an adaptive settle. Anti-flicker:
         # re-capture after a short gap; the buffer clears within a frame
         # or two when the Enter lands.
         settle = poll_s * (1 + attempt)  # adaptive back-off between attempts
-        verify_deadline = time_fn() + settle
+        if require_submission_proof:
+            settle = max(settle, proof_stable_s)
+        verify_deadline = time_fn() + settle + max(poll_s, proof_stable_s * 0.25)
+        clear_since: float | None = None
+        clear_observations = 0
         while True:
             if poll_s > 0:
                 sleep_fn(poll_s)
             last_pane = _advanced()
-            if not _compose_pending_live(last_pane):
+            phase = _SubmitPhase.PROVING
+            if _fragment_in_transcript(last_pane):
+                phase = _SubmitPhase.SUBMITTED
                 return True
+            # Hermes hides its empty live composer while a submitted turn is
+            # active.  The submitted transcript row therefore remains the
+            # bottom-most ``❯`` row and looks "pending" to the generic
+            # composer parser even though the newly-rendered Pondering/Ctrl+C
+            # control proves Enter started the turn.  Trust only a TRANSITION
+            # observed after our idle-gated Enter; a pane that was already
+            # busy before the key cannot satisfy this branch.
+            from .._lifecycle.liveness_probe import pane_is_busy
+
+            if not pane_is_busy(pane_before_enter) and pane_is_busy(last_pane):
+                phase = _SubmitPhase.SUBMITTED
+                return True
+            if not _pending(last_pane):
+                if not require_submission_proof:
+                    phase = _SubmitPhase.SUBMITTED
+                    return True
+                now = time_fn()
+                if clear_since is None:
+                    clear_since = now
+                clear_observations += 1
+                if clear_observations >= 2 and now - clear_since >= proof_stable_s:
+                    phase = _SubmitPhase.SUBMITTED
+                    return True
+            else:
+                # A clear frame followed by the payload returning is the
+                # Claude 2.1.197 false positive.  Reset proof and retry.
+                clear_since = None
+                clear_observations = 0
             if time_fn() >= verify_deadline:
                 break
         # 2d — not advanced; loop to next attempt (re-checks idle).
 
+    phase = _SubmitPhase.FAILED
     pane = capture_fn(name)
     log_pane_fault(
         log,
         name,
         pane or last_pane,
         "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
-        "after %d wait-for-idle Enter attempts — the Ink TUI keeps dropping "
-        "Enter (or the pane never left BUSY). Attach to inspect/recover: "
+        "after %d guarded submit attempts (final phase=%s) — the TUI did not "
+        "produce durable submission proof, or the pane never proved safe for "
+        "Escape/Enter. Attach to inspect/recover: "
         "`tmux attach -t %s` then press Enter.",
         name,
         max_resends,
+        phase.name,
         name,
     )
     return False

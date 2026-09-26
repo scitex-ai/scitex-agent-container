@@ -24,6 +24,17 @@ import pytest
 
 pytestmark = pytest.mark.smoke
 
+_WORKTREE_POLICY_FIXTURE = (
+    Path(__file__).parents[1]
+    / "scitex_agent_container"
+    / "_lifecycle"
+    / "_fixtures"
+    / "worktree-policy"
+    / "src"
+    / ".bin"
+    / "scitex-worktree-policy"
+)
+
 
 def _install_fresh_creds(home: Path) -> Path:
     """Write a non-expired OAuth credentials file under ``$home/.claude/``.
@@ -52,6 +63,40 @@ def _install_fresh_creds(home: Path) -> Path:
         encoding="utf-8",
     )
     return creds
+
+
+def _install_worktree_policy_fixture(home: Path) -> Path:
+    """Expose the executable protocol fixture at the canonical neutral path."""
+    policy = home / ".dotfiles" / "src" / ".bin" / "scitex-worktree-policy"
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.symlink_to(_WORKTREE_POLICY_FIXTURE)
+    return policy
+
+
+def _create_git_authority(path: Path) -> Path:
+    """Create the real clean Git authority required by the policy adapter."""
+    path.mkdir()
+    subprocess.run(["git", "-C", str(path), "init", "-q", "-b", "develop"], check=True)
+    (path / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        check=True,
+    )
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +189,7 @@ spec:
   host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
   claude:
     model: haiku
@@ -173,14 +218,22 @@ def test_sac_agents_start_dry_run_against_real_spec_yaml(
     home.mkdir()
     env_save_restore.set("HOME", str(home))
     _install_fresh_creds(home)
+    _install_worktree_policy_fixture(home)
+    workdir = _create_git_authority(tmp_path / "work")
     spec = tmp_path / "smoke-agent" / "spec.yaml"
     spec.parent.mkdir()
     from tests.scitex_agent_container._helpers.explicit_spec import (
         explicitize_yaml,
     )
+    from tests.scitex_agent_container._helpers.spec_authority import (
+        establish_test_spec_authority,
+    )
 
     # Red-start ruling 2026-07-21: every field explicit (body wins).
-    spec.write_text(explicitize_yaml(_MINIMAL_V3_SPEC))
+    spec.write_text(
+        explicitize_yaml(_MINIMAL_V3_SPEC.replace("/home/agent/work", str(workdir)))
+    )
+    establish_test_spec_authority(spec)
     # Act
     result = _run("agents", "start", str(spec), "--dry-run", cwd=tmp_path)
     # Assert (one combined assert: exit 0 AND output mentions "dry-run")

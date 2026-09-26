@@ -40,7 +40,7 @@ def _stamp(wall_us: int, node: str = "compute-04") -> HLC:
 
 
 # ``test_every_known_table_has_an_explicit_sync_decision`` WAS HERE. It read
-# ``state_db.KNOWN_TABLES`` and required every entry to appear in exactly one
+# ``state_store.KNOWN_TABLES`` and required every entry to appear in exactly one
 # of ``SOURCE_TABLE`` / ``NEVER_SYNCED``, so a NEW table nobody classified
 # turned into a red test rather than a quiet absence from sync — an absence
 # that looks identical to a deliberate exclusion.
@@ -113,8 +113,8 @@ def test_the_field_the_per_host_identity_depends_on_is_actually_written(pg_schem
     # have raised rather than answered. The test's claim is unchanged, and it
     # is still the writer that is exercised, with NO host argument, so the
     # DEFAULT is what has to populate the identity field.
-    from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container._state.state_db_instances import read_instance
+    from scitex_agent_container._state.state_store import record_instance_start
+    from scitex_agent_container._state.state_store_instances import read_instance
 
     instance_id = record_instance_start("agent-under-test")
     # Act

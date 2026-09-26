@@ -26,7 +26,16 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["liveness_payload", "print_inbox", "print_liveness"]
+from .._logging import render_rich
+
+__all__ = [
+    "health_summary",
+    "heartbeat_health_state",
+    "liveness_payload",
+    "print_inbox",
+    "print_liveness",
+    "status_health_state",
+]
 
 # wedged = present but NOT working — magenta, distinct from unknown's yellow so
 # a "known-stuck, needs a restart" reads apart from a "we could not tell". It is
@@ -37,6 +46,89 @@ _VERDICT_COLOUR = {
     "unknown": "yellow",
     "wedged": "magenta",
 }
+
+
+def heartbeat_health_state(resident_state: str) -> str:
+    """Project resident evidence without collapsing disconnection to death."""
+    if resident_state in {"idle", "active", "blocked"}:
+        return "healthy"
+    if resident_state in {"dead", "stalled"}:
+        return "unhealthy"
+    return "unknown"
+
+
+def status_health_state(status: dict) -> str:
+    """Project typed health from the process dimension of a status snapshot."""
+    resident_state = str(status.get("resident_state") or "unknown")
+    if resident_state == "stalled":
+        return "unhealthy"
+    process_state = str(
+        ((status.get("observation") or {}).get("process") or {}).get("state")
+        or "unknown"
+    )
+    if process_state == "alive":
+        return "healthy"
+    if process_state in {"absent", "exited"}:
+        return "unhealthy"
+    return "unknown"
+
+
+def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, str]:
+    """Name UNKNOWN and delivery-only evidence instead of guessing a pole."""
+    evidence = liveness.get("evidence") or []
+    process = next(
+        (item for item in evidence if item.get("source") == "process"), None
+    )
+    delivery = next(
+        (item for item in evidence if item.get("source") == "delivery"), None
+    )
+    heartbeat = next(
+        (item for item in evidence if item.get("source") == "heartbeat"), None
+    )
+    process_verdict = (
+        str(process.get("verdict") or "unknown").lower()
+        if process is not None
+        else "unknown"
+    )
+    process_detail = (
+        str(process.get("detail") or "process not observed")
+        if process is not None
+        else "process not observed"
+    )
+    delivery_verdict = (
+        str(delivery.get("verdict") or "unknown").lower()
+        if delivery is not None
+        else "unknown"
+    )
+    heartbeat_verdict = (
+        str(heartbeat.get("verdict") or "unknown").lower()
+        if heartbeat is not None
+        else "unknown"
+    )
+    if process_verdict == "dead":
+        return {
+            "state": "unhealthy",
+            "message": message if not is_healthy else f"unhealthy: {process_detail}",
+        }
+    if process_verdict == "unknown":
+        if heartbeat_verdict == "alive":
+            return {
+                "state": "healthy",
+                "message": "healthy: fresh heartbeat proves process presence",
+            }
+        if delivery_verdict == "alive":
+            return {
+                "state": "alive-by-delivery-only",
+                "message": (
+                    "delivery reachable; process liveness unknown "
+                    f"({process_detail})"
+                ),
+            }
+        return {"state": "unknown", "message": f"health unknown: {process_detail}"}
+    return {
+        "state": "healthy" if is_healthy else "unhealthy",
+        "message": message,
+    }
 
 
 def liveness_payload(name: str, config: Any) -> dict:
@@ -78,12 +170,10 @@ def print_liveness(console: Any, liveness: dict) -> None:
     verdict = str(liveness.get("verdict", "unknown"))
     colour = _VERDICT_COLOUR.get(verdict, "yellow")
     summary = liveness.get("summary", "?")
-    console.print(f"[{colour}]liveness: {summary}[/{colour}]")
+    render_rich(f"[{colour}]liveness: {summary}[/{colour}]", __name__)
     veto = liveness.get("destroy_veto_reason")
     if veto:
-        console.print(
-            f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]"
-        )
+        render_rich(f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]", __name__)
 
 
 def print_inbox(
@@ -112,34 +202,26 @@ def print_inbox(
     from .._listen._reachability import UNKNOWN, UNREACHABLE
 
     if reachable == UNREACHABLE and fault == FAULT_NOT_RUNNING:
-        console.print(
-            f"[red]inbox: NOT REACHABLE — and '{name}' IS NOT RUNNING. No live "
+        render_rich(f"[red]inbox: NOT REACHABLE — and '{name}' IS NOT RUNNING. No live "
             f"session was observed for it, so its registry row has outlived "
             f"its process. Messages are queued durably, but NOTHING WILL "
             f"DRAIN THAT QUEUE until the agent is started — there is no "
-            f"adapter left to reconnect. Do not wait for a reply.[/red]"
-        )
+            f"adapter left to reconnect. Do not wait for a reply.[/red]", __name__)
     elif reachable == UNREACHABLE and fault == FAULT_DEAF_INBOX:
-        console.print(
-            f"[yellow]inbox: NOT REACHABLE — RUNNING BUT DEAF. A live session "
+        render_rich(f"[yellow]inbox: NOT REACHABLE — RUNNING BUT DEAF. A live session "
             f"was observed for '{name}' AND it has 0 subscribers, so a2a_send "
             f"reaches nobody while the agent is up. Messages are queued and "
             f"replayed when its channel adapter reconnects. Do NOT "
-            f"force-restart: the session is healthy.[/yellow]"
-        )
+            f"force-restart: the session is healthy.[/yellow]", __name__)
     elif reachable == UNREACHABLE:
-        console.print(
-            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers, cause "
+        render_rich(f"[yellow]inbox: NOT REACHABLE — 0 live subscribers, cause "
             f"UNCONFIRMED. a2a_send to '{name}' will reach nobody. This is "
             f"EITHER a detached inbox adapter on a live agent (messages "
             f"replay on reconnect) OR an agent that is not running at all "
             f"(nothing will reconnect) — this reading cannot tell them apart. "
-            f"Do NOT force-restart on it.[/yellow]"
-        )
+            f"Do NOT force-restart on it.[/yellow]", __name__)
     elif reachable == UNKNOWN:
-        console.print(
-            "[dim]inbox: unknown (could not reach sac listen to observe "
-            "subscribers)[/dim]"
-        )
+        render_rich("[dim]inbox: unknown (could not reach sac listen to observe "
+            "subscribers)[/dim]", __name__)
     else:
-        console.print(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]")
+        render_rich(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]", __name__)

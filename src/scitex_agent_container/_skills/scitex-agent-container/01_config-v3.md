@@ -21,6 +21,7 @@ The current and only accepted apiVersion. The v3 loader **rejects**:
 └── <name>/
     ├── spec.yaml       # ← agent name comes from this directory
     └── to_home/        # optional; auto-discovered next to spec.yaml; mirrors $HOME
+        ├── AGENTS.md         # → $HOME/AGENTS.md   (exact projection)
         ├── CLAUDE.md         # → $HOME/CLAUDE.md   (marker-protected)
         ├── .mcp.json         # → $HOME/.mcp.json   (full overwrite)
         ├── .env              # → $HOME/.env        (mode 0600)
@@ -73,13 +74,39 @@ spec:
 | `model` | alias or full ID | `opus` / `sonnet` (default) / `haiku` (+ `[1m]` for 1M context), or a full ID like `claude-opus-4-7`. May also sit at `spec.model` (top level). Abbreviated IDs missing version digits (`claude-opus[1m]`) are rejected at validate-time. |
 | `session` | enum | `fresh` (default — independent session, no `-c`) \| `continue` (resume latest for this cwd; TUI `claude -c`) \| `resume` (with `resume_id`). Aliases: `new-session`/`new`→`fresh`, `continue-or-new`→`continue`. An OMITTED field defaults to `fresh` EXCEPT coordinator roles (lead/head/worker/telegrammer/project-maintainer/…), which the loader maps to `continue`. Per-start override: `sac start --continue` / `--fresh`. |
 | `resume_id` | string | Explicit session UUID for `session: resume` |
-| `continue_max_age_minutes` | int | Only resume if `session.jsonl` is newer than N minutes |
+| `continue_max_age_minutes` | int | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]` | list | Extra flags appended to the `claude` invocation |
 | `channels[]` | list | MCP push channels (`server:<name>` / `plugin:<id>@<v>`) |
 | `auto_accept` | bool (default `true`) | Auto-confirm TUI permission prompts |
 | `account` | string | Pin this agent to a stored OAuth account (`sac accounts` store-name). Credentials are **boot-copied** into the agent state dir, not live-bound. Mutually exclusive with `provider`. See [26_credentials-rotation.md](26_credentials-rotation.md). |
-| `provider` | string OR `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend. **Canonical (ADR-0011 extension, 2026-05-28):** registered name string, e.g. `provider: mimo` / `provider: deepseek`. sac resolves the base URL + auth env var name from the registry at `config/_provider_registry.py`. **Legacy dict shape** still accepted for back-compat: `base_url` endpoint + `auth_token_env` NAME of the host env var holding the key (never the key value). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. Auto-injects `ANTHROPIC_MODEL` from `spec.claude.model` (fixes the pitfall where the SDK's default model id silently won). Adding a new provider = add one entry `{base_url, auth_token_env}` to `PROVIDERS` in `_provider_registry.py`. See ADR-0011. |
+| `provider` | string OR `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend. **Canonical:** use a registered name. Paid models use `provider: external-gateway`; the compatibility name `provider: deepseek` resolves to that same neutral SciTeX GenAI egress boundary and never injects `DEEPSEEK_API_KEY` into the container. `provider: mimo` remains direct. SAC resolves the base URL + auth env var name from `config/_provider_registry.py`. **Legacy dict shape** remains accepted: `base_url` endpoint + `auth_token_env` NAME of the host env var holding the key. Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. Auto-injects `ANTHROPIC_MODEL` from `spec.claude.model`. See ADR-0011. |
 | `raw_options` | dict | Escape hatch — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+### `spec.engines` — several backends, one picked at start (ADR-0024)
+
+OPTIONAL. A spec that omits it declares its single backend the old way
+(`harness` + `spec.claude.model` + `spec.claude.provider`) and is unchanged.
+
+```yaml
+spec:
+  engines:
+    claude:      { harness: anthropic, model: fable[1m], provider: anthropic, default: true }
+    qwen38-27b:  { harness: anthropic, model: qwen38-27b, reasoning_effort: low,
+                   provider: { base_url: http://127.0.0.1:18772, auth_token_env: QWEN_GATEWAY_API_KEY } }
+```
+
+* `sac agents start|restart <name> --engine qwen38-27b` picks one for THAT
+  start. START TIME ONLY — nothing rebinds mid-session.
+* Exactly one entry may set `default: true` (implicit with a single entry);
+  two defaults, or two entries with none, are hard load errors naming both.
+* An unknown `--engine` key fails loud listing the declared keys. An engine
+  that cannot be honoured REFUSES the start naming what was unhonourable.
+  **sac never falls back** — not to the default, not to another engine.
+* Reachability: STATIC resolution always; a live TCP probe only under
+  `--probe-engine` / `SAC_ENGINE_PROBE=1`, where a timeout is "could not
+  tell" (loud warning, start proceeds), not a refusal.
+* Migration: legacy block alone works silently; both blocks AGREEING are
+  accepted; both DISAGREEING is a hard error naming both values.
 
 ## Auto-derived fields
 
@@ -102,7 +129,8 @@ A sibling directory named `to_home/` (override path with
 `spec.to_home:`, default `./to_home`) is materialized into the agent's
 container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
-`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
+`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `AGENTS.md` is
+an exact projection; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and
 `${metadata.name}` are interpolated in text files. A shared baseline
 `to_home/` (`<agents_dir>/_shared/to_home`, override `$SAC_TO_HOME_BASELINE`)
@@ -111,6 +139,7 @@ is applied first; the per-agent `to_home/` overlays on top.
 | Source | Destination | Mode | Semantics |
 |---|---|---|---|
 | `to_home/CLAUDE.md` | `$HOME/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
+| `to_home/AGENTS.md` | `$HOME/AGENTS.md` | 0644 | Neutral instruction projection; Hermes consumes its verified bytes through `agent.system_prompt` |
 | `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Full overwrite |
 | `to_home/.env` | `$HOME/.env` | **0600** | Full overwrite; sourceable by spawned shells |
 | `to_home/state.md` | `$HOME/state.md` | 0644 | Marker-protected (handover snapshot) |

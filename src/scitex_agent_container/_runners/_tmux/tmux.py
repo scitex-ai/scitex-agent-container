@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import secrets
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -60,6 +62,10 @@ class TuiKeystrokeDropError(RuntimeError):
     """
 
 
+class TmuxPasteError(RuntimeError):
+    """Raised when tmux cannot load or atomically paste a text buffer."""
+
+
 class TmuxManager:
     """Helpers for tmux session lifecycle."""
 
@@ -89,6 +95,7 @@ class TmuxManager:
         env_exports: str = "",
         venv: str = "",
         session_env: dict[str, str] | None = None,
+        runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> bool:
         """Launch a command inside a new detached tmux session.
 
@@ -112,6 +119,8 @@ class TmuxManager:
                 staged $STATE/home dropped to interactive OAuth login
                 because the inner ``claude`` read the operator's
                 real ``~/.claude/`` instead of the staged one).
+                The two SAC-owned diagnostic keys are consumed by this
+                launcher and are not forwarded to the pane.
 
         Returns:
             True if the tmux session was created successfully.
@@ -130,11 +139,25 @@ class TmuxManager:
                 activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
+        effective_session_env = dict(session_env or {})
+        diagnostics_path = effective_session_env.pop(
+            "SAC_TMUX_START_DIAGNOSTICS_PATH", None
+        )
+        boot_stderr_path = effective_session_env.pop(
+            "SAC_TMUX_BOOT_STDERR_PATH", None
+        )
+        stderr_redirect = (
+            f"exec 2>> {shlex.quote(str(boot_stderr_path))}\n"
+            if boot_stderr_path
+            else ""
+        )
+
         # Per-session env snapshot, written 0600 into a 0700 per-user dir
         # immediately before ``exec``. It dumps the pane's WHOLE environment,
         # so its mode and its directory are the security-relevant parts —
         # see ``._env_snapshot`` for the two defects that shaped both.
         shell_script = (
+            f"{stderr_redirect}"
             f"cd '{workdir}' || exit 1\n"
             f"{venv_activate}"
             f"{env_exports}\n"
@@ -154,7 +177,6 @@ class TmuxManager:
         # helper skips-if-missing + appends-not-clobbers (see
         # ``runtimes._apptainer_host_env``). No-op when ``~/.cargo/bin``
         # is absent or the command is not an apptainer launch.
-        effective_session_env = dict(session_env or {})
         if command.lstrip().startswith("apptainer "):
             from ...runtimes._apptainer_host_env import host_cargo_bin_append_env
 
@@ -170,7 +192,13 @@ class TmuxManager:
             for key, value in effective_session_env.items():
                 argv += ["-e", f"{key}={value}"]
         argv += ["bash", "-c", shell_script]
-        subprocess.run(argv, check=False)
+        result = runner(argv, check=False, capture_output=True, text=True)
+        if diagnostics_path is not None:
+            from ._launch_diagnostic import persist_tmux_start_result
+
+            persist_tmux_start_result(Path(diagnostics_path), result)
+        if result.returncode != 0:
+            return False
 
         time.sleep(2)
         return TmuxManager.exists(session_name)
@@ -179,11 +207,24 @@ class TmuxManager:
     def stop(session_name: str) -> bool:
         """Terminate a tmux session.
 
-        Returns True if the session was alive and has been terminated.
+        Returns True only after the exact session and the identity-snapshotted
+        pane process group are both gone.
         """
         if not TmuxManager.exists(session_name):
             return False
 
+        pane_pid = TmuxManager.pane_pid(session_name)
+        if pane_pid is None:
+            return False
+        from ._process_group import (
+            capture_owned_process_tree,
+            terminate_owned_process_tree,
+        )
+
+        owned_processes = capture_owned_process_tree(pane_pid)
+        if not owned_processes:
+            return False
+        process_tree_dead = terminate_owned_process_tree(owned_processes)
         subprocess.run(
             ["tmux", "kill-session", "-t", exact_target(session_name)],
             capture_output=True,
@@ -191,7 +232,7 @@ class TmuxManager:
         )
 
         time.sleep(0.5)
-        return not TmuxManager.exists(session_name)
+        return process_tree_dead and not TmuxManager.exists(session_name)
 
     @staticmethod
     def session_activity(session_name: str) -> int | None:
@@ -315,25 +356,57 @@ class TmuxManager:
         text: str,
         *,
         runner: Callable[..., object] = subprocess.run,
+        buffer_name: str | None = None,
     ) -> None:
-        """Paste ``text`` into the pane LITERALLY (``send-keys -l``), NO submit.
+        """Atomically bracket-paste ``text`` into the pane, without submitting.
 
-        The ``-l`` (literal) flag is REQUIRED for the containerized Ink/React
-        ``claude`` TUI: without it the TUI silently DROPS the keystrokes (the
-        pane stays byte-identical, nothing lands). Source-verified recovery
-        recipe: ``_skills/scitex-agent-container/45_agent-to-agent-recovery-
-        tmux.md`` — ``-l`` for TEXT, then a SEPARATE named ``Enter`` (never
-        ``-l``) to submit. Submit-free by design so the caller can send that
-        ``Enter`` ONLY once the pane is idle (see
-        :func:`runtimes._tui_compose.verify_submit_by_advancement`), never into
-        the BUSY boot window where the Ink TUI eats it. ``runner`` is an
-        injection seam (tests pass a recording callable — no mocks).
+        ``send-keys -l`` still emits one input event per character. A live
+        Codex redraw interleaved those events with its own input handling and
+        corrupted a 2.2 KiB task while tmux reported success. Loading the
+        payload through stdin keeps it out of argv/process listings; one
+        ``paste-buffer -p -r`` presents it as one bracketed-paste transaction
+        without translating embedded LF bytes. A unique named buffer prevents
+        concurrent deliveries from overwriting each other. Submission remains
+        a separate, verified Enter.
         """
-        runner(
-            ["tmux", "send-keys", "-t", exact_target(session_name), "-l", text],
+        name = buffer_name or f"sac-paste-{os.getpid()}-{secrets.token_hex(8)}"
+        loaded = runner(
+            ["tmux", "load-buffer", "-b", name, "-"],
+            input=text,
+            text=True,
             check=False,
             capture_output=True,
         )
+        if getattr(loaded, "returncode", 0) != 0:
+            runner(
+                ["tmux", "delete-buffer", "-b", name],
+                check=False,
+                capture_output=True,
+            )
+            raise TmuxPasteError("tmux could not load the TUI paste buffer")
+        try:
+            pasted = runner(
+                [
+                    "tmux",
+                    "paste-buffer",
+                    "-p",
+                    "-r",
+                    "-b",
+                    name,
+                    "-t",
+                    exact_target(session_name),
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if getattr(pasted, "returncode", 0) != 0:
+                raise TmuxPasteError("tmux could not bracket-paste into the TUI pane")
+        finally:
+            runner(
+                ["tmux", "delete-buffer", "-b", name],
+                check=False,
+                capture_output=True,
+            )
 
     @staticmethod
     def send_text_and_submit(
@@ -346,12 +419,10 @@ class TmuxManager:
     ) -> None:
         """Send message text LITERALLY, let the TUI settle, then press Enter.
 
-        Preferred over ``send_keys(session, text + "\\r")``: tmux treats a
-        trailing ``\\r`` as raw input and Claude Code's TUI drops it during an
-        active re-render ("text arrived but submit never fired"). Sends the text
-        first LITERALLY (``-l``, via :meth:`send_text_literal`, so the
-        containerized Ink TUI does not silently drop it), settles, then issues a
-        separate ``Enter`` keystroke (a named key, NEVER ``-l``).
+        Preferred over ``send_keys(session, text + "\\r")``: text is loaded
+        through stdin and atomically delivered with ``paste-buffer -p`` so a
+        TUI redraw cannot interleave with a long prompt. It then settles and
+        issues a separate named ``Enter`` keystroke.
 
         ``settle_s`` (``None`` → ``_DEFAULT_SUBMIT_SETTLE_S``,
         ``SAC_SUBMIT_SETTLE_S``-overridable) is the text→Enter gap; ``sleep_fn``

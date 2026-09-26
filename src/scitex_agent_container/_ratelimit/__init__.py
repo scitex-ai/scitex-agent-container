@@ -31,6 +31,24 @@ Layout — the rule is separated from the doing, as in the siblings:
 Driven by ``sac agents resume-rate-limited`` (read-only by default) and
 scheduled as the ``sac.resume-rate-limited-agents`` JobSpec.
 
+THE FOURTH SHAPE — a wall that WAITING cannot end (2026-09-06)
+    A rate wall publishes an end. A MODEL cap does not. Measured tonight: the
+    operator sent two messages to a Fable-family agent and both were answered
+    by the harness with ``You've reached your Fable limit. Run /usage-credits
+    to continue or switch models with /model.`` — no reset clause anywhere, so
+    the machinery above has nothing to wait for and correctly reports
+    ``NOT-LIMITED`` while the agent stays silent to the operator. Three
+    workflow subagents died in the same window behind ``You've hit your
+    session limit · resets 2am (UTC)``, which does publish an end — hours
+    away.
+
+    Both are walls a MODEL SWITCH ends in seconds, so the same four-part
+    separation is repeated for that remedy: :mod:`._modelcap` (the pure
+    parser), :mod:`._switch_rule` (the pure rule), :mod:`._switch` (the one
+    mutation — the operator's three steps, three seconds apart, then a
+    verification) and :mod:`._switch_pass` (its own ledger and perform leg).
+    It is OFF by default and armed with ``--switch-model``.
+
 WHY THIS CANNOT HOT-LOOP AGAINST A LIVE LIMIT
     Structurally, not by tuning. The resume branch of :func:`._rule.decide`
     is unreachable until ``now >= reset_at``, where ``reset_at`` is read from
@@ -44,6 +62,7 @@ from __future__ import annotations
 
 from ._alarm import SUBSYSTEM
 from ._banner import LimitObservation, observe_pane
+from ._modelcap import ModelCapObservation, observe_model_cap, verify_switch
 from ._pass import (
     DEFAULT_INTERVAL,
     DEFAULT_PASS_CAP,
@@ -54,20 +73,32 @@ from ._pass import (
 )
 from ._resume import RESUME_MESSAGE
 from ._rule import MANAGED_POLICIES, Decision, Verdict, decide
+from ._switch import KICK_MESSAGE, SWITCH_STEP_DELAY_S, switch_model_now
+from ._switch_pass import switch_history_path
+from ._switch_rule import TARGET_MODEL, decide_switch
 
 __all__ = [
     "AgentReport",
     "DEFAULT_INTERVAL",
     "DEFAULT_PASS_CAP",
     "Decision",
+    "KICK_MESSAGE",
     "LimitObservation",
     "MANAGED_POLICIES",
+    "ModelCapObservation",
     "PassOutcome",
     "RESUME_MESSAGE",
     "SUBSYSTEM",
+    "SWITCH_STEP_DELAY_S",
+    "TARGET_MODEL",
     "Verdict",
     "decide",
+    "decide_switch",
     "history_path",
+    "observe_model_cap",
     "observe_pane",
     "resume_pass",
+    "switch_history_path",
+    "switch_model_now",
+    "verify_switch",
 ]

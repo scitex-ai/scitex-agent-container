@@ -54,7 +54,7 @@ def started_at_for(name: str) -> str | None:
 
     Read from the SAME ``instances`` table :func:`._verdict_state.registry_signal`
     reads, so the stamp is directly comparable to the auth cache's ``checked_at``
-    (both are ``state_db.now_iso`` UTC-'Z' stamps). ``list_active_instances``
+    (both are ``state_store.now_iso`` UTC-'Z' stamps). ``list_active_instances``
     orders started_at DESC, so the newest row is this incarnation.
 
     Best-effort: any failure returns ``None`` — no started_at means no SUPERSEDED
@@ -62,7 +62,7 @@ def started_at_for(name: str) -> str | None:
     still gates on staleness and on a missing row.
     """
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances(host=None) if r.get("name") == name]
     except Exception:  # stx-allow: fallback (an unreadable registry ⇒ no started_at ⇒ no SUPERSEDED suppression, never a crash)

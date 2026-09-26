@@ -7,13 +7,15 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 ```
 ~/.scitex/agent-container/ or <project>/.scitex/agent-container/
 ├── config.yaml                ← host identity, host.aliases, peers (F-CS12),
-│                                listen.{host,port}, a2a.port_range
+│                                listen.{host,port}, a2a.port_range,
+│                                scratch_root (+ scratch_root_reason)
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
 │   └── to_home/               ← optional: mirrored into the agent $HOME at start.
 │                                Any path lands at the same relative path; the
-│                                entries below are the Claude Code harness's
-│                                filenames, shown as the worked example.
+│                                AGENTS.md is the neutral harness instruction
+│                                source; no legacy translation occurs.
+│       ├── AGENTS.md           (→ $HOME/AGENTS.md, exact projection; Hermes consumes this explicitly)
 │       ├── CLAUDE.md           (→ $HOME/CLAUDE.md, marker-protected)
 │       ├── .mcp.json           (→ $HOME/.mcp.json, full overwrite)
 │       ├── .env                (→ $HOME/.env, mode 0600)
@@ -38,6 +40,7 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif    (top-level symlink)
 │   ├── sac-{base,scitex}/                              (dir-per-image)
 │   │   ├── sac-{base,scitex}.sif                       (the image; gitignored)
+│   │   ├── sac-{base,scitex}-sha256-<digest>.sif        (distributed immutable image)
 │   │   ├── sac-{base,scitex}.def                       (recipe snapshot)
 │   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log; gitignored)
 │   │   └── .def-hash                                   (skip-rebuild cache)
@@ -45,7 +48,8 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 └── runtime/                   ← regenerable per-host state; gitignored
     ├── <agent-name>/           per-agent runner state
     │   ├── pid                  (runner PID)
-    │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
+    │   ├── heartbeat.json       (liveness plus privacy-safe native Hermes lease)
+    │   ├── card-lease.json      (optional bounded developer/reviewer Card lease)
     │   ├── session_id           (persisted SDK session id, resume marker)
     │   ├── session.jsonl        (one JSON object per turn event)
     │   └── quota.json           (accumulated per-turn token totals)
@@ -53,6 +57,23 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
     │   └── <agent>.jsonl
     └── cache/                   snapshot cache for the dashboard / `sac agents diff`
         └── <agent>.{latest,prev,diff}.json
+```
+
+Not under this root, and deliberately so — the SCRATCH volume (ADR-0024):
+
+```
+<scratch_root>/                ← `scratch_root:` in config.yaml, else /scratch
+└── sac/agents/<name>/uvwork   ← bound at /uvwork inside the container (0700).
+                                 uv itself, the uv cache, TMPDIR and the agent
+                                 venv (/uvwork/venv-agent). It lives HERE rather
+                                 than in the overlay upper because the overlay
+                                 is on the host's ROOT LV, which filled to 0
+                                 four times on scitex-compute-04 on 2026-09-02
+                                 (11.7 GB of it was one agent's /uvwork).
+                                 Regenerable: the spec rebuilds it on the next
+                                 start if it is missing. Move an existing
+                                 overlay copy across with
+                                 `sac agents scratch-migrate`.
 ```
 
 ## Configuration cascade

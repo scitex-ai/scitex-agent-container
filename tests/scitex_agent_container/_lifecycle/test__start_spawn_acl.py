@@ -25,8 +25,6 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 from typing import Any, Iterator
@@ -35,8 +33,12 @@ import pytest
 
 from scitex_agent_container._lifecycle._start import agent_start
 from scitex_agent_container._state.registry import Registry
-from scitex_agent_container._state.state_db_nodes import derive_group, record_lineage
+from scitex_agent_container._state.state_store_nodes import derive_group, record_lineage
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 # ---------------------------------------------------------------------------
 # Real (non-mock) collaborators + isolation fixtures
@@ -134,21 +136,23 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {yaml_root / (name + '-work')}\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n"
-        "    model: sonnet\n"
-        "  health:\n"
-        "    enabled: false\n"
-        "    interval: 60\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {yaml_root / (name + '-work')}\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: false\n"
+            "    interval: 60\n"
+        )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +161,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
 
 
 def test_core_start_writes_lineage_row_for_parent_caller(
-    pg_schema: str,
-    isolated_state, sac_name, tmp_path
+    pg_schema: str, isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — a root parent agent spawns a child via core agent_start.
     sac_name("parent-root")
@@ -178,8 +181,7 @@ def test_core_start_writes_lineage_row_for_parent_caller(
 
 
 def test_admin_start_records_no_lineage_edge(
-    pg_schema: str,
-    isolated_state, sac_name, tmp_path
+    pg_schema: str, isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — no SAC_NAME → admin / operator / lead launch.
     sac_name(None)
@@ -204,8 +206,7 @@ def test_admin_start_records_no_lineage_edge(
 
 
 def test_mcp_tool_spawn_is_denied_for_child_caller(
-    pg_schema: str,
-    isolated_state, sac_name, tmp_path
+    pg_schema: str, isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — the MCP tool runs through the real CLI; a child caller
     # ("worker-a", parented to "root") must be rejected by check_spawn.
@@ -238,8 +239,7 @@ def test_mcp_tool_spawn_is_denied_for_child_caller(
 
 
 def test_mcp_tool_spawn_deny_does_not_launch_child(
-    pg_schema: str,
-    isolated_state, sac_name, tmp_path
+    pg_schema: str, isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — same denied child; assert no live instance row was created
     # (the gate fired BEFORE any runtime/instance bookkeeping).
@@ -252,7 +252,7 @@ def test_mcp_tool_spawn_deny_does_not_launch_child(
     os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(yaml_root)
     os.environ["SAC_ANTHROPIC_API_KEY"] = "sk-ant-api-test-dummy"
     from scitex_agent_container._mcp._tools._agent import agent_start as mcp_start
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     try:
         # Act

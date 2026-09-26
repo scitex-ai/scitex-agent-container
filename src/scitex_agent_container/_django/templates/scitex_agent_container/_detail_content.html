@@ -1,0 +1,171 @@
+{% comment %}
+Shared Agents detail content. Included by detail.html (standalone shell) and
+detail_hub.html (Hub global_base). `url_base` is the app mount prefix so the
+back link and the lifecycle form action are correct in both modes.
+{% endcomment %}
+<div class="agents-app" data-page="detail">
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
+      {% if agent %}
+      <h1><i class="fas fa-robot"></i> {{ agent.name }}</h1>
+      {% else %}
+      <h1><i class="fas fa-ghost"></i> Agent not in scope</h1>
+      {% endif %}
+      {% if agent %}
+      <span class="agents-sub">{{ agent.host }} · acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if not agent %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-lock"></i>
+    <span>This agent is not visible to <strong>{{ identity|default:"(unidentified)" }}</strong>.</span>
+    <small>Cross-host agents are hidden unless the acting identity is explicitly
+    authorized for the fleet.</small>
+    {% if list_error %}<br><small>Listener: {{ list_error }}</small>{% endif %}
+  </div>
+  {% else %}
+  <div class="detail-grid">
+    <div class="detail-card">
+      <div class="detail-state">
+        <span class="dot {{ agent.state_tone }}"></span>
+        <span class="detail-state-label {{ agent.state_tone }}">{{ agent.state_label }}</span>
+        {% if cross_host %}<span class="pill cross">cross-host</span>{% endif %}
+      </div>
+      <dl class="kv">
+        <dt>Runtime</dt><dd>{{ agent.runtime }}</dd>
+        <dt>Billing</dt><dd>{{ agent.billing_mode }}</dd>
+        <dt>Auth identity</dt><dd>{{ agent.auth_identity }}</dd>
+        <dt>Identity source</dt><dd>{{ agent.runtime_identity_source }}</dd>
+        <dt>Harness</dt><dd>{{ agent.harness }}</dd>
+        <dt>Role</dt><dd>{{ agent.role }}</dd>
+        <dt>Engine</dt><dd>{{ agent.engine }}</dd>
+        <dt>Model</dt><dd>{{ agent.model }}</dd>
+        <dt>Project</dt><dd>{{ agent.project }}</dd>
+        <dt>Host</dt><dd>{{ agent.host }}</dd>
+        <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
+        <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
+        <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
+        <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
+        {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
+      </dl>
+    </div>
+
+    <div class="detail-card detail-card-wide">
+      <h2>Runtime activity</h2>
+      <dl class="kv activity-kv">
+        <dt>Phase</dt><dd>{% if agent.activity.phase.state == "observed" %}{{ agent.activity.phase.value }}{% else %}<span class="unknown" title="{{ agent.activity.phase.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Operation</dt><dd>{% if agent.activity.operation.state == "observed" %}{{ agent.activity.operation.value }}{% else %}<span class="unknown" title="{{ agent.activity.operation.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Turn elapsed</dt><dd>{% if agent.activity.turn_elapsed.state == "observed" %}{{ agent.activity.turn_elapsed.value }} s{% else %}<span class="unknown" title="{{ agent.activity.turn_elapsed.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Last progress</dt><dd>{% if agent.activity.last_progress.state == "observed" %}{{ agent.activity.last_progress.value }}{% else %}<span class="unknown" title="{{ agent.activity.last_progress.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Queue</dt><dd>{% if agent.activity.queue.state == "observed" %}{{ agent.activity.queue.value }}{% else %}<span class="unknown" title="{{ agent.activity.queue.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Inference</dt><dd>{% if agent.activity.inference.state == "observed" %}{{ agent.activity.inference.value }}{% else %}<span class="unknown" title="{{ agent.activity.inference.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Tool</dt><dd>{% if agent.activity.tool.state == "observed" %}{{ agent.activity.tool.value }}{% else %}<span class="unknown" title="{{ agent.activity.tool.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Wait</dt><dd>{% if agent.activity.wait.state == "observed" %}{{ agent.activity.wait.value }}{% else %}<span class="unknown" title="{{ agent.activity.wait.reason }}">Unknown</span>{% endif %}</dd>
+      </dl>
+      <p class="dim activity-note">Only runner-published state is shown. Unknown means SAC has no authoritative signal; session logs are not guessed into activity.</p>
+    </div>
+
+    <div class="detail-card">
+      <h2>Control</h2>
+      {% if agent.state_detail %}
+      <p class="dim">Status: <span class="mono">{{ agent.state_detail }}</span></p>
+      {% endif %}
+      {% if agent.detail_error %}
+      <p class="dim">Status endpoint unavailable: <span class="mono">{{ agent.detail_error }}</span></p>
+      {% endif %}
+      {% if can_operate %}
+      <p class="dim">
+        {% if cross_host %}
+        Cross-host control — this action is recorded in the operator audit trail.
+        {% else %}
+        You are an authorized lifecycle operator for this node's agents.
+        {% endif %}
+      </p>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/action" class="lifecycle-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <div class="lifecycle-btns">
+          <button type="submit" name="action" value="start" class="btn good"><i class="fas fa-play"></i> Start</button>
+          <button type="submit" name="action" value="restart" class="btn"><i class="fas fa-rotate"></i> Restart</button>
+          <button type="submit" name="action" value="stop" class="btn bad"><i class="fas fa-stop"></i> Stop</button>
+        </div>
+      </form>
+
+      {% comment %}
+      Message / steer and the three SAC UI-control keys. Both POST to the
+      agent's OWN bridge endpoint (its published turn_url) — the GUI never
+      constructs a host/port and never drives tmux. Each submit carries a
+      dispatch id so a double-click cannot inject the text twice.
+      {% endcomment %}
+      <h3 class="control-sub">Send a message</h3>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
+        <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
+                  placeholder="Message or steering instruction…"></textarea>
+        <div class="lifecycle-btns">
+          <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>
+        </div>
+      </form>
+
+      <h3 class="control-sub">UI control</h3>
+      <p class="dim">Positional input to the agent's live terminal — Enter submits,
+      Escape dismisses, C-c interrupts. Nothing else is available.</p>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="control-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <div class="lifecycle-btns">
+          {% for key in control_keys %}
+          <button type="submit" name="control_key" value="{{ key }}" class="btn">{{ key }}</button>
+          {% endfor %}
+        </div>
+      </form>
+      {% else %}
+      <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
+      identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
+      cross-host agents, the cross-host operator allowlist{% endif %}.</p>
+      {% endif %}
+    </div>
+
+    <div class="detail-card">
+      <h2>Resources</h2>
+      {% with r=agent.resources %}
+      {% if r.state == "ok" %}
+      <dl class="kv">
+        <dt>PID</dt><dd class="mono">{{ r.pid }}</dd>
+        <dt>RSS</dt><dd class="mono">{{ r.rss|default:"—" }}</dd>
+        <dt>VSZ</dt><dd class="mono">{{ r.vsz|default:"—" }}</dd>
+        <dt>CPU ticks</dt><dd class="mono">{{ r.cpu_ticks|default:"—" }}</dd>
+        <dt>Process tree</dt><dd>{{ r.tree_size }} process(es)</dd>
+      </dl>
+      {% elif r.state == "namespace" %}
+      <p class="dim"><i class="fas fa-boxes"></i> PID {{ r.pid }} is reported by the listener but runs in a
+      separate pid namespace (apptainer isolation) — live CPU/memory cannot be
+      read from the web process, so no value is shown rather than a guessed one.</p>
+      {% else %}
+      <p class="dim"><i class="fas fa-power-off"></i> No process to read (agent not started or stopped).</p>
+      {% endif %}
+      {% endwith %}
+    </div>
+
+    <div class="detail-card">
+      <h2>Recent session log</h2>
+      {% if agent.session_error %}
+      <p class="dim">Log unavailable: <span class="mono">{{ agent.session_error }}</span></p>
+      {% elif agent.session_lines %}
+      <ul class="session-log mono">
+        {% for line in agent.session_lines %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+      <p class="dim session-note">Tail (last {{ agent.session_lines|length }} lines), secrets redacted.</p>
+      {% else %}
+      <p class="dim">No session log recorded yet.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>

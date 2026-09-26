@@ -39,8 +39,8 @@ from scitex_agent_container._state.lead_inbox import (
     push_to_lead,
     resolve_lead,
 )
-from scitex_agent_container._state.state_db_channel import list_undelivered
-from scitex_agent_container._state.state_db_nodes import record_lineage
+from scitex_agent_container._state.state_store_channel import list_undelivered
+from scitex_agent_container._state.state_store_nodes import record_lineage
 
 TOKEN = "test-lead-inbox-token"
 

@@ -1,0 +1,45 @@
+{% comment %}
+Shared Agents launch content. Included by launch.html (standalone shell) and
+launch_hub.html (Hub global_base). `url_base` is the app mount prefix so the
+back link and the form action are correct in both modes.
+
+CREATE in the lifecycle sense: start a PRE-REGISTERED spec by name on this
+node. The form carries a name only — never an inline spec (a spec written
+from a web form would be arbitrary code execution behind one POST).
+{% endcomment %}
+<div class="agents-app" data-page="launch">
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
+      <h1><i class="fas fa-rocket"></i> Launch agent</h1>
+      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+    </div>
+  </header>
+
+  {% if can_launch %}
+  <div class="detail-card">
+    <h2>Start a registered agent</h2>
+    <p class="dim">Starts a pre-registered spec on <strong>this node</strong> — the same
+    operation as the Start button on an agent's page, but for a spec that is not
+    in the current fleet list. Nothing new is registered here: the name must
+    already exist in this node's registry, and the launch is recorded in the
+    operator audit trail.</p>
+    <form method="post" action="{{ url_base }}/launch/" class="message-form launch-form">
+      {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+      <label class="launch-label" for="launch-name">Registered agent name</label>
+      <input id="launch-name" name="name" type="text" required maxlength="64"
+             pattern="[A-Za-z0-9][A-Za-z0-9._-]*" placeholder="my-agent" autocomplete="off">
+      <p class="dim">Letters, digits, '.', '_' and '-'; must already be registered on this node.</p>
+      <div class="lifecycle-btns">
+        <button type="submit" class="btn good"><i class="fas fa-play"></i> Launch</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-lock"></i>
+    <span>Read-only. Launching an agent requires an identity listed in the
+    lifecycle-operator allowlist.</span>
+  </div>
+  {% endif %}
+</div>

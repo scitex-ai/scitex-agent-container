@@ -47,15 +47,17 @@ from pathlib import Path
 import click
 from rich.table import Table
 
+from .._logging import render_rich
 from ..runtimes._cct_rail_verdict import (
     RAIL_DOWN,
     RAIL_NOT_REQUESTED,
     RAIL_UNKNOWN,
     RAIL_UP,
     assess_cct_rail,
+    materialised_home,
 )
 from ..runtimes._secret_pool import _pool_source_label, read_pool
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 _STYLE = {
     RAIL_UP: ("UP", "green"),
@@ -63,6 +65,43 @@ _STYLE = {
     RAIL_UNKNOWN: ("UNKNOWN", "yellow"),
     RAIL_NOT_REQUESTED: ("n/a", "dim"),
 }
+
+
+def _materialized_hermes_rail(
+    config, *, home: Path | None = None
+) -> tuple[dict, str | None, str]:
+    """Inspect the selected Hermes profile; return data, override, detail."""
+    if str(getattr(config, "harness", "")) != "hermes":
+        return {"state": "not-applicable"}, None, ""
+    from ..runtimes._hermes_cct import inspect_materialized_hermes_cct
+
+    home = home if home is not None else materialised_home(config)
+    if home is None:
+        return (
+            {"state": "unknown", "reason": "materialized home is unresolved"},
+            RAIL_UNKNOWN,
+            "Hermes selected, but SAC cannot resolve its materialized home.",
+        )
+    observed = inspect_materialized_hermes_cct(config, home)
+    if not observed["profile_present"]:
+        observed["state"] = "not-materialized"
+        return observed, RAIL_UNKNOWN, (
+            "Hermes selected, but no generated profile exists yet; token "
+            "resolution alone does not prove a working CCT rail."
+        )
+    ready = bool(
+        observed["mcp_present"]
+        and observed["turn_url_present"]
+        and observed["turn_url_matches"]
+    )
+    observed["state"] = "ready" if ready else "broken"
+    if ready:
+        return observed, None, ""
+    return observed, RAIL_DOWN, (
+        "Generated Hermes CCT profile is incomplete: the canonical MCP entry "
+        "and matching /v1/turn URL are both required. Re-materialize with the "
+        "current SAC build; `sac agents health <name>` then verifies the live bridge."
+    )
 
 
 def _spec_paths(agents_dir: str | None = None):
@@ -98,7 +137,7 @@ def _rows(include_unrequested: bool, agents_dir: str | None = None) -> list[dict
     rows: list[dict] = []
     for path in _spec_paths(agents_dir):
         name = path.parent.name
-        # stx-allow: fallback (reason: one unloadable spec must not abort a fleet-wide audit; it is reported as its OWN unknown row rather than dropped, because a spec sac cannot read is exactly the kind of thing this sweep exists to surface)
+        # stx-allow: fallback (reason: one unloadable spec must not abort a fleet-wide audit; it is reported as its OWN unknown row in cct-audit stdout rather than dropped, because a spec sac cannot read is exactly the kind of thing this sweep exists to surface)
         try:
             config = load_config(str(path))
         except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
@@ -119,16 +158,27 @@ def _rows(include_unrequested: bool, agents_dir: str | None = None) -> list[dict
         verdict = assess_cct_rail(config, pool=pool)
         if verdict.state == RAIL_NOT_REQUESTED and not include_unrequested:
             continue
+        materialization = {"state": "not-requested"}
+        state = verdict.state
+        detail = verdict.detail
+        if verdict.state != RAIL_NOT_REQUESTED:
+            materialization, override, material_detail = _materialized_hermes_rail(
+                config
+            )
+            if override is not None and state == RAIL_UP:
+                state = override
+                detail = f"{detail} {material_detail}".strip()
         rows.append(
             {
                 "agent": verdict.agent or name,
-                "state": verdict.state,
+                "state": state,
                 "declared_slot": verdict.declared_slot,
                 "resolved_slot": verdict.resolved_slot,
                 "slots_tried": list(verdict.candidates),
                 "near_miss_slots": list(verdict.near_misses),
                 "pool_read_conclusive": verdict.pool_trusted,
-                "detail": verdict.detail,
+                "detail": detail,
+                "materialization": materialization,
                 "spec": str(path),
             }
         )
@@ -155,6 +205,7 @@ def _render_table(rows: list[dict]) -> None:
     table.add_column("AGENT", overflow="fold")
     table.add_column("RAIL")
     table.add_column("SLOT", overflow="fold")
+    table.add_column("HERMES PROFILE", overflow="fold")
     table.add_column("TRIED", overflow="fold")
     table.add_column("DID YOU MEAN", overflow="fold")
     for row in rows:
@@ -166,10 +217,11 @@ def _render_table(rows: list[dict]) -> None:
             row["agent"],
             f"[{style}]{label}[/{style}]",
             slot,
+            str(row.get("materialization", {}).get("state", "unknown")),
             ", ".join(row["slots_tried"]) or "-",
             ", ".join(row["near_miss_slots"]) or "-",
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 @click.command(name="cct-audit")
@@ -243,27 +295,21 @@ def cct_audit(
         )
     else:
         _render_table(rows)
-        console.print(f"[dim]pool source: {_short_pool_label(pool_label)}[/dim]")
-        console.print(
-            f"{len(rows)} agent(s) considered — "
-            f"[red]{len(down)} DOWN[/red], [yellow]{len(unknown)} UNKNOWN[/yellow]"
-        )
+        render_rich(f"[dim]pool source: {_short_pool_label(pool_label)}[/dim]", __name__)
+        render_rich(f"{len(rows)} agent(s) considered — "
+            f"[red]{len(down)} DOWN[/red], [yellow]{len(unknown)} UNKNOWN[/yellow]", __name__)
         if unknown:
-            console.print(
-                "[yellow]UNKNOWN is not an all-clear.[/yellow] sac could not "
+            render_rich("[yellow]UNKNOWN is not an all-clear.[/yellow] sac could not "
                 "read the pool it meant to read from HERE. Re-run from where "
                 "the agents are started (the pool resolves from the LAUNCHING "
                 "process env), or set SAC_SECRETS_ENVRC, before believing any "
-                "row."
-            )
+                "row.", __name__)
         if down:
-            console.print(
-                "Fix each DOWN agent with ONE line in its spec under "
+            render_rich("Fix each DOWN agent with ONE line in its spec under "
                 "[bold]spec.apptainer.env[/bold]:  "
                 "[bold]CCT_BOT_TOKEN_SLOT: <SLOT>[/bold]  — or drop "
-                "'server:claude-code-telegrammer' from spec.claude.channels "
-                "if it needs no Telegram rail."
-            )
+                "'server:claude-code-telegrammer' from spec.comms.channels "
+                "if it needs no Telegram rail.", __name__)
 
     if down or unknown:
         ctx.exit(1)

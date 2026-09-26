@@ -3,7 +3,7 @@
 A new top-level noun rather than a fold-in, because worktree sprawl is
 REPO-scoped, not agent-scoped. The closest existing homes are all the
 wrong shape: ``sac agents`` verbs take an agent name and act on that
-agent's runtime; ``sac db clean`` is the state DB; ``sac host`` is peer
+agent's runtime; ``sac store clean`` is the state DB; ``sac host`` is peer
 identity/routing. A repo's worktrees belong to none of them — they
 outlive the agent that made them, which is precisely why they sprawl.
 

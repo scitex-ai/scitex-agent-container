@@ -117,6 +117,8 @@ from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 from ..config._harness_registry import known_harnesses
+from ._apptainer_context_window import context_window_env
+from ._apptainer_provider_cfg import container_config_dir
 
 
 class ProviderEnvError(RuntimeError):
@@ -138,6 +140,47 @@ def provider_active(config: AgentConfig) -> bool:
     """
     provider = _provider_spec(config)
     return bool(provider is not None and getattr(provider, "base_url", ""))
+
+
+def resolve_provider_api_key(config: AgentConfig) -> str:
+    """Resolve the provider API key VALUE for ``config`` (fail-loud).
+
+    Shared by :func:`provider_env_flags` (which injects it into the
+    container env) and :mod:`._apptainer_provider_cfg` (which pre-approves
+    it in the config dir), so the two can never disagree about which key
+    the agent runs on. Raises :class:`ProviderEnvError` when
+    ``provider.auth_token_env`` is empty or resolves to nothing after the
+    scitex-config cascade (see module docstring). The value is never
+    logged by sac.
+    """
+    provider = _provider_spec(config)
+    auth_token_env = getattr(provider, "auth_token_env", "")
+    if not auth_token_env:
+        raise ProviderEnvError(
+            "spec.claude.provider.auth_token_env is empty; cannot resolve "
+            "the backend API key. Set it to the NAME of the host env var "
+            "holding the key (e.g. DEEPSEEK_API_KEY)."
+        )
+
+    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
+    # load_dotenv() is no-op-safe — already-set process env always wins,
+    # so calling it on every provider-env resolution is cheap and
+    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
+    # surprise of the default load_dotenv() search order.
+    load_dotenv(dotenv_path=str(Path.home() / ".env"))
+    resolver = PriorityConfig(auto_uppercase=False)
+    api_key = resolver.resolve(key=auth_token_env, default="")
+    if not api_key:
+        raise ProviderEnvError(
+            f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
+            "not be resolved through scitex-config (direct → config → env "
+            "→ default cascade). Set the key by EITHER exporting "
+            f"{auth_token_env} in the shell that runs `sac agents start` "
+            f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
+            "(chmod 0600). sac reads the value at start and never logs "
+            "it; PriorityConfig auto-masks it in the resolution log."
+        )
+    return api_key
 
 
 def provider_env_flags(config: AgentConfig) -> list[str]:
@@ -167,36 +210,11 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
         )
 
     base_url = getattr(provider, "base_url", "")
-    auth_token_env = getattr(provider, "auth_token_env", "")
-    if not auth_token_env:
-        raise ProviderEnvError(
-            "spec.claude.provider.auth_token_env is empty; cannot resolve "
-            "the backend API key. Set it to the NAME of the host env var "
-            "holding the key (e.g. DEEPSEEK_API_KEY)."
-        )
-
-    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
-    # load_dotenv() is no-op-safe — already-set process env always wins,
-    # so calling it on every provider-env resolution is cheap and
-    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
-    # surprise of the default load_dotenv() search order.
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    resolver = PriorityConfig(auto_uppercase=False)
-    api_key = resolver.resolve(key=auth_token_env, default="")
-    if not api_key:
-        raise ProviderEnvError(
-            f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
-            "not be resolved through scitex-config (direct → config → env "
-            "→ default cascade). Set the key by EITHER exporting "
-            f"{auth_token_env} in the shell that runs `sac agents start` "
-            f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
-            "(chmod 0600). sac reads the value at start and never logs "
-            "it; PriorityConfig auto-masks it in the resolution log."
-        )
+    api_key = resolve_provider_api_key(config)
 
     # Per-agent clean config dir — the conflict-breaker. Distinct from the
     # OAuth path's /tmp/sac-claude so a stale OAuth bind can never win.
-    config_dir = f"/tmp/sac-{config.name}-provider-cfg"
+    config_dir = container_config_dir(config.name)
     flags = [
         "--env",
         f"ANTHROPIC_BASE_URL={base_url}",
@@ -226,6 +244,94 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
     model = (getattr(claude, "model", "") or "") if claude is not None else ""
     if model:
         flags.extend(["--env", f"ANTHROPIC_MODEL={model}"])
+    return flags
+
+
+# ---------------------------------------------------------------------------
+# Per-ENGINE parameters (spec.engines.<key>.{reasoning_effort,
+# max_context_tokens}) — operator answer Q4, 2026-09-03.
+# ---------------------------------------------------------------------------
+
+#: Env var carrying the ENGINE KEY this container was started on. Pure
+#: provenance: an operator inside the container can read what backend
+#: the agent was launched against without going back to the spec.
+ENGINE_KEY_ENV = "SAC_ENGINE"
+
+#: Env vars carrying the per-engine parameters into the container.
+#: NAMESPACED under ``SAC_`` deliberately — see ``engine_env_flags``.
+ENGINE_REASONING_EFFORT_ENV = "SAC_ENGINE_REASONING_EFFORT"
+ENGINE_MAX_CONTEXT_TOKENS_ENV = "SAC_ENGINE_MAX_CONTEXT_TOKENS"
+
+#: The Claude-family harness's OWN name for the context window, and the one
+#: mapping in this module that is MEASURED rather than assumed (2026-09-05).
+#: Claude Code assumes 200,000 tokens for a model name it does not recognise
+#: and auto-compacts at that boundary; its own notice says so and names this
+#: variable as the fix ("set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real
+#: window ... Until then auto-compact keeps this session within <N> tokens
+#: (the context window it assumes)") -- read out of the 2.1.258 binary the
+#: agent image ships. Effect measured on the live fleet the same day: agent
+#: `business` on qwen38-27b (served window 1048576) read ctx:100% and looped
+#: on failed compactions; with this variable set to 1048576 the SAME pinned
+#: transcript read ctx:64% and stopped compacting.
+CLAUDE_CODE_MAX_CONTEXT_ENV = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+
+
+def engine_env_flags(config: AgentConfig) -> list[str]:
+    """Render the ``--env`` flags carrying the selected engine's parameters.
+
+    Returns ``[]`` for a config with no engine selected and no
+    parameters — every legacy single-backend spec, so the launch argv is
+    byte-identical to what it was before ``spec.engines`` existed.
+
+    WHAT THIS DELIVERS, AND WHAT IT DOES NOT. sac's contract stops at
+    putting the declaration inside the container under a name that says
+    where it came from. Whether the in-container harness ACTS on
+    ``SAC_ENGINE_REASONING_EFFORT`` is the harness's business, and sac
+    does not claim otherwise — which is why these are ``SAC_``-prefixed
+    rather than dressed up as a vendor env var (``MAX_THINKING_TOKENS``,
+    say) that would imply a mapping nobody has measured. Saying so here
+    is the point: a field that VALIDATES is not a field that RUNS, and a
+    green test on this function proves delivery, not effect.
+
+    ONE MAPPING IS NOW MEASURED, and only one. ``max_context_tokens``
+    ALSO renders the Claude-family harness's own variable
+    (:data:`CLAUDE_CODE_MAX_CONTEXT_ENV`) when the launch resolves to the
+    ``anthropic`` harness -- see that constant for the binary text and the
+    fleet measurement behind it. ``reasoning_effort`` keeps its
+    ``SAC_``-only delivery: no equivalent measurement exists for it yet,
+    and inventing one would be the silent claim this codebase keeps
+    paying for. The openai / codex harnesses get the ``SAC_`` name only;
+    a Codex mapping belongs to whoever measures Codex.
+
+    The engine's own ``env:`` map is NOT rendered here — it is merged
+    into ``config.env`` by ``config._engine_types.apply_engine`` and
+    reaches the container through the normal ``effective_env`` path, so
+    an operator can spell a harness's real knob today without waiting
+    for sac to model it.
+    """
+    flags: list[str] = []
+    key = str(getattr(config, "engine_key", "") or "").strip()
+    if key:
+        flags += ["--env", f"{ENGINE_KEY_ENV}={key}"]
+    effort = str(getattr(config, "reasoning_effort", "") or "").strip()
+    if effort:
+        flags += ["--env", f"{ENGINE_REASONING_EFFORT_ENV}={effort}"]
+    max_ctx = getattr(config, "max_context_tokens", None)
+    if max_ctx:
+        flags += ["--env", f"{ENGINE_MAX_CONTEXT_TOKENS_ENV}={int(max_ctx)}"]
+        # ASK THE HARNESS, DO NOT TEST FOR A VENDOR. This used to read
+        # ``if resolve_agent_harness(config) == DEFAULT_AGENT_HARNESS``,
+        # which handed the engine's declared window to ONE program and
+        # silently dropped it for every other — a privilege granted by an
+        # ``if``, not by a measurement. Each descriptor now spells its own
+        # context-window variable (``context_window_env``), and a harness
+        # that takes its window some other way answers ``None`` explicitly
+        # (codex renders ``-c model_context_window`` onto the argv
+        # instead). Adding a harness that needs an env var is one registry
+        # column, not an edit here.
+        context_env = context_window_env(config, resolve_agent_harness(config))
+        if context_env:
+            flags += ["--env", f"{context_env}={int(max_ctx)}"]
     return flags
 
 
@@ -376,10 +482,15 @@ def openai_env_flags(config: AgentConfig) -> list[str]:
 
 __all__ = [
     "AGENT_HARNESS_ENV",
+    "ENGINE_KEY_ENV",
+    "ENGINE_MAX_CONTEXT_TOKENS_ENV",
+    "ENGINE_REASONING_EFFORT_ENV",
     "ProviderEnvError",
+    "engine_env_flags",
     "openai_env_flags",
     "openai_harness_active",
     "provider_active",
     "provider_env_flags",
+    "resolve_provider_api_key",
     "resolve_agent_harness",
 ]

@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 
 from scitex_agent_container._lifecycle._instances import record_local_instance
-from scitex_agent_container._state.state_db_incarnations import get_incarnation
+from scitex_agent_container._state.state_store_incarnations import get_incarnation
 from scitex_agent_container.config import AgentConfig
 
 

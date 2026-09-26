@@ -19,7 +19,7 @@ the prior limited scope had deferred):
   the perimeter (:class:`_listen.auth.BearerAuthMiddleware`) plus the
   NAME-based predicates below.
 
-* Cross-group grants are accepted (see :mod:`_state.state_db_nodes`
+* Cross-group grants are accepted (see :mod:`_state.state_store_nodes`
   ``grant_send`` / ``has_grant``); the sender for the grant check is
   the ``metadata.from_agent`` claim, honoured verbatim on the
   administrative / host-bearer path — which is every path.
@@ -36,12 +36,12 @@ forwarder's side — see :mod:`_listen.peer_tokens`).
 
 from __future__ import annotations
 
-import logging
 from typing import Literal
 
+import scitex_logging as slogging
 from starlette.responses import JSONResponse
 
-from .._state.state_db_nodes import (
+from .._state.state_store_nodes import (
     derive_group,
     has_grant,
     is_developer,
@@ -53,7 +53,7 @@ from .._state.state_db_nodes import (
 )
 from ..config._group_resolver import groups_mesh
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "AclDecision",
@@ -98,7 +98,7 @@ def check_lineage_acl(
       * ``caller`` is in the ``developer`` group (operator
         2026-06-25) — full agent-CRUD authority over ANY target,
         independent of lineage. See
-        :func:`_state.state_db_nodes.is_developer`.
+        :func:`_state.state_store_nodes.is_developer`.
       * ``target ∈ descendants_of(caller)`` — caller is a
         transitive ancestor; lineage-scoped operation permitted.
       * ``groups_mesh(caller, target)`` (operator 2026-06-29
@@ -213,7 +213,7 @@ def check_send_acl(
        management (:func:`check_lineage_acl`). Same-name (self-send) is
        trivially allowed.
     3. **Overrides that STILL deny** are evaluated before the default
-       allow: an explicit block (``state_db_blocks.has_block`` → "block")
+       allow: an explicit block (``state_store_blocks.has_block`` → "block")
        and a per-spec ``spec.comms`` parent/siblings=deny
        (:func:`_phase3_relationship_deny` → "deny"). An explicit
        ``grant_send`` remains a no-op-compatible allow.
@@ -250,7 +250,7 @@ def check_send_acl(
     # :func:`node_message_send` distinguish silent-drop (no
     # receiver push, no approve-prompt re-fire) from the
     # cross-group deny that does push.
-    from .._state.state_db_blocks import has_block as _has_block
+    from .._state.state_store_blocks import has_block as _has_block
 
     if _has_block(sender=sender, target=target):
         return ("block", f"blocked: {sender!r} → {target!r}")
@@ -424,7 +424,7 @@ def check_spawn(
 
     All three group checks are MEMBERSHIP over the caller's WHOLE
     named-group set, never primary-group equality — see
-    :mod:`..._state.state_db_groups` (incident 2026-08-10, grant).
+    :mod:`..._state.state_store_groups` (incident 2026-08-10, grant).
     """
     if caller and is_developer(name=caller):
         return ("allow", None)

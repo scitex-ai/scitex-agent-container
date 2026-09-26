@@ -21,8 +21,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_blocks import has_block
-from scitex_agent_container._state.state_db_nodes import has_grant
+from scitex_agent_container._state.state_store_blocks import has_block
+from scitex_agent_container._state.state_store_nodes import has_grant
 
 _TOKEN = "test-token-acl-routes"
 
@@ -55,7 +55,7 @@ def test_unblock_route_writes_comms_grants_row(isolated_state: Path, pg_schema: 
     app = create_app(token=_TOKEN)
     # Act
     with TestClient(app) as client:
-        r = client.post(
+        client.post(
             "/v1/acl/unblock",
             json={"sender": "alice", "target": "lead"},
             headers=_auth(),

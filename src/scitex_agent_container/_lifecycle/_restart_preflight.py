@@ -59,14 +59,15 @@ labels, paths, and the endpoint/status ``reason`` sentence
 from __future__ import annotations
 
 import json
-import logging
 import time
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
+
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Do NOT spend the single-use refresh grant probing a token this fresh.
 # Mirrors the `sac accounts refresh` CLI's own "skipped; token still fresh

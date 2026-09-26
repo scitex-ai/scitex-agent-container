@@ -27,6 +27,8 @@ from scitex_agent_container._creds import NoHealthyAccountError
 from scitex_agent_container._lifecycle._quota_evidence import UNVERIFIABLE_MARKER
 from scitex_agent_container._lifecycle._start import _rotate_to_healthy_account
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._parsers._claude import parse_claude
+from scitex_agent_container.config._schema_compat import normalize_document
 
 
 def _without_quota_warning(log: str) -> str:
@@ -98,6 +100,43 @@ def _make_config(name: str, account: str) -> AgentConfig:
     cfg = AgentConfig(name=name)
     cfg.claude.account = account
     return cfg
+
+
+def test_canonical_claude_code_account_reaches_start_preflight_unchanged(
+    _isolate_home: Path,
+) -> None:
+    # Arrange -- this is the canonical Hub authoring surface, with no
+    # spec.claude compatibility block in the input document.
+    account = "scitex-01-scitex-ai"
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "comms": {"channels": ["server:sac"]},
+            "available_harnesses": {
+                "claude-code": {
+                    "account": account,
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "approval_policy": "never",
+                    "watchdog": {
+                        "enabled": False,
+                        "interval": 1.5,
+                        "responses": {
+                            "y_n": "1",
+                            "y_y_n": "2",
+                            "waiting": "/speak-and-call",
+                        },
+                    },
+                }
+            },
+        }
+    }
+    folded = normalize_document(raw)
+    cfg = AgentConfig(name="hub", claude=parse_claude(folded["spec"]))
+    _write_snapshot(_isolate_home, account, _future_ms())
+    # Act -- exercise the real stored-account picker used before launch.
+    _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
+    # Assert
+    assert cfg.claude.account == account
 
 
 # ---------------------------------------------------------------------------

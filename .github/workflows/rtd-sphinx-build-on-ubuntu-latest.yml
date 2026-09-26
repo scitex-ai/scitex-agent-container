@@ -77,19 +77,22 @@ jobs:
           version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
+      - name: Prepare job-scoped docs scratch
+        run: bash .github/ci/prepare-bare-scratch.sh docs 3.12 DOCS_VENV
+
       - name: Install package + docs deps
         run: |
           set -euo pipefail
-          uv venv --python 3.12 .venv
-          uv pip install --python .venv/bin/python -e ".[docs]"
+          uv venv --python 3.12 "$DOCS_VENV"
+          uv pip install --python "$DOCS_VENV/bin/python" -e ".[docs]"
 
       - name: Build Sphinx HTML (warnings fail PRs only)
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            .venv/bin/sphinx-build -W -b html docs/sphinx docs/sphinx/_build/html
+            "$DOCS_VENV/bin/sphinx-build" -W -b html docs/sphinx docs/sphinx/_build/html
           else
-            .venv/bin/sphinx-build -b html docs/sphinx docs/sphinx/_build/html
+            "$DOCS_VENV/bin/sphinx-build" -b html docs/sphinx docs/sphinx/_build/html
           fi
 
       - name: Refresh src/scitex_agent_container/_sphinx_html/ (push to default branch only)
@@ -122,3 +125,7 @@ jobs:
             git commit -m "docs: refresh _sphinx_html/ from CI build [skip ci]"
             git push
           fi
+
+      - name: Remove this job's docs scratch
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh docs 3.12

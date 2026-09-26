@@ -51,7 +51,7 @@ def _register_self_comms_node(*, port: int) -> None:
     """
     try:
         from .._state.host_config import load
-        from .._state.state_db_nodes import (
+        from .._state.state_store_nodes import (
             CommsNodeConflictError,
             register_comms_node,
         )

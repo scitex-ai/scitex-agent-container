@@ -25,9 +25,10 @@ import json
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import load
 from .._state.host_config_diagnose import config_state_problems
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 @click.command("validate")
@@ -64,13 +65,11 @@ def host_validate(ctx: click.Context, as_json: bool) -> None:
         )
     else:
         for w in warnings:
-            console.print(f"[yellow]warning:[/yellow] {w}")
+            render_rich(f"[yellow]warning:[/yellow] {w}", __name__)
         for e in errors:
-            console.print(f"[red]error:[/red] {e}")
+            render_rich(f"[red]error:[/red] {e}", __name__)
         if not errors and not warnings:
-            console.print(
-                f"[green]ok[/green]  config.yaml is valid ({detail['peers']} peer(s))"
-            )
+            render_rich(f"[green]ok[/green]  config.yaml is valid ({detail['peers']} peer(s))", __name__)
     if errors:
         raise SystemExit(1)
 

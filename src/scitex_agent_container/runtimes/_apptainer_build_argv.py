@@ -93,16 +93,29 @@ def build_run_argv(
     # function reads ``config.harness`` CORRECTLY. That split-brain is
     # exactly the bug this guard retires: OPENAI_* auth env provisioned,
     # Claude runner launched, no error anywhere.
-    from ..config._harness_types import ensure_harness_matches_claude_launch
-
-    ensure_harness_matches_claude_launch(
-        config,
-        launching=(
-            "the interactive claude TUI"
-            if tui
-            else f"runner module {RUNNER_MODULE!r}"
-        ),
+    from ..config._harness_registry import (
+        CODEX_SDK,
+        CODEX_TUI,
+        HERMES_TUI,
+        resolve_harness_key,
     )
+    from ..config._harness_types import ensure_harness_matches_claude_launch
+    from ._apptainer_codex_env import codex_harness_active
+
+    harness_key = resolve_harness_key(config)
+    codex_pane = bool(tui) and codex_harness_active(config)
+    if harness_key not in {HERMES_TUI, CODEX_SDK}:
+        ensure_harness_matches_claude_launch(
+            config,
+            launching=(
+                "the interactive codex TUI"
+                if codex_pane
+                else "the interactive claude TUI"
+                if tui
+                else f"runner module {RUNNER_MODULE!r}"
+            ),
+            launching_key=CODEX_TUI if codex_pane else "",
+        )
 
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
@@ -224,9 +237,11 @@ def build_run_argv(
         # No `--env HOME=...`: apptainer protects HOME from --env override
         # and inherits the host /etc/passwd entry, so HOME points at a real
         # writable home automatically.
-        "--env",
-        "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
-        # AND ITS SIBLING, which was missing and blinded fleet liveness.
+        # The retired per-agent SQLite path is deliberately not injected.
+        # State access goes through SCITEX_STORE_DSN/scitex_dev.store.
+        # The runtime-root binding below remains necessary for heartbeat files.
+        # It was once the database path's sibling and was missing, blinding
+        # fleet liveness.
         #
         # `beat_is_recent(name)` resolves `runtime_base_dir() / name /
         # heartbeat.json`, and `runtime_base_dir()` honours this env var
@@ -320,7 +335,8 @@ def build_run_argv(
     # Sized /tmp scratch (spec.apptainer.tmpfs_size, default "2G").
     # A --containall container otherwise gets a 64 MB session tmpfs
     # at /tmp, which fills mid-run during the full test suite. The
-    # helper emits `--workdir <state_dir>/tmp-scratch` to relocate
+    # helper emits `--workdir <scratch_root>/sac/agents/<agent>/
+    # apptainer-workdir` to relocate
     # /tmp + /var/tmp onto the host filesystem (capacity >> 64 MB)
     # and fails loud (TmpfsSpaceError) if that filesystem has less
     # than tmpfs_size free. No-op when tmpfs_size is "" (opt-out) or
@@ -349,29 +365,25 @@ def build_run_argv(
     # skipped); otherwise → the OAuth path (forward host auth env +
     # bind the resolved .credentials.json). Extracted to
     # _apptainer_auth so this runtime file stays under the line cap.
-    from ._apptainer_auth import auth_argv
-
-    argv += auth_argv(config, state_dir)
+    argv += HARNESS_DESCRIPTORS[harness_key].env_and_binds(config, state_dir)
 
     # Agent env = the FLEET-DEFAULT layer merged UNDER spec.env (spec.env
     # WINS). See _fleet_env for the precedence rule and why it never raises.
     from ._fleet_env import effective_env
 
-    for key, val in effective_env(config).items():
-        argv += ["--env", f"{key}={val}"]
+    for env_key, val in effective_env(config).items():
+        argv += ["--env", f"{env_key}={val}"]
 
-    # Layer-5 of auto-port-allocation + bus auth — forward the
-    # host-stable ``sac listen`` base URL and the host-generated bearer
-    # so the in-container ``sac mcp channel`` adapter can reach AND
-    # authenticate to the bus. Extracted to ``_apptainer_listen_env`` so
-    # the runtime file stays under the line cap; the helper fails loud
-    # when ``server:sac`` is registered but the bearer is unresolvable
-    # (see its docstring). UNCONDITIONAL w.r.t. the relaxed escape-hatch
-    # below: relaxed specs bypass the preflight wrapper but still need
-    # bus auth, else their adapter can never subscribe.
+    # Layer-5 of auto-port-allocation + bus auth — harnesses that own the
+    # Claude channel adapter receive the host-stable ``sac listen`` URL and
+    # bearer. Hermes does not own that adapter, even though the legacy config
+    # compatibility object inherits ``server:sac``; forwarding or validating
+    # its credentials there would cross the harness boundary. Generic runtime
+    # env from this helper still applies to Hermes. For adapter owners this is
+    # unconditional w.r.t. the relaxed escape hatch below.
     from ._apptainer_listen_env import listen_env_flags
 
-    argv += listen_env_flags(config)
+    argv += listen_env_flags(config, include_listener=harness_key != HERMES_TUI)
 
     # TUI parity with the SDK's telegrammer wake (apply_channels →
     # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an
@@ -385,6 +397,15 @@ def build_run_argv(
         _wake_url = tui_channel_plan(config).telegrammer_turn_url
         if _wake_url:
             argv += ["--env", f"CLAUDE_CODE_TELEGRAMMER_TURN_URL={_wake_url}"]
+            argv += ["--env", f"CCT_HARNESS={harness_key}"]
+            if harness_key == CODEX_TUI:
+                # SAC's host-side poller owns inbound delivery for the exact
+                # managed Codex /v1/turn session.  Any lazily launched CCT MCP
+                # server is outbound-only and must not race that owner.
+                argv += [
+                    "--env",
+                    "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER=1",
+                ]
 
     # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
     # appended verbatim after all curated args, before the SIF +
@@ -432,7 +453,7 @@ def build_run_argv(
     tui_channel_mcp: str | None = None
     tui_dev_channels: str | None = None
     tui_settings: str | None = None
-    if tui:
+    if tui and harness_key != HERMES_TUI:
         ch = resolve_container_home(config).rstrip("/")
         has_mcp = (home_host / ".mcp.json").is_file() or (
             _upper_home is not None and (_upper_home / ".mcp.json").is_file()
@@ -464,7 +485,7 @@ def build_run_argv(
             ):
                 tui_settings = f"{ch}/{_rel}"
                 break
-        # SDK-parity channels: spec.claude.channels → dev-channels flag +
+        # SDK-parity channels: spec.comms.channels → dev-channels flag +
         # an inline ``sac mcp channel`` subscriber MCP (server:sac only).
         from ._apptainer_inner_argv import tui_channel_config
 

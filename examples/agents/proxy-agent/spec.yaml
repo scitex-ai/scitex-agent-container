@@ -32,7 +32,7 @@ spec:
   workdir: /home/agent/work
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-proxy.sif
+    image: sac-proxy
 
     # binds — explicit mounts. The proxy needs nothing from the host
     # beyond its own state bind, so the list is empty.

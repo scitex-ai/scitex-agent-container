@@ -11,6 +11,7 @@ from rich.table import Table
 
 from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
+from .._logging import render_rich
 from .._state.registry import Registry
 from ..config import load_config
 from ._agents_list_fleet import fleet_list_options, run_fleet_list
@@ -313,7 +314,7 @@ def status(
             if use_json:
                 click.echo(json_mod.dumps({"error": str(exc)}))
             else:
-                console.print(f"[red]Error: {exc}[/red]")
+                render_rich(f"[red]Error: {exc}[/red]", __name__)
             sys.exit(1)
 
         if with_snapshot:
@@ -383,7 +384,7 @@ def status(
             style = "red" if key == "status" and value == "stopped" else style
             cell = _encode_safe_cell(value, cell_encoding)
             table.add_row(key, cell, style=style)
-        console.print(table)
+        render_rich(table, __name__)
     else:
         # `agents status` only shows agents now. Claude-account info
         # moved to `sac accounts list` — different noun, different
@@ -429,23 +430,82 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
-        if use_json:
-            click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
+        try:
+            status_snapshot = agent_status(name, registry)
+        except Exception as exc:  # stx-allow: fallback (missing fleet evidence is typed UNKNOWN, never inferred DEAD)
+            payload = {
+                "name": name,
+                "healthy": False,
+                "health_state": "unknown",
+                "message": f"health unknown: {exc}",
+                "error": str(exc),
+            }
         else:
-            console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
+            from ._health_liveness import status_health_state
+
+            health_state = status_health_state(status_snapshot)
+            payload = {
+                "name": name,
+                "healthy": health_state == "healthy",
+                "health_state": health_state,
+                "message": f"process health: {health_state}",
+                "resident_state": status_snapshot.get("resident_state", "unknown"),
+                "heartbeat": status_snapshot.get("heartbeat"),
+                "liveness": status_snapshot.get("liveness", {}),
+            }
+        if use_json:
+            click.echo(json_mod.dumps(payload, indent=2))
+        else:
+            render_rich(payload["message"], __name__)
+        if not payload["healthy"]:
+            sys.exit(1)
+        return
 
     # stx-allow: fallback (reason: config YAML may be corrupted or missing after registry entry was created; CLI exits with code 1 in both JSON and human output modes)
     try:
         config = load_config(entry["config"])
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if use_json:
-            click.echo(json_mod.dumps({"error": str(exc)}))
+            from ._health_liveness import health_summary
+
+            try:
+                status_snapshot = agent_status(name, registry)
+                liveness = status_snapshot.get("liveness") or {}
+            except Exception:  # stx-allow: fallback (reason: failed status observation is itself UNKNOWN, never DEAD)
+                liveness = {"evidence": []}
+            summary = health_summary(
+                False,
+                f"health unknown: config validation failed ({exc})",
+                liveness,
+            )
+            click.echo(
+                json_mod.dumps(
+                    {
+                        "name": name,
+                        "healthy": False,
+                        "health_state": summary["state"],
+                        "message": summary["message"],
+                        "error": str(exc),
+                        "liveness": liveness,
+                    }
+                )
+            )
         else:
-            console.print(f"[red]Error loading config: {exc}[/red]")
+            render_rich(f"[red]Error loading config: {exc}[/red]", __name__)
         sys.exit(1)
 
     is_healthy, message = health_check(config)
+    resident_state = None
+    resident_heartbeat = None
+    try:
+        status_snapshot = agent_status(name, registry)
+        resident_state = status_snapshot.get("resident_state")
+        resident_heartbeat = status_snapshot.get("heartbeat")
+        if resident_state in {"stalled", "dead"}:
+            is_healthy = False
+            message = f"unhealthy: authoritative heartbeat is {resident_state}"
+    except Exception:  # stx-allow: fallback (status observation failure leaves the existing runtime health verdict unchanged)
+        pass
 
     # REGISTERED IS NOT REACHABLE. ``health_check`` asks "is the process
     # up?" — a deaf agent (one whose inbox adapter is not subscribed to the
@@ -468,14 +528,33 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     # alongside the ``healthy`` bool rather than replacing it — a bool cannot
     # say "I could not tell", and ``healthy`` gates this command's exit code.
     # See :mod:`._health_liveness`.
-    from ._health_liveness import liveness_payload, print_inbox, print_liveness
+    from ._health_liveness import (
+        health_summary,
+        liveness_payload,
+        print_inbox,
+        print_liveness,
+    )
 
     liveness = liveness_payload(name, config)
+    summary = health_summary(is_healthy, message, liveness)
+    health_state = summary["state"]
+    message = summary["message"]
+    is_healthy = health_state == "healthy"
 
-    # Observation-only like ``liveness``: never flips ``healthy``.
+    # Overlay masking is observation-only; health_state above is authoritative
+    # for the compatibility bool and exit code.
     from ._health_overlay_masking import overlay_masking_payload, print_overlay_masking
 
     overlay_masking = overlay_masking_payload(name, config)
+
+    # Observation-only like the two above. Answers the question no other
+    # surface answered: which backend is this agent ACTUALLY running on?
+    # Read from the running process, never re-derived from the spec — a
+    # reading derived from the spec would agree with the spec and could
+    # never report the disagreement. See :mod:`._health_engine`.
+    from ._health_engine import engine_payload, print_engine
+
+    engine = engine_payload(name, config)
 
     if use_json:
         click.echo(
@@ -483,12 +562,16 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                 {
                     "name": name,
                     "healthy": is_healthy,
+                    "health_state": health_state,
                     "message": message,
                     "inbox_subscribers": subscribers,
                     "inbox_reachable": reachable,
                     "fault": inbox_fault,
                     "liveness": liveness,
                     "overlay_masking": overlay_masking,
+                    "engine": engine,
+                    "resident_state": resident_state,
+                    "heartbeat": resident_heartbeat,
                 },
                 indent=2,
             )
@@ -497,13 +580,16 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
             sys.exit(1)
         return
 
-    if is_healthy:
-        console.print(f"[green]{message}[/green]")
+    if health_state == "healthy":
+        render_rich(f"[green]{message}[/green]", __name__)
+    elif health_state in {"unknown", "alive-by-delivery-only"}:
+        render_rich(f"[yellow]{message}[/yellow]", __name__)
     else:
-        console.print(f"[red]{message}[/red]")
+        render_rich(f"[red]{message}[/red]", __name__)
 
     print_liveness(console, liveness)
     print_overlay_masking(console, overlay_masking)
+    print_engine(console, engine)
     print_inbox(console, name, subscribers, reachable, inbox_fault)
 
     if not is_healthy:

@@ -69,18 +69,29 @@ spec:
     ready_poll_interval_seconds: 0.5
     ready_timeout_seconds: 60
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
-  context_management:                    # context auto-management (compact/restart/noop)
-    trigger_at_percent: 70
-    strategy: noop                       # compact | restart | noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
+  available_harnesses:
+    hermes:
+      session: { mode: continue, max_age_minutes: 4320 }
+      background_review: false
+      # run_budget_seconds: 900  # optional; one-shot/eval jobs only
+      compression:
+        threshold: 0.80
+        threshold_tokens: null           # optional absolute trigger cap
+        target_ratio: 0.20
+        tail_mode: lean
+        in_place: true
+  comms:
+    channels: [server:sac, server:scitex-cards]
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
   telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
   hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
 
   startup_commands:                      # SHELL before claude starts (list of {delay, command} dicts)
     - { delay: 0, command: "echo hi" }
-  startup_prompts:  [...]                # TEXT fed to claude as first user msg
+  startup_prompts:  [...]                # TEXT fed to the selected harness as first user msg
   session: continue                      # top-level shortcut overriding spec.claude.session
 
   host:  gpu-box                         # mutually exclusive: singleton on one peer
@@ -138,6 +149,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
 | `harness`            | `anthropic` (default) \| `openai` \| `codex` | **Which agent SDK runs the session** (NOT the same field as `spec.claude.provider`, which points the *Claude* SDK at an Anthropic-compatible inference gateway — the two axes compose). `openai` runs the agent on the `openai-agents` SDK: at launch sac injects `SAC_OPENAI_API_KEY` + `OPENAI_API_KEY` (resolved host-side, shell export > `$HOME/.env`, `SAC_OPENAI_API_KEY` preferred over `OPENAI_API_KEY`) and forwards `OPENAI_BASE_URL` / `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` / `SAC_OPENAI_MODEL` when set on the host; NO Anthropic OAuth env or credentials bind is emitted. Fail-loud when no key resolves or when composed with an active `spec.claude.provider` override. **Launch caveat today — read this before choosing a harness:** the registry has four entries (`claude-code-tui`, `claude-agent-sdk`, `openai-agents`, `codex-sdk`) and `spec.harness` accepts three values, but **only `anthropic` can be STARTED**. `openai` and `codex` both load, validate and resolve to their registry entries, and then every lifecycle launch path REFUSES them — loudly, rather than silently launching a Claude runner under a spec that asked for something else. A2A serving uses the `openai_session` executor (`spec.a2a.handler`), which is the working path for the OpenAI SDK meanwhile; there is no equivalent executor for `codex` yet. **`codex` is also a legal `spec.claude.provider` value and means something different there** — as a HARNESS the Codex agent program runs the loop; as a PROVIDER Claude Code still drives and Codex only answers. **Ops-only override:** exporting `SAC_PROVIDER=openai` (or `anthropic`) in the shell that runs `sac agents start` overrides `spec.harness` for every launch from that shell — an operations escape hatch for emergency flips / A/B smoke tests, never a spec surface; unknown values are rejected loudly. (The env var keeps its older `SAC_PROVIDER` name.) |
 | `provider`           | *(deprecated alias of `harness`)* | The spelling this field had before it was renamed. **Still honoured** — a spec carrying `provider:` loads unchanged and satisfies the explicit-fields requirement for `harness`; starting such an agent logs a one-line deprecation naming the agent. Writing BOTH keys is fine when they carry the same value; writing both with DIFFERENT values is a hard load error naming both, because a spec that says two things does not say which harness it wants. It was renamed because it never named a provider: it selects which agent PROGRAM drives the loop, while `spec.claude.provider` (unchanged, and still correctly named) selects which inference endpoint answers. |
+| `engines`            | mapping `<key>: {harness, model, provider, default, reasoning_effort, max_context_tokens, timeouts, env}` | **SEVERAL declared backends, ONE picked at start.** Optional — a spec that omits it declares its single backend the old way (`harness` + `spec.claude.model` + `spec.claude.provider`) and is unchanged. See **`spec.engines`** below and ADR-0024. |
 | `residency`          | `resident` (default) \| `one-shot` | **Does the daemon outlive its work?** (v4 residency axis.) `resident` — the fleet posture — keeps the session daemon alive after a conversation completes, parked awaiting more turns; a turn driver that returns on its own is then a residency VIOLATION (ExitRecord `harness-returned`/`crashed`, non-zero exit). `one-shot` makes a normal completion the PLAN: the mission turn carries `exit_after`, and the daemon exits `0` with ExitRecord reason `oneshot-complete` — for experiment trials and one-off workers. Absence/null defaults to `resident` (the axis postdates the live corpus; the v3→v4 converter materializes the explicit line — requiring it is that later step). Illegal values are rejected loudly naming the closed set. Only runner-hosted harnesses honour it: `one-shot` on the interactive TUI (`runtime: tui`, which has no session daemon) or on `kind: AgentProxy` is refused at validation time. |
 | `access`             | `full` (default) \| `capsule` | Host-access posture. `full` (the default; absent → `full`) binds the operator's WHOLE home rw at its canonical path (`/home/<user>:/home/<user>:rw`) so the agent reaches every project + config, and opens `--pwd` at the workdir's **canonical** path (the `/work` alias stays bound for back-compat). The agent's own `$HOME=/home/agent` (credentials / to_home / overlay wiring) is untouched. `capsule` restricts the agent to ONLY the binds explicitly listed in the spec + the `/work` alias (pre-2026-06-19 behaviour) — for leak-prevention agents. |
 | `workdir`            | path                       | Mounted rw at the canonical host path **and** the `/work` alias under `access: full`; at `/work` only under `access: capsule` (default: `~/.scitex/agent-container/runtime/agents/<name>/`). `--pwd` is the canonical path (full) or `/work` (capsule). |
@@ -150,17 +162,17 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
 | `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
+| `startup_prompts[]`  | list of strings            | Required explicitly; `[]` means no startup turn; no implicit prompt fallback |
 
 ### `spec.apptainer` — engine knobs
 
 | Field         | Type                          | Description                                                |
 |---------------|-------------------------------|------------------------------------------------------------|
-| `image`       | path to `.sif`                | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal). Optional; empty falls back to the sac default SIF at dispatch. |
+| `image`       | logical name or custom path   | Use `sac-base`, `sac-scitex`, or `sac-proxy` for SAC-owned images. SAC resolves the host-local live link and records the exact immutable path plus SHA-256 in incarnation state. Timestamped and stable-link filesystem paths for SAC-owned images are rejected. An absolute `.sif` path remains valid for a custom image. |
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
 | `overlay_size` | size string (e.g. `"5G"`, `"500M"`) | When set together with `overlay`, sac auto-creates the overlay image at that path with the given size if it doesn't exist (declarative — no manual `apptainer overlay create` step). Units: M/MB/G/GB only (K/KB rejected). Empty = no auto-create (missing overlay raises a clear FileNotFoundError at launch). |
 | `overlay_create_if_missing` | bool (default `true`) | Gate for the auto-create behaviour above. When `false` AND the overlay is missing, sac raises FileNotFoundError without attempting creation (operator must pre-create with `apptainer overlay create`). |
-| `tmpfs_size`  | size string (default `"2G"`)  | Minimum free-space guarantee for the container's `/tmp` (and `/var/tmp`). A `--containall` container otherwise gets a 64 MB session tmpfs at `/tmp` that fills mid-run during the full test suite. sac emits `--workdir <state_dir>/tmp-scratch` to relocate `/tmp` onto the host filesystem (capacity >> 64 MB) and fails loud (`TmpfsSpaceError`) if that filesystem has less than `tmpfs_size` free. Units: M/MB/G/GB only (K/KB rejected). NOT a hard cap (unprivileged apptainer can't size-cap a tmpfs). Set to `""` to opt out (legacy 64 MB tmpfs). Skipped when the operator declares their own `--workdir`/`-W` in `raw_args`. |
+| `tmpfs_size`  | size string (default `"2G"`)  | Minimum free-space guarantee for the container's `/tmp` (and `/var/tmp`). A `--containall` container otherwise gets a 64 MB session tmpfs at `/tmp` that fills mid-run during the full test suite. sac emits `--workdir <scratch_root>/sac/agents/<agent>/apptainer-workdir` to relocate `/tmp` onto the host scratch filesystem and fails loud (`TmpfsSpaceError`) if that filesystem has less than `tmpfs_size` free. Units: M/MB/G/GB only (K/KB rejected). NOT a hard cap (unprivileged apptainer can't size-cap a tmpfs). Set to `""` to opt out (legacy 64 MB tmpfs). Skipped when the operator declares their own `--workdir`/`-W` in `raw_args`. |
 | `binds[]`     | `host:container[:ro\|rw]` (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `container_workdir` | path (default `/work`)  | Working directory inside the container.                    |
@@ -171,6 +183,243 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 | `nested_build` | bool (default `false`)       | Enable **NESTED** apptainer build/pull from INSIDE the agent container — a solver reproduces a capsule's pinned env itself (pull a published `docker://` image, or build a Dockerfile-derived def whose `%post` runs as root), then `apptainer exec`s it. Binds `/dev/fuse`, masks `/etc/subuid`+`/etc/subgid` (→ root-mapped + `fakeroot`-command build path; the SIF's `newuidmap` is `agent`-owned so plain `--fakeroot` FATALs), and points `APPTAINER_TMPDIR`/`CACHEDIR` at the real-disk `/tmp` (size via `tmpfs_size` — the 2G default is too small for a multi-GB image). Composes with `access: capsule` (adds **no** host-FS bind). Fail-loud if the host lacks `/dev/fuse`. Build-from-Dockerfile needs the base image to contain `/etc/subuid` (every real distro base does; busybox doesn't). Verified 2026-06-20 inside `sac-scitex.sif`. See [`runtimes/_apptainer_nested.py`](../src/scitex_agent_container/runtimes/_apptainer_nested.py). |
 
+### `spec.harness` + `spec.engine` — TWO AXES, TWO LINES
+
+`harness:` names the PROGRAM that runs the loop; `engine:` names the MODEL
+ENDPOINT that answers it. They are independent — either flips without touching
+the other, in one line — and the fleet-wide default engine lives in one line of
+one file. **Full reference, the three worked YAML cases, the precedence, and the
+harness × engine refusal table: [harness-and-engine.md](harness-and-engine.md).**
+
+### `spec.available_harnesses.claude-code.account`
+
+`account` pins a Claude Code harness to one saved Anthropic OAuth account by
+its `sac account list` slug. It belongs to the harness that consumes the
+credential, not to the legacy `spec.claude` compatibility block:
+
+```yaml
+spec:
+  harness: claude-code
+  available_harnesses:
+    claude-code:
+      account: scitex-01-scitex-ai
+      session: {mode: continue, max_age_minutes: null}
+      approval_policy: never
+      watchdog:
+        enabled: false
+        interval: 1.5
+        responses: {y_n: "1", y_y_n: "2", waiting: /speak-and-call}
+```
+
+The slug must be a non-empty string with no surrounding whitespace. At the
+parser boundary SAC folds it into the typed Claude runtime configuration, so
+the existing start preflight checks that exact stored-account preference and
+the auth bind resolves its snapshot. `account` is rejected on other harness
+entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
+
+### `spec.available_harnesses.<key>.compression` — Hermes only
+
+Hermes context compaction is configured beside the Hermes harness that owns
+the behavior. The block is optional; omitting it preserves SAC's current
+Hermes defaults: `threshold: 0.80`, `threshold_tokens: null`,
+`target_ratio: 0.20`, `tail_mode: lean`, and `in_place: true`.
+`threshold_tokens`, when set, is a positive integer absolute cap: Hermes
+compacts at the lower of the ratio-derived trigger and this value while the
+model's truthful `context_length` remains unchanged. The ratios must satisfy
+`0 < target_ratio < threshold < 1`; `tail_mode` is `lean` or `legacy`, and
+`in_place` is a boolean.
+
+For agents sharing one engine, derive the absolute trigger from fresh engine
+KV capacity rather than adding their independent model windows. SAC's
+fail-closed helper reserves 25%, divides the remainder by the sharing agents,
+and rounds down to a binary token boundary. Six agents sharing an observed
+`max_total_num_tokens: 2180096` therefore use `threshold_tokens: 262144`:
+their six triggers total 1,572,864 tokens and leave 607,232 tokens of reserve.
+A missing or stale capacity observation is an error. A 524,288-token trigger
+is suitable only for a controlled single-agent canary; six such triggers total
+3,145,728 and are not a safe fleet steady state.
+The derivation helper is intentionally pure and does not rewrite running
+agents. An operator or deployment planner must put its `threshold_tokens`
+result in each selected Hermes harness block; normal spec loading then carries
+that value into the compiled Hermes profile on the next authorized restart.
+The same block under Claude Code, Codex, or another harness is rejected rather
+than silently ignored. The former top-level `spec.context_management` example
+was removed because that tolerated legacy key has no runtime consumer.
+
+### `spec.available_harnesses.hermes.background_review`
+
+This boolean controls Hermes' automatic post-turn review. It defaults to
+`false`, so SAC-managed Hermes agents do not silently issue a second request
+over the full conversation after completing foreground work. Set it to `true`
+only when that extra review traffic is intentional. SAC compiles the value to
+Hermes' internal `auxiliary.background_review.enabled` setting.
+
+On 2026-09-12, aligned Hermes and inference-server logs showed an automatic
+review replaying about 691,000 tokens while the next foreground turn began on
+the same conversation. After the gateway restarted and cancelled the review,
+the foreground turn performed a cold prefill and took about 276 seconds. This
+field makes that high-cost behavior declared and testable rather than implicit.
+
+### `spec.available_harnesses.hermes.run_budget_seconds`
+
+This optional positive integer gives one Hermes run a wall-clock checkpoint for
+one-shot/eval jobs that already have an external deadline. It is unset by
+default for agentic SAC sessions, so Hermes runs to completion and does not
+receive the 80%-elapsed wrap-up instruction. When explicitly set, SAC compiles
+the value to Hermes' internal `agent.run_budget_seconds` setting. This is not a
+hard kill and does not trigger context compression; it injects a one-time
+wrap-up notice and tightens implicit stale-call timeouts.
+
+SAC separately emits Hermes' `agent.max_turns: none` sentinel for agentic
+sessions. This keeps Hermes' own tool loop unbounded while leaving
+`spec.autonomous.max_turns` as the independent safety cap for SAC's outer
+drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.
+
+Telegram is an edge transport, not a per-agent dependency. Select the CCT
+Telegram channel only on the human-facing gateway agent (normally
+`scitex-lead`); application agents communicate through Cards, SAC, or A2A.
+For each spec that explicitly selects CCT, SAC owns one poller using that
+spec's declared token. SAC neither creates nor requires a separate BotFather
+token for every agent. Selecting the same Telegram bot in several agent specs
+would create competing pollers and is not a supported topology.
+
+A CCT turn is acknowledged only after Hermes proves the exact delivery marker
+visible in its native session. The receipt identifies `agent`, `delivery_id`,
+and `exchange_id`, so a gateway or web client can report and retry the turn
+without an operator watching or attaching to the TUI.
+
+### `spec.engines` — several backends, one picked at start
+
+One spec, several named backends; `--engine <key>` picks one for THAT start.
+Full rationale and the four operator answers behind it: **ADR-0024**.
+
+```yaml
+spec:
+  engines:
+    claude:
+      harness: anthropic
+      model: fable[1m]
+      provider: anthropic
+      default: true
+    qwen38-27b:
+      harness: anthropic
+      model: qwen38-27b
+      provider: { base_url: http://127.0.0.1:18772, auth_token_env: QWEN_GATEWAY_API_KEY }
+      reasoning_effort: low
+      max_context_tokens: 393216
+      timeouts:
+        upstream_deadline_seconds: 1800
+        client_abandonment_seconds: 1860
+```
+
+| Entry field          | Type                                | Description |
+|----------------------|-------------------------------------|-------------|
+| `harness`            | *(deprecated inside an entry)*      | An entry that states one claims the HARNESS axis, which is the coupling this design removes. Omit it: no value means *inherit the spec's*. Still accepted while the legacy block lives, and still resolved through the SAME harness registry — an engine cannot invent a harness the fleet cannot run. |
+| `model`              | same as `spec.claude.model`         | The model id passed to this engine's endpoint. |
+| `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
+| `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. While it is accepted, exactly ONE entry may set it: with a single entry it is the default implicitly, and two defaults, or two entries with none, are hard load errors naming the offenders. |
+| `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
+| `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |
+| `timeouts`           | mapping                             | Declares the endpoint's `upstream_deadline_seconds` and the later `client_abandonment_seconds` together. The client value must be strictly greater. Hermes maps the latter to both its request and no-output stale deadlines, so slow prefill is not mistaken for a dead provider; a provider that accepts a connection and never responds still fails at that finite bound. Both values are preserved in the incarnation birth certificate. |
+| `env`                | mapping                             | Merged OVER `spec.apptainer.env` for this engine only — the escape hatch for a gateway knob sac does not model. |
+
+**Selecting.** `sac agents start|restart <name> --engine <key>`. START TIME
+ONLY: nothing rebinds mid-session. An unknown key fails loud listing the
+declared keys — it never falls back to the default.
+
+**Refusing.** An engine that cannot be honoured (unregistered provider name,
+incomplete inline provider, unset `auth_token_env` on this host, unknown
+harness) REFUSES the start, naming the engine, how it was selected, what was
+unhonourable, and the fix. sac never falls back to another engine. On
+`restart` the refusal fires BEFORE the stop leg, so a rejected `--engine`
+leaves the running agent UP rather than stopping it and then declining to
+bring it back.
+
+**Reachability.** STATIC resolution runs on every start and is the whole
+refusal surface by default — no sockets, so a network blip cannot ground the
+fleet. `--probe-engine` (or `SAC_ENGINE_PROBE=1`) adds ONE bounded TCP connect
+to the engine's `base_url`; only an ACTIVE connection refusal refuses the
+start, while a timeout or DNS failure is reported as "could not tell" with a
+LOUD warning and the start proceeds — never silently treated as honourable.
+
+**Not covered yet** (each fails loud rather than dropping the engine):
+`--engine` from inside a container (the host-listen broker body carries no
+engine field), for an agent that lives on a peer, or with directory /
+multi-agent targets.
+
+**Migration.** A spec with only the legacy single-backend block works unchanged
+and silently. Both blocks that AGREE are accepted; both that DISAGREE are a
+hard load error naming both values. The migration ends when every deployed spec
+declares `engines:`, at which point the legacy reading is deleted.
+
+**The sweep that gets there:** `sac agents migrate-engines`. Dry-run by
+DEFAULT — it writes nothing and prints a unified diff per spec — with
+`--apply` as the deliberate act and `--agent` / `--host` / `--limit` for
+batching. Each spec's CURRENT backend becomes ONE named engine, restated
+verbatim; `spec.claude.model` and `spec.claude.provider` are EMPTIED (present,
+stating nothing — the explicit-spec ruling keeps the keys) while `spec.harness`
+stays stated and the entry inherits it. The edit is line surgery, so comments
+survive, and it re-parses its own output through `parse_engines`,
+`validate_engines` and `legacy_conflict_messages` first. The apply loads every
+spec before and after and restores every original unless the effective backend
+is unchanged. Precedence, the worked YAML cases and the harness × engine
+refusal table: [`harness-and-engine.md`](harness-and-engine.md).
+
+**What it deliberately does NOT write:** no per-entry `harness:` (that claims
+the HARNESS axis); no `default: true` (a spec-local default OUTRANKS the fleet
+library — `engine: <key>` at the top of `spec:` is the one-line pin); and no
+copied `qwen38-27b`, which lives once in the tracked
+[fleet library](../.scitex/agent-container/engines.yaml), deployed to
+`$SCITEX_DIR/agent-container/engines.yaml` (`$SAC_ENGINES_FILE` unset,
+`$SCITEX_DIR` at its documented `~/.scitex` default) and reached with `--engine
+qwen38-27b`. Its ADDRESS stays in
+[`_qwen_gateway.py`](../src/scitex_agent_container/config/_qwen_gateway.py) as
+`provider: qwen-gateway`, overridable per host with `$SAC_QWEN_GATEWAY_URL`.
+
+**A version floor, enforced at plan time.** A sac older than 2026-09-03
+(commit `0d61e077`) does not ignore an unknown `engines:` key — it REJECTS the
+spec. Measured by running that commit's PARENT validator over a real fleet
+spec: 0 errors without the block, exactly one with it
+(`Unknown spec field 'engines'`). So writing the block into a spec pinned on
+such a host stops that agent starting, at a validator on a machine nobody is
+watching. The sweep therefore REFUSES those specs by name BEFORE the write,
+against a recorded roster of measured hosts in
+[`_maintenance/_engines_floor.py`](../src/scitex_agent_container/_maintenance/_engines_floor.py)
+— measured by FIX PRESENCE (is `apply_default_engine` in that host's own
+`config/_engine_types.py`), not by a version string. It **fails closed**: a
+host absent from the roster is refused, never assumed capable, and so is a
+spec that names no host at all. `--host-supports-engines HOST` (repeatable)
+lifts the floor for a machine you have checked yourself, and the claim is
+recorded in `engine_floor_overrides` in `--json`. A floor refusal is a NAMED
+refusal like any other: it does not fail the exit code and does not make the
+plan unsafe to apply — it just means those specs are not written.
+
+**Where it writes, and how a batch advances.** The root is `--root DIR`, else
+`$SCITEX_AGENT_CONTAINER_AGENTS_DIR`, else EVERY user-scope root the rest of
+the CLI resolves (`sac agents find` / `sac agents start` share that resolver),
+de-duplicated by agent name with the earlier root winning. The old default
+read a different env var and landed on `$HOME/.scitex/agent-container/agents`,
+which inside a container is the container's own home — measured, one spec
+beside the fleet's 123, reported as a finished sweep. Every report names the
+roots it searched (`roots` in `--json`); pass `--root` to
+sweep the git-tracked tree instead. `--limit N` caps what is WRITTEN, not what is
+examined: already-migrated and refused specs do not consume the cap, so running
+the same command again takes the NEXT N and the specs past the cap are reported
+as `held_back` rather than dropped. `--host` reads each spec to decide, and one
+it cannot read is KEPT so it reaches the plan as `unreadable` — a filter that
+excluded it would be the flag that disables the guard blocking an unsafe apply.
+In `--json`, `migration_complete` is the answer to "is the sweep finished"; the
+exit code is not, because a run that wrote nothing because every spec was
+refused also exits 0.
+
+**Preflight, three-valued:** `sac agents migrate-engines --preflight` names
+what the gateway did rather than returning a boolean —
+`reachable-but-unauthorized` (a 401 proves something is listening and
+demanding a key), `connection-refused` (the one definite negative), or
+`name-does-not-resolve` (undetermined: `curl` prints `000` for a hostname
+typo and for a dead host alike). The spelling that resolves fleet-wide is
+`scitex-compute-04`; `compute-04` and `compute-04-lan` do not.
+
 ### `spec.claude` — SDK knobs
 
 | Field                       | Type                                  | Description                                                       |
@@ -180,11 +429,33 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
-| `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
+| `continue_max_age_minutes`  | int                                   | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
-| `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+### `spec.comms` — harness-neutral communication
+
+`spec.comms.channels` declares inbound communication adapters once for the
+agent. The selected harness does not own this list. SAC adapts the same
+declaration to Claude Code, Hermes, or Codex while preserving the same durable
+SAC/Cards identity and exchange ledger.
+
+```yaml
+spec:
+  comms:
+    channels:
+      - server:sac
+      - server:scitex-cards
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
+```
+
+With `available_harnesses`, a `channels` key inside a harness entry is rejected
+with a relocation hint. Older direct `spec.claude.channels` specs remain
+readable only for the fleet migration window; new specs must use
+`spec.comms.channels`.
 
 #### Available models (`spec.claude.model`)
 
@@ -241,7 +512,7 @@ pinned regex catches this early.
 | Field        | Description                                                                          |
 |--------------|--------------------------------------------------------------------------------------|
 | `a2a.host`   | Bind interface for the per-agent A2A sidecar (default `127.0.0.1`).                  |
-| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists in `state.db`, surfaces via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
+| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists it in the shared PostgreSQL store, and surfaces it via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
 | `listen[]`   | LIST of side-port DECLARATIONS (NOT a single port override). Each item: `{port, proto, path, name, owner}`. `proto`: `tcp` (default) / `udp` / `unix`. Entries that fail validation (`tcp`/`udp` needs `port>0`; `unix` needs `path`) are silently dropped. **The container does NOT bind these — declarations only**, surfaced on the AgentCard for peers. The host-level `sac listen` server port (default 7878) is configured in `~/.scitex/agent-container/config.yaml` under `listen.port`, NOT here. |
 
 The per-agent sidecar binds the **same URL shape** as `sac listen`
@@ -256,6 +527,19 @@ The AgentCard's `url` field advertises the **sac listen** URL
 (`http://127.0.0.1:7878/agents/<name>`) regardless of which
 endpoint served the card, so external A2A clients caching the card
 get a URL that survives per-agent port churn.
+
+### `spec.lineage` / `spec.delegation` — child-agent policy
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `lineage.may_spawn` | bool | `true` | Permission for the agent to create children. For Hermes, `false` removes the `delegation` toolset and therefore `delegate_task`. |
+| `delegation.max_concurrent_children` | int 1–8 | `2` | Per-parent parallel child cap. The cap is authored independently of the harness and engine. |
+| `delegation.worktree_isolation` | bool | `true` | Ask a supporting harness to put child work in separate Git worktrees. Hermes 0.21.1 honors this only for Git workspaces on its local terminal backend. |
+
+SAC's Hermes adapter fixes delegation depth at one, so children are leaves and
+cannot multiply the configured width. Worktree isolation does not create a new
+container or isolate databases, credentials, and other shared services.
+Parallel writers must own distinct Cards and branches/worktrees.
 
 ### `~/.scitex/agent-container/config.yaml`
 

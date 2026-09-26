@@ -17,7 +17,7 @@ import socket
 import threading
 from typing import Any
 
-from scitex_agent_container._network.peer import post_turn_to_url
+from scitex_agent_container._network.peer import PeerError, post_turn_to_url
 
 
 def _free_port() -> int:
@@ -50,12 +50,17 @@ def _capture_post_body(*, from_agent: str | None) -> dict[str, Any]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        post_turn_to_url(
-            f"http://127.0.0.1:{port}/v1/turn",
-            "hello",
-            timeout_s=5.0,
-            from_agent=from_agent,
-        )
+        try:
+            post_turn_to_url(
+                f"http://127.0.0.1:{port}/v1/turn",
+                "hello",
+                timeout_s=5.0,
+                from_agent=from_agent,
+            )
+        except PeerError:
+            # This fixture observes the requester body only. Its intentionally
+            # synchronous response is now refused by the public protocol.
+            pass
     finally:
         server.shutdown()
         server.server_close()
@@ -78,9 +83,18 @@ class TestPeerRequesterBody:
         # Assert
         assert isinstance(body.get("dispatch_id"), str)
 
-    def test_post_body_carries_the_turn_text(self) -> None:
+    def test_post_body_binds_turn_text_to_visible_delivery_id(self) -> None:
         # Arrange
         # Act
         body = _capture_post_body(from_agent="lead")
         # Assert
-        assert body["text"] == "hello"
+        delivery_id = body["visible_delivery_id"]
+        assert (
+            delivery_id,
+            body["dispatch_id"],
+            body["text"],
+        ) == (
+            body["dispatch_id"],
+            body["dispatch_id"],
+            f"hello\n<!-- delivery:{delivery_id} -->",
+        )

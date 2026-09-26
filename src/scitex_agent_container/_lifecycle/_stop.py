@@ -6,22 +6,26 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
-import logging
 import threading
 import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import scitex_logging as slogging
+import yaml
+
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config
+from ..config._loaders import load_v3
 from ._a2a_port import release_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
+from ._instances import resolve_local_stop_instance
 from ._runtime_select import _get_runtime
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Default upper bound on how long ``agent_restart`` will wait for the
 # previous runtime to actually exit before ESCALATING to SIGKILL (see
@@ -34,6 +38,27 @@ logger = logging.getLogger(__name__)
 _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S = 15.0
 
 
+def _load_config_for_teardown(path: str | Path, expected_name: str) -> AgentConfig:
+    """Parse enough of a v3 spec to tear down its already-running runtime.
+
+    A spec can become invalid after SAC is upgraded while the process it
+    launched is still alive.  Teardown must not strand that process merely
+    because a start-time capability rule changed.  ``load_v3`` constructs the
+    same runtime configuration without applying current launch validation;
+    the registry name check prevents an invalid path from targeting a
+    different agent.
+    """
+    resolved = Path(path).resolve()
+    with resolved.open() as stream:
+        raw = yaml.safe_load(stream)
+    config = load_v3(raw, resolved)
+    if config.name != expected_name:
+        raise ValueError(
+            f"Registry entry for {expected_name!r} resolves to spec for {config.name!r}"
+        )
+    return config
+
+
 def agent_stop(
     name: str,
     registry: Registry | None = None,
@@ -42,6 +67,12 @@ def agent_stop(
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     handover_mod: Any = None,
     prune_runtime: bool = False,
+    config_resolver: Optional[Callable[[str], str]] = None,
+    stop_instance_resolver: Optional[Callable[[AgentConfig, Any], dict | None]] = None,
+    tui_stop_verifier: Optional[Callable[..., str]] = None,
+    drain_timeout_s: float = 0.0,
+    allow_active_turn_kill: bool | None = None,
+    managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -63,26 +94,99 @@ def agent_stop(
             made by ``agent_restart`` / force-``agent_start`` NEVER prune
             the runtime they are about to reuse — only the terminal
             ``sac agents stop`` entry point passes True.
+        config_resolver: Injectable agent-name to spec-path resolver. When the
+            registry row is absent, stop resolves the declared spec and tears
+            down that runtime instead of abandoning a live tmux session or
+            bridge solely because registry state was lost.
+        drain_timeout_s: Maximum seconds to wait for an active Hermes turn to
+            become idle. Zero observes once and refuses immediately.
+        allow_active_turn_kill: Explicit destructive override for the Hermes
+            turn guard. ``None`` follows ``force`` for compatibility with
+            direct force-stop callers; restart passes ``False`` explicitly.
     """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
-        if force:
-            return True
-        raise RuntimeError(f"Agent '{name}' not found in registry")
+        resolver = config_resolver
+        if resolver is None:
+            from ..config import resolve_config as resolver
+
+        try:
+            config_path = resolver(name)
+        except FileNotFoundError as exc:
+            if force:
+                return True
+            raise RuntimeError(
+                f"Agent '{name}' not found in registry and no spec could be "
+                f"resolved by name ({exc})"
+            ) from exc
+        entry = {"name": name, "config": config_path}
 
     # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
         config = load_config(entry["config"])
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if not force:
-            raise
-        # Config gone — just nuke the registry entry
-        registry.remove(name)
-        return True
+    except Exception as validation_error:  # stx-allow: fallback (reason: an upgraded validator must not strand an already-running process)
+        try:
+            config = _load_config_for_teardown(entry["config"], name)
+        except Exception:  # stx-allow: fallback (reason: an absent/unparseable spec leaves no safe runtime target; force may release only the stale registry row)
+            if not force:
+                raise validation_error
+            registry.remove(name)
+            return True
+        logger.warning(
+            "Stopping %s from its registered v3 spec despite current launch "
+            "validation failure: %s",
+            name,
+            validation_error,
+        )
 
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
+    from ..runtimes.tui_session import TuiSessionRuntime
+
+    is_tui_runtime = isinstance(runtime, TuiSessionRuntime)
+    instance_resolver = stop_instance_resolver or resolve_local_stop_instance
+    stop_instance = instance_resolver(config, runtime) if is_tui_runtime else None
+    if is_tui_runtime:
+        from ._stop_outcome import (
+            has_complete_scope_ownership,
+            verify_tui_incarnation_stopped,
+        )
+
+        verifier = tui_stop_verifier or verify_tui_incarnation_stopped
+        if stop_instance is not None and not has_complete_scope_ownership(
+            stop_instance
+        ):
+            verifier(
+                name=name,
+                instance=stop_instance,
+                runtime_stop_succeeded=False,
+                runtime=runtime,
+                config=config,
+            )
+
+    # Guard BEFORE handover snapshots, hooks, inbox teardown, or any other
+    # mutation. Hermes' native session registry is the authority for whether
+    # the model/tool turn is active; a TUI footer is only presentation and can
+    # be stale. A normal stop therefore leaves a working agent wholly intact.
+    if (
+        is_tui_runtime
+        and str(getattr(config, "harness", "") or "").lower() == "hermes"
+        and runtime.is_running(config)
+    ):
+        from ._managed_turn_drain import guard_managed_turn
+
+        guard_kwargs: dict[str, Any] = {}
+        if managed_turn_probe is not None:
+            guard_kwargs["probe"] = managed_turn_probe
+        guard_managed_turn(
+            config,
+            allow_active_turn_kill=(
+                force if allow_active_turn_kill is None else allow_active_turn_kill
+            ),
+            timeout_s=drain_timeout_s,
+            **guard_kwargs,
+        )
 
     hook_env = {
         "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
@@ -143,11 +247,31 @@ def agent_stop(
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
     # stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)
+    runtime_stop_succeeded = False
     try:
-        runtime.stop(config)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if not force:
+        runtime_stop_succeeded = bool(runtime.stop(config))
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        from ..runtimes.tui_session import TuiStopVerificationError
+
+        if isinstance(exc, TuiStopVerificationError):
+            if not is_tui_runtime:
+                raise
+            logger.warning(
+                "tmux teardown could not verify %r; checking its exact "
+                "launch-recorded systemd scope before deciding the stop",
+                name,
+            )
+        elif not force:
             raise
+
+    if is_tui_runtime:
+        verifier(
+            name=name,
+            instance=stop_instance,
+            runtime_stop_succeeded=runtime_stop_succeeded,
+            runtime=runtime,
+            config=config,
+        )
 
     # Post-stop hooks
     # stx-allow: fallback (reason: post-stop hooks are best-effort notification; a failed hook must not prevent registry cleanup)
@@ -236,6 +360,10 @@ def agent_restart(
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
     successor_auth_check: Optional[Callable[[str], None]] = None,
     thread_factory: Callable[..., Any] = threading.Thread,
+    engine_override: str | None = None,
+    probe_engine: bool | None = None,
+    drain_timeout_s: float = 0.0,
+    managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -306,11 +434,24 @@ def agent_restart(
             :func:`config.resolve_config`). Injected for tests so the
             no-registry-row fallback can be exercised against a real
             on-disk spec without monkeypatching internals.
+        engine_override: Select a DIFFERENT ``spec.engines`` entry for
+            the START leg of this restart (the CLI ``--engine <key>``).
+            Forwarded verbatim to :func:`._start.agent_start`, which
+            refuses rather than falling back when the key is unknown or
+            the engine cannot be honoured. ``None`` restarts on the
+            spec's declared default engine, which is the unchanged
+            behaviour for every legacy single-backend spec.
+        probe_engine: Whether the start leg runs the OPT-IN live
+            reachability probe. ``None`` defers to ``SAC_ENGINE_PROBE``
+            (default OFF — static resolution is the refusal surface).
         wait_for_stop_timeout_s: SIGTERM grace for the previous-runtime
             gate (see "Teardown gate" above) before it escalates to
             SIGKILL. Default 15 s — ~10× a healthy apptainer teardown.
             Set to 0 to skip the gate entirely (legacy behaviour,
             retained for tests of unrelated code paths).
+        drain_timeout_s: Maximum seconds to wait for an active Hermes turn to
+            finish before refusing the restart. This is distinct from the
+            post-SIGTERM process-exit timeout above.
 
     Raises:
         RuntimeError: When ``name`` has neither a registry row NOR a
@@ -369,6 +510,19 @@ def agent_restart(
     _auth_check = successor_auth_check or preflight_from_config_path
     _auth_check(config_path)
 
+    # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
+    # reason the credential pre-flight above does. ``agent_start`` refuses
+    # an unhonourable engine before it forces anything down; a RESTART
+    # stops FIRST, so that refusal — reached through the start leg at the
+    # bottom of this function — would fire on an agent that is already
+    # DOWN and leave it down. ``sac agents restart x --engine qwen38-27bb``
+    # (one typo) would have bought exactly that. Refusing here leaves the
+    # OLD process UP and re-startable, which is the whole point of the
+    # one-way-trip guard this stands beside.
+    from ._engine_select import check_engine_before_stop
+
+    check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
     # ad-hoc-launched agents with no row.
@@ -378,6 +532,11 @@ def agent_restart(
         force=True,
         runtime_factory=runtime_factory,
         handover_mod=handover_mod,
+        drain_timeout_s=drain_timeout_s,
+        # ``force=True`` here historically tolerates missing/stale registry
+        # state; it is NOT operator consent to kill an active model turn.
+        allow_active_turn_kill=False,
+        managed_turn_probe=managed_turn_probe,
     )
     # Escalate (SIGKILL) or RAISE — never "proceed to start anyway" into a
     # collision this gate already knows is coming. See ._stop_escalate.
@@ -390,20 +549,6 @@ def agent_restart(
         sleep_fn=sleep_fn,
         timeout_s=wait_for_stop_timeout_s,
     )
-    # Clear BOTH the persisted session_id AND session_id_history before the
-    # restart. A plain ``agent_restart`` previously called ``agent_start``
-    # WITHOUT force=True (so no session reset ran at all), and the
-    # ``--force`` path itself only cleared ``session_id`` — leaving a dead
-    # uuid in the append-only history that the runner's resume fallback
-    # RE-RESUMED and RE-CRASHED. That is why ``sac agents restart`` could
-    # not recover a DEAD session (clew/neurovista, 2026-05-24): the manual
-    # recovery had to clear both and back them up. Doing it here makes a
-    # plain restart self-recovering regardless of the start path's force
-    # flag. ``_clear_persisted_session_id`` backs both up to
-    # ``session_id_history.dead-<ts>`` and is a no-op on a clean state dir.
-    from ._session_reset import _clear_persisted_session_id
-
-    _clear_persisted_session_id(name)
     # ``assume_yes=True`` — a restart is an ALREADY-authorized action: the
     # ``sac agents restart`` CLI refuses without ``-y`` (see
     # ``cli_pkg/lifecycle/_restart.py``) and the MCP / public-API restart
@@ -449,6 +594,13 @@ def agent_restart(
         registry,
         assume_yes=True,
         force=True,
+        # A plain restart replaces the process while preserving the harness
+        # conversation. Only the CLI's explicit --fresh route may request a
+        # new conversation; internal force is teardown mechanics, not consent
+        # to erase session_id/session_id_history.
+        session_override="continue",
+        engine_override=engine_override,
+        probe_engine=probe_engine,
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,

@@ -19,6 +19,7 @@ import sys
 
 import click
 
+from .._logging import render_rich
 from .._state._peer_resolve import peers_with_registry
 from .._state.host_config import (
     Config,
@@ -26,7 +27,7 @@ from .._state.host_config import (
     load,
     ssh_control_options_str,
 )
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 from ._host_list_cmd import host_list, register_list_command
 from ._host_validate_cmd import host_validate, register_validate_command
 
@@ -166,7 +167,7 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
     \b
     Example:
       $ sac host exec spartan -- agent list --json
-      $ sac host exec bm198 -- sac db clean --json
+      $ sac host exec bm198 -- sac store clean --json
 
     PEER may be a ``peers:`` entry in config.yaml or any host in the
     scitex-dev registry that declares an ``ssh_alias``; config.yaml wins
@@ -333,13 +334,11 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
     elif reachable:
-        console.print(
-            f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}"
-        )
+        render_rich(f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}", __name__)
     else:
-        console.print(f"[red]unreachable[/red]  {peer}  exit={proc.returncode}")
+        render_rich(f"[red]unreachable[/red]  {peer}  exit={proc.returncode}", __name__)
         if proc.stderr.strip():
-            console.print(f"[dim]{proc.stderr.strip()[:200]}[/dim]")
+            render_rich(f"[dim]{proc.stderr.strip()[:200]}[/dim]", __name__)
     if not reachable:
         raise SystemExit(1)
 
@@ -431,7 +430,7 @@ def host_add_peer(peer_host: str, token: str) -> None:
     if not token:
         raise click.UsageError("TOKEN must be non-empty")
     dst = write_peer_token(peer_host=peer_host, token=token)
-    console.print(f"[green]ok[/green]  wrote {dst}")
+    render_rich(f"[green]ok[/green]  wrote {dst}", __name__)
 
 
 @host_group.command("list-peers")
@@ -447,14 +446,12 @@ def host_list_peers() -> None:
     tdir = default_peer_tokens_dir()
     hosts = list_peer_hosts()
     if not hosts:
-        console.print(
-            f"no peer tokens registered (dir: {tdir}). "
-            "Add one with: sac host add-peer <host> <token>"
-        )
+        render_rich(f"no peer tokens registered (dir: {tdir}). "
+            "Add one with: sac host add-peer <host> <token>", __name__)
         return
-    console.print(f"peer-tokens dir: {tdir}")
+    render_rich(f"peer-tokens dir: {tdir}", __name__)
     for h in hosts:
-        console.print(f"  {h}")
+        render_rich(f"  {h}", __name__)
 
 
 @host_group.command("remove-peer")
@@ -470,7 +467,7 @@ def host_remove_peer(peer_host: str) -> None:
         raise click.UsageError("PEER_HOST must be non-empty")
     path = default_peer_tokens_dir() / f"{peer_host}.token"
     if not path.exists():
-        console.print(f"no peer token to remove at {path}")
+        render_rich(f"no peer token to remove at {path}", __name__)
         return
     path.unlink()
-    console.print(f"[green]ok[/green]  removed {path}")
+    render_rich(f"[green]ok[/green]  removed {path}", __name__)

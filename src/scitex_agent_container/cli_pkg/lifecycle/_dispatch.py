@@ -49,25 +49,15 @@ if TYPE_CHECKING:
     from ._host_chain import ReachabilityOracle
 
 
-def _spawned_by() -> str:
-    """Launching identity for the lineage edge (Rule B/D).
-
-    The host that runs ``sac agents start`` and dispatches cross-host is
-    the spawn parent. A parent AGENT shelling out carries ``SAC_NAME``
-    in its env (recorded as ``spawned_by=<parent>``); a bare lead /
-    operator dispatch has none and records ``"cli"``.
-    """
-    from ..._env import getenv
-
-    return getenv("NAME") or "cli"
-
-
 def _dispatch_remote_start(
     name: str,
     peer: str,
     *,
     dry_run: bool = False,
     force: bool = False,
+    engine: str | None = None,
+    session_mode: str | None = None,
+    resume_id: str | None = None,
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
@@ -166,21 +156,33 @@ def _dispatch_remote_start(
     # env_preamble is honoured by build_ssh_argv (bash -lc wrapper).
     import json as _json
 
-    from ..._state.host_config import build_ssh_argv
     from ..._state._remote_sac_hint import remote_sac_not_found_hint
+    from ..._state.host_config import build_ssh_argv
     from ..._state.host_config import load as _load_host_config
-    from ..._state.state_db import record_instance_start
+    from ..._state.state_store import record_instance_start
 
     peers_map = _load_host_config().peers
     # NOTE: the remote process's state root (``SCITEX_DIR=<registry root>``)
     # is pinned inside ``build_ssh_argv`` — the single choke point every
     # remote-sac invocation funnels through — so it is NOT injected here.
     # See ``_state/_host_ssh._scitex_dir_prefix``.
-    ssh_argv = build_ssh_argv(
-        peer,
-        ["sac", "agents", "start", name, "--no-redispatch", "--json"],
-        peers_map,
+    # THE ENGINE TRAVELS WITH THE VERB, same rule as the restart dispatch.
+    # This argv was a literal until 2026-09-05, so
+    # `sac agents start <peer-pinned-agent> --engine <e>` dropped the engine
+    # here and started the agent on its DEFAULT, with NO message at all. The
+    # restart path at least printed something; this one was silent, which is
+    # worse: the agent comes up, looks healthy, and runs the wrong backend.
+    from ._dispatch_start_argv import remote_start_argv, spawned_by
+
+    remote_argv = remote_start_argv(
+        name,
+        engine=engine,
+        session_mode=session_mode,
+        resume_id=resume_id,
     )
+    # login=True for the same reason as the restart dispatch: an agent start
+    # on the peer needs the secrets only its login profile carries.
+    ssh_argv = build_ssh_argv(peer, remote_argv, peers_map, login=True)
     ssh_result = subprocess.run(
         ssh_argv,
         capture_output=True,
@@ -228,7 +230,7 @@ def _dispatch_remote_start(
         a2a_port=bound,
         bound_port=bound,
         remote=True,
-        spawned_by=_spawned_by(),
+        spawned_by=spawned_by(),
     )
     # ADR-0014 — paired comms_nodes entry for the cross-host agent so peers
     # resolving via the federated graph (not just the local instances table)
@@ -237,7 +239,7 @@ def _dispatch_remote_start(
     # for and no window in which a just-placed agent is unaddressable.
     if bound is not None:
         try:
-            from ..._state.state_db_nodes import register_comms_node
+            from ..._state.state_store_nodes import register_comms_node
 
             register_comms_node(
                 name=name,
@@ -264,6 +266,9 @@ def try_dispatch(
     *,
     dry_run: bool,
     force: bool,
+    engine: str | None = None,
+    session_mode: str | None = None,
+    resume_id: str | None = None,
     local_names: "Collection[str] | None" = None,
     reachability: "ReachabilityOracle | None" = None,
     dispatcher: "Callable[..., int] | None" = None,
@@ -311,6 +316,12 @@ def try_dispatch(
     :func:`_dispatch_remote_start` — injection seams so tests exercise the
     routing decision hermetically, with no network and no PATH shim.
 
+    ``engine`` is the CLI ``--engine <key>`` and is FORWARDED to the peer, so a
+    named engine survives the hop. An injected ``dispatcher`` therefore has to
+    accept the keyword; that is intentional, because a test double that silently
+    ignored it would pass while the production argv dropped it, which is exactly
+    the defect this parameter exists to close.
+
     Raises:
         RuntimeError: ``spec.host`` resolves nowhere usable (message body from
             ``_host_routing.format_route_error``).
@@ -337,13 +348,14 @@ def try_dispatch(
             peer=dispatch_peer,
             dry_run=dry_run,
             force=force,
+            engine=engine,
+            session_mode=session_mode,
+            resume_id=resume_id,
         )
     except Exception:
         # The failure is re-raised UNCHANGED — this only adds the sentence the
         # operator needs to attribute it. See :func:`_explain_pinned_hop_failure`.
-        _explain_pinned_hop_failure(
-            config.name, config.hosts_spec.host, dispatch_peer
-        )
+        _explain_pinned_hop_failure(config.name, config.hosts_spec.host, dispatch_peer)
         raise
     return True
 
@@ -408,7 +420,7 @@ def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
     host, a2a_port, started_at, ended_at, ...). Callers care about
     ``host`` and ``a2a_port`` mostly.
 
-    Resolution chain for current_host matches ``state_db._resolve_host``
+    Resolution chain for current_host matches ``state_store._resolve_host``
     (env override → ``host.canonical`` → ``host.aliases`` → ``hostname -s``),
     so a row written under one alias is matched when the same alias is
     set on this run.
@@ -418,7 +430,7 @@ def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
     instances row is a legitimate "not running" signal, but a missing
     database when one was expected is a configuration error.
     """
-    from ..._state.state_db import _resolve_host, list_active_instances
+    from ..._state.state_store import _resolve_host, list_active_instances
 
     rows = list_active_instances()
     matching = [r for r in rows if r.get("name") == name]
@@ -475,9 +487,23 @@ def try_dispatch_remote(
     if found is None:
         return False
     peer, row = found
+    # The REGISTRY is a route source too, not only config.yaml. `sac host list`
+    # already resolves peers from it (_state._peer_resolve.peers_with_registry),
+    # but this dispatch path consulted only the config mapping — so restart,
+    # delete, send and status dead-ended with "Cannot <verb> cross-host without
+    # an ssh target" on any host whose config.yaml has no peers: section, even
+    # though the peer was perfectly routable. Measured 2026-09-19: an operator
+    # instruction to restart an agent failed exactly this way, and the only
+    # working path was `sac host exec <peer> -- sac agents restart <name>`.
+    # Merge the registry in BEFORE concluding the peer is unreachable; config
+    # entries keep precedence and glob resolution is unchanged (the merged
+    # mapping is a PeersMap).
+    from ..._state._peer_resolve import peers_with_registry
+
+    peers = peers_with_registry(dict(peers))
     if peer not in peers:
         raise RuntimeError(
-            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"Agent {name!r} active on peer {peer!r} per the shared store, but "
             f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
             f"peers: section. Cannot {verb} cross-host without an ssh "
             f"target. Add the peer entry and retry."

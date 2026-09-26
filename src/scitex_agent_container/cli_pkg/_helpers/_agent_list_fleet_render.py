@@ -27,6 +27,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
+
+from ..._logging import render_rich
+from .._terminal_text import terminal_safe
 from ._agent_list_fleet_model import NOT_QUERIED, FleetListing
 
 __all__ = [
@@ -41,7 +45,7 @@ __all__ = [
 def resolution_echo(listing: FleetListing) -> list[str]:
     """``--host localhost → scitex-compute-04`` for every rewrite that happened."""
     return [
-        f"--host {requested} → {resolved}"
+        f"--host {terminal_safe(requested)} → {terminal_safe(resolved)}"
         for requested, resolved in listing.resolutions
     ]
 
@@ -60,7 +64,7 @@ def _suppression_note(listing: FleetListing) -> str:
     if n <= 0:
         return ""
     noun = "peer" if n == 1 else "peers"
-    return f"{n} {noun} NOT queried ({listing.suppressed_reason})"
+    return f"{n} {noun} NOT queried ({terminal_safe(listing.suppressed_reason)})"
 
 
 def summary_line(listing: FleetListing) -> str:
@@ -68,7 +72,10 @@ def summary_line(listing: FleetListing) -> str:
     total = listing.total
     noun = "host" if total == 1 else "hosts"
     head = f"{listing.responded}/{total} {noun} responded"
-    parts = [f"{r.host}: {r.detail}" for r in listing.unanswered]
+    parts = [
+        f"{terminal_safe(r.host)}: {terminal_safe(r.detail)}"
+        for r in listing.unanswered
+    ]
     note = _suppression_note(listing)
     if note:
         parts.append(note)
@@ -80,7 +87,8 @@ def instrument_line(listing: FleetListing) -> str:
     if not listing.reports:
         return ""
     cells = [
-        f"{r.host}={r.instrument}" + ("" if r.responded else " (no answer)")
+        f"{terminal_safe(r.host)}={terminal_safe(r.instrument)}"
+        + ("" if r.responded else " (no answer)")
         for r in listing.reports
     ]
     return "instruments: " + ", ".join(cells)
@@ -112,13 +120,13 @@ def print_fleet_header(console: Any, listing: FleetListing) -> None:
     as a failure would train the operator to ignore it.
     """
     for line in resolution_echo(listing):
-        console.print(f"[cyan]{line}[/cyan]")
+        render_rich(Text(line, style="cyan"), __name__)
     complete = listing.responded == listing.total and not listing.suppressed_reason
     colour = "green" if complete else "yellow"
-    console.print(f"[{colour}]{summary_line(listing)}[/{colour}]")
+    render_rich(Text(summary_line(listing), style=colour), __name__)
     instruments = instrument_line(listing)
     if instruments:
-        console.print(f"[dim]{instruments}[/dim]")
+        render_rich(Text(instruments, style="dim"), __name__)
 
 
 def hosts_payload(listing: FleetListing) -> dict:

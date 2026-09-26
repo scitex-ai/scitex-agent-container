@@ -256,7 +256,7 @@ def propagate_remote_start(
 
     agent_name = _name_from_target(name)
     bound = peer_state.get("a2a_port")
-    from .._state.state_db import record_instance_start
+    from .._state.state_store import record_instance_start
 
     record_instance_start(
         name=agent_name,

@@ -112,7 +112,7 @@ def db_path(tmp_path: Path, pg_schema: str):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -126,14 +126,14 @@ def db_path(tmp_path: Path, pg_schema: str):
 
 
 def _on_this_host() -> str:
-    from scitex_agent_container._state.state_db import _resolve_host
+    from scitex_agent_container._state.state_store import _resolve_host
 
     return _resolve_host(None)
 
 
 def _seed_row(name: str, *, screen: str | None, host: str | None = None) -> None:
     """Insert a REAL ``instances`` row, exactly as a start would."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name=name, host=host or _on_this_host(), screen=screen)
 

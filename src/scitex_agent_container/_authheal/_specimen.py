@@ -136,7 +136,7 @@ def _auth_status_table(sac_bin: str) -> str:
     return _run([sac_bin, "agents", "auth-status"])
 
 
-def _state_db_row(agent: str) -> str:
+def _state_store_row(agent: str) -> str:
     """The ``agent_auth_state`` row, pipe-separated as in the operator's example."""
     # READ THROUGH THE OWNING MODULE, not through its storage. This used to
     # open ``state.db`` directly and SELECT from ``agent_auth_state``. The same
@@ -195,7 +195,7 @@ def capture_specimen(
         f"--- pane pid ---\n{pid}\n{_ps_line(pid)}\n"
         f"--- pane capture (full scrollback tail {_SCROLLBACK_LINES}) ---\n"
         f"{_run(['tmux', 'capture-pane', '-t', exact_target(f'{_TUI_PREFIX}{agent}'), '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
-        f"--- state.db row ---\n{_state_db_row(agent)}\n"
+        f"--- shared-store row ---\n{_state_store_row(agent)}\n"
     )
     target = specimen_path(agent, now=now, root=root)
     # stx-allow: fallback (reason: a specimen that cannot reach disk must return

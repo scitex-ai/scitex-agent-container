@@ -35,10 +35,11 @@ no-op in that case (no event emitted, no state mutated).
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+import scitex_logging as slogging
 
 from .._account.backoff_agent import backoff_agent
 from .._account.quota_cache import read_quota_entry
@@ -50,7 +51,7 @@ from .._account.rate_limit_classifier import (
 from .._account.rate_limit_signals import RateLimitSignal, detect_signal_from_text
 from .._account.rotate_account import rotate_account
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["RATE_LIMITED_CAUSE", "ReactiveOutcome", "handle_rate_limit_failure"]
 

@@ -231,6 +231,7 @@ def test_file_trust_no_match_no_folder():
 def test_all_handlers_present():
     # Arrange
     expected = {
+        "hermes-contributor-tier",
         "bypass-permissions",
         "dev-channels",
         "thinking-effort",
@@ -778,3 +779,22 @@ def test_detect_still_matches_live_theme_selection_modal():
     name = detect(pane)
     # Assert
     assert name == "theme-selection"
+
+
+def test_hermes_contributor_tier_accepts_training():
+    """Fleet runs the contributor tier deliberately: answer y + Enter."""
+    from scitex_agent_container.runtimes.prompts import (
+        _detect_hermes_contributor_tier,
+        detect_and_respond,
+    )
+
+    content = (
+        "!!! CONTRIBUTOR TIER \u2014 TRAINS ON YOUR DATA !!!\n"
+        "Use this model for this invocation? [y/N]"
+    )
+    assert _detect_hermes_contributor_tier(content) is True
+    assert _detect_hermes_contributor_tier("bypass permissions ready") is False
+    sent: list[str] = []
+    result = detect_and_respond(content, set(), lambda k: sent.append(k))
+    assert result == "hermes-contributor-tier"
+    assert sent == ["y", "Enter"]

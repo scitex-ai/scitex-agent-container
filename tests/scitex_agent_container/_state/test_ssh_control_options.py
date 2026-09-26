@@ -1,6 +1,6 @@
 """Tests for :mod:`scitex_agent_container._state.host_config` ssh ControlMaster wiring.
 
-Conventions (mirroring test_dispatch_ledger.py / test_state_db_turns_*.py):
+Conventions (mirroring test_dispatch_ledger.py / test_state_store_turns_*.py):
 
   * One assertion per test (STX-TQ007). Related invariants collapse
     into ``pytest.parametrize``.
@@ -34,6 +34,8 @@ import tempfile
 
 import pytest
 from click.testing import CliRunner
+
+from scitex_agent_container._network.peer import PeerError
 
 # Re-import the shared helpers package fixtures (env_save_restore,
 # subprocess_shim) via the conftest at tests/scitex_agent_container/.
@@ -617,12 +619,15 @@ def test_network_peer_post_turn_via_ssh_argv_includes_ControlMaster_auto(
     from scitex_agent_container._network.peer import _post_turn_via_ssh
 
     # Act
-    _post_turn_via_ssh(
-        "ssh://example.invalid:9999/v1/turn",
-        text="hello",
-        exit_after=False,
-        timeout_s=5,
-    )
+    try:
+        _post_turn_via_ssh(
+            "ssh://example.invalid:9999/v1/turn",
+            text="hello",
+            exit_after=False,
+            timeout_s=5,
+        )
+    except PeerError:
+        pass
     argv = subprocess_shim.argv_for("ssh")
 
     # Assert
@@ -639,19 +644,22 @@ def test_network_peer_post_turn_via_ssh_argv_includes_control_path(
     from scitex_agent_container._network.peer import _post_turn_via_ssh
 
     # Act
-    _post_turn_via_ssh(
-        "ssh://example.invalid:9999/v1/turn",
-        text="hello",
-        exit_after=False,
-        timeout_s=5,
-    )
+    try:
+        _post_turn_via_ssh(
+            "ssh://example.invalid:9999/v1/turn",
+            text="hello",
+            exit_after=False,
+            timeout_s=5,
+        )
+    except PeerError:
+        pass
     argv = subprocess_shim.argv_for("ssh")
 
     # Assert
     assert any(isinstance(a, str) and a.startswith("ControlPath=") for a in argv)
 
 
-def test_network_peer_post_turn_via_ssh_returns_parsed_text(
+def test_network_peer_post_turn_via_ssh_rejects_synchronous_text(
     tmp_path, env_save_restore, subprocess_shim
 ):
     # Arrange — sanity check the full happy path through the shim.
@@ -661,15 +669,14 @@ def test_network_peer_post_turn_via_ssh_returns_parsed_text(
     from scitex_agent_container._network.peer import _post_turn_via_ssh
 
     # Act
-    reply = _post_turn_via_ssh(
-        "ssh://example.invalid:9999/v1/turn",
-        text="hello",
-        exit_after=False,
-        timeout_s=5,
-    )
-
     # Assert
-    assert reply == "ok"
+    with pytest.raises(PeerError, match="canonical xch_"):
+        _post_turn_via_ssh(
+            "ssh://example.invalid:9999/v1/turn",
+            text="hello",
+            exit_after=False,
+            timeout_s=5,
+        )
 
 
 # ---------------------------------------------------------------------------

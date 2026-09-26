@@ -36,6 +36,7 @@ def _render(template: str) -> str:
         name="alpha",
         host="scitex-compute-04",
         home="/home/agent",
+        overlay="/scratch/sac/agents/alpha/overlay",
         credentials_files="[]",
     )
 
@@ -81,9 +82,7 @@ def test_every_registered_template_carries_the_header():
     # Arrange
     # Act
     missing = [
-        key
-        for key, tmpl in _TEMPLATES.items()
-        if _DESIGN_DOC_LINE not in _render(tmpl)
+        key for key, tmpl in _TEMPLATES.items() if _DESIGN_DOC_LINE not in _render(tmpl)
     ]
     # Assert
     assert missing == []

@@ -704,7 +704,7 @@ def _channel_rows(sql: str) -> list:
     which no longer exists. The queries are unchanged apart from the table
     name and the placeholder style.
     """
-    from scitex_agent_container._state.state_db_channel_store import (
+    from scitex_agent_container._state.state_store_channel_store import (
         new_channel_connection,
     )
 
@@ -1013,3 +1013,40 @@ def test_a2a_published_ack_event_is_not_re_acked(_persisted_ack_event):
     should = _should_auto_ack(event)
     # Assert
     assert should is False
+
+
+def test_a2a_send_path_preserves_structural_receipt_metadata(_isolated_db, tmp_path):
+    # Arrange
+    metadata = {
+        "from_agent": "bob",
+        "ack": True,
+        "kind": "reaction",
+        "dispatch_id": "dispatch-original",
+        "extra": {"reacted_dispatch_id": "dispatch-original"},
+    }
+
+    yml = _write_yaml(tmp_path, "alice")
+    app = build_app([yml])
+    payload = _ack_send_payload(from_agent="bob")
+    payload["params"]["metadata"] = metadata
+    # Act
+    with TestClient(app) as client:
+        response = client.post("/agents/alice/message:send", json=payload)
+    rows = _channel_rows(
+        "SELECT meta_json FROM sac_channel_events WHERE target = 'alice'"
+    )
+    event = json.loads(rows[0][0])
+    # Assert
+    assert (
+        response.status_code in (200, 201, 202),
+        event["ack"],
+        event["kind"],
+        event["dispatch_id"],
+        event["extra"],
+    ) == (
+        True,
+        True,
+        "reaction",
+        "dispatch-original",
+        {"reacted_dispatch_id": "dispatch-original"},
+    ), response.text

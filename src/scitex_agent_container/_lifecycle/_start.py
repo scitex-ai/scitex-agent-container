@@ -14,18 +14,19 @@ from typing import Any, Callable, Optional
 
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
-from ._a2a_port import resolve_a2a_port
+
+# Re-exported for back-compat: these ran inline in ``agent_start`` before the
+# pre-launch region moved to ``_start_prelaunch`` (512-line cap), and callers /
+# tests import them from here. The CALLS now live in that module.
+from ._a2a_port import resolve_a2a_port  # noqa: F401
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
-
-# Re-exported from _start_failure_diag for back-compat: this helper lived here
-# before the 512-line-cap split.
-from ._identity_drift import check_board_identity_at_launch
+from ._identity_drift import check_board_identity_at_launch  # noqa: F401
 from ._instances import record_local_instance as _record_local_instance
-from ._layers_preflight import check_to_home_layers_at_launch
+from ._layers_preflight import check_to_home_layers_at_launch  # noqa: F401
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
-from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
+from ._spawn_gate import enforce_spawn_gate, persist_acl_policy  # noqa: F401
 
 # Re-exported from _start_announce for back-compat: this helper lived here
 # before the 512-line-cap split.
@@ -44,7 +45,16 @@ from ._start_preflight import (  # noqa: F401
     _rotate_to_healthy_account,
     _verify_real_liveness,
 )
+from ._start_prelaunch import run_prelaunch
 from ._start_supervision import start_background_supervision
+from ._worktree_policy import enforce_task_worktree_policy
+
+
+def _should_clear_persisted_session(
+    *, force: bool, explicit_session_override: str | None
+) -> bool:
+    """Separate process replacement from explicit conversation replacement."""
+    return force and explicit_session_override == "fresh"
 
 
 def agent_start(
@@ -54,6 +64,8 @@ def agent_start(
     *,
     session_override: str | None = None,
     resume_id_override: str | None = None,
+    engine_override: str | None = None,
+    probe_engine: bool | None = None,
     dry_run: bool = False,
     no_preflight: bool = False,
     foreground: bool = False,
@@ -77,6 +89,20 @@ def agent_start(
         force: Restart even when the agent is already running.
         session_override: Override ``spec.claude.session``.
         resume_id_override: Override ``spec.claude.resume_id``.
+        engine_override: Select a DIFFERENT ``spec.engines`` entry for
+            THIS start (the CLI ``--engine <key>``). ``None`` uses the
+            spec's declared default engine. An unknown key raises rather
+            than degrading to the default, and an engine that cannot be
+            honoured refuses the start rather than falling back — see
+            :mod:`._engine_select` (operator answers Q2 / Q3).
+        probe_engine: Whether to run the OPT-IN live reachability probe
+            of the selected engine's ``base_url``. ``None`` defers to
+            ``SAC_ENGINE_PROBE``, whose default is OFF: STATIC
+            resolution runs on every start and is the whole refusal
+            surface by default, because making every start depend on a
+            possibly-remote endpoint answering is how a refusal grounds
+            a fleet. Even with the probe on, only an ACTIVE connection
+            refusal refuses; a timeout is "could not tell" and warns.
         dry_run: Materialize the workspace without launching the agent.
         no_preflight: Skip the runtime preflight (CLI ``--no-preflight``).
         foreground: Run the runtime in the foreground.
@@ -96,11 +122,10 @@ def agent_start(
             though ``-y`` was explicitly passed at the CLI. Ignored on
             the non-SIF (direct) path — it has no interactive gate of
             its own to satisfy.
-        strict_drift: Whether a STALE spec source blocks the launch.
-            ``None`` (default) resolves to STRICT unless
-            ``SAC_ALLOW_STALE_SPEC`` / ``SAC_STRICT_DRIFT=0`` says
-            otherwise; ``True`` forces strict, ``False`` forces lenient
-            (what ``--allow-stale-spec`` passes).
+        strict_drift: Compatibility-only input. Spec authority validation is
+            always strict; ``False`` and legacy environment variables cannot
+            bypass it. Intentional detached snapshots are accepted only by
+            exact immutable source/commit/spec-digest policy.
         runtime_factory: Injectable real callable that builds an SDK
             runtime from an :class:`AgentConfig`. Default is the real
             :func:`_get_runtime`.
@@ -125,7 +150,7 @@ def agent_start(
     # lineage + shells the real ``sac agent start``. Bypassed on
     # dry-run (dry-run inspects the LOCAL planned workspace). Fail-loud
     # contract lives in :func:`_in_sif_broker.maybe_broker_in_sif_spawn`.
-    from ._in_sif_broker import maybe_broker_in_sif_spawn
+    from ._in_sif_broker import is_in_sif, maybe_broker_in_sif_spawn
 
     # PR-α (lead msg d96a468c 2026-06-06): propagate --foreground /
     # --one-shot through the broker so the host listen's /agents handler
@@ -137,6 +162,24 @@ def agent_start(
     # fires BEFORE the local force branch below, so dropping it silently
     # downgraded an in-SIF RESTART into an unforced host start that
     # no-op'd over the live agent and still reported SUCC + rc=0.
+    # The broker's POST body threads force/foreground/one_shot/assume_yes
+    # EXPLICITLY and drops anything not listed, so an --engine passed
+    # in-SIF would reach the host as a plain start on the DEFAULT engine
+    # — the silent fallback operator answer Q3 rules out, arriving by way
+    # of a dropped field rather than a decision. Refuse instead, naming
+    # the command that works. (Threading engine through the broker body,
+    # the host listen handler and its argv builder is the follow-up.)
+    if engine_override and not dry_run and is_in_sif():
+        raise RuntimeError(
+            f"--engine {engine_override!r} cannot be honoured from inside "
+            "an apptainer SIF: the start is brokered to the host's `sac "
+            "listen`, whose request body has no engine field, so the "
+            "engine would be silently dropped and the agent would start "
+            "on its DEFAULT engine. sac refuses to start rather than "
+            f"start on a backend you did not ask for. Run on the host: "
+            f"sac agents start {config.name} --force --yes --engine "
+            f"{engine_override}"
+        )
     if maybe_broker_in_sif_spawn(
         config.name,
         dry_run=dry_run,
@@ -148,115 +191,39 @@ def agent_start(
     ):
         return True
 
-    # TWO SPEC-SANITY GATES, refuse-by-default, each with its OWN named
-    # override (operator ruling 2026-08-10 — never a blanket --force).
-    # (1) spec source BEHIND/DIVERGED = a possibly STALE spec; escape hatch
-    # ``--allow-stale-spec``. AHEAD / non-git / unreachable still start.
-    # (2) undeclared ``to_home_layers``; escape hatch
-    # ``--allow-undeclared-layers``, and the refusal itself is still gated
-    # on the fleet migration (``_layers_preflight.ENFORCE_BY_DEFAULT``).
-    # (2) is called HERE, once, not in the resolver a start invokes twice.
-    _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
-    check_to_home_layers_at_launch(config)
-
-    # Launch-time BOARD IDENTITY check, same contract as the drift check
-    # above: LOUD WARNING, never a block, never crashes a launch. An agent
-    # whose name and SCITEX_TODO_AGENT_ID disagree is one process with two
-    # identities — peers address it by one, it owns cards and polls its
-    # inbox as the other — and every symptom is SILENT, because a card
-    # query for the wrong spelling returns a well-formed empty list rather
-    # than an error. Measured 2026-08-09: that hid a P1 from the agent
-    # that owned it for over an hour. See :mod:`._identity_drift`.
-    check_board_identity_at_launch(config)
-
-    # CREDS-PHASE1 — auto-rotate ``spec.claude.account`` to a healthy
-    # stored account when the pinned one's snapshot is EXPIRED/ABSENT.
-    # Runs before forced_stop / runtime build so a "no healthy account"
-    # error never tears down a running agent we cannot restart. Unpinned
-    # agents (account="") are untouched: they continue to use the host
-    # live ``.credentials.json`` via the existing bind. See
-    # :func:`_rotate_to_healthy_account` for the contract.
-    _rotate_to_healthy_account(config)
-
-    if session_override:
-        config.claude.session = session_override
-    if resume_id_override is not None:
-        config.claude.resume_id = resume_id_override
-    if one_shot and not (config.startup_prompts or config.startup_commands):
-        raise RuntimeError(
-            f"--one-shot requires spec.startup_prompts (or legacy "
-            f"startup_commands) on agent '{config.name}'; nothing to run."
-        )
-
-    # Spawn-permission gate + lineage record (ADR-0010 Rule B / Phase 2:
-    # "起動経路 = 記録経路 = ACL経路" collapsed to one path). EVERY spawn
-    # path funnels through core ``agent_start`` — the MCP ``agent_start``
-    # tool and the plain ``sac agents start`` CLI both reach here, not
-    # just the ``sac listen`` ``POST /agents`` handler. Enforcing the
-    # gate here (rather than only in the server handler) means an
-    # agent-from-agent spawn is ACL-gated WITHOUT requiring a running
-    # ``sac listen`` daemon — clew on Spartan can spawn capsule children
-    # with no extra process. The caller identity is the parent agent's
-    # ``SAC_NAME`` env (``None`` → admin / operator / lead → always
-    # allowed). On allow with a real caller, the ``caller → child`` edge
-    # is written to the ``lineage`` table — the same identity that
-    # ``record_local_instance`` records as ``instances.spawned_by``, so
-    # the two are no longer split-brained. A denied spawn raises
-    # ``SpawnDeniedError`` HERE, before the runtime is built or touched.
-    # The server handler still passes its request ``caller`` verbatim and
-    # records lineage itself; its subprocess inherits no ``SAC_NAME`` on
-    # the bare host, so this gate sees ``caller=None`` (admin) and does
-    # not double-record — and ``record_lineage`` is idempotent regardless.
-    enforce_spawn_gate(config.name)
-
-    # Phase-3 (ADR-0010 Step 2) — publish the loaded spec's per-spec
-    # ACL policy into ``node_comms_policy`` so check_send_acl /
-    # check_spawn / derive_group see the current outbound, inbound,
-    # group=solitary, and may_spawn rules on the next request. The
-    # upsert is idempotent and re-runs on every start so a spec edit
-    # becomes live without manual state.db surgery. Defaults preserve
-    # pre-Phase-3 behaviour, so an existing YAML with no spec.comms /
-    # spec.lineage blocks writes the all-allow / may_spawn=True row.
-    #
-    # NOT ON A DRY RUN. This publish was a write to the host's own
-    # state.db, where a dry run doing it was untidy but contained. The
-    # policy now lives in ONE store shared by the whole fleet, so the same
-    # line makes `sac agents start --dry-run` mutate fleet-wide ACL state
-    # for an agent it is not starting -- and makes the dry run fail
-    # outright wherever that store is unreachable, which is how CI found
-    # it: the smoke test drives the real CLI against the isolation DSN and
-    # got `exit=1 ... Cannot connect to Postgres store 'node_comms_policy'`.
-    # A dry run answers "would this start?" and must not write to do it.
-    if not dry_run:
-        persist_acl_policy(config)
-
-    # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
-    # gets a fresh allocator claim; an explicit int is recorded so
-    # ``sac listen`` can find the port via state.db without re-parsing
-    # the spec.yaml.
-    resolve_a2a_port(config)
-
-    # Bug #41 preflight — refuse to start when spec.claude.channels
-    # requests ``server:claude-code-telegrammer`` but spec.a2a.port is
-    # unset/null. Without the /v1/turn endpoint the standalone
-    # telegrammer poller has no URL to POST inbound Telegram to and an
-    # idle agent silently won't wake. Catching this here makes the
-    # misconfig loud at ``sac agents start`` time rather than the
-    # operator discovering it via "agent doesn't reply to Telegram"
-    # three messages later. See ``runtimes/_sdk_channels.
-    # validate_telegrammer_wake_wiring`` for the contract; F3 (MCP key
-    # mis-keyed in to_home/.mcp.json) is covered by the matching
-    # runner-side WARN/ERROR logs in ``_wire_telegrammer_wake``.
-    from ..runtimes._sdk_channels import validate_telegrammer_wake_wiring
-
-    validate_telegrammer_wake_wiring(
-        getattr(config.claude, "channels", None),
-        getattr(config.a2a, "port", None),
-        agent_name=config.name,
+    # The PRE-LAUNCH GAUNTLET — every gate that must hold before the
+    # runtime is built and before any forced stop, so a refusal never
+    # tears down a running agent it cannot bring back: the two
+    # spec-sanity gates, board identity, credential rotation, the
+    # start-time overrides (session / resume id / ENGINE), the one-shot
+    # requirement, the spawn ACL gate, the ACL policy publish, the a2a
+    # port, and the telegrammer wake wiring. Body lives in
+    # ``_start_prelaunch`` (per-file line cap); the region moved verbatim.
+    run_prelaunch(
+        config,
+        config_path,
+        strict_drift=strict_drift,
+        session_override=session_override,
+        resume_id_override=resume_id_override,
+        engine_override=engine_override,
+        probe_engine=probe_engine,
+        one_shot=one_shot,
+        dry_run=dry_run,
     )
 
+    uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
+
+    if uses_production_runtime and not dry_run:
+        from ..runtimes.tui_session import TuiSessionRuntime
+
+        if isinstance(runtime, TuiSessionRuntime):
+            from .._state.state_store_instances_store import (
+                ensure_instances_ownership_schema,
+            )
+
+            ensure_instances_ownership_schema()
 
     # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (force-restart
     # stops here; ``agent_restart`` starts there).
@@ -296,6 +263,14 @@ def agent_start(
         )
     )
     really_running = verdict.is_alive
+    if uses_production_runtime and (dry_run or not really_running or force):
+        enforce_task_worktree_policy(config, provision=not dry_run)
+    if really_running:
+        from ._start_engine_noop import assert_explicit_engine_noop_safe
+
+        assert_explicit_engine_noop_safe(
+            config, engine_override, force=force, dry_run=dry_run
+        )
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
     if really_running:
@@ -368,13 +343,13 @@ def agent_start(
     if forced_stop:
         resolve_a2a_port(config)
 
-    # --force = "I want a clean start". Wipe the persisted SDK
-    # ``session_id`` resume marker so the next runtime.start cannot
-    # silently re-resume an aged-out conversation (server-side TTL is
-    # finite; a stale id surfaces as
-    # ``ProcessError: Command failed with exit code 1`` ~90s into the
-    # first turn — see fix/start-force-clears-session-id).
-    if force:
+    # Process replacement and conversation replacement are independent.
+    # ``--force`` guarantees a clean PROCESS cycle; only an explicitly
+    # requested ``--fresh`` session override may wipe the conversation.
+    if _should_clear_persisted_session(
+        force=force,
+        explicit_session_override=session_override,
+    ):
         _clear_persisted_session_id(config.name)
 
     # Hook env vars — let hooks know about the agent context
@@ -408,7 +383,11 @@ def agent_start(
     # skill can pick up the snapshot before claude actually launches.
     _h = handover_mod if handover_mod is not None else _load_handover_module()
 
-    _h.ensure_instance_uuid(config)
+    launch_incarnation = _h.ensure_instance_uuid(config)
+    if uses_production_runtime:
+        from ._worktree_policy import refresh_task_worktree_owner
+
+        refresh_task_worktree_owner(config)
     try:
         _h.hydrate_from_hub(config)
     except Exception:
@@ -435,6 +414,22 @@ def agent_start(
 
     kill_orphan_mcp_children(config.name)
 
+    # Reap detached durable-inbox consumers left by an older launch or by the
+    # pre-rename Hermes bridge lifecycle.  Exact agent/spec/module matching is
+    # required; no command-substring pkill is used.  At this point singleton
+    # teardown is complete, so this launch has no authoritative sidecar yet.
+    from ..runtimes._inbox_sidecar_reconcile import reconcile_inbox_sidecars
+    from ..runtimes.tui_session import state_dir_for_config
+
+    reconcile_inbox_sidecars(
+        name=config.name,
+        config_path=str(getattr(config, "config_path", "") or config_path),
+        incarnation_id=(
+            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "") or None
+        ),
+        state_dir=state_dir_for_config(config),
+    )
+
     # Spec-pinned session resume (``spec.claude.session: resume`` +
     # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
     # marker from the pinned uuid — but ONLY when no marker exists yet
@@ -446,7 +441,7 @@ def agent_start(
     seed_pinned_session_id(config, runtime)
 
     # Twin context-inheritance (``sac agents twin``). When this spec carries
-    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # ``SAC_FORK_PARENT`` in its env it is a twin: resolve the parent's
     # CURRENT session uuid, pin this twin's resume to it, and copy the
     # parent's transcript into the twin's container-home projects store so
     # the resume finds it. Host-side (paths always resolve on the bare host)

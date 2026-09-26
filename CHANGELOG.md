@@ -6,6 +6,160 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Lifecycle spec authority now fails closed instead of warning through
+  provenance uncertainty.** Starts refuse non-git/unreachable sources, dirty
+  repositories, a main checkout not on `develop`, linked feature worktrees,
+  and live sources that are ahead, behind, or diverged. The former
+  `--allow-stale-spec`/environment bypass is removed. Intentional detached
+  `sac-authority/<source>-<commit>` snapshots remain supported only when their
+  origin identity, HEAD, clean tree, and loaded spec blob match exactly.
+- **Prompt assembly is explicit, provenance-checked, and harness-neutral.**
+  Omitting `startup_prompts` no longer injects a Claude/scitex-todo prompt,
+  while an explicit empty list remains a true no-op. Declared
+  `to_home_layers` now control the files that are actually materialized, and
+  each home backing receives a SHA-256 manifest covering prompt sources,
+  projections, skills, commands, and startup turns. Hermes launch requires a
+  verified neutral root `AGENTS.md`, embeds those exact bytes through
+  `agent.system_prompt`, and fails with a migration hint instead of silently
+  translating a legacy `CLAUDE.md` or accepting divergent home projections.
+- **Remote image staging includes SAC's console bootstrap package.** The HPC
+  bake context now copies `_scitex_agent_container_bootstrap` alongside the
+  main package, matching the wheel manifest and preventing the image `%test`
+  from installing a `sac` entrypoint whose import target is absent.
+- **The base-image Hermes version gate matches its immutable source pin.**
+  Hermes commit `b635448768d6ba49bc1f75bd381f32336dde7ac8` declares version
+  0.21.2, so the recipe, artifact label, package manifest, and integration
+  contract now verify 0.21.2 instead of rejecting the correctly pinned source
+  as 0.21.1.
+- **HPC CI test scratch stays node-local.** The managed scratch resolver now
+  honors an existing writable runner-provisioned child of `/tmp` or `/var/tmp`
+  before considering shared storage. Test paths therefore no longer inherit
+  GPFS setgid modes or violate jailed-path invariants; per-run naming, cleanup,
+  and the GPFS source/image bind remain unchanged. Host-shape checks now test
+  the actual private-directory invariant under node-local `/tmp`, and the
+  fixed-width statusline normalizes HPC FQDNs to their unique node label.
+- **Inline agent spawn cannot mutate a linked authority spec.** The host now
+  returns the existing `409 already_exists` contract when an inline
+  `agent_spawn(overwrite=true)` targets a per-agent directory or `spec.yaml`
+  installed as a symlink. Regular host-owned inline specs retain their explicit
+  overwrite behavior; git-backed specs must be changed at their source and
+  redeployed with `sac agents link-specs`.
+- **Legacy TUI ownership fails closed through the SciTeX status protocol.**
+  Existing central instance stores gain the five nullable ownership columns
+  through scitex-dev's public declared-field evolution before a TUI launch. Pre-field incarnation rows
+  now emit `process/3` with explicit unverified ownership instead of leaking a
+  raw `KeyError`, and never authorize a name-based signal.
+- **Plain agent restart preserves the harness conversation.** Internal
+  `start --force` now means process replacement only; it no longer clears
+  `session_id` or `session_id_history` when the resolved session policy is
+  `continue`. Only a forced start with an explicit `fresh` override
+  resets those artifacts.
+
+### Removed
+- **The retired per-agent SQLite contract and its misleading Python namespace.**
+  The inert `SCITEX_AGENT_CONTAINER_STATE_DB` injection, rename rule, and
+  `sac whoami` field are gone; durable state continues to use
+  `scitex_dev.store` and the PostgreSQL endpoint on port 55432. The active
+  `_state/state_db*` modules and tests are now named `_state/state_store*`,
+  with no compatibility modules under the old import paths. Historical ADRs
+  and shipped-version changelog entries retain the old names as records.
+
+### Added
+- **Write-capable agent tasks now pass the harness-neutral worktree policy
+  gate.** SAC invokes the operator-owned `scitex-worktree-policy` CLI before a
+  new Claude, Codex, or Hermes harness process starts; automatically resolves a
+  stable agent-owned linked worktree while preserving/refusing dirty or
+  conflicting checkouts; exposes the migration plan in dry-run/explain; fails
+  closed on missing, denied, stale, malformed, or hash-inconsistent results;
+  and records `policy_sha256` plus `projection_sha256` on the incarnation.
+  Policy remains in dotfiles; SAC adds no hook-, skill-, prompt-, or doc-based
+  rule copy or bypass.
+- **Hermes Cards messages now enter the visible TUI as durable steer turns.**
+  Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
+  doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed
+  terminal rendering, final native HTTP status, and exact notification ACK.
+  Only one turn owns a session, duplicate hints coalesce at the durable poll,
+  staged human input is never overwritten, and a long jittered poll covers
+  missed doorbells. Hermes compiles the Cards MCP server in tools-only mode so
+  its Claude-specific notification poller cannot race this rail. Startup also
+  refuses a Cards database it cannot authenticate, while `agents explain`
+  reports Cards ingress, Cards tools, and optional CCT as separate facts.
+- **An autonomous Hermes TUI wakes through Hermes' own idle heartbeat instead
+  of remaining passively `ready` after one turn.** `spec.autonomous.enabled`
+  now arms one native `/heartbeat` command at successful launch, using
+  `idle_kick_after_s` (60-second Hermes safety floor) and `kick_text`. The
+  recurring prompt requires a fresh Cards ownership/overlap check before any
+  edit. Hermes fires only while idle with an empty input queue, so no SAC
+  busy-loop, token-burning poller, or human-steering race is introduced
+  (ADR-0028). The wake contract also parks merely-pending external CI until a
+  later heartbeat instead of holding the active turn with serial polling
+  sleeps; genuine running tests/builds remain unaffected. Existing live agents
+  are not restarted by this change. A stable SHA-256-derived per-agent offset
+  (0–59 seconds, bounded by the configured interval) prevents identical fleet
+  specs from waking a shared inference engine as a thundering herd; the
+  configured interval remains the minimum idle backoff.
+- **`/uvwork` is bound from the host scratch volume instead of accumulating in
+  the apptainer overlay upper on the root LV** (ADR-0024; operator directive
+  2026-09-02 「ディスクは /scratch 使ってくださいね」). Ninety of the 123 agent
+  specs point `TMPDIR`, `UV_CACHE_DIR`, `UV_INSTALL_DIR` and the agent venv at
+  `/uvwork`; the base image creates that directory and **nothing bound it**, so
+  every byte went to `overlays/<agent>/upper/uvwork` on the host's ROOT volume.
+  Measured on `scitex-compute-04` 2026-09-03: 11.7 GB (`sac`), 3.3 GB
+  (`scitex-dev`), 3.0 GB (`scitex-hub`), 2.5 GB (`scitex-cards`), 1.9 GB
+  (`scitex-storage`) — and the root LV filled to 0 **four times** on
+  2026-09-02, while `/scratch` on the same host is a separate 3.0 T volume with
+  2.8 T free.
+  Each start now resolves the host scratch root once and appends
+  `--bind <root>/sac/agents/<agent>/uvwork:/uvwork:rw` in the argv finalize
+  layer, after every spec-declared bind so a spec that binds `/uvwork` itself
+  still wins. The directory (mode 0700, idempotent across restarts) is created
+  on the REAL launch path only — `build_run_argv` is also what `sac agents
+  explain` and `sac agents start --dry-run` call, and a read-only command must
+  neither write to the host nor fail on a launch-time host condition; on a
+  host with no scratch root those two show the refusal a start would hit
+  instead of raising it. The per-agent directory is derived by ONE function
+  (`scratch_uvwork_dir_for`, keyed on the effective `config.name`) that the
+  launch bind and `scratch-migrate` both call, so the two cannot disagree —
+  they would for every `hosts:` spec, whose effective id carries a
+  `-<hostname>` suffix its spec directory name does not.
+  No spec changes: `binds:` and `startup_commands` are untouched fleetwide.
+- **`scratch_root:` (and `scratch_root_reason:`) in the per-host
+  `config.yaml`.** An absolute path, or the literal `none` — the written
+  decision that this host keeps `/uvwork` in the overlay, which is **refused
+  without a stated reason**, as is a `scratch_root_reason:` with no
+  `scratch_root:` beside it. With no declaration the default `/scratch` is
+  probed (compute-01 and compute-03 have no `config.yaml` at all, so the
+  default has to work without one); with neither a declaration nor a
+  `/scratch`, sac **REFUSES to start the agent** naming the missing path, the
+  config key, the config file and all three fixes. There is no env-var knob:
+  falling back to the overlay silently is the bug this replaces.
+- **`sac agents scratch-migrate [--agent NAME]… [--apply] [--json]`** — moves
+  each STOPPED agent's `overlays/<agent>/upper/uvwork` to
+  `<scratch_root>/sac/agents/<agent>/uvwork`, so the historical copy stops
+  occupying the root LV and the next start finds uv and the venv already in
+  place. **Dry-run by default**, printing per-agent sizes, per-agent decisions
+  and the total it would move. A RUNNING agent is refused by name (its
+  container has the overlay mounted) and so is one whose liveness the runtime
+  adapter could not determine — "unknown" is not "stopped". Applying copies,
+  **verifies** every path, size and symlink target against the source, and only
+  then removes the overlay copy; a verification mismatch keeps the source and
+  says so. Exit codes: 0 sound, 1 the plan does not describe the sweep, 2
+  refused.
+  Two refusals come straight out of the first real dry-run, which found both:
+  **(a)** run from inside an agent container, the probe called the agent
+  executing it "stopped" and offered its 10.3 GiB — `is_running` is a pid file
+  plus `os.kill(pid, 0)`, the recorded pid was 3190806 and the container's
+  `/proc` topped out at 74275, because the container has its own PID namespace.
+  The verb now abstains whenever `APPTAINER_CONTAINER` /
+  `SINGULARITY_CONTAINER` is set, naming the vantage and saying to run it on
+  the host; sizes still print, since the overlays are read through a bind mount.
+  **(b)** `scitex-hub` and `scitex-hub-mobile-ux` declare ONE `--overlay`, as do
+  `scitex-cards` / `scitex-todo` and eight `handyman-*` specs, so one 2.6 GiB
+  tree was listed as movable twice. Shared sources are now refused on every
+  claiming row, each naming the others, with ownership computed over the whole
+  roster rather than the `--agent` subset.
+
 ### Removed
 - **`state_db.DEFAULT_DB_PATH`, and the ~4900-times-per-run test ceremony that
   rebound it.** The engine deletion below left the PATH behind — a `Path`
@@ -185,6 +339,15 @@ versioning follows [SemVer](https://semver.org/).
   (`host_store` resolves without connecting, so neither path pays for it).
 
 ### Fixed
+- **`sac agents stop --force` can no longer report success over an orphaned
+  TUI container.** Each local launch now records the long-lived PID's kernel
+  start time, uid, cgroup, transient scope unit, and systemd InvocationID on
+  its central `instances` incarnation. Stop matches every one before asking
+  systemd to stop that exact scope, then requires both the launch PID identity
+  and every process in the cgroup to disappear. A missing tmux session is no
+  longer accepted as terminal evidence; an unverifiable survivor returns a
+  nonzero process outcome in scitex-dev's central `status_exchanges` ledger
+  and preserves registry/overlay/session state for diagnosis.
 - **`agent_send`'s non-blocking dispatch reported `delivered_subscriber_count:
   1` for an agent that had NEVER been started.** Three task cards were routed
   to `scitex-hpc` (`status=defined`, zero tmux sessions) on 2026-08-29; every
@@ -284,6 +447,93 @@ versioning follows [SemVer](https://semver.org/).
   the store that actually holds the records, so on a host with no `state.db` a
   LIVE agent read as stopped and `preflight` let the rename proceed underneath
   it.
+
+## [0.28.2] - 2026-09-22
+
+**Three weeks, one theme: the fleet grows up.** Named engines let one spec
+declare several runtimes with one picked at start; the harness/engine split
+means any agent can run on Qwen, Codex, or Claude; and the GUI, the images,
+and the lifecycle all learned the same lesson — never let one slow or stale
+thing take down the whole fleet.
+
+### Added
+- One spec declares several named engines (`engines:` + `--engine`), with
+  start-time switching and a restart that refuses an unhonourable engine
+  BEFORE stopping the agent (#1287).
+- `sac agents migrate-engines`: writes HARNESS x ENGINE into every spec, and
+  `sac agents list` reports which engine an agent is ACTUALLY running on
+  (#1316, #1318).
+- Codex arrives as a first-class harness: TUI lifecycle, pane inherits the
+  Claude hooks, MCP servers inherit the pane's fleet environment, and an
+  explicit subscription-engine picker (#1298, #1300, #1303, #1305).
+- GUI: agent activity timeline with safe control surfaces, a scoped
+  browser-facing Agents dashboard, and a fleet shell that renders before any
+  inventory read so one slow control-plane read cannot lose the whole fleet
+  (#1505, #1330, #1512).
+- The agent-forking command is named `fork`, not `twin`, and paid models
+  route through a neutral egress gateway (#1519, #1347).
+- Monitoring: alarm when an agent's log is REPEATING, not working (#1525).
+- `sac doctor` reports image-frozen package identity (#1492).
+
+### Changed
+- **Requires Python >= 3.11**; the 3.10 support claim is dropped (#1523).
+- Images: reproducible builds with staged provenance, Hermes pinned in the
+  base image, Cards staged exactly, and `psutil` declared a runtime
+  dependency (#1337, #1466).
+- Lifecycle spec authority fails closed: starts refuse non-git/unreachable
+  sources, dirty repos, diverged live sources, and stale bypasses (#1473).
+- New agent state lives on scratch, owned worktrees are provisioned before
+  launch, and agent tasks gate on a neutral worktree policy (#1428, #1474).
+- A2A: scheduled fleet-wide reachability probe, nonce-bound agentic
+  feedback, and a cross-host forwarder that resolves peers from the host
+  registry — never a silent HTTP fallback (#1284, #1285, #1410).
+- Hermes hardening throughout: engine-scoped session identity, progress-aware
+  heartbeats, stale-provider recovery, neutral delegation policy, and prompt
+  projection provenance verification (#1422, #1475, #1499, #1518).
+- Protocol: asynchronous turn receipts, visible delivery binding, 202
+  handling, and bridges that refuse without a ledger ACL (#1385, #1398,
+  #1404).
+
+### Fixed
+- A malformed heartbeat event no longer makes the whole replay
+  unprojectable (#1524).
+- MCP fleet inventory is host-authoritative (#1481).
+- `sac agents delete` reaps a DANGLING spec link instead of reporting it not
+  found, and refuses cross-device spec archives (#1520, #1393).
+- Standalone hook/probe output routes through scitex-logging (#1473).
+- The store DSN no longer points at a READ-ONLY replica (no agent state was
+  written from 08-23 until this fix).
+
+## [0.28.1] - 2026-09-02
+
+### Fixed
+- The fleet-env injection test no longer encodes where scitex-dev's default
+  lands (0.58.1 moved it). Test-only fix; no runtime change (#1281).
+
+## [0.28.0] - 2026-09-01
+
+**SQLite is out.** Every agent-state table — instances, lineage, dispatches,
+channel_events, comms_nodes, comms_grants, diary, relocation trio — now lives
+in PostgreSQL, renamed by its own migration step with its own inverse. The
+storage engine, the one-shot carriers, the allowlists, and `DEFAULT_DB_PATH`
+are deleted, and the retired engine's name reaches zero outside `docs/adr`.
+
+### Added
+- Renaming an agent carries its ACL grants; `_rename_db` is deleted (#1273).
+- `sac agents roles`: 103 of 115 agents could not say what they are for, so
+  now they can (#1230).
+- Agents come back on their own after a rate wall lifts, and a Fable-capped
+  agent switches to opus instead of going silent (#1259, #1313).
+- The inbound_dispatches migration that was never written, plus
+  `--accept-post-cutover-replay` with a remedy that can be followed
+  (#1267, #1265).
+
+### Fixed
+- `create` births agents as `session:resume`, not null or continue (#1232).
+- The A2A rail stops fabricating `delivered_subscriber_count` and adopts the
+  shared StatusCode (#1264).
+- Three follow-ups an audit found in the merged migrations, and a diary
+  migration that could never write a row (#1246, #1237).
 
 ## [0.27.0] - 2026-08-26
 

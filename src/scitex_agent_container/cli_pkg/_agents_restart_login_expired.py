@@ -25,8 +25,9 @@ import json
 import click
 
 from .._authheal import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, auth_heal_pass
+from .._logging import render_rich
 from .._reconcile._rule import Verdict
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 #: Colour per verdict. Anything that leaves an agent wedged is loud on purpose.
 _STYLE = {
@@ -47,8 +48,8 @@ _STYLE = {
 def _print_report(report) -> None:
     colour, label = _STYLE.get(report.verdict, ("white", report.verdict.value))
     # soft_wrap: a wrapped agent name is one you cannot grep out of a cron log.
-    console.print(f"[{colour}]{label:<14}[/{colour}] {report.name}", soft_wrap=True)
-    console.print(f"    [dim]{report.detail}[/dim]", soft_wrap=True)
+    render_rich(f"[{colour}]{label:<14}[/{colour}] {report.name}", __name__)
+    render_rich(f"    [dim]{report.detail}[/dim]", __name__)
 
 
 def already_summarised_by_count(report) -> bool:
@@ -192,11 +193,9 @@ def restart_login_expired(
     # agents we could not read into the agents we found wedged, which is the
     # collapse this command's exit code exists to keep apart.
     unseen = outcome.of(Verdict.UNOBSERVED)
-    console.print(
-        f"[bold]sac agents restart-login-expired[/bold]  {mode} — "
+    render_rich(f"[bold]sac agents restart-login-expired[/bold]  {mode} — "
         f"{len(outcome.reports) - len(unseen)} corroborated login-expired "
-        f"agent(s), {len(unseen)} NOT observed\n"
-    )
+        f"agent(s), {len(unseen)} NOT observed\n", __name__)
     # See :func:`already_summarised_by_count` — the no-session population is printed
     # once, by count, below; repeating it per-agent is what put 93,778 lines in a
     # 32 MB timer log. Indeterminate UNOBSERVED reports still print individually.
@@ -206,28 +205,22 @@ def restart_login_expired(
         _print_report(report)
 
     counts = outcome.counts()
-    console.print(
-        "\n[bold]"
+    render_rich("\n[bold]"
         + ("  ".join(f"{k}={v}" for k, v in counts.items()) or "nothing wedged")
-        + "[/bold]"
-    )
+        + "[/bold]", __name__)
 
     would = outcome.of(Verdict.WOULD_RESTART)
     if would:
-        console.print(
-            f"\n[yellow]{len(would)} agent(s) are login-expired and would be "
+        render_rich(f"\n[yellow]{len(would)} agent(s) are login-expired and would be "
             f"restarted:[/yellow] {', '.join(r.name for r in would)}\n"
             "  Nothing was restarted — this is a dry-run. To act:\n"
-            "    sac agents restart-login-expired --apply"
-        )
+            "    sac agents restart-login-expired --apply", __name__)
     down = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
     if down:
-        console.print(
-            f"\n[red]{len(down)} agent(s) are STILL wedged and sac could NOT heal "
+        render_rich(f"\n[red]{len(down)} agent(s) are STILL wedged and sac could NOT heal "
             f"them:[/red] {', '.join(r.name for r in down)}\n"
             "  Each has a board card. A human needs to look — restarting is not "
-            "fixing these (usually a real account problem)."
-        )
+            "fixing these (usually a real account problem).", __name__)
     # `unseen` is EVERY UNOBSERVED, but only some of them are this pass's own
     # indeterminacy. `no-session` is a DETERMINATE reading handed to
     # fleet-reconcile, and :meth:`PassOutcome.exit_code` already excludes it.
@@ -238,30 +231,24 @@ def restart_login_expired(
     indeterminate = outcome.indeterminate()
     no_session = tuple(r for r in unseen if r.reason == "no-session")
     if indeterminate:
-        console.print(
-            f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
+        render_rich(f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
             f"{', '.join(r.name for r in indeterminate)}\n"
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
             "    sac agents auth-status\n"
-            "    sac agents list"
-        )
+            "    sac agents list", __name__)
     if no_session:
-        console.print(
-            f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
+        render_rich(f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
             "— fleet-reconcile's half of the fleet, not this pass's. A missing "
             "session is a determinate reading, so it does NOT prevent a clean "
-            "report here."
-        )
+            "report here.", __name__)
     if outcome.of(Verdict.BUDGET_UNKNOWN):
-        console.print(
-            "\n[magenta]sac could not read its OWN restart history[/magenta] — so "
+        render_rich("\n[magenta]sac could not read its OWN restart history[/magenta] — so "
             "the debounce and the hourly cap cannot be enforced. It has REFUSED "
             "to restart anything rather than risk a loop.\n"
             "  Pin the state somewhere durable:\n"
-            "    export SAC_LOGIN_EXPIRED_HISTORY=/var/tmp/sac-login-expired.json"
-        )
+            "    export SAC_LOGIN_EXPIRED_HISTORY=/var/tmp/sac-login-expired.json", __name__)
     raise SystemExit(code)
 
 

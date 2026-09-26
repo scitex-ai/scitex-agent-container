@@ -86,7 +86,7 @@ def test_secret_keys_detected(key: str) -> None:
         "DIRENV_CONFIG",
         "UV_PROJECT_ENVIRONMENT",
         "ANTHROPIC_MODEL",
-        "SCITEX_AGENT_CONTAINER_STATE_DB",
+        "SCITEX_CARDS_AGENT_ID",
     ],
 )
 def test_non_secret_keys_not_detected(key: str) -> None:
@@ -434,7 +434,7 @@ def test_build_argv_keeps_non_secret_env_flag(
     # Arrange
     argv = built_argv.argv
     # Act — a curated non-secret --env must NOT be swept (no over-reach).
-    present = "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv
+    present = "SAC_NAME=sec-x" in argv
     # Assert
     assert present is True
 

@@ -223,7 +223,7 @@ def diagnose_send_failure(
     # split-brain symptom this diagnosis is meant to explain, not repeat.
     row: dict[str, Any] | None = None
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = list_active_instances()
         matching = [r for r in rows if r.get("name") == name]
@@ -256,7 +256,7 @@ def diagnose_send_failure(
     hb_state: Any = None
     hb_age: float | None = None
     try:
-        from .._state.state_db import latest_heartbeats_per_name
+        from .._state.state_store import latest_heartbeats_per_name
 
         beats = {b.get("name"): b for b in latest_heartbeats_per_name()}
         beat = beats.get(name)

@@ -4,16 +4,30 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ._engine_library import resolve_engine_namespace
+from ._engine_types import apply_default_engine
 from ._explicit_validation import validate as _validate_explicit_fields
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
-from ._residency_types import resolve_spec_residency
+from ._hermes_background_review import parse_selected_hermes_background_review
+from ._hermes_compression import parse_selected_hermes_compression
+from ._hermes_run_budget import parse_selected_hermes_run_budget
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
     substitute_hostnames,
 )
+
+# The guarded direnv-allow startup command ``load_v3`` injects into every agent
+# lives in the
+# sibling ``_loader_startup_defaults`` module (extracted when this
+# orchestrator hit the per-file line cap). Re-imported here so every
+# existing consumer keeps its ``config._loaders`` import path.
+from ._loader_startup_defaults import (
+    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
+    _with_default_direnv_allow,
+)
 from ._parsers import (
-    MODEL_DISPLAY_NAMES,
+    MODEL_ENV_KEY,
     interpolate_mcp_servers,
     parse_a2a,
     parse_apptainer,
@@ -21,6 +35,7 @@ from ._parsers import (
     parse_claude,
     parse_comms,
     parse_container,
+    parse_delegation,
     parse_extensions,
     parse_health,
     parse_hooks,
@@ -32,19 +47,11 @@ from ._parsers import (
     parse_skills,
     parse_startup_commands,
     parse_watchdog,
+    resolve_model_surface,
 )
+from ._residency_types import resolve_spec_residency
 from ._types import AgentConfig, HostsSpec
-
-# The two defaults ``load_v3`` injects into every agent — the guarded
-# direnv-allow startup command and the generic boot kick — live in the
-# sibling ``_loader_startup_defaults`` module (extracted when this
-# orchestrator hit the per-file line cap). Re-imported here so every
-# existing consumer keeps its ``config._loaders`` import path.
-from ._loader_startup_defaults import (
-    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
-    DEFAULT_STARTUP_PROMPT,
-    _with_default_direnv_allow,
-)
+from ._workdir_hook import mapped_workdir_mkdir_hook
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -214,6 +221,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     No backward compatibility — old apiVersions raise loud validation
     errors at config-load time.
     """
+    from ._schema_compat import normalize_document
+
+    raw = normalize_document(raw)
+
     # Red-start explicit-fields gate (operator ruling 2026-07-21): every
     # spec field must be WRITTEN — an omitted field is a load error with
     # a complete, paste-ready hint. Runs BEFORE any parsing so an
@@ -310,9 +321,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
             "SCITEX_AGENT_CONTAINER_ROLE"
         ) or labels.get("role")
         claude_spec.session = default_session_for_role(_role)
-    model = claude_spec.model or "sonnet"
-    display_model = MODEL_DISPLAY_NAMES.get(model, model)
-    auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
+    # The LEGACY reading of the model. A spec declaring ``spec.engines``
+    # states nothing here on purpose (the engines carry the models), so this
+    # pair is provisional: ``apply_default_engine`` below folds the default
+    # engine's model over both halves. Computing it here anyway keeps a spec
+    # with no engines block on exactly the path it has always had.
+    model, display_model = resolve_model_surface(claude_spec.model)
+    auto_env[MODEL_ENV_KEY] = display_model
 
     # CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.
     # Propagate the per-agent account dir-name (e.g. "alpha-example-com")
@@ -331,22 +346,21 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
-    # Auto-derive hooks: prepend mkdir for workdir
+    # Auto-derive hooks: the lifecycle runs these on the HOST, whereas
+    # spec.workdir is an IN-CONTAINER path.  Resolve it only through the
+    # explicit writable bind that supplies the container path.
     hooks = parse_hooks(spec)
     expanded = str(Path(workdir).expanduser())
-    mkdir_cmd = f"mkdir -p {expanded}/.claude"
-    if mkdir_cmd not in hooks.get("pre_start", []):
+    mkdir_cmd = mapped_workdir_mkdir_hook(expanded, apptainer_spec.binds)
+    if mkdir_cmd and mkdir_cmd not in hooks.get("pre_start", []):
         hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
 
     # Parse mcp_servers with metadata interpolation (uses effective name)
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
-    startup_prompts_raw = spec.get("startup_prompts", []) or []
+    startup_prompts_raw = spec["startup_prompts"]
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
-    if not startup_prompts:
-        # DRY default: specs omit startup_prompts and inherit the generic kick.
-        startup_prompts = [DEFAULT_STARTUP_PROMPT]
     exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
     exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 
@@ -359,7 +373,12 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # existing sidecar-disable path (A2ASpec.is_disabled) carries
     # both surfaces without a second code branch downstream.
     comms_spec = parse_comms(spec)
+    if not comms_spec.channels and claude_spec.channels:
+        # Migration window for the deployed v3 corpus. Canonical specs with
+        # available_harnesses are validated to use spec.comms.channels.
+        comms_spec.channels = list(claude_spec.channels)
     lineage_spec = parse_lineage(spec)
+    delegation_spec = parse_delegation(spec)
     a2a_spec = parse_a2a(spec)
     if not comms_spec.a2a.listen:
         a2a_spec = type(a2a_spec)(host=a2a_spec.host, port=None)
@@ -374,18 +393,28 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # merge for the tools server.
     _sac_optout = str(labels.get("sac-builtin", "")).strip().lower()
     if _sac_optout not in ("off", "false", "0", "no"):
-        if "server:sac" not in {c.strip() for c in claude_spec.channels}:
-            claude_spec.channels.append("server:sac")
+        if "server:sac" not in {c.strip() for c in comms_spec.channels}:
+            comms_spec.channels.append("server:sac")
         if "scitex-agent-container" not in mcp_servers:
             mcp_servers["scitex-agent-container"] = {
                 "type": "stdio",
                 "command": "/opt/venv-sac/bin/sac",
                 "args": ["mcp", "start"],
             }
+    # Runtime adapters still consume the resolved ClaudeSpec while the v4
+    # layering refactor proceeds. Project the one neutral declaration into
+    # that internal carrier; no harness owns the configuration surface.
+    claude_spec.channels = list(comms_spec.channels)
 
-    return AgentConfig(
+    # The engine NAMESPACE this spec can name: the fleet engine library
+    # UNION the spec's own ``engines:`` block, spec-local winning a
+    # collision. Merged here so ``--engine <key>`` can select a fleet
+    # engine without the spec having to copy it first.
+    engines = resolve_engine_namespace(spec)
+    config = AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
+        engines=engines,
         # HARNESS — which agent SDK runs the session. NOT
         # spec.claude.provider (the inference backend). ``spec.harness``
         # is canonical; ``spec.provider`` is the deprecated alias, and a
@@ -415,6 +444,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
+        hermes_background_review=parse_selected_hermes_background_review(spec),
+        hermes_run_budget_seconds=parse_selected_hermes_run_budget(spec),
+        hermes_compression=parse_selected_hermes_compression(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),
@@ -432,6 +464,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         a2a=a2a_spec,
         comms=comms_spec,
         lineage=lineage_spec,
+        delegation=delegation_spec,
         kind=kind,
         proxy=proxy_spec,
         # ADR-0006: default to ``./to_home`` when the key is absent so a
@@ -445,6 +478,14 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         # distinguishes them, so the default here cannot be `[]`.
         to_home_layers=_parse_to_home_layers(spec.get("to_home_layers")),
     )
+
+    # ``spec.engines`` — fold the DEFAULT engine onto the resolved
+    # backend fields so every read surface downstream sees the backend
+    # this agent starts on. PURE: no warning, no probe, no network (see
+    # ``_engine_types.apply_default_engine`` for why those belong on the
+    # START path instead).
+    apply_default_engine(config, engines, spec)
+    return config
 
 
 def _parse_to_home_layers(value: object) -> "list[str] | None":

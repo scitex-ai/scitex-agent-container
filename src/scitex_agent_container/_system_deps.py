@@ -28,9 +28,27 @@ from scitex_dev.system_deps import SystemDepSpec
 
 _PROVIDER = "scitex-agent-container"
 
+#: Pinned Hermes installer + non-interactive args. The URL is the only
+#: curl|bash source sac trusts for its Hermes harness; the args keep the
+#: install fleet-safe (no setup wizard stopping to ask). Verified against
+#: the live installer 2026-09-22 (``--skip-setup``, ``--non-interactive``,
+#: ``--branch``/``--commit``/``--dir``/``--hermes-home`` all parsed).
+HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
+HERMES_INSTALL_ARGS = ("--skip-setup", "--non-interactive")
+HERMES_VERIFY_COMMAND = "hermes --version"
+
 
 def provide() -> list[SystemDepSpec]:
-    """System deps sac itself needs at image-build time."""
+    """System deps sac itself needs at image-build time, plus the Hermes installer.
+
+    The apt entries install at IMAGE-BUILD time (root). The trailing
+    ``kind="script"`` entry declares sac's Hermes harness -- a user-space
+    ``curl | bash`` installer that runs at HOST-CONFIGURE time via
+    ``scitex-dev ecosystem system-deps install-script
+    --provider scitex-agent-container``. Same entry-point group, same
+    aggregator; the kind is what separates build-time root from
+    configure-time user.
+    """
     return [
         SystemDepSpec(
             "ripgrep",
@@ -90,6 +108,19 @@ def provide() -> list[SystemDepSpec]:
             "and could only answer from general knowledge instead of from the "
             "database in front of it",
             _PROVIDER,
+        ),
+        SystemDepSpec(
+            "hermes-agent",
+            "sac's Hermes harness runs resident on every fleet host: sac "
+            "launches and supervises Hermes agents, so a host without the "
+            "binary cannot run them. User-space install (no root), hence "
+            "kind='script' — apt cannot carry it and the image build must "
+            "not wait on it",
+            _PROVIDER,
+            kind="script",
+            install_url=HERMES_INSTALL_URL,
+            install_args=HERMES_INSTALL_ARGS,
+            verify_command=HERMES_VERIFY_COMMAND,
         ),
     ]
 

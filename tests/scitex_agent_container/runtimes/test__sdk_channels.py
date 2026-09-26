@@ -127,6 +127,17 @@ class TestComputeChannelPlan:
         # Assert
         assert plan.telegrammer_turn_url is None
 
+    def test_declarative_auto_port_yields_no_wake_until_start_resolves_it(self):
+        # Arrange
+        channels = ["server:sac", "server:claude-code-telegrammer"]
+        # Act
+        plan = compute_channel_plan(channels, "auto", "clew")
+        # Assert
+        assert (plan.telegrammer_turn_url, plan.sac_sidecar_args) == (
+            None,
+            ("mcp", "channel", "--name", "clew"),
+        )
+
     def test_sac_channel_yields_sidecar_args_with_turn_url(self):
         # Arrange
         channels = ["server:sac"]
@@ -241,19 +252,21 @@ class TestTelegrammerWakeWiring:
 
 
 class TestSacChannelStillWorks:
-    """``server:sac`` keeps both the dev flag and the sidecar registration.
+    """``server:sac`` keeps outbound tools without a second subscriber.
 
     All tests here depend on ``fake_sac_bin`` so the binary resolver returns
     a deterministic absolute path instead of raising SacBinaryNotFoundError.
     """
 
-    def test_sac_channel_sets_dev_flag(self, fake_sac_bin):
+    def test_sac_channel_is_not_loaded_as_a_second_native_subscriber(
+        self, fake_sac_bin
+    ):
         # Arrange
         kwargs: dict = {}
         # Act
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
-        assert _devflag(kwargs) == "server:sac"
+        assert _devflag(kwargs) is None
 
     def test_sac_channel_registers_sac_mcp(self, fake_sac_bin):
         # Arrange — SAC_BIN points at a real executable so the resolver
@@ -271,7 +284,10 @@ class TestSacChannelStillWorks:
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
         args = kwargs["mcp_servers"]["sac"]["args"]
-        assert args[args.index("--turn-url") + 1] == "http://127.0.0.1:9999/v1/turn"
+        assert (args[args.index("--turn-url") + 1], args[-1]) == (
+            "http://127.0.0.1:9999/v1/turn",
+            "--send-only",
+        )
 
     def test_sac_sidecar_omits_turn_url_when_no_a2a_port(self, fake_sac_bin):
         # Arrange
@@ -388,8 +404,9 @@ class TestBothChannelsCoexist:
         apply_channels(
             kwargs, ["server:sac", "server:claude-code-telegrammer"], None, "clew"
         )
-        # Assert: claude needs the full set to render both channels' tags.
-        assert _devflag(kwargs) == "server:sac,server:claude-code-telegrammer"
+        # Assert: only the Lead edge remains harness-owned. SAC is consumed by
+        # the resident daemon and must not race it as a second subscriber.
+        assert _devflag(kwargs) == "server:claude-code-telegrammer"
 
     def test_sac_mcp_registered_when_sac_present_among_many(self, fake_sac_bin):
         # Arrange
@@ -411,7 +428,7 @@ class TestDedupeAndNormalization:
         # Act — ``fake_sac_bin`` so the sac sidecar resolver does not raise.
         apply_channels(kwargs, ["server:sac", " server:sac "], None, "lead")
         # Assert
-        assert _devflag(kwargs) == "server:sac"
+        assert _devflag(kwargs) is None
 
 
 class TestNoChannels:
@@ -494,6 +511,32 @@ class TestMergeHomeMcpServers:
                 os.environ["MY_REF"] = saved
         # Assert
         assert out["x"]["env"]["K"] == "resolved-value"
+
+    def test_telegrammer_server_env_keeps_current_and_drops_retired_names(
+        self, home_with_mcp
+    ):
+        # Arrange
+        (home_with_mcp / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "claude-code-telegrammer": {
+                            "command": "cct",
+                            "env": {
+                                "CCT_BOT_TOKEN": "current",
+                                "CCT_ALLOWED_USERS": "123",
+                                "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": "old",
+                                "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": "old",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        # Act
+        env = merge_home_mcp_servers({})["claude-code-telegrammer"]["env"]
+        # Assert
+        assert env == {"CCT_BOT_TOKEN": "current", "CCT_ALLOWED_USERS": "123"}
 
 
 # ---------------------------------------------------------------------------

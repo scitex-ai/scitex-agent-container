@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Is an agent's Telegram rail UP, DOWN or unobserved — and how a MUTE agent raises the alarm when the rail it would use is the broken one.
-  [DETAILS] When a spec declares `server:claude-code-telegrammer` and no `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` REMOVES the MCP server (operator ruling). The agent then starts perfectly, reports healthy, and is MUTE and DEAF with no signal anywhere — it cannot even self-diagnose, because `health` is a tool on the server that was removed. `runtimes/_cct_rail_verdict.assess_cct_rail` answers three-valued (up / down / unknown, where `unknown` is never rendered as fine); `runtimes/_cct_rail_alarm` records it in sac's event log under subsystem `cct-rail` and pushes a `blocker` at the LEAD (ADR-0013), i.e. over ANOTHER agent's Telegram. `sac agents cct-audit` sweeps the whole host read-only and exits 1 on any down/unknown. Never gates a start; never reads a token value.
+  [DETAILS] When a spec declares `server:claude-code-telegrammer` and no `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` REMOVES the MCP server (operator ruling). `runtimes/_cct_rail_verdict.assess_cct_rail` answers three-valued (up / down / unknown, where `unknown` is never rendered as fine); `runtimes/_cct_rail_alarm` records it in sac's event log under subsystem `cct-rail` and pushes a `blocker` at the LEAD (ADR-0013), i.e. over ANOTHER agent's Telegram. `sac agents cct-audit` also inspects the selected Hermes profile for the MCP and matching turn URL, and exits 1 on any down/unknown. A selected Hermes rail fails profile materialization when these required parts are absent; other harnesses retain the post-start alarm behavior. Token values are never rendered.
 tags: [scitex-agent-container-telegram-rail-verdict]
 ---
 
@@ -75,12 +75,18 @@ is the specification:
 `_lifecycle/_start.py` AFTER `runtime.start` has materialised `$HOME/.env`
 (reading it earlier would report a token-less agent that in fact has one).
 
-**It never gates the start.** 81 specs declare the channel and 15 resolve a
+**The observer never gates the start.** 81 specs declare the channel and 15 resolve a
 token; the request is inherited from the spec templates as scaffolding, so
 refusing would refuse most of the fleet. Telegram is a comms rail, not a boot
 dependency. And refusing makes the silence worse — a stranded agent cannot do
 its non-Telegram work, and the one process that could report the problem is
 gone.
+
+Hermes is stricter at its harness boundary: when its selected channel requests
+CCT, profile materialization requires a resolved token, the canonical
+`claude-code-telegrammer` MCP entry, and a matching `/v1/turn` URL. A missing
+piece fails before the TUI starts, because a nominally healthy Hermes session
+with a declared but absent rail is not the requested configuration.
 
 Two rails, neither of them the broken agent's Telegram:
 

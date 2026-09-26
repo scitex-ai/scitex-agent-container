@@ -317,6 +317,10 @@ def test_build_sdk_options_bakes_manifested_spec_env_into_servers(
     pytest.importorskip("claude_agent_sdk")
     from scitex_agent_container.runtimes import _sdk_common
 
+    # The SDK externalises configs below $HOME. A real/shared HOME lets other
+    # xdist workers writing agent "alpha" replace this test's returned path
+    # between build and read (CI py3.13 run 35285758037). Isolate the artifact.
+    env.setenv("HOME", str(tmp_path / "home"))
     env.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     cred = tmp_path / ".credentials.json"
     cred.write_text(_valid_creds_json())
@@ -350,7 +354,10 @@ def test_build_sdk_options_bakes_manifested_spec_env_into_servers(
     # ``mcp_servers`` is a 0600 FILE PATH now (secrets must not ride the child
     # argv — see runtimes/_mcp_config_file), so read the effective table back.
     servers = read_mcp_servers(opts.mcp_servers)
-    assert servers["stx"]["env"]["SCITEX_CARDS_DB"] == "/shared/cards.db"
+    assert (
+        Path(str(opts.mcp_servers)).is_relative_to(tmp_path),
+        servers["stx"]["env"]["SCITEX_CARDS_DB"],
+    ) == (True, "/shared/cards.db")
 
 
 # ---------------------------------------------------------------------------

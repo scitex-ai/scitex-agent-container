@@ -11,14 +11,14 @@ ApptainerContainerRuntime's resolver API), same as the session-seed suite.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 
 import pytest
 
 from scitex_agent_container._lifecycle._twin import (
+    CARDS_AGENT_ENV,
+    RETIRED_AGENT_ENV,
     TWIN_PARENT_ENV,
     TwinSeedError,
     build_twin_boot_kick,
@@ -32,6 +32,7 @@ from scitex_agent_container._runners._session_state import (
 )
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import ClaudeSpec
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 _UUID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -56,7 +57,7 @@ def _parent_doc() -> dict:
                 "channels": ["server:sac", "server:claude-code-telegrammer"],
             },
             "env": {
-                "SCITEX_TODO_AGENT_ID": "parent",
+                "SCITEX_CARDS_AGENT_ID": "parent",
                 "SAC_NAME": "parent",
                 "FOO": "bar",
             },
@@ -99,13 +100,33 @@ def test_resolve_twin_name_honours_explicit_request():
 # ─── derive_twin_spec: identity split (safety-critical) ───────────────────
 
 
-def test_derive_sets_todo_author_to_twin():
+def test_derive_sets_cards_author_to_twin():
     # Arrange
     doc = _parent_doc()
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    # Assert — the CANONICAL board-identity key, never the retired one.
+    assert out["spec"]["env"][CARDS_AGENT_ENV] == "parent-twin"
+
+
+def test_derive_never_writes_the_retired_author_key():
+    # Arrange
+    doc = _parent_doc()
+    # Act
+    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    # Assert — a generated spec must not re-declare the retired name.
+    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
+
+
+def test_derive_drops_an_inherited_retired_author_key():
+    # Arrange — a parent still launched from an old-name spec. Left in place
+    # the key would carry the PARENT's name into the twin.
+    doc = _parent_doc()
+    doc["spec"]["env"][RETIRED_AGENT_ENV] = "parent"
+    # Act
+    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["env"]["SCITEX_TODO_AGENT_ID"] == "parent-twin"
+    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
 
 
 def test_derive_sets_twin_parent_env_to_parent():
@@ -192,6 +213,20 @@ def test_derive_drops_telegrammer_channel():
     assert out["spec"]["claude"]["channels"] == ["server:sac"]
 
 
+def test_derive_drops_telegrammer_from_neutral_channels():
+    # Arrange
+    doc = _parent_doc()
+    doc["spec"]["comms"] = {
+        "channels": ["server:sac", "server:claude-code-telegrammer"]
+    }
+    # Act
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert out["spec"]["comms"]["channels"] == ["server:sac"]
+
+
 # ─── derive_twin_spec: inheritance / role / to_home / boot-kick ───────────
 
 
@@ -246,7 +281,7 @@ def test_derive_does_not_mutate_parent_doc():
     # Act
     derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert doc["spec"]["env"]["SCITEX_TODO_AGENT_ID"] == "parent"
+    assert doc["spec"]["env"][CARDS_AGENT_ENV] == "parent"
 
 
 # ─── build_twin_boot_kick ─────────────────────────────────────────────────
@@ -364,7 +399,7 @@ def _twin_env(tmp_path, _set_yaml_dirs):
 
 
 def test_seed_noop_for_non_twin(tmp_path):
-    # Arrange — a config with no SAC_TWIN_PARENT is not a twin.
+    # Arrange — a config with no SAC_FORK_PARENT is not a twin.
     cfg = AgentConfig(name="plain", runtime="apptainer")
     # Act
     seeded = seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))

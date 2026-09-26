@@ -17,7 +17,6 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.account_group import _AccountsGroup, account
 
-
 # --- the sections ----------------------------------------------------------
 
 

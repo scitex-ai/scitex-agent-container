@@ -27,8 +27,25 @@ apiVersion: scitex-agent-container/v3
 kind: Agent
 
 spec:
-  runtime: apptainer
+  # ---------------------------------------------------------------------
+  # TWO AXES, TWO LINES. `harness:` names the PROGRAM that runs the loop;
+  # `engine:` names the MODEL ENDPOINT that answers it. They are
+  # independent: either can be flipped without touching the other, and
+  # that is the whole point of the split.
+  #
+  #   harness: anthropic | codex        (anthropic == claude-code)
+  #   runtime: tui | headless           (launch mode within the harness)
+  #   engine:  <key from the fleet engine library, or from `engines:` below>
+  #
+  # Moving THIS agent onto Qwen is ONE line:  engine: qwen38-27b
+  # Moving the WHOLE FLEET onto Qwen is ONE line, in the fleet library
+  # ($SCITEX_DIR/agent-container/engines.yaml), not here.
+  # ---------------------------------------------------------------------
+  runtime: headless
   harness: anthropic
+  # No `engine:` line = follow the fleet default. Uncomment to PIN this
+  # agent to one backend, immune to any fleet-wide edit:
+  # engine: qwen38-27b
   # Placement: the RESOLVED hostname of the machine this agent runs on
   # (filled with the creating host at render time; `host: local` is
   # banned). Edit to a `sac host list` peer name to pin it elsewhere,
@@ -51,7 +68,7 @@ spec:
     mount_host_claude: false
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
     env: {{}}
     raw_args: []
@@ -60,7 +77,7 @@ spec:
     def_file: ""
     nv: false
     rocm: false
-    overlay: ""
+    overlay: {overlay}
     overlay_size: ""
     overlay_create_if_missing: true
     tmpfs_size: 2G
@@ -70,7 +87,14 @@ spec:
     nested_build: false
 
   claude:
-    model: haiku
+    # EXPLICIT-EMPTY, and that is the new grammar, not an omission: the
+    # ENGINE carries the model and the endpoint (see `engine:` at the top
+    # of spec:). A value written HERE is read as a LEGACY backend pin and
+    # takes precedence over the fleet default, which is exactly what a
+    # freshly scaffolded spec should NOT do — it would be born unable to
+    # follow a fleet-wide backend switch. Pin a backend with
+    # `engine: <key>`, never by writing a model down here.
+    model: ""
     flags:
       - --dangerously-skip-permissions
     channels: []
@@ -176,7 +200,7 @@ _FULL_TEMPLATE = """\
 #   * relaxed + directory overlay persistent per-agent $HOME / installs
 #   * full host reach at the canonical path (so ~/proj/... paths match)
 #   * fleet push channels         server:sac + server:scitex-todo + telegrammer
-#   * SCITEX_TODO_AGENT_ID        todo-store writes attribute to THIS agent
+#   * SCITEX_CARDS_AGENT_ID       card-store writes attribute to THIS agent
 #   * editable install of the agent's own repo (live dev loop)
 #   * a generic "Start or continue." kick + metadata.labels + opus model
 # EVERY field is written explicitly (red-start ruling 2026-07-21); the
@@ -199,8 +223,13 @@ metadata:
     cardinality: singleton
 
 spec:
+  # TWO AXES, TWO LINES — `harness:` is the PROGRAM, `engine:` is the
+  # MODEL ENDPOINT, and neither implies the other. Flipping this agent to
+  # a local Qwen is one added line (`engine: qwen38-27b`); flipping the
+  # whole fleet is one line in the fleet engine library, not here.
   runtime: tui
   harness: anthropic
+  # engine: <key>   # omitted = follow the fleet default; state it to PIN.
   # RESOLVED placement (creating host at render time; `local` is banned).
   host: {host}
 
@@ -228,7 +257,7 @@ spec:
     # sac-base.sif = the minimal layer; the agent editable-installs its
     # own stack into the overlay below. Swap to sac-scitex.sif to start
     # from the full pre-baked scitex stack instead.
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
 
     # Relaxed isolation — the dev agent shares the operator's identity and
     # host tree (the fleet dev default). Pairs with the raw_args below,
@@ -239,7 +268,7 @@ spec:
     # $HOME state survive restarts while the base SIF stays immutable. sac
     # auto-creates the overlay dir and materialises to_home/ into its upper
     # home on first start.
-    overlay: ~/.scitex/agent-container/containers/overlays/{name}/
+    overlay: {overlay}
     overlay_size: ""
     overlay_create_if_missing: true
 
@@ -249,12 +278,13 @@ spec:
     binds:
       - {home}:{home}:rw
 
-    # Per-agent env. SCITEX_TODO_AGENT_ID makes scitex-todo writes
-    # attribute to THIS agent. (sac AUTO-injects
-    # SCITEX_AGENT_CONTAINER_STATE_DB + binds the per-agent state dir, so
-    # the state DB needs no manual entry here.)
+    # Per-agent env. SCITEX_CARDS_AGENT_ID makes scitex-cards writes
+    # attribute to THIS agent; it is the CANONICAL board-identity name (its
+    # predecessor SCITEX_TODO_AGENT_ID is retired and must not be emitted
+    # into a new spec). sac binds the per-agent state dir; durable state uses
+    # the shared PostgreSQL store and needs no per-agent database entry here.
     env:
-      SCITEX_TODO_AGENT_ID: {name}
+      SCITEX_CARDS_AGENT_ID: {name}
 
     # Relaxed mode skips sac's curated isolation prepend, so re-declare the
     # user namespace, filesystem isolation, and the canonical container HOME
@@ -275,7 +305,14 @@ spec:
     nested_build: false
 
   claude:
-    model: opus[1m]
+    # EXPLICIT-EMPTY, and that is the new grammar, not an omission: the
+    # ENGINE carries the model and the endpoint (see `engine:` at the top
+    # of spec:). A value written HERE is read as a LEGACY backend pin and
+    # takes precedence over the fleet default, which is exactly what a
+    # freshly scaffolded spec should NOT do — it would be born unable to
+    # follow a fleet-wide backend switch. Pin a backend with
+    # `engine: <key>`, never by writing a model down here.
+    model: ""
     flags:
       - --dangerously-skip-permissions
     # resume, always — see the note on the other template above.
@@ -384,4 +421,32 @@ _TEMPLATES = {
     "full": _FULL_TEMPLATE,
 }
 
-__all__ = ["_FULL_TEMPLATE", "_MINIMAL_TEMPLATE", "_TEMPLATES"]
+def render_minimal_spec(
+    *,
+    name: str,
+    host: str,
+    credentials_files: str = "[]",
+    overlay: str = '""',
+) -> str:
+    """The ``minimal`` v3 scaffold with the caller's values substituted, as TEXT.
+
+    PUBLIC ON PURPOSE. Two layers need this field set: ``sac agents create`` and the
+    MCP contributor-spec renderer. The MCP layer used to read ``_TEMPLATES`` (a
+    private dict) directly, and that coupling is exactly how a second field set goes
+    stale — measured 2026-09-17, the tool carried its own pre-v3 template and had
+    drifted 8 validator errors away from this one. Callers outside this module use
+    this function; ``tests/scitex_agent_container/_mcp/_tools/test__template.py``
+    asserts that no other module reads ``_TEMPLATES``.
+
+    Returned as text, not a parsed document, because the template's per-field
+    operator documentation is part of what a caller needs to read.
+    """
+    return _TEMPLATES["minimal"].format(
+        name=name,
+        host=host,
+        credentials_files=credentials_files,
+        overlay=overlay,
+    )
+
+
+__all__ = ["_FULL_TEMPLATE", "_MINIMAL_TEMPLATE", "_TEMPLATES", "render_minimal_spec"]

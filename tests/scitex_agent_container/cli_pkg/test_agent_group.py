@@ -73,3 +73,13 @@ def test_agents_help_lists_create_under_lifecycle() -> None:
     result = runner.invoke(agent_group, ["--help"])
     # Assert — the Lifecycle section names `create` (renamed from `new`).
     assert "create" in result.output
+
+
+def test_agents_terminal_delivery_command_is_retired() -> None:
+    """Prompt delivery must not expose the tmux paste/Enter implementation."""
+    # Arrange
+    commands = agent_group.commands
+    # Act
+    registered = "deliver" in commands
+    # Assert
+    assert registered is False

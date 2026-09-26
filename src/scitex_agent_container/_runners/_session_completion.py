@@ -34,11 +34,12 @@ The completion payload the requester receives is the JSON object
 from __future__ import annotations
 
 import json
-import logging
 import uuid
 from typing import Any, Optional
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "CompletionPushError",

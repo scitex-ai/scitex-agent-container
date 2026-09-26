@@ -430,7 +430,7 @@ def mint_acl_deny_synthetic_notification(
     ``lead-sac-acl-blocked-attempt-notification``). When an outbound
     ``a2a_send(sender, target)`` is ACL-denied, the receiver gets ONE
     synthetic system-level notification per cool-down window (default
-    30 min, see :mod:`_state.state_db_acl_deny_notify`).
+    30 min, see :mod:`_state.state_store_acl_deny_notify`).
 
     Differences from :func:`mint_deny_notification`:
 

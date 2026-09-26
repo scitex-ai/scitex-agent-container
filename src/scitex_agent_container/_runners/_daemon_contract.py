@@ -17,9 +17,10 @@ under the line cap while remaining the single orchestrator:
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Callable
+
+import scitex_logging as slogging
 
 from ._incarnation import (
     EXIT_CRASHED,
@@ -31,7 +32,7 @@ from ._incarnation import (
     try_bind_incarnation,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "make_convo_done_callback",

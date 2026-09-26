@@ -17,11 +17,16 @@ import path.
 
 from __future__ import annotations
 
-import logging
+import asyncio
 import os
+import time
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+from scitex_dev.status import StatusCode, is_exchange_id
+
+log = slogging.getLogger(__name__)
 
 __all__ = ["_should_wake_turn", "_wake_text", "_wake_turn"]
 
@@ -112,8 +117,17 @@ def _wake_text(event: dict[str, Any]) -> str:
     """
     source = event.get("from_agent", "unknown")
     msg_id = event.get("msg_id", "")
+    delivery_marker_id = event.get("cards_notification_id") or msg_id
     content = event.get("content", "")
-    return f'<channel source="{source}" msg_id="{msg_id}">\n{content}\n</channel>'
+    marker = (
+        f"<!-- delivery:{delivery_marker_id} -->"
+        if event.get("cards_notification_id")
+        or event.get("_require_terminal_visibility")
+        else ""
+    )
+    return (
+        f'<channel source="{source}" msg_id="{msg_id}">\n{content}\n</channel>{marker}'
+    )
 
 
 async def _wake_turn(
@@ -155,6 +169,21 @@ async def _wake_turn(
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
     payload: dict[str, Any] = {"text": _wake_text(event)}
+    require_terminal_visibility = bool(
+        event.get("cards_notification_id") or event.get("_require_terminal_visibility")
+    )
+    visible_delivery_id = (
+        event.get("cards_notification_id") or event.get("msg_id")
+        if require_terminal_visibility
+        else None
+    )
+    if isinstance(visible_delivery_id, str) and visible_delivery_id:
+        # The TUI bridge must not answer 200 merely because tmux accepted
+        # keystrokes.  This opaque marker lets a harness-aware runtime prove
+        # the exact incoming turn is bound to the exchange. Harnesses with
+        # a native projection (Hermes) prove transcript visibility; pane-
+        # backed harnesses conclude from their checked submit contract.
+        payload["visible_delivery_id"] = visible_delivery_id
     requester = event.get("from_agent")
     if isinstance(requester, str) and requester and requester != "unknown":
         # ``mint_event`` defaults a missing sender to the literal
@@ -165,7 +194,89 @@ async def _wake_turn(
     dispatch_id = event.get("dispatch_id")
     if isinstance(dispatch_id, str) and dispatch_id:
         payload["dispatch_id"] = dispatch_id
+    exchange_id = event.get("exchange_id")
+    if isinstance(exchange_id, str) and exchange_id:
+        payload["exchange_id"] = exchange_id
     effective_timeout = _resolve_wake_timeout() if timeout is None else timeout
     async with httpx.AsyncClient(timeout=effective_timeout) as client:
         resp = await client.post(turn_url, json=payload, headers=headers)
-        resp.raise_for_status()
+        if resp.is_error:
+            try:
+                failure = resp.json().get("status_code", {})
+            except ValueError:
+                failure = {}
+            message = failure.get("message") if isinstance(failure, dict) else None
+            raise RuntimeError(
+                message
+                or f"turn endpoint returned HTTP {resp.status_code}; leave the "
+                "durable message unacknowledged and inspect `sac agents logs <agent>`"
+            )
+        if resp.status_code != 202 and not require_terminal_visibility:
+            # SDK runners retain their established synchronous 2xx contract.
+            # A durable dispatcher asks every TUI harness for the asynchronous
+            # exchange; the target adapter decides which proof it can supply.
+            return
+        body = resp.json()
+        status = body.get("status_code") if isinstance(body, dict) else None
+        exchange_id = body.get("exchange_id") if isinstance(body, dict) else None
+        try:
+            accepted_status = (
+                StatusCode.from_dict(status) if isinstance(status, dict) else None
+            )
+        except Exception:
+            accepted_status = None
+        if not (
+            resp.status_code == 202
+            and accepted_status is not None
+            and accepted_status.kind == "http"
+            and accepted_status.code == 202
+            and not accepted_status.final
+            and is_exchange_id(exchange_id)
+        ):
+            raise RuntimeError(
+                "turn endpoint did not return HTTP 202 plus a canonical xch_ "
+                "exchange_id; leave "
+                "the durable notification unconfirmed and inspect "
+                "`sac agents logs <agent>` before retrying"
+            )
+        turn_parts = urlsplit(turn_url)
+        status_url = urlunsplit(
+            turn_parts._replace(path=f"/v1/exchanges/{exchange_id}", query="")
+        )
+        deadline = time.monotonic() + effective_timeout
+        while True:
+            result = await client.get(status_url, headers=headers)
+            result.raise_for_status()
+            result_body = result.json()
+            final_status = (
+                result_body.get("status_code")
+                if isinstance(result_body, dict)
+                else None
+            )
+            try:
+                parsed_status = (
+                    StatusCode.from_dict(final_status)
+                    if isinstance(final_status, dict)
+                    else None
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"turn exchange {exchange_id} returned an invalid canonical "
+                    f"status ({exc}); leave the durable notification unconfirmed "
+                    f"and inspect `{status_url}`"
+                ) from exc
+            if parsed_status is not None and parsed_status.final:
+                if parsed_status.kind == "http" and parsed_status.code == 200:
+                    return
+                message = parsed_status.message
+                raise RuntimeError(
+                    f"turn exchange {exchange_id} reported no confirmed "
+                    f"terminal visibility: {message}"
+                )
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"turn exchange {exchange_id} is still non-final; leave the "
+                    "durable notification unconfirmed and poll "
+                    f"`{status_url}` before retrying"
+                )
+            await asyncio.sleep(0.1)

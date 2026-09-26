@@ -57,7 +57,7 @@ def _run_hook(
     returncode / stdout / stderr without retrying or coupling.
 
     ``env`` (when given) fully REPLACES the subprocess environment —
-    the owner-stamp tests use it to pin ``SCITEX_TODO_AGENT_ID`` (or to
+    the owner-stamp tests use it to pin ``SCITEX_CARDS_AGENT_ID`` (or to
     prove its absence) deterministically, independent of the runner's
     ambient value. When ``None`` the child inherits the parent env.
     """

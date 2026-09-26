@@ -1,12 +1,9 @@
 """Agent-spec source drift detection (sac-drift).
 
-Two surfaces:
+Three surfaces:
 
-* :mod:`._local` — launch-time check that the LOCAL host's agent-spec
-  source git repo is current with its remote. Wired into
-  ``sac agents start`` so a stale (or unpushed) spec source produces a
-  loud warning before the agent boots. Fast (cached ``git fetch``) and
-  resilient (never crashes a launch).
+* :mod:`._authority` — fail-closed lifecycle authority validation.
+* :mod:`._local` — resilient, read-only local diagnostics for ``sac doctor``.
 * :mod:`._fleet` — on-demand ``sac doctor --fleet`` that ssh-checks the
   same drift on every configured peer host and renders a per-host table.
 
@@ -15,6 +12,7 @@ The shared drift model lives in :mod:`._status`.
 
 from __future__ import annotations
 
+from ._authority import SpecAuthority, SpecAuthorityError, validate_spec_authority
 from ._fleet import HostDrift, check_fleet_drift, check_peer_drift
 from ._local import (
     SpecSourceDriftError,
@@ -34,6 +32,8 @@ __all__ = [
     "DriftState",
     "DriftStatus",
     "HostDrift",
+    "SpecAuthority",
+    "SpecAuthorityError",
     "SpecSourceDriftError",
     "check_fleet_drift",
     "check_peer_drift",
@@ -43,5 +43,6 @@ __all__ = [
     "drift_warning_lines",
     "record_overlay_manifest",
     "spec_source_repo",
+    "validate_spec_authority",
     "warn_if_spec_source_drifted",
 ]

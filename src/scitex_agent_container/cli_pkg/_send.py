@@ -57,14 +57,43 @@ from ._send_status_code import (
     not_resolvable_status_code,
     timed_out_status_code,
 )
-
 from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
     build_track_command,
     build_track_command_argv,
-    resolve_track_strategy,
 )
 
 __all__ = ["send_to_agent", "build_track_command"]
+
+
+def _pending_exchange_payload(name: str, pending: Any) -> dict[str, Any]:
+    """Keep an accepted exchange pending instead of recasting it as failure."""
+    from scitex_dev.status import StatusCode
+
+    raw_body = pending.raw_body if isinstance(pending.raw_body, dict) else {}
+    raw_receipt = raw_body.get("receipt")
+    receipt = (
+        dict(raw_receipt)
+        if isinstance(raw_receipt, dict)
+        else {"state": "pending", "final": False}
+    )
+    # The typed exception is only raised for a non-final accepted exchange.
+    # Keep that canonical truth even if the most recent GET omitted the
+    # optional human-facing receipt projection.
+    receipt["state"] = "pending"
+    receipt["final"] = False
+    message = (
+        f"turn accepted as {pending.exchange_id} and still pending; do not resend; "
+        f"poll with `{pending.poll_hint}`"
+    )
+    return {
+        "status": "pending",
+        "agent": name,
+        "exchange_id": pending.exchange_id,
+        "receipt": receipt,
+        "poll_hint": pending.poll_hint,
+        "detail": str(pending),
+        "status_code": StatusCode(kind="http", code=202, message=message).to_dict(),
+    }
 
 
 def _post_turn(url: str, text: str, *, timeout_s: float) -> tuple[str, dict[str, Any]]:
@@ -180,7 +209,7 @@ def send_to_agent(
         raise ValueError("either prompt or key is required")
 
     from .._network.peer import PeerError
-    from .._state.state_db import _resolve_host
+    from .._state.state_store import _resolve_host
     from ._send_broker import (
         PeerLookupUnavailable,
         resolve_send_endpoint_via_host,
@@ -308,16 +337,13 @@ def send_to_agent(
         url = f"http://127.0.0.1:{a2a_port}/v1/turn"
 
     if key:
-        # Key-passthrough isn't wired into /v1/turn yet; the CLI handles
-        # ESC via os.kill(SIGINT) on a local pid file. Surfacing this
-        # as a loud error is the no-silent-fallback choice.
-        return {
-            "status": "error",
-            "error": (
-                f"key={key!r} dispatch not supported via send_to_agent; "
-                "use the CLI's local SIGINT path (`sac agents send --key`)"
-            ),
-        }
+        from .._network.peer import post_control_to_url
+
+        try:
+            response = post_control_to_url(url, key, timeout_s=timeout_seconds)
+        except PeerError as exc:
+            return {"status": "error", "error": str(exc), "agent": name}
+        return {"status": "ok", "agent": name, "response_metadata": response}
 
     text = prompt or ""
     metadata_extras: dict[str, Any] = {}
@@ -359,6 +385,10 @@ def send_to_agent(
     try:
         reply, body = _post_turn(url, text, timeout_s=float(timeout_seconds))
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            return _pending_exchange_payload(name, exc)
         msg = str(exc)
         # peer.py wraps timeouts as "peer timeout at <url> after Ns" and
         # ssh+curl timeouts as "ssh+curl timeout to ...". Sniff either

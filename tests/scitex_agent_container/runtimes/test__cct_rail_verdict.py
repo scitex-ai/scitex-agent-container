@@ -393,7 +393,7 @@ def test_remedy_offers_dropping_the_channel(tmp_path: Path) -> None:
     # Act
     verdict = assess_cct_rail(_cfg("zz-fixme3"), dest=_home(tmp_path), pool=_pool())
     # Assert
-    assert "spec.claude.channels" in verdict.remedy()
+    assert "spec.comms.channels" in verdict.remedy()
 
 
 def test_the_verdict_never_carries_a_token_value(tmp_path: Path) -> None:

@@ -113,7 +113,7 @@ _REQUIRED_TOOL_NAMES = [
     "agent_status",
     "agent_start",
     "agent_stop",
-    "db_clean",
+    "store_clean",
     "host_list",
     "image_build",
     "template_render_contributor_spec",

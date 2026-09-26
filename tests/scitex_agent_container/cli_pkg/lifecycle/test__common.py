@@ -414,9 +414,9 @@ class TestBoundHost:
 # ---------------------------------------------------------------------------
 
 
-def _reload_state_db_at(path: Path, env_save_restore):
+def _reload_state_store_at(path: Path, env_save_restore):
     """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at ``path`` and reload the
-    state_db module.
+    state_store module.
 
     THE RELOAD NO LONGER REBINDS A PATH. It existed so the import-time
     ``DEFAULT_DB_PATH`` constant would follow the env var this had just set;
@@ -431,33 +431,33 @@ def _reload_state_db_at(path: Path, env_save_restore):
     import importlib
 
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(path))
-    import scitex_agent_container._state.state_db as state_db_mod
+    import scitex_agent_container._state.state_store as state_store_mod
 
-    importlib.reload(state_db_mod)
-    return state_db_mod
+    importlib.reload(state_store_mod)
+    return state_store_mod
 
 
 class TestRegistryActiveOn:
-    def test_missing_state_db_treated_as_not_live(self, tmp_path, env_save_restore):
+    def test_missing_state_store_treated_as_not_live(self, tmp_path, env_save_restore):
         # Arrange — point the env var at a non-existent path.
         import importlib
 
-        state_db_mod = _reload_state_db_at(tmp_path / "nope.db", env_save_restore)
+        state_store_mod = _reload_state_store_at(tmp_path / "nope.db", env_save_restore)
         try:
             # Act
             live = _registry_active_on("ghost", "alpha")
             # Assert
             assert live is False
         finally:
-            importlib.reload(state_db_mod)
+            importlib.reload(state_store_mod)
 
     def test_recorded_instance_seen_as_live(self, tmp_path, env_save_restore):
         # Arrange
         import importlib
 
-        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
+        state_store_mod = _reload_state_store_at(tmp_path / "state.db", env_save_restore)
         try:
-            state_db_mod.record_instance_start(
+            state_store_mod.record_instance_start(
                 name="clew",
                 host="alpha",
                 a2a_port=19100,
@@ -470,7 +470,7 @@ class TestRegistryActiveOn:
             # Assert
             assert live is True
         finally:
-            importlib.reload(state_db_mod)
+            importlib.reload(state_store_mod)
 
     def test_instance_on_other_host_not_live_on_target(
         self, tmp_path, env_save_restore
@@ -478,9 +478,9 @@ class TestRegistryActiveOn:
         # Arrange — row recorded on beta, asking about alpha.
         import importlib
 
-        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
+        state_store_mod = _reload_state_store_at(tmp_path / "state.db", env_save_restore)
         try:
-            state_db_mod.record_instance_start(
+            state_store_mod.record_instance_start(
                 name="clew",
                 host="beta",
                 a2a_port=19101,
@@ -493,7 +493,7 @@ class TestRegistryActiveOn:
             # Assert
             assert live is False
         finally:
-            importlib.reload(state_db_mod)
+            importlib.reload(state_store_mod)
 
     def test_ended_instance_not_live(self, tmp_path, env_save_restore):
         # Arrange — record then end; the row's ended_at != NULL so it
@@ -501,9 +501,9 @@ class TestRegistryActiveOn:
         # do via the new release path).
         import importlib
 
-        state_db_mod = _reload_state_db_at(tmp_path / "state.db", env_save_restore)
+        state_store_mod = _reload_state_store_at(tmp_path / "state.db", env_save_restore)
         try:
-            row_id = state_db_mod.record_instance_start(
+            row_id = state_store_mod.record_instance_start(
                 name="clew",
                 host="alpha",
                 a2a_port=19100,
@@ -511,13 +511,13 @@ class TestRegistryActiveOn:
                 remote=False,
                 spawned_by="cli",
             )
-            state_db_mod.record_instance_stop(row_id, exit_reason="released")
+            state_store_mod.record_instance_stop(row_id, exit_reason="released")
             # Act
             live = _registry_active_on("clew", "alpha")
             # Assert
             assert live is False
         finally:
-            importlib.reload(state_db_mod)
+            importlib.reload(state_store_mod)
 
 
 # ---------------------------------------------------------------------------

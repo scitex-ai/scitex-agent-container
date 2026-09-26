@@ -141,13 +141,101 @@ def _codex_sdk_inner_argv(
     Takes the SAME shared runner argv as the other two runner-hosted
     entries — the codex session CLI accepts every flag for real (it
     hands the process to ``run_session_daemon`` exactly like the
-    claude/openai runners do). The step-2 refusal
-    (``ensure_harness_matches_claude_launch``) still guards every LAUNCH
-    path, so nothing dispatches this argv until the canary step lifts
-    that guard; ``a2a.handler`` / a direct ``python -m`` is the working
-    entry today, mirroring the openai entry's position.
+    claude/openai runners do). ``harness: codex`` with ``runtime: headless``
+    selects this argv through the lifecycle registry.
     """
     return _session_runner_inner_argv(config, CODEX_SESSION_RUNNER, options)
+
+
+def _codex_tui_inner_argv(
+    config: "AgentConfig", options: "Mapping[str, object] | None" = None
+) -> list[str]:
+    """Inner argv for the interactive ``codex`` TUI (pre-shell-wrap).
+
+    Takes the SAME option keys as the Claude TUI entry (the workspace
+    ``.mcp.json`` path and the inline channel-subscriber JSON) so the
+    TUI branch of ``build_inner_argv`` dispatches both entries alike.
+    """
+    options = options or {}
+    from ..runtimes._apptainer_inner_argv_codex import codex_tui_argv
+
+    return codex_tui_argv(
+        config,
+        mcp_config=options.get("tui_mcp_config"),  # type: ignore[arg-type]
+        channel_mcp=options.get("tui_channel_mcp"),  # type: ignore[arg-type]
+        settings=options.get("tui_settings"),  # type: ignore[arg-type]
+    )
+
+
+def _hermes_tui_inner_argv(
+    config: "AgentConfig", options: "Mapping[str, object] | None" = None
+) -> list[str]:
+    """Inner argv for Hermes' official Ink TUI as the session owner.
+
+    Hermes does not reliably select the profile's default backend before a
+    session exists.  Pin the same resolved model/provider pair materialized in
+    ``~/.hermes/config.yaml`` so fresh sessions do not fall into Setup Required.
+    """
+    del options
+    from ..runtimes._hermes_context_gc import DEFAULT_MAX_SESSION_AGE_MINUTES
+
+    configured_max_age = config.claude.continue_max_age_minutes
+    max_age = min(
+        configured_max_age or DEFAULT_MAX_SESSION_AGE_MINUTES,
+        DEFAULT_MAX_SESSION_AGE_MINUTES,
+    )
+    argv = [
+        "/usr/bin/tini",
+        "-s",
+        "--",
+        "python3",
+        "-m",
+        "scitex_agent_container.runtimes._hermes_tui_owner",
+        "--state-dir",
+        f"/state/{config.name}",
+        "--max-session-age-minutes",
+        str(max_age),
+        "--",
+        "hermes",
+        "chat",
+        "--tui",
+        "--in",
+        str(config.workdir),
+        "--pass-session-id",
+    ]
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or "").strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes TUI requires a resolved engine model and key; refusing "
+            "to launch without a resolved engine"
+        )
+    # NOTE: no explicit --model/--provider flags. The generated hermes
+    # config.yaml already selects this model as default, and the explicit
+    # override path is what trips Hermes' data-training-tier guard in
+    # non-interactive runs (config-default needs no confirmation).
+    session_mode = str(config.claude.session or "").strip().lower()
+    if session_mode == "continue":
+        from ._hermes_session import hermes_session_key
+
+        argv += [
+            "--continue",
+            hermes_session_key(config.name, engine_key),
+            "--create-if-missing",
+        ]
+    elif session_mode == "resume":
+        resume_id = str(config.claude.resume_id or "").strip()
+        if not resume_id:
+            raise ValueError(
+                "Hermes session mode 'resume' requires spec.claude.resume_id "
+                "or the CLI --resume <session-id>; refusing to degrade to a "
+                "fresh session"
+            )
+        argv += ["--resume", resume_id]
+    prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
+    if prompts:
+        argv += ["--query", "\n\n".join(prompts)]
+    return argv
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +282,40 @@ def _codex_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
     from ..runtimes._apptainer_codex_env import codex_env_flags
 
     return codex_env_flags(config, state_dir)
+
+
+def _hermes_profile_env_argv(state_dir: "Path") -> list[str]:
+    """Expose the materialized owner-only Hermes env without argv secrets."""
+    profile_env = state_dir / "home" / ".hermes" / ".env"
+    if not profile_env.is_file():
+        raise RuntimeError(
+            "Hermes profile env is absent; materialize the Hermes workspace "
+            f"before building its container argv: {profile_env}"
+        )
+    mode = profile_env.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise RuntimeError(
+            f"Hermes profile env {profile_env} has unsafe mode {mode:#o}; "
+            "expected no group/world permissions"
+        )
+    return ["--env-file", str(profile_env)]
+
+
+def _hermes_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
+    """Expose the isolated Hermes profile, env, and engine provenance.
+
+    Hermes imports config-reading modules before its CLI-level dotenv loader.
+    A generated MCP entry containing ``${env:NAME}`` can therefore be parsed
+    while NAME is still absent, leaving the literal placeholder in the child
+    server environment for the entire session. Apptainer must load the same
+    owner-only profile env before the Hermes process starts. ``--env-file``
+    carries only a path in argv, so provider keys and the SAC listen bearer
+    remain absent from the world-readable process command line.
+    """
+    from ..runtimes._apptainer_provider import engine_env_flags
+
+    return (
+        ["--env", "HERMES_HOME=/home/agent/.hermes"]
+        + _hermes_profile_env_argv(state_dir)
+        + engine_env_flags(config)
+    )

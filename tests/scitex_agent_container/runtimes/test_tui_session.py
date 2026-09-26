@@ -14,15 +14,25 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
 
 from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
+from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.runtimes import _hermes_profile as hermes_profile
 from scitex_agent_container.runtimes import prompts as _prompts
+from scitex_agent_container.runtimes import tui_session as tui_module
+from scitex_agent_container.runtimes._apptainer_runtime import (
+    ApptainerContainerRuntime,
+)
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
+    TuiStopVerificationError,
     session_name_for,
 )
 
@@ -50,6 +60,8 @@ class _MemorySession:
     # to True.
     pane_pid: int = 0
     pane_dead: bool = False
+    submitted: bool = False
+    literal_pending: bool = False
 
 
 class _MemoryMultiplexer:
@@ -125,8 +137,10 @@ class _MemoryMultiplexer:
         # rather than the path it means to test. Modelling an IDLE pane is the
         # honest default here; tests that want a busy one say so explicitly by
         # overriding capture_content (see the busy-pane tests below).
+        busy = "\nWorking…" if sess.submitted else ""
         return (
             "\n".join(sess.pane)
+            + busy
             + "\n? for shortcuts"
             + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
         )
@@ -145,7 +159,19 @@ class _MemoryMultiplexer:
         sess = cls._sessions.get(session_name)
         if sess is None:
             return
+        if "Enter" in keys and sess.literal_pending:
+            sess.submitted = True
+            sess.literal_pending = False
+            return
         sess.pane.extend(keys)
+
+    @classmethod
+    def send_text_literal(cls, session_name: str, text: str) -> None:
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return
+        sess.pane.append(text)
+        sess.literal_pending = True
 
     @classmethod
     def send_text_and_submit(cls, session_name: str, text: str) -> None:
@@ -227,6 +253,7 @@ class _Config:
 
     name: str
     workdir: str = "/tmp"
+    harness: str = ""
 
 
 # Deterministic stand-in for the ``apptainer exec ... claude`` argv the
@@ -235,6 +262,20 @@ class _Config:
 # runner — the realistic argv is exercised by the build_run_argv suite +
 # the in-apptainer dry-run smoke. Ends in ``claude`` (the inner TUI).
 _FAKE_ARGV = ["apptainer", "exec", "img.sif", "claude"]
+
+
+@contextmanager
+def _replace_attributes(replacements):
+    originals = [
+        (target, name, getattr(target, name)) for target, name, _ in replacements
+    ]
+    try:
+        for target, name, value in replacements:
+            setattr(target, name, value)
+        yield
+    finally:
+        for target, name, value in originals:
+            setattr(target, name, value)
 
 
 def _fake_builder(config: _Config) -> list[str]:
@@ -297,6 +338,78 @@ def test_tui_runtime_start_returns_true_on_success(
     ok = runtime.start(config)
     # Assert
     assert ok is True
+
+
+def test_tui_runtime_start_never_stages_heartbeat_over_initial_turn(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="hermes-auto")
+    config.harness = "hermes"
+    config.runtime = "tui"
+    config.autonomous = SimpleNamespace(
+        enabled=True,
+        idle_kick_after_s=180,
+        kick_text="Keep working.",
+    )
+    # Act
+    runtime.start(config)
+    # Assert
+    assert not any(
+        row.startswith("/heartbeat every ")
+        for row in mux._sessions["tui-hermes-auto"].pane
+    )
+
+
+def test_tui_runtime_materializes_hermes_profile_on_production_workspace_path(
+    tmp_path,
+) -> None:
+    # Arrange
+    config = AgentConfig(name="project-gui", harness="hermes", runtime="tui")
+    home = tmp_path / "home"
+    calls: list[tuple[str, Path, bool]] = []
+
+    def materialize(value, *, state_dir, deploy_home):
+        calls.append((value.name, state_dir, deploy_home))
+        return [home]
+
+    replacements = [
+        (tui_module, "_materialize_workspace", lambda *args, **kwargs: home),
+        (hermes_profile, "materialize_hermes_tui_profile", materialize),
+        (tui_module, "state_dir_for_config", lambda value: tmp_path),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        result = TuiSessionRuntime().materialize_workspace(config)
+    # Assert
+    assert (result, calls) == (home, [("project-gui", tmp_path, False)])
+
+
+def test_default_tui_argv_validates_hermes_profile_against_final_argv(tmp_path):
+    # Arrange
+    config = AgentConfig(name="project-gui", harness="hermes", runtime="tui")
+    argv = ["apptainer", "exec", "--bind", "/host:/home/agent", "image", "hermes"]
+    calls: list[tuple[str, Path, list[str]]] = []
+
+    def validate(value, *, state_dir, launch_argv):
+        calls.append((value.name, state_dir, list(launch_argv)))
+
+    replacements = [
+        (
+            ApptainerContainerRuntime,
+            "resolve_sif",
+            lambda self, value: Path("/image.sif"),
+        ),
+        (tui_module, "build_run_argv", lambda *args, **kwargs: list(argv)),
+        (hermes_profile, "validate_hermes_tui_profile", validate),
+        (tui_module, "state_dir_for_config", lambda value: tmp_path),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        result = TuiSessionRuntime()._default_argv(config)
+    # Assert
+    assert (result, calls) == (argv, [("project-gui", tmp_path, argv)])
 
 
 def test_tui_runtime_start_invokes_turn_bridge_seam(
@@ -377,6 +490,98 @@ def test_tui_runtime_stop_swallows_turn_bridge_failure(
     stopped = runtime.stop(config)
     # Assert
     assert stopped is True
+
+
+def test_codex_tui_owns_one_cct_poller_for_managed_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    events: list[str] = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: events.append("bridge-start"),
+        turn_bridge_stop=lambda config: events.append("bridge-stop"),
+        inbox_dispatcher_start=lambda config: events.append("inbox-start"),
+        inbox_dispatcher_stop=lambda config: events.append("inbox-stop"),
+        cct_poller_start=lambda config: events.append("cct-start"),
+        cct_poller_stop=lambda config: events.append("cct-stop"),
+    )
+    config = _Config(name="codex-cct", harness="codex")
+    # Act
+    started = runtime.start(config)
+    stopped = runtime.stop(config)
+    # Assert — exactly one external owner, after its sink; teardown reverses it.
+    assert (started, stopped, events) == (
+        True,
+        True,
+        [
+            "bridge-start",
+            "inbox-start",
+            "cct-start",
+            "cct-stop",
+            "inbox-stop",
+            "bridge-stop",
+        ],
+    )
+
+
+def test_codex_cct_start_failure_unwinds_managed_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    events: list[str] = []
+
+    def fail_cct(config: object) -> None:
+        events.append("cct-start")
+        raise RuntimeError("poller preflight failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: events.append("bridge-start"),
+        turn_bridge_stop=lambda config: events.append("bridge-stop"),
+        inbox_dispatcher_start=lambda config: events.append("inbox-start"),
+        inbox_dispatcher_stop=lambda config: events.append("inbox-stop"),
+        cct_poller_start=fail_cct,
+        cct_poller_stop=lambda config: events.append("cct-stop"),
+    )
+    config = _Config(name="codex-cct-fail", harness="codex")
+    # Act
+    error = ""
+    try:
+        runtime.start(config)
+    except RuntimeError as exc:
+        error = str(exc)
+    # Assert
+    assert (error, events, mux.exists("tui-codex-cct-fail")) == (
+        "poller preflight failed",
+        [
+            "bridge-start",
+            "inbox-start",
+            "cct-start",
+            "cct-stop",
+            "inbox-stop",
+            "bridge-stop",
+        ],
+        False,
+    )
+
+
+def test_codex_dry_run_never_starts_cct_poller(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    starts: list[object] = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        cct_poller_start=starts.append,
+    )
+    # Act
+    result = runtime.start(_Config(name="codex-dry", harness="codex"), dry_run=True)
+    # Assert
+    assert (result, starts) == (True, [])
 
 
 def test_tui_runtime_start_invokes_claude_binary_in_session(
@@ -473,6 +678,27 @@ def test_tui_runtime_stop_returns_false_when_no_session(
     ok = runtime.stop(config)
     # Assert
     assert ok is False
+
+
+def test_tui_runtime_stop_raises_when_mux_cannot_verify_teardown() -> None:
+    # Arrange
+    class _UnverifiedStopMux(_MemoryMultiplexer):
+        @classmethod
+        def stop(cls, session_name: str) -> bool:
+            cls._stop_log.append(session_name)
+            return False
+
+    _UnverifiedStopMux.reset()
+    runtime = TuiSessionRuntime(
+        multiplexer=_UnverifiedStopMux, command_builder=_fake_builder
+    )
+    config = _Config(name="unverified-stop")
+    runtime.start(config)
+    # Act
+    call = lambda: runtime.stop(config)  # noqa: E731
+    # Assert
+    with pytest.raises(TuiStopVerificationError, match="owned process cgroup"):
+        call()
 
 
 # ---------------------------------------------------------------------------
@@ -651,9 +877,7 @@ def test_tui_runtime_logs_returns_captured_pane_text(
     # Act
     text = runtime.logs(config, lines=10)
     # Assert
-    assert text.startswith(
-        "<pane lines=10>apptainer exec img.sif claude 2> "
-    ) and text.endswith("/boot.stderr.log@/data/nu")
+    assert text == "<pane lines=10>apptainer exec img.sif claude@/data/nu"
 
 
 def test_tui_runtime_logs_returns_empty_when_session_absent(
@@ -787,6 +1011,7 @@ def test_send_turn_refuses_when_the_pane_is_busy(
     when work does not progress" — an unobservable non-progress condition
     means that escalation can never trigger.
     """
+
     # Arrange — a live session whose pane is mid-turn.
     class _BusyMux(mux):  # type: ignore[misc, valid-type]
         @classmethod

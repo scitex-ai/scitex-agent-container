@@ -164,26 +164,21 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # because a claim that names its sink is not this gate's business at
         # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
-        "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
         "scitex_agent_container/_lifecycle/_relocate_transcript.py:172",
-        "scitex_agent_container/_lifecycle/_restart_client.py:142",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:188",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:289",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:328",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:206",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:346",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:375",
         "scitex_agent_container/_listen/_deploy_freshness.py:227",
         "scitex_agent_container/_listen/_liveness_tick.py:123",
-        "scitex_agent_container/_listen/_node_channel_forwarders.py:177",
+        # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason
+        # now names where the tolerated non-JSON body goes (the a2a response
+        # the sender receives) instead of claiming it is "surfaced".
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:193",
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:226",
         "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
-        "scitex_agent_container/_mcp/_channel_post_deliver.py:120",
-        "scitex_agent_container/_mcp/_channel_post_deliver.py:99",
         # THESE FOUR MOVED, they did not change. The dispatch-ledger port to
         # PostgreSQL (2026-08-28) added prose above each of them, so the
         # coordinates shifted 107->115, 329->331, 46->62 and 59->79. The
@@ -198,7 +193,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # agent is a survey nobody has done, so naming it here would be a
         # guess wearing a receipt.
         "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
-        "scitex_agent_container/_mcp/channel.py:331",
         "scitex_agent_container/_network/_peer_dispatch.py:62",
         "scitex_agent_container/_network/_peer_dispatch.py:79",
         "scitex_agent_container/_network/probe.py:457",
@@ -211,17 +205,12 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_runners/_session_completion.py:183",
         "scitex_agent_container/_runners/_session_conversation.py:262",
         "scitex_agent_container/_runners/_session_hooks.py:225",
-        "scitex_agent_container/_runners/_session_http.py:244",
         "scitex_agent_container/_runners/_tmux/claude_code.py:516",
         "scitex_agent_container/_state/_acl_broker_client.py:130",
         "scitex_agent_container/_state/snapshot/_io.py:411",
         "scitex_agent_container/a2a/executors/_base.py:97",
         "scitex_agent_container/cli_pkg/_account_refresh_push.py:99",
-        "scitex_agent_container/cli_pkg/_agents_cct_audit.py:101",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:157",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:186",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",
-        "scitex_agent_container/cli_pkg/build_cmds.py:198",
+
         "scitex_agent_container/cli_pkg/hook_cmds.py:46",
         # _tui_outbound.py and _tui_turn_bridge.py LEFT THIS SET 2026-08-20 —
         # both reasons now name their sink. MEASURED before writing it, because
@@ -248,7 +237,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # drifts into position 179.
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
         "scitex_agent_container/runtimes/_tui_inject.py:92",
-        "scitex_agent_container/runtimes/_tui_turn_bridge_lifecycle.py:196",
     }
 )
 
@@ -277,7 +265,9 @@ def test_the_scanner_still_detects_the_incident_that_motivated_it():
     assert on a line we KNOW is a delivery claim with no sink.
     """
     # Arrange
-    known_bad = 'except Exception:  # stx-allow: fallback (reason: x; logged for the operator)'
+    known_bad = (
+        "except Exception:  # stx-allow: fallback (reason: x; logged for the operator)"
+    )
     # Act
     claims = bool(_CLAIMS_DELIVERY.search(known_bad))
     names = bool(_NAMES_A_SINK.search(known_bad))
@@ -292,7 +282,7 @@ def test_a_named_sink_satisfies_the_gate():
     unshrinkable, and the failure would look like diligence.
     """
     # Arrange
-    good = 'except Exception:  # stx-allow: fallback (reason: x; logged to runtime/logs/turn-bridge.log)'
+    good = "except Exception:  # stx-allow: fallback (reason: x; logged to runtime/logs/turn-bridge.log)"
     # Act
     claims = bool(_CLAIMS_DELIVERY.search(good))
     names = bool(_NAMES_A_SINK.search(good))
@@ -312,7 +302,7 @@ def test_no_new_unnamed_delivery_claim():
         "These `stx-allow` reasons claim the failure is logged/alerted/"
         "reported but name no sink. Name the path or channel in the comment "
         "(e.g. 'logged to runtime/logs/<name>.log') so the claim can be "
-        f"re-checked later:\n  " + "\n  ".join(sorted(new))
+        "re-checked later:\n  " + "\n  ".join(sorted(new))
     )
 
 

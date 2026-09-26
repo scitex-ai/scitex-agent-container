@@ -28,14 +28,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config._residency_types import AGENT_RESIDENCIES, RESIDENT
 from ._session_state import DEFAULT_TICK_SECONDS
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["_parse_argv", "main"]
 
@@ -116,7 +117,7 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="CHANNEL",
         help=(
-            "spec.claude.channels passthrough. Channel adapters are "
+            "spec.comms.channels passthrough. Channel adapters are "
             "Claude-SDK-specific; the codex turn driver warns LOUDLY and "
             "ignores them rather than degrading silently."
         ),

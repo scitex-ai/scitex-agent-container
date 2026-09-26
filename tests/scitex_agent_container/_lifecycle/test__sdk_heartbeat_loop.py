@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._lifecycle._session_movement import heartbeat_iso
 from scitex_agent_container._lifecycle._sdk_heartbeat_loop import (
     DEFAULT_SDK_HEARTBEAT_INTERVAL_S,
     sdk_heartbeat_loop,
 )
+from scitex_agent_container._lifecycle._session_movement import heartbeat_iso
 from scitex_agent_container._runners._session_state import write_heartbeat
 
 ISO_8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00$")

@@ -107,12 +107,13 @@ the one command that makes both work again.
 
 from __future__ import annotations
 
-import logging
 import socket
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 
 class BindCapabilityError(RuntimeError):

@@ -36,7 +36,7 @@ from scitex_agent_container._listen._reachability import (
     UNKNOWN,
     UNREACHABLE,
 )
-from scitex_agent_container._state.state_db import _resolve_host
+from scitex_agent_container._state.state_store import _resolve_host
 
 
 class _Inbox:

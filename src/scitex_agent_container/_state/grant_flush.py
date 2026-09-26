@@ -70,12 +70,12 @@ def unblock_and_clear_pending(
         raise ValueError(
             "unblock_and_clear_pending: sender and target must be non-empty"
         )
-    # Local imports so the module loads cleanly even when state_db
+    # Local imports so the module loads cleanly even when state_store
     # is mid-migration (the schema-init paths reach into siblings
     # circularly; lazy is safer).
-    from .state_db_blocks import unblock_send
-    from .state_db_nodes import grant_send
-    from .state_db_pending_approval import clear_pending_prompt
+    from .state_store_blocks import unblock_send
+    from .state_store_nodes import grant_send
+    from .state_store_pending_approval import clear_pending_prompt
 
     grant_send(sender=sender, target=target, note=note)
     unblocked = unblock_send(sender=sender, target=target)
@@ -120,8 +120,8 @@ def block_and_clear_pending(
     """
     if not sender or not target:
         raise ValueError("block_and_clear_pending: sender and target must be non-empty")
-    from .state_db_blocks import block_send
-    from .state_db_pending_approval import clear_pending_prompt
+    from .state_store_blocks import block_send
+    from .state_store_pending_approval import clear_pending_prompt
 
     block_send(sender=sender, target=target, note=note)
     cleared = clear_pending_prompt(sender=sender, target=target)

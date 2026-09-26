@@ -49,16 +49,17 @@ rather than an unknown quietly recorded as a pass.
 
 from __future__ import annotations
 
-import logging
 import os
 from collections import defaultdict
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._drift.versions import DEFAULT_VENV
 from ._overlay_masking_model import canonical_dist_name
 from ._overlay_venv_model import CHECK_VENV_DISTS_UNIQUE, VenvCheck
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "SKIP_ENV_VAR",

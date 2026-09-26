@@ -217,35 +217,19 @@ def test_apply_default_binds_preserves_explicit_spec_bind_order(
 
 
 # ---------------------------------------------------------------------------
-# 2026-06-13 SAC overlay stopgap — host scitex_agent_container -> in-SIF install
-# (lead a2a b6f3916c; removable once a SIF rebuild folds in the new install)
+# In-SIF SAC install — fleet defaults must never shadow the verified image.
 # ---------------------------------------------------------------------------
 
 
-def test_default_binds_returns_sac_overlay_when_host_repo_exists(
+def test_default_binds_do_not_shadow_image_sac_when_host_repo_exists(
     fake_home: Path,
 ) -> None:
-    # Arrange — synthesise the canonical host repo path under the
-    # sandboxed $HOME so the helper's expanduser() check picks it up.
+    # Arrange — this is the exact host checkout path used by the retired
+    # stopgap. Its presence must not change what code the image imports.
     sac_src = (
         fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
     )
     sac_src.mkdir(parents=True)
-    # Act
-    binds = default_binds_for_host()
-    # Assert — destination path is the in-SIF site-packages location.
-    assert any(
-        ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro" in b
-        for b in binds
-    )
-
-
-def test_default_binds_skips_sac_overlay_when_host_repo_missing(
-    fake_home: Path,
-) -> None:
-    # Arrange — fake_home (tmp_path) has no proj/scitex-agent-container
-    # subtree; deploy-host case where the operator hasn't cloned the
-    # repo at the canonical path.
     # Act
     binds = default_binds_for_host()
     # Assert
@@ -255,29 +239,24 @@ def test_default_binds_skips_sac_overlay_when_host_repo_missing(
     )
 
 
-def test_apply_default_binds_lets_explicit_spec_override_sac_overlay(
+def test_apply_default_binds_preserves_explicit_per_agent_sac_development_bind(
     fake_home: Path,
 ) -> None:
-    # Arrange — operator pins a custom host source for the overlay
-    # via spec; the spec entry MUST win (de-dup by destination).
-    sac_src = (
-        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
-    )
-    sac_src.mkdir(parents=True)
-    custom_override = (
+    # Arrange — development source injection remains possible when the
+    # operator declares it for one agent instead of changing every agent.
+    explicit_development_bind = (
         "/opt/local-sac-src"
         ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:rw"
     )
-    spec_binds = [custom_override]
     # Act
-    result = apply_default_binds(spec_binds)
-    # Assert — exactly one entry whose destination is the in-SIF install path.
+    result = apply_default_binds([explicit_development_bind])
+    # Assert
     sac_entries = [
         b
         for b in result
         if "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
     ]
-    assert sac_entries == [custom_override]
+    assert sac_entries == [explicit_development_bind]
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +306,7 @@ def test_apply_default_binds_still_lets_explicit_spec_pin_venv_agent_overlay(
     assert custom_override in result
 
 
-def test_only_venv_sac_overlay_is_a_default_not_venv_agent(
+def test_neither_sac_install_path_is_a_fleet_default(
     fake_home: Path,
 ) -> None:
     # Arrange
@@ -337,15 +316,11 @@ def test_only_venv_sac_overlay_is_a_default_not_venv_agent(
     sac_src.mkdir(parents=True)
     # Act
     binds = default_binds_for_host()
-    only_sac = any(
-        "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
-        for b in binds
-    ) and not any(
-        "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
-        for b in binds
-    )
+    sac_install_binds = [
+        b for b in binds if "/site-packages/scitex_agent_container" in b
+    ]
     # Assert
-    assert only_sac
+    assert sac_install_binds == []
 
 
 # ---------------------------------------------------------------------------

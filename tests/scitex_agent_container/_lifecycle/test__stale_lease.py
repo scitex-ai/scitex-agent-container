@@ -26,6 +26,10 @@ from typing import Iterator
 
 import pytest
 
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
+
 
 class FakeThread:
     """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
@@ -47,6 +51,7 @@ class FakeThread:
     def start(self) -> None:
         self.started = True
 
+
 @pytest.fixture
 def db_path(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
@@ -62,7 +67,7 @@ def db_path(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -109,7 +114,7 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         last_known_instance,
         list_active_instances,
         record_instance_start,
@@ -184,7 +189,7 @@ def _drive_live_pid_scenario(name: str) -> tuple[int, list[dict]]:
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         list_active_instances,
         record_instance_start,
     )
@@ -239,7 +244,7 @@ def _drive_name_scoped_scenario() -> tuple[int, set[str]]:
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         list_active_instances,
         record_instance_start,
     )
@@ -295,7 +300,7 @@ def _drive_null_pid_scenario(name: str) -> tuple[int, list[dict]]:
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         list_active_instances,
         record_instance_start,
     )
@@ -415,7 +420,7 @@ def _write_zombie_spec(tmp_path: Path) -> Path:
             "    post_stop: []\n"
         )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _drive_dead_runtime_start_scenario(
@@ -431,7 +436,7 @@ def _drive_dead_runtime_start_scenario(
     """
     from scitex_agent_container._lifecycle import lifecycle as lc
     from scitex_agent_container._state.registry import Registry
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         list_active_instances,
         record_instance_start,
     )
@@ -455,8 +460,7 @@ def _drive_dead_runtime_start_scenario(
 
 
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
-    pg_schema: str,
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -470,8 +474,7 @@ def test_agent_start_clears_dead_pid_from_active_zombie_rows(
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
-    pg_schema: str,
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -496,7 +499,7 @@ def _drive_live_lease_preserve_scenario() -> tuple[int, int, list[dict]]:
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         list_active_instances,
         record_instance_start,
     )

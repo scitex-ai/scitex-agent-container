@@ -55,6 +55,7 @@ __all__ = [
     "TuiAuthStageError",
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
+    "TuiStopVerificationError",
     "_compose_pending_live",
     "clear_compose_buffer",
     "drain_modals_until_ready",
@@ -63,6 +64,10 @@ __all__ = [
     "state_dir_for_config",
     "verify_submit_by_advancement",
 ]
+
+
+class TuiStopVerificationError(RuntimeError):
+    """The owned tmux session or process cgroup survived teardown."""
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
@@ -170,6 +175,10 @@ class TuiSessionRuntime(
         command_builder: Any | None = None,
         turn_bridge_start: Any | None = None,
         turn_bridge_stop: Any | None = None,
+        inbox_dispatcher_start: Any | None = None,
+        inbox_dispatcher_stop: Any | None = None,
+        cct_poller_start: Any | None = None,
+        cct_poller_stop: Any | None = None,
     ) -> None:
         # Injection seams (tests pass in-memory fakes — real Protocol impls,
         # no mocks): ``multiplexer`` (MultiplexerProtocol; default TmuxManager),
@@ -181,6 +190,71 @@ class TuiSessionRuntime(
         self._command_builder = command_builder or self._default_argv
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
+        self._inbox_dispatcher_start = inbox_dispatcher_start
+        self._inbox_dispatcher_stop = inbox_dispatcher_stop
+        self._cct_poller_start = cct_poller_start
+        self._cct_poller_stop = cct_poller_stop
+
+    @staticmethod
+    def _owns_external_cct_poller(config: AgentConfig) -> bool:
+        """Whether this base runtime owns CCT for the selected TUI harness.
+
+        Hermes keeps its established subclass lifecycle.  Codex uses this
+        harness-neutral base lifecycle so inbound transport is tied to the
+        exact SAC-managed ``/v1/turn`` session rather than an MCP launch.
+        """
+        return str(getattr(config, "harness", "") or "").lower() == "codex"
+
+    def _start_cct_poller(self, config: AgentConfig) -> None:
+        start = self._cct_poller_start
+        if start is None:
+            from ._tui_cct_poller import start_cct_poller as start
+
+        start(config)
+
+    def _stop_cct_poller(self, config: AgentConfig) -> None:
+        stop = self._cct_poller_stop
+        if stop is None:
+            from ._tui_cct_poller import stop_cct_poller as stop
+
+        stop(config)
+
+    def _start_inbox(self, config: AgentConfig) -> None:
+        """Start the harness-neutral durable inbox dispatcher."""
+        start = self._inbox_dispatcher_start
+        if start is None:
+            from ._channel_inbox_dispatcher_lifecycle import (
+                start_inbox_dispatcher as start,
+            )
+
+        start(config)
+
+    def _stop_inbox(self, config: AgentConfig) -> None:
+        """Stop the exact dispatcher owned by this agent incarnation."""
+        stop = self._inbox_dispatcher_stop
+        if stop is None:
+            from ._channel_inbox_dispatcher_lifecycle import (
+                stop_inbox_dispatcher as stop,
+            )
+
+        stop(config)
+
+    def send_key(self, config: AgentConfig, key: str) -> bool:
+        """Deliver one bounded, explicit control key to the owned TUI pane."""
+        normalized = {
+            "ESC": "Escape",
+            "Escape": "Escape",
+            "Enter": "Enter",
+            "C-c": "C-c",
+            "SIGINT": "C-c",
+        }.get(key)
+        if normalized is None:
+            raise ValueError(f"unsupported TUI control key: {key!r}")
+        name = self.session_name(config)
+        if not name or not self._mux.exists(name):
+            return False
+        self._mux.send_keys(name, normalized)
+        return True
 
     def _default_argv(self, config: AgentConfig) -> list[str] | None:
         """Resolve the SIF and render the ``apptainer exec ... claude`` argv
@@ -194,8 +268,28 @@ class TuiSessionRuntime(
         sif_path = container_rt.resolve_sif(config)
         if sif_path is None:
             return None
+        self._resolved_sif_path = sif_path
         state_dir = state_dir_for_config(config)
-        return build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
+        argv = build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
+        if getattr(config, "harness", "") == "hermes":
+            from ._hermes_profile import validate_hermes_tui_profile
+
+            validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
+        return argv
+
+    def resolved_image_identity(self) -> dict[str, str] | None:
+        """Exact immutable artifact selected for this runtime's last launch."""
+        path = getattr(self, "_resolved_sif_path", None)
+        if path is None:
+            return None
+        from ._apptainer_image_ref import image_artifact_identity
+
+        return image_artifact_identity(path)
+
+    def resolved_storage_identity(self) -> dict[str, str] | None:
+        """Exact write-heavy paths selected for this runtime's last launch."""
+        value = getattr(self, "_resolved_launch_storage", None)
+        return dict(value) if value is not None else None
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         """Materialise per-agent ``to_home/`` + CLAUDE.md into the container
@@ -206,7 +300,16 @@ class TuiSessionRuntime(
         for the per-step rationale (SDK-parity $HOME surface, settings.json USER
         scope, overlay upper-home, onboarding pre-seed).
         """
-        return _materialize_workspace(config, state_dir_for_config=state_dir_for_config)
+        home = _materialize_workspace(config, state_dir_for_config=state_dir_for_config)
+        if home is not None and getattr(config, "harness", "") == "hermes":
+            from ._hermes_profile import materialize_hermes_tui_profile
+
+            materialize_hermes_tui_profile(
+                config,
+                state_dir=state_dir_for_config(config),
+                deploy_home=False,
+            )
+        return home
 
     def start(
         self,
@@ -258,6 +361,10 @@ class TuiSessionRuntime(
             )
             if not dry_run:
                 return True
+        if not dry_run and self._owns_external_cct_poller(config):
+            from ._apptainer_codex_env import preflight_subscription
+
+            preflight_subscription(config, state_dir_for_config(config))
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)
@@ -294,35 +401,18 @@ class TuiSessionRuntime(
             write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
-        # OVERLAY VENV INVALIDATION CONTRACT — parity with the SDK runtime (see
-        # ``_apptainer_runtime.start`` for the full why-here). Past the
-        # duplicate-session guard above, so no container of this agent holds the
-        # overlay mounted; past the dry-run return, so ``--dry-run`` mutates
-        # nothing; and BEFORE the entry-point probe below, so that probe
-        # measures the RECONCILED union rather than the stale one.
-        # The SIF is read OUT OF THE LAUNCH ARGV rather than re-resolved. Same
-        # reasoning as ``_entry_point_gate.probe_argv_from_launch``: a second
-        # resolution is free to drift from the one that actually launches, and
-        # reconciling against a DIFFERENT image than the container mounts would
-        # stamp the overlay with an identity it never ran on — which then reads
-        # as reconciled forever. Deriving it makes divergence impossible.
-        from .._maintenance._overlay_venv_invalidate import (
-            reconcile_overlay_venv_for_launch,
-        )
+        # LAUNCH GATE — the /uvwork scratch bind (ADR-0024), the overlay-venv
+        # reconcile and the entry-point probe. All three are launch-time acts
+        # that write to the host or refuse to start, so all three live past the
+        # dry-run return and past the duplicate-session guard above, never
+        # inside ``build_run_argv`` (which ``sac agents explain`` also calls).
+        # Order and derivation rationale: :mod:`._tui_launch_gate`.
+        from ._tui_launch_gate import run_launch_gate
 
-        launch_sif = next((a for a in argv if str(a).endswith(".sif")), None)
-        if launch_sif is not None:
-            reconcile_overlay_venv_for_launch(
-                config, launch_sif, state_dir_for_config(config)
-            )
+        run_launch_gate(config, argv, state_dir=state_dir_for_config(config))
+        from ._launch_storage import launch_storage_identity
 
-        # The console script must RUN in the union we are about to launch, not
-        # merely import in the image. Called after argv exists (so the probe
-        # inherits the real overlay) and after the dry-run return (so
-        # ``--dry-run`` stays subprocess-free).
-        from ._entry_point_gate import assert_entry_point_runs
-
-        assert_entry_point_runs(config.name, argv)
+        self._resolved_launch_storage = launch_storage_identity(argv)
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
         # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).
@@ -334,17 +424,26 @@ class TuiSessionRuntime(
         # Redirect the inner ``apptainer exec … claude`` STDERR (apptainer FATAL
         # mount errors / an immediate claude exit) to a DURABLE per-agent log so
         # ``agent_start`` surfaces the real boot failure instead of a cause-less
-        # ``<empty>`` pane tail. ``2>`` truncates per start.
+        # ``<empty>`` pane tail. Host-side truncation occurs before tmux starts;
+        # TmuxManager installs the stderr redirect before its first shell step,
+        # so even a failed ``cd`` or venv activation survives the pane's exit.
         boot_stderr_log = state_dir_for_config(config) / "boot.stderr.log"
-        command = " ".join(shlex.quote(a) for a in argv) + (
-            f" 2> {shlex.quote(str(boot_stderr_log))}"
-        )
+        boot_stderr_log.parent.mkdir(parents=True, exist_ok=True)
+        boot_stderr_log.write_text("")
+        boot_stderr_log.chmod(0o600)
+        command = " ".join(shlex.quote(a) for a in argv)
         started = bool(
             self._mux.start(
                 session_name=name,
                 command=command,
                 workdir=str(workdir),
-                session_env={"CLAUDE_DISABLE_AUTO_UPDATE": "1"},
+                session_env={
+                    "CLAUDE_DISABLE_AUTO_UPDATE": "1",
+                    "SAC_TMUX_BOOT_STDERR_PATH": str(boot_stderr_log),
+                    "SAC_TMUX_START_DIAGNOSTICS_PATH": str(
+                        state_dir_for_config(config) / "tmux.start.json"
+                    ),
+                },
             )
         )
         # BUG 3 (false success): whether the boot-drain observed a ready
@@ -372,6 +471,13 @@ class TuiSessionRuntime(
             # endpoint the SDK runner serves. Best-effort — a failed bridge
             # must not fail the start.
             self._maybe_start_turn_bridge(config)
+            # One host daemon owns the durable SAC/Cards subscriptions for
+            # every TUI harness.  It hands neutral envelopes to /v1/turn;
+            # that endpoint's runtime adapter decides Claude Code, Hermes, or
+            # Codex delivery.  Starting it after the turn bridge prevents an
+            # inbox consumer from acknowledging work before a sink exists.
+            if str(getattr(config, "harness", "") or "").lower() != "hermes":
+                self._start_inbox(config)
         # BUG 3 (false success — constitution §2 "no surprises / fail loud"):
         # up to here ``started`` only proves ``tmux new-session`` succeeded, NOT
         # that the inner claude survived boot and reached its input-ready state.
@@ -390,9 +496,9 @@ class TuiSessionRuntime(
                 is_running=self.is_running(config) if alive else False,
             )
             if not ok:
-                import logging
+                import scitex_logging as slogging
 
-                logging.getLogger(__name__).error(
+                slogging.getLogger(__name__).error(
                     "TuiSessionRuntime: start FAILED for %s — tmux session "
                     "%s (session_alive=%s, reached_ready=%s). The inner claude "
                     "did not survive boot and reach its input field. Reproduce "
@@ -405,6 +511,22 @@ class TuiSessionRuntime(
                     name,
                 )
                 return False
+            if self._owns_external_cct_poller(config):
+                try:
+                    self._start_cct_poller(config)
+                except Exception:
+                    # CCT is part of the requested managed session contract.
+                    # Never leave a TUI advertised as live after its sole
+                    # inbound owner failed to start, and never fall back to an
+                    # MCP-owned second poller.
+                    self._stop_cct_poller(config)
+                    self._stop_inbox(config)
+                    self._maybe_stop_turn_bridge(config)
+                    self._mux.stop(name)
+                    raise
+            # Hermes autonomy is armed by its detached monitor after that
+            # monitor positively observes an idle footer and empty composer.
+            # Never stage SAC control text over the initial model turn here.
         return started
 
     def stop(self, config: AgentConfig) -> bool:
@@ -413,11 +535,21 @@ class TuiSessionRuntime(
         Returns True iff a session existed AND was terminated (no-op on absent
         session, so the supervisor's ``stop()->start()`` cycle stays idempotent).
         """
-        # Tear down the A2A turn bridge first so it stops accepting wake POSTs
-        # before the tmux session it injects into goes away.
+        # Stop inbound owners before the A2A sink and pane disappear.
+        if self._owns_external_cct_poller(config):
+            self._stop_cct_poller(config)
+        if str(getattr(config, "harness", "") or "").lower() != "hermes":
+            self._stop_inbox(config)
         self._maybe_stop_turn_bridge(config)
         name = session_name_for(config)
-        return bool(self._mux.stop(name))
+        if not self._mux.exists(name):
+            return False
+        if not self._mux.stop(name):
+            raise TuiStopVerificationError(
+                f"TUI stop for {config.name!r} could not verify that both "
+                f"tmux session {name!r} and its owned process cgroup are gone"
+            )
+        return True
 
     def is_running(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S

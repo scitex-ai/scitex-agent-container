@@ -22,6 +22,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+CANONICAL_CI_STORE_DSN = (
+    "postgresql://ywatanabe__scitex-agent-container@"
+    "scitex-primary:55432/scitex"
+)
+
 # CI outcome -> card status. ``failed``, deliberately NOT ``blocked``, and
 # the difference is not cosmetic. A ``blocked`` card must name the gate
 # holding it, and this store's blockers are ('compute', 'dependency',
@@ -231,10 +236,9 @@ def cards() -> Any:
       ``:5442`` (an SSH tunnel to another box's postgres) while every
       shell reads ``:55432``, so a process's card writes and its own
       read-back can land in different databases with nothing saying so.
-    * An UNSET ``$SCITEX_CARDS_DB`` does not fail. It silently resolves to
-      a local ``cards.db`` FILE that no board reads. A runner's ``run:``
-      step gets a non-interactive shell sourcing no profile, so unset is
-      exactly what it sees unless the workflow passes the DSN explicitly.
+    * Cards 0.52.1 removed the Cards-specific SQLite-era ambient resolver.
+      A runner's ``run:`` step gets a non-interactive shell sourcing no
+      profile, so the workflow must pass the shared-store DSN explicitly.
 
     Writing a verdict into a store nobody reads is the same silent-nobody
     failure as delivering to a deaf agent. So: resolve, check, and refuse
@@ -249,8 +253,15 @@ def cards() -> Any:
         raise RuntimeError(
             f"card store resolved to {resolved.get('resolved')!r} "
             f"(backend={backend!r}), not the fleet's postgres store. Set "
-            "$SCITEX_CARDS_DB explicitly — an unset DSN falls back to a "
-            "local file that no board reads."
+            "$SCITEX_STORE_DSN explicitly — the CI rail must not infer its "
+            "write authority from an interactive shell."
+        )
+    resolved_dsn = str(resolved.get("resolved") or "")
+    if resolved_dsn != CANONICAL_CI_STORE_DSN:
+        raise RuntimeError(
+            f"card store resolved to {resolved_dsn!r}, not the canonical "
+            "scitex-primary:55432/scitex authority. Refusing to write a CI "
+            "verdict to an unverified store."
         )
     return scitex_cards
 

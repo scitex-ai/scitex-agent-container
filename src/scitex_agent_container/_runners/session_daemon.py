@@ -63,11 +63,12 @@ declares a planned END, never an excuse.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import signal
 from pathlib import Path
 from typing import Any
+
+import scitex_logging as slogging
 
 from ..config._residency_types import (
     AGENT_RESIDENCIES,
@@ -80,6 +81,7 @@ from ._daemon_contract import (
     resolve_exit,
 )
 from ._incarnation import (
+    EXIT_CRASHED,
     EXIT_ONESHOT_COMPLETE,
     EXIT_STOPPED_BY_SIGNAL,
     WRITER_SESSION_DAEMON,
@@ -104,7 +106,7 @@ from ._session_state import (
     heartbeat_loop as _heartbeat_loop,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["_autonomous_loop", "run_session_daemon"]
 
@@ -174,7 +176,7 @@ async def run_session_daemon(
     # turn / error) tags the same hostname. _resolve_host falls back
     # to hostname -s when config.yaml is malformed, so this never
     # raises.
-    from .._state.state_db import _resolve_host
+    from .._state.state_store import _resolve_host
 
     host = _resolve_host(None)
 
@@ -266,6 +268,7 @@ async def run_session_daemon(
     inbox: asyncio.Queue = make_inbox()
     convo_task: asyncio.Task | None = None
     http_task: asyncio.Task | None = None
+    channel_task: asyncio.Task | None = None
 
     def _write_exit() -> int:
         """Write the terminal ExitRecord; returns the exit code."""
@@ -297,11 +300,46 @@ async def run_session_daemon(
             ),
         )
 
+    # The runner owns one consumer; harness-native MCPs keep tools only.
+    durable_channels = tuple(
+        channel
+        for channel in dict.fromkeys(channels or [])
+        if channel in {"server:sac", "server:scitex-cards"}
+    )
+    if durable_channels:
+        from functools import partial
+
+        from .._listen._config import listen_base_url
+        from ..runtimes._channel_inbox_dispatcher import consume as consume_channels
+        from ._session_channel_dispatcher import dispatch_to_session
+
+        channel_task = asyncio.create_task(
+            consume_channels(
+                name=name,
+                listen_url=listen_base_url(),
+                turn_url="direct://resident-session",
+                channels=durable_channels,
+                dispatch_event=partial(dispatch_to_session, inbox=inbox),
+            )
+        )
+
+        def _channel_done(task: asyncio.Task) -> None:
+            if task.cancelled() or stop.is_set():
+                return
+            failure = task.exception()
+            if failure is None:
+                failure = RuntimeError("durable channel dispatcher exited unexpectedly")
+            logger.error("channel dispatcher failed for %s: %s", name, failure)
+            exit_cause.set_once(EXIT_CRASHED, 1)
+            stop.set()
+
+        channel_task.add_done_callback(_channel_done)
+
     # Spawn the conversation (turn-driver) task whenever the inbox has a
     # producer: mission seeds it with the boot prompt, or a2a_port lets
     # HTTP feed turns. Without a producer, no harness client is needed.
     autonomous_task: asyncio.Task | None = None
-    if mission or a2a_port is not None:
+    if mission or a2a_port is not None or durable_channels:
         if mission and not autonomous_enabled:
             # Seed the inbox with the mission turn. exit_after=True for
             # foreground (--print-stream) mode AND for a declared
@@ -379,6 +417,15 @@ async def run_session_daemon(
             try:
                 await convo_task
             finally:
+                if channel_task is not None and not channel_task.done():
+                    channel_task.cancel()
+                    try:
+                        await channel_task
+                    except (
+                        asyncio.CancelledError,
+                        Exception,
+                    ):  # stx-allow: fallback (reason: one-shot teardown still must write its exit record)
+                        pass
                 hb_task.cancel()
                 try:
                     await hb_task
@@ -398,6 +445,15 @@ async def run_session_daemon(
     try:
         await stop.wait()
     finally:
+        if channel_task is not None and not channel_task.done():
+            channel_task.cancel()
+            try:
+                await channel_task
+            except (
+                asyncio.CancelledError,
+                Exception,
+            ):  # stx-allow: fallback (reason: dispatcher teardown cannot prevent the daemon from recording its terminal state)
+                pass
         if autonomous_task is not None and not autonomous_task.done():
             autonomous_task.cancel()
             try:

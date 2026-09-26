@@ -8,13 +8,14 @@ orchestrators declare their MCP servers explicitly in v2 YAML.
 from __future__ import annotations
 
 import json
-import logging
 import os
 from pathlib import Path
 
+import scitex_logging as slogging
+
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _resolve_env_refs(value: str) -> str:

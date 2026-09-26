@@ -1,8 +1,8 @@
 """Store plumbing for the dispatch ledger — schema, target, ordering.
 
 Extracted from :mod:`.dispatch_ledger` so that module stays under the per-file
-line cap, exactly as :mod:`.state_db_grants` was extracted from
-:mod:`.state_db_nodes`. Everything public here is re-exported from
+line cap, exactly as :mod:`.state_store_grants` was extracted from
+:mod:`.state_store_nodes`. Everything public here is re-exported from
 ``dispatch_ledger``, so the existing import surface is unchanged.
 
 This file holds the two decisions the port turned on — WHAT the identity is,
@@ -139,7 +139,7 @@ def _schema() -> Any:
     """The dispatch-ledger schema.
 
     Built lazily so importing this module does not import scitex-dev; the old
-    module was equally lazy about ``state_db``, for the same reason.
+    module was equally lazy about ``state_store``, for the same reason.
     """
     from scitex_dev.store import FieldKind, Schema
 

@@ -246,6 +246,19 @@ def test_the_unreadable_reason_survives_a_multiline_error(fleet: Path) -> None:
     assert "Unknown top-level field 'this'" in plan.unreadable[0]
 
 
+def test_the_unreadable_reason_survives_a_long_runner_path(fleet: Path) -> None:
+    # Arrange
+    nested = fleet.joinpath(*(f"very-long-runner-segment-{i}" for i in range(12)))
+    broken = nested / "broken"
+    broken.mkdir(parents=True)
+    spec = broken / "spec.yaml"
+    spec.write_text("this: is not an agent spec\n")
+    # Act
+    plan = plan_migration([spec])
+    # Assert
+    assert "Unknown top-level field 'this'" in plan.unreadable[0]
+
+
 # ---------------------------------------------------------------------------
 # Already declared — the third not-written outcome, and the one that is done
 # ---------------------------------------------------------------------------

@@ -57,12 +57,13 @@ is a clean no-op: a container launched by an older sac must keep booting
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Mapping
+
+import scitex_logging as slogging
 
 from ._board_identity_env import assert_expanded
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: Env var carrying the comma-separated spec-env KEY LIST into the container.
 #: Values are NOT carried here — they ride their own ``--env`` flags; this is

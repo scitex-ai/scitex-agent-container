@@ -30,11 +30,12 @@ queryable communication state — not an ad-hoc side file.
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any, Optional
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "record_dispatch",
@@ -236,9 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     """Stop-hook entrypoint: report the just-completed turn's completion.
 
     Invoked by the agent's in-container ``Stop`` hook, which pipes claude's
-    Stop payload JSON on stdin. Resolves the agent name, ``state.db``,
-    bus URL and bearer from the in-container env the runtime injects
-    (``SCITEX_AGENT_CONTAINER_AGENT`` / ``…_STATE_DB`` /
+    Stop payload JSON on stdin. Resolves the agent name, bus URL and bearer
+    from the in-container env the runtime injects
+    (``SCITEX_AGENT_CONTAINER_AGENT`` /
     ``SAC_LISTEN_BASE_URL`` / ``SAC_LISTEN_BEARER``), reads
     ``transcript_path`` from stdin for the reply summary, and flushes the
     OLDEST pending inbound dispatch (one per ``Stop`` = one completed turn).
@@ -269,8 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     agent = os.environ.get("SCITEX_AGENT_CONTAINER_AGENT", "").strip()
     listen_url = os.environ.get("SAC_LISTEN_BASE_URL", "").strip()
     bearer = os.environ.get("SAC_LISTEN_BEARER", "").strip() or None
-    # SCITEX_AGENT_CONTAINER_STATE_DB IS NO LONGER PART OF THIS GATE, and
-    # dropping it is the point rather than tidying. It named the file
+    # The retired SQLite path is no longer part of this gate. It named the file
     # the ledger used to live in; the ledger is PostgreSQL now and this path
     # reads nothing from it. Left in place, an agent without that variable
     # would silently stop reporting completions — the gate would be refusing

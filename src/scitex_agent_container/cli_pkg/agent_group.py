@@ -24,11 +24,11 @@ from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
 from .lifecycle import forget as _forget_impl
+from .lifecycle import fork as _fork_impl
 from .lifecycle import rename as _rename_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
-from .lifecycle import twin as _twin_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl
@@ -80,6 +80,13 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "refresh-acl",
                 "declare-a2a-host",
                 "migrate-layers",
+                "migrate-engines",
+                "migrate-images",
+                "scratch-migrate",
+                "link-specs",
+                "provision-cards-notify",
+                "sync-cards-store-credential",
+                "reconcile-turn-bridge",
             ],
         ),
     ]
@@ -106,10 +113,11 @@ def agent_group() -> None:
 # --project <p>`.
 agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
-# `twin` — spawn a context-inheriting twin of a running agent (forks the
+# `fork` — spawn a context-inheriting child of a running agent (forks the
 # parent's live session, then diverges; parent never stops). See the
-# twin-spawning skill + docs/adr/0019.
-agent_group.add_command(_rebind(_twin_impl, "twin"))
+# fork-spawning skill + docs/adr/0019. The verb is `fork`; the noun "twin" is
+# retired (operator, 2026-09-19: a noun must not name a command).
+agent_group.add_command(_rebind(_fork_impl, "fork"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the
@@ -184,6 +192,11 @@ _register_auth_audit(agent_group)
 from ._agents_cct_audit import register as _register_cct_audit  # noqa: E402
 
 _register_cct_audit(agent_group)
+from ._agents_reconcile_turn_bridge import (  # noqa: E402
+    register as _register_reconcile_turn_bridge,
+)
+
+_register_reconcile_turn_bridge(agent_group)
 # `state` — the ONE state shape, returned for every agent, always. Each signal
 # is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
 # instead of by whatever subset each call site happened to hold. It exists
@@ -194,20 +207,11 @@ _register_cct_audit(agent_group)
 from ._agents_state import register as _register_agents_state  # noqa: E402
 
 _register_agents_state(agent_group)
-# `deliver` — a send that reports whether it actually landed. `send` (above)
-# resumes a recorded Claude session and is the right tool when the target has
-# one; measured on the live host, only a handful of agents do, so for the TUI
-# population it cannot deliver at all. A bare `tmux send-keys` into a session
-# that does not exist prints "can't find pane" to a stderr nobody reads and
-# exits 0 — which is how hours of coordination went to a session that had never
-# existed, every message reported as delivered. This verb resolves and PROVES
-# the target, confirms arrival by an injected token matched against a FLATTENED
-# pane (a prose grep already returned 0 for a message that had arrived), and
-# confirms SUBMISSION — the step that was missing, since text can sit unsent in
-# the composer forever while the agent looks idle.
-from ._agents_deliver import register as _register_agents_deliver  # noqa: E402
-
-_register_agents_deliver(agent_group)
+# Prompt delivery has ONE public CLI: `send`. It uses the agent's native HTTP
+# `/v1/turn` boundary, accepts the responder-issued scitex-dev StatusCode
+# exchange receipt, and reconciles that exchange to a final result. The retired
+# `deliver` verb selected a second route which pasted text and Enter into tmux;
+# no timing-sensitive keyboard injector is registered as a communication CLI.
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
@@ -279,6 +283,13 @@ agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloa
 from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
 
 agent_group.add_command(_refresh_acl_impl)
+# `link-specs` — install a selected, git-backed agent definition tree as the
+# live SAC path without destroying the prior live copy. Dry-run is the
+# default; apply archives every replaced entry and atomically publishes the
+# links only after the entire batch passes preflight.
+from ._agents_link_specs import register as _register_link_specs  # noqa: E402
+
+_register_link_specs(agent_group)
 # `migrate-layers` — step 3 of the to_home_layers migration: write into each
 # spec the ``to_home`` cascade it ALREADY resolves, so what an agent inherits
 # is readable from the spec instead of only derivable by re-running the
@@ -290,6 +301,43 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_migrate_layers import register as _register_migrate_layers  # noqa: E402
 
 _register_migrate_layers(agent_group)
+
+# `migrate-engines` — the roll-over `config._engine_types` names but does not
+# ship: give every spec a `spec.engines` block so HARNESS and ENGINE are
+# separate axes and any agent can start on the Qwen gateway instead of Claude.
+# 1 of 119 specs declares the block today. Same shape as `migrate-layers`
+# (dry-run by default, `--apply` is the act, `--json` for machines) plus the
+# two things a 119-file rewrite needs and a one-line insert did not: a unified
+# diff per spec, and batching by --agent / --host / --limit. Agent-spec-scoped,
+# so it lives here rather than under a new top-level noun.
+from ._agents_migrate_engines import register as _register_migrate_engines  # noqa: E402
+
+_register_migrate_engines(agent_group)
+
+from ._agents_migrate_images import register as _register_migrate_images  # noqa: E402
+
+_register_migrate_images(agent_group)
+
+# `scratch-migrate` — ADR-0024: move each STOPPED agent's overlay-upper
+# ``/uvwork`` (11.7 GB for sac alone on the root LV, measured 2026-09-03)
+# onto the host scratch volume where sac now binds ``/uvwork`` from. Same
+# shape as `migrate-layers`: dry-run by default, `--apply` is the act,
+# running agents refused by name, `--json` for machines.
+from ._agents_scratch_migrate import register as _register_scratch_migrate  # noqa: E402
+
+_register_scratch_migrate(agent_group)
+
+from ._agents_provision_cards_notify import (  # noqa: E402
+    register as _register_provision_cards_notify,
+)
+
+_register_provision_cards_notify(agent_group)
+
+from ._agents_sync_cards_store_credential import (  # noqa: E402
+    register as _register_sync_cards_store_credential,
+)
+
+_register_sync_cards_store_credential(agent_group)
 
 # `declare-a2a-host` — one-shot fleet sweep making every spec state its own
 # a2a bind address instead of inheriting one from a code default. Sits beside

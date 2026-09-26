@@ -187,3 +187,165 @@ async def test_reconnect_sends_no_cursor_when_server_stamped_no_id(header_server
     await _run_until_reconnect(header_server)
     # Assert
     assert "last-event-id" not in header_server.headers_seen[1]
+
+
+@pytest.mark.asyncio
+async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
+    # Arrange
+    requests: list[tuple[str, str]] = []
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            request_line = (await reader.readline()).decode("latin-1").strip()
+            method, path, _version = request_line.split(" ", 2)
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                key, _, value = line.decode("latin-1").partition(":")
+                if key.lower() == "content-length":
+                    content_length = int(value.strip())
+            body = (
+                (await reader.readexactly(content_length)).decode()
+                if content_length
+                else ""
+            )
+            requests.append((f"{method} {path}", body))
+            if method == "GET":
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    b"Connection: keep-alive\r\n\r\n"
+                    b'id: 41\ndata: {"msg_id":"m-41","content":"steer"}\n\n'
+                )
+                await writer.drain()
+                await asyncio.sleep(5)
+            else:
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
+                )
+                await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+    accepted = []
+
+    async def on_event(event):
+        accepted.append(event["msg_id"])
+
+    task = asyncio.create_task(
+        _consume_sse(
+            f"http://127.0.0.1:{port}/stream?ack=explicit",
+            "bearer",
+            on_event,
+            ack_url=f"http://127.0.0.1:{port}/ack",
+        )
+    )
+    cancelled = False
+    # Act
+    try:
+        for _ in range(100):
+            if any(request[0] == "POST /ack" for request in requests):
+                break
+            await asyncio.sleep(0.02)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            cancelled = True
+        server.close()
+        await server.wait_closed()
+    # Assert
+    assert (cancelled, accepted, ("POST /ack", '{"id":41}') in requests) == (
+        True,
+        ["m-41"],
+        True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_ack_does_not_hold_the_cursor():
+    """A stale daemon 404s the ack route. The event was ALREADY delivered to
+    on_event, so the cursor MUST still advance — otherwise every reconnect
+    re-serves the same row forever. This is the exact live loop that stuck
+    msg_id ad7db0e5 (row 9309, delivered, re-served 400+ times because the
+    ack 404 threw before the cursor advanced)."""
+    # Arrange
+    get_headers: list[dict[str, str | None]] = []
+    ack_paths: list[str] = []
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = (await reader.readline()).decode("latin-1").strip()
+            method, path, _ = request_line.split(" ", 2)
+            last_event_id: str | None = None
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                key, _, value = line.decode("latin-1").partition(":")
+                k = key.strip().lower()
+                if k == "last-event-id":
+                    last_event_id = value.strip()
+                elif k == "content-length":
+                    content_length = int(value.strip())
+            if method == "GET":
+                get_headers.append({"last-event-id": last_event_id})
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    b"Connection: keep-alive\r\n\r\n"
+                    b'id: 41\ndata: {"msg_id":"m-41","content":"steer"}\n\n'
+                )
+                await writer.drain()
+                return  # close -> force the client to reconnect
+            # POST /ack -> the stale daemon 404s it
+            if content_length:
+                await reader.readexactly(content_length)
+            ack_paths.append(path)
+            writer.write(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found"
+            )
+            await writer.drain()
+            await asyncio.sleep(0.05)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+
+    async def on_event(event: dict[str, Any]) -> None:
+        pass  # delivery succeeded; the ack outcome is what under test
+
+    task = asyncio.create_task(
+        _consume_sse(
+            f"http://127.0.0.1:{port}/stream",
+            "bearer",
+            on_event,
+            ack_url=f"http://127.0.0.1:{port}/ack",
+        )
+    )
+    # Act — wait for the reconnect (2 GET connections) and the failed ack.
+    try:
+        for _ in range(200):
+            if len(get_headers) >= 2:
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # stx-allow: teardown
+            pass
+        server.close()
+        await server.wait_closed()
+    # Assert — despite the ack 404ing, the cursor advanced past 41 and was
+    # sent on a later reconnect. The core invariant: the cursor reaches "41"
+    # even though the ack POST failed (404).
+    assert any(h.get("last-event-id") == "41" for h in get_headers)

@@ -47,12 +47,13 @@ not a registry implementation.
 from __future__ import annotations
 
 import json
-import logging
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Literal
+
+import scitex_logging as slogging
 
 from .host_config import Config, LeadConfig, load
 
@@ -66,7 +67,7 @@ __all__ = [
     "resolve_lead",
 ]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 LEAD_EVENT_KINDS: tuple[str, ...] = ("done", "blocker", "status")
 LeadEventKind = Literal["done", "blocker", "status"]

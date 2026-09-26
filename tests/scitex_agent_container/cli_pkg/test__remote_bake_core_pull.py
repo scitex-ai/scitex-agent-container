@@ -29,6 +29,7 @@ from scitex_agent_container.cli_pkg._remote_bake_core import (
 
 _OLD = "sac-base-2026-0710-000000.sif"
 _NEW = "sac-base-2026-0717-000000.sif"
+_HEAD = "6b1da1a092464010fa63c86be1d3d086eaae4953"
 
 
 def _sha256(data: bytes) -> str:
@@ -46,12 +47,22 @@ def _make_store(tmp_path: Path, layer: str, names: list[str], live: str) -> Path
     return containers
 
 
-def _outcome(layer: str, name: str, payload: bytes) -> RemoteBakeOutcome:
+def _outcome(
+    layer: str,
+    name: str,
+    payload: bytes,
+    *,
+    base_sif: str = "",
+    base_sha256: str = "",
+) -> RemoteBakeOutcome:
     return RemoteBakeOutcome(
         verdict=BakeVerdict.BAKED,
         layer=layer,
         sif=f"/remote/store/sac-{layer}/{name}",
         sha256=_sha256(payload),
+        head=_HEAD,
+        base_sif=base_sif,
+        base_sha256=base_sha256,
     )
 
 
@@ -63,10 +74,17 @@ class _RecordingRunner:
     ``probe_rc``. Every argv is recorded for order/count assertions.
     """
 
-    def __init__(self, *, rsync_payload: bytes | None, probe_rc: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        rsync_payload: bytes | None,
+        probe_rc: int = 0,
+        provenance_commit: str | None = _HEAD,
+    ) -> None:
         self.calls: list[list[str]] = []
         self._rsync_payload = rsync_payload
         self._probe_rc = probe_rc
+        self._provenance_commit = provenance_commit
 
     def __call__(self, args, **kwargs):
         self.calls.append(list(args))
@@ -79,6 +97,13 @@ class _RecordingRunner:
             Path(args[-1]).write_bytes(self._rsync_payload)
             return subprocess.CompletedProcess(args, 0, "", "")
         if exe == "apptainer":
+            if args[-2:] == ["provenance", "--json"]:
+                payload = '{"commit": %s}' % (
+                    f'"{self._provenance_commit}"'
+                    if self._provenance_commit is not None
+                    else "null"
+                )
+                return subprocess.CompletedProcess(args, 0, payload, "")
             out = "OK" if self._probe_rc == 0 else "FATAL: probe failed"
             return subprocess.CompletedProcess(args, self._probe_rc, out, "")
         raise AssertionError(f"unexpected subprocess: {args}")
@@ -167,7 +192,55 @@ def test_verified_pull_runs_rsync_then_probe_through_the_seam(
     # Act
     _pull(containers, b"fresh")
     # Assert
-    assert [Path(c[0]).name for c in runner.calls] == ["rsync", "apptainer"]
+    assert [Path(c[0]).name for c in runner.calls] == [
+        "rsync",
+        "apptainer",
+        "apptainer",
+    ]
+
+
+def _run_pull_and_get_symbol_probe_call(tmp_path: Path, seam) -> list[str]:
+    containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
+    runner = seam(_RecordingRunner(rsync_payload=b"fresh"))
+    _pull(containers, b"fresh")
+    return runner.calls[-1]
+
+
+def test_symbol_probe_runs_under_containment(tmp_path: Path, seam) -> None:
+    # Arrange
+    expected_flag = "--containall"
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
+
+    # Assert
+    assert expected_flag in probe_call
+
+
+def test_symbol_probe_binds_readonly_to_explicit_container_path(
+    tmp_path: Path, seam
+) -> None:
+    # Arrange
+    expected = ("sif_symbol_probe.py", "/tmp/sac-sif-symbol-probe.py", "ro")
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
+    bind_spec = probe_call[probe_call.index("--bind") + 1]
+    source, destination, mode = bind_spec.rsplit(":", 2)
+
+    # Assert
+    assert (Path(source).name, destination, mode) == expected
+
+
+def test_symbol_probe_executes_container_path(tmp_path: Path, seam) -> None:
+    # Arrange
+    expected = "/tmp/sac-sif-symbol-probe.py"
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
+
+    # Assert
+    assert probe_call[-1] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +314,33 @@ def test_probe_failure_reports_failed(tmp_path: Path, seam) -> None:
     result = _pull(containers, b"stale")
     # Assert
     assert result.verdict is PullVerdict.FAILED
+
+
+def test_base_with_unknown_in_image_commit_refuses_before_swap(
+    tmp_path: Path, seam
+) -> None:
+    # Arrange
+    # Exact 2026-09-13 incident shape: the remote result named HEAD 6b1da1a0,
+    # but the gitless wheel had commit=None and `sac --version` therefore
+    # displayed its had62ef96 code hash. A new timestamp/checksum is not source
+    # provenance and must not replace the newer local base.
+    containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
+    runner = seam(_RecordingRunner(rsync_payload=b"fresh", provenance_commit=None))
+
+    # Act
+    result = _pull(containers, b"fresh")
+
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "artifact provenance status MISMATCH" in result.detail,
+            _HEAD in result.detail,
+            "commit=(unknown)" in result.detail,
+            (containers / "sac-base.sif").resolve().name == _OLD,
+            [Path(call[0]).name for call in runner.calls] == ["rsync", "apptainer"],
+        )
+    )
 
 
 def test_probe_failure_names_the_gate(tmp_path: Path, seam) -> None:
@@ -323,3 +423,108 @@ def test_live_artifact_with_differing_checksum_refuses_to_guess(
     result = _pull(containers, b"different-remote-bytes")
     # Assert
     assert result.verdict is PullVerdict.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Layer dependency authority — scitex may publish only over its exact base
+# ---------------------------------------------------------------------------
+
+
+def _make_scitex_chain(tmp_path: Path, *, local_base_sha: str) -> Path:
+    base_name = "sac-base-2026-0912-194122.sif"
+    containers = _make_store(tmp_path, "base", [base_name], live=base_name)
+    base = containers / "sac-base" / base_name
+    Path(str(base) + ".sha256").write_text(
+        f"{local_base_sha}  {base_name}\n", encoding="utf-8"
+    )
+    return containers
+
+
+def test_scitex_dependency_mismatch_refuses_before_transfer(
+    tmp_path: Path, seam
+) -> None:
+    # Arrange
+    containers = _make_scitex_chain(tmp_path, local_base_sha="ca9fe2")
+    runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="older-base",
+    )
+
+    # Act
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "SciTeX dependency status MISMATCH" in result.detail,
+            "ca9fe2" in result.detail,
+            "older-base" in result.detail,
+            runner.calls == [],
+            not (containers / "sac-scitex.sif").exists(),
+        )
+    )
+
+
+def test_scitex_dependency_match_allows_verified_publish(tmp_path: Path, seam) -> None:
+    # Arrange
+    containers = _make_scitex_chain(tmp_path, local_base_sha="same-base")
+    seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="same-base",
+    )
+
+    # Act
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    # Assert
+    assert (
+        result.verdict,
+        (containers / "sac-scitex.sif").resolve().name,
+    ) == (PullVerdict.SWAPPED, name)
+
+
+def test_scitex_without_local_base_provenance_fails_actionably(
+    tmp_path: Path, seam
+) -> None:
+    # Arrange
+    base_name = "sac-base-2026-0912-194122.sif"
+    containers = _make_store(tmp_path, "base", [base_name], live=base_name)
+    runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="remote-base",
+    )
+
+    # Act
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "SciTeX dependency status UNKNOWN" in result.detail,
+            "checksum sidecar" in result.detail,
+            runner.calls == [],
+        )
+    )

@@ -64,6 +64,8 @@ _ENV_PREFIX = "SCITEX_AGENT_CONTAINER_FRESHNESS"
 _DEFAULT_TTL_S = 24 * 60 * 60
 
 if TYPE_CHECKING:  # pragma: no cover - kept off the CLI import path
+    from pathlib import Path
+
     from scitex_dev.versioning import Report
 
 __all__ = [
@@ -238,9 +240,13 @@ def _cache_file() -> "Path | None":
 def _has_stale_cached() -> bool:
     """Cheap pre-gate: is there a positively-STALE finding worth speaking about?
 
-    Pure stdlib, one small file read, ~1 ms. Returns False for every one of:
-    no file, unreadable, malformed, no timestamp, expired, or nothing stale
-    — i.e. UNKNOWN and FRESH both fall through silently, exactly as they must.
+    The common path is pure stdlib, one small file read, ~1 ms. An already-
+    stale daemon finding pays for one local ``systemctl show`` because an
+    out-of-band restart can invalidate that finding before the 24 h TTL.
+    Returns False for every one of: no file, unreadable, malformed, no
+    timestamp, expired, nothing stale, or a daemon warning disproved by its
+    current start time — i.e. UNKNOWN and FRESH both fall through silently,
+    exactly as they must.
     """
     import json
     import time
@@ -283,7 +289,85 @@ def _has_stale_cached() -> bool:
     findings = raw.get("findings")
     if not isinstance(findings, list):
         return False
-    return any(isinstance(f, dict) and f.get("state") == "stale" for f in findings)
+    stale = [
+        finding
+        for finding in findings
+        if isinstance(finding, dict) and finding.get("state") == "stale"
+    ]
+    if not stale:
+        return False
+
+    daemon_findings = [
+        finding for finding in stale if finding.get("check") == "running-vs-installed"
+    ]
+    if daemon_findings and _daemon_restart_disproves_cached_stale(daemon_findings):
+        # The report is one coherent snapshot. Once its daemon fact is known
+        # to be obsolete, do not feed that snapshot to the renderer (which
+        # would faithfully repeat the obsolete finding). The next hourly
+        # refresh republishes all findings together.
+        return False
+    return True
+
+
+def _daemon_restart_disproves_cached_stale(findings: list[dict[str, Any]]) -> bool:
+    """True only when live systemd evidence disproves every cached finding.
+
+    A failed live probe does not erase the last positive cached evidence; it
+    leaves the warning intact. This is invalidation by stronger evidence, not
+    blanket suppression.
+    """
+    started_at = _live_daemon_started_at()
+    if started_at is None:
+        return False
+    for finding in findings:
+        data = finding.get("data")
+        installed_at = data.get("installed_at") if isinstance(data, dict) else None
+        if not isinstance(installed_at, (int, float)) or isinstance(installed_at, bool):
+            return False
+        if started_at < float(installed_at):
+            return False
+    return True
+
+
+def _live_daemon_started_at() -> float | None:
+    """Read the configured daemon's current start as epoch seconds.
+
+    Mirrors the primitive's monotonic-to-wall conversion. Keeping this tiny
+    probe here avoids importing the ~200 ms primitive unless a warning still
+    has current evidence worth rendering.
+    """
+    import subprocess
+    import time
+
+    try:
+        proc = subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                LISTEN_UNIT,
+                "-p",
+                "ExecMainStartTimestampMonotonic",
+                "--value",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        monotonic_usec = int(proc.stdout.strip().splitlines()[0])
+        with open("/proc/uptime", encoding="utf-8") as uptime_file:
+            uptime_s = float(uptime_file.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    if monotonic_usec <= 0:
+        return None
+    return time.time() - uptime_s + (monotonic_usec / 1_000_000.0)
 
 
 def warn_once(stream: Any = None) -> int:
@@ -298,9 +382,11 @@ def warn_once(stream: Any = None) -> int:
 
     So the expensive path is gated behind a ~1 ms stdlib read of the cache
     the refresher already wrote. Nothing heavy is imported unless there is
-    positively-STALE news to deliver, which is the rare case. When there IS,
-    the primitive does the rendering — sac never composes a remedy of its
-    own, because composing one is how an editable checkout gets handed a
+    positively-STALE news to deliver, which is the rare case. A stale daemon
+    finding additionally gets one local systemd comparison so its prescribed
+    restart can retire it immediately. When there IS still current news, the
+    primitive does the rendering — sac never composes a remedy of its own,
+    because composing one is how an editable checkout gets handed a
     ``pip install -U``.
 
     Returns an exit code — non-zero only under

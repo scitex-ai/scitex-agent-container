@@ -8,6 +8,7 @@ schema.
 
 Schema mirrors :mod:`._acl_types`:
 
+* ``spec.comms.channels``                    — harness-neutral ingress adapters
 * ``spec.comms.outbound.{siblings,parent}`` — ``"allow" | "deny"``
 * ``spec.comms.inbound.{siblings,parent}``  — ``"allow" | "deny"``
 * ``spec.comms.a2a.listen``                  — ``bool``
@@ -36,12 +37,18 @@ def _validate_comms(comms: object) -> list[str]:
             f"spec.comms must be a mapping, got {type(comms).__name__}"
         )
         return errs
-    unknown = set(comms.keys()) - {"outbound", "inbound", "a2a"}
+    unknown = set(comms.keys()) - {"channels", "outbound", "inbound", "a2a"}
     for k in sorted(unknown):
         errs.append(
             f"spec.comms.{k} is not a valid key; "
-            "use 'outbound', 'inbound', or 'a2a'."
+            "use 'channels', 'outbound', 'inbound', or 'a2a'."
         )
+    channels = comms.get("channels")
+    if channels is not None and (
+        not isinstance(channels, list)
+        or not all(isinstance(item, str) and item.strip() for item in channels)
+    ):
+        errs.append("spec.comms.channels must be a list of non-empty strings")
     for dir_key in ("outbound", "inbound"):
         block = comms.get(dir_key)
         if block is None:

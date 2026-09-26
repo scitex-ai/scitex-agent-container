@@ -6,11 +6,12 @@ The contract, the measurement and the vocabulary live in
 facts, asks the predicate, and performs the one mutation the rail is allowed to
 make.
 
-NOTHING IS EVER DELETED. The stale slice is renamed into
+NOTHING IS EVER DISCARDED. The stale slice is moved into
 ``<overlay>/.old/<timestamp>/upper/opt/venv-sac``. That is the standing fleet
 rule and it is also what keeps the rail debuggable: if a prune is ever wrong,
 the evidence is one ``mv`` away from being restored, and the path mirrors the
-original so the restore is mechanical.
+original so the restore is mechanical. When ``.old`` is on another filesystem,
+the move is a completed archive copy followed by removal of the source tree.
 
 WHERE THE ARCHIVE LIVES, AND WHY NOT UNDER ``upper/``. ``.old/`` sits beside
 ``upper/``, not inside it. Inside, the archived tree would still be part of the
@@ -46,10 +47,15 @@ refuse to run broken in-container.
 
 from __future__ import annotations
 
-import logging
+import errno
 import os
+import shutil
+import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._drift.versions import DEFAULT_VENV
 from ..runtimes._apptainer_overlay import (
@@ -66,7 +72,7 @@ from ._overlay_venv_model import (
 )
 from ._overlay_venv_predicate import plan_invalidation
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "ARCHIVE_DIRNAME",
@@ -373,12 +379,39 @@ def _move_aside(
     plan: InvalidationPlan,
     venv: str,
     now: datetime | None = None,
+    rename_fn: Callable[[Path, Path], None] | None = None,
 ) -> Path | None:
-    """Rename the stale slice under ``.old/``; return where it landed."""
+    """Move the stale slice under ``.old/``; return where it landed.
+
+    ``.old`` may be a symlink to scratch storage, as it is on the compute
+    hosts.  In that layout a rename crosses filesystems and Linux returns
+    ``EXDEV``.  The fallback first copies to a hidden staging tree on the
+    archive filesystem, publishes that completed tree with a local rename,
+    and only then removes the source.  A failed copy therefore leaves the
+    original intact and a failed source cleanup still leaves a complete,
+    recoverable archive.
+    """
     source = venv_slice(overlay_root, venv)
     destination = archive_dir_for(overlay_root, now=now) / venv.lstrip("/")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    os.rename(source, destination)
+    rename = rename_fn or os.rename
+    try:
+        rename(source, destination)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        staging = destination.with_name(
+            f".{destination.name}.partial-{uuid.uuid4().hex}"
+        )
+        logger.warning(
+            "overlay-venv: archive crosses filesystems; copying %s to %s "
+            "before removing the source",
+            source,
+            destination,
+        )
+        shutil.copytree(source, staging, symlinks=True, copy_function=shutil.copy2)
+        os.rename(staging, destination)
+        shutil.rmtree(source)
     # ONE line, naming BOTH image identities and the path that moved. Silence
     # is what cost scitex-hub a session: the agent read a broken venv as a
     # broken repo because nothing anywhere said the env had changed under it.
@@ -406,6 +439,7 @@ def reconcile_overlay_venv(
     now: datetime | None = None,
     inside_container_fn=None,
     base_probe=None,
+    rename_fn: Callable[[Path, Path], None] | None = None,
 ) -> InvalidationPlan | None:
     """Enforce the contract for one agent. Returns the plan, or ``None``.
 
@@ -457,12 +491,13 @@ def reconcile_overlay_venv(
 
     if plan.action == ACTION_INVALIDATE:
         try:
-            _move_aside(name, root, plan, venv, now=now)
+            _move_aside(name, root, plan, venv, now=now, rename_fn=rename_fn)
         except OSError as exc:  # stx-allow: fallback (reason: a failed archive must log loudly and leave the stamp unwritten, never brick the launch)
             logger.error(
                 "overlay-venv: could not archive %s for agent %s: %s. The stale "
-                "venv slice is UNCHANGED and the stamp is NOT advanced, so the "
-                "next start retries. Move it aside by hand if this persists.",
+                "venv slice and any recoverable archive data are preserved as far "
+                "as the filesystem operation allowed; the stamp is NOT advanced, "
+                "so the next start retries. Move it aside by hand if this persists.",
                 venv_slice(root, venv),
                 name,
                 exc,

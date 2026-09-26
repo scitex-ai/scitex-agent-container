@@ -37,13 +37,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import os
 import signal
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import scitex_logging as slogging
 
 from ._session_state import (
     DEFAULT_STATE_ROOT,
@@ -58,7 +59,7 @@ from ._session_state import (
     heartbeat_loop as _heartbeat_loop,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = ["main", "run", "build_app", "splice_card"]
 

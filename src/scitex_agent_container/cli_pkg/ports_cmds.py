@@ -35,6 +35,8 @@ from typing import Callable
 
 import click
 
+from .._logging import render_rich
+
 
 def _reference_map() -> list[dict]:
     """The scitex / sac port-assignment scheme, as a list of ``{range,
@@ -222,7 +224,6 @@ def _render_table(data: dict) -> None:
     """Print the inventory as two rich tables + a summary footer."""
     from rich.table import Table
 
-    from ._helpers._console import console
 
     conflict_ports = {c["port"] for c in data["conflicts"]}
 
@@ -246,15 +247,13 @@ def _render_table(data: dict) -> None:
             _live_cell(bool(row["live"])),
             " ".join(flags) or "—",
         )
-    console.print(inv)
+    render_rich(inv, __name__)
 
     listen = data["listen"]
     if listen.get("pid") is not None:
         alive = "alive" if listen.get("pid_alive") else "[red]stale[/red]"
-        console.print(
-            f"[dim]listen pidfile {listen['pidfile']} → pid {listen['pid']} "
-            f"({alive})[/dim]"
-        )
+        render_rich(f"[dim]listen pidfile {listen['pidfile']} → pid {listen['pid']} "
+            f"({alive})[/dim]", __name__)
 
     ref = Table(title="Reference — scitex / sac port-assignment scheme")
     ref.add_column("Range", justify="right", style="bold", no_wrap=True)
@@ -262,27 +261,19 @@ def _render_table(data: dict) -> None:
     ref.add_column("Owner", no_wrap=True)
     for row in data["reference"]:
         ref.add_row(row["range"], row["purpose"], row["owner"])
-    console.print(ref)
-    console.print(
-        "[dim]Reference is a sac-side map; the ecosystem-wide port SSOT "
-        "(incl. the 3129X GUI block) is being routed to scitex-dev.[/dim]"
-    )
+    render_rich(ref, __name__)
+    render_rich("[dim]Reference is a sac-side map; the ecosystem-wide port SSOT "
+        "(incl. the 3129X GUI block) is being routed to scitex-dev.[/dim]", __name__)
 
     live_a2a = sum(1 for r in data["a2a_claims"] if r["live"])
-    console.print(
-        f"[dim]{len(data['a2a_claims'])} a2a claim(s), {live_a2a} live; "
-        f"listen {'up' if listen['live'] else 'down'}.[/dim]"
-    )
+    render_rich(f"[dim]{len(data['a2a_claims'])} a2a claim(s), {live_a2a} live; "
+        f"listen {'up' if listen['live'] else 'down'}.[/dim]", __name__)
     if data["conflicts"]:
-        console.print(
-            f"[bold red]⚠ {len(data['conflicts'])} port conflict(s)[/bold red] "
-            "— two owners on one port."
-        )
+        render_rich(f"[bold red]⚠ {len(data['conflicts'])} port conflict(s)[/bold red] "
+            "— two owners on one port.", __name__)
     if data["orphans"]:
-        console.print(
-            f"[yellow]⚠ {len(data['orphans'])} orphan claim(s)[/yellow] "
-            "— a2a port claimed, nothing listening."
-        )
+        render_rich(f"[yellow]⚠ {len(data['orphans'])} orphan claim(s)[/yellow] "
+            "— a2a port claimed, nothing listening.", __name__)
 
 
 @click.command(name="ports")

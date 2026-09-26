@@ -11,11 +11,13 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 
 from __future__ import annotations
 
-import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 
 @dataclass
@@ -282,18 +284,109 @@ def _detect_resume_session(content: str) -> bool:
     )
 
 
-def _detect_done(content: str) -> bool:
-    """Check if claude is at the main input prompt (all TUI prompts done).
+def _detect_codex_dir_trust(content: str) -> bool:
+    """Codex's first-boot directory-trust picker (harness codex, 2026-09-05).
 
-    The status bar shows "bypass permissions" when ready.
+    "Do you trust the contents of this directory? ... 1. Yes, continue /
+    2. No, quit / Press enter to continue" — the cursor already sits on
+    option 1, so Enter alone accepts.
     """
-    return "bypass permissions" in content and "Enter to confirm" not in content
+    return (
+        "Do you trust the contents of this directory" in content
+        and "1. Yes, continue" in content
+    )
+
+
+def _detect_codex_hooks_review(content: str) -> bool:
+    """Codex's "Hooks need review" picker (harness codex, 2026-09-05).
+
+    Shown once sac has copied the fleet's hooks into CODEX_HOME/hooks.json,
+    and again whenever one of them changes. The hooks ARE the fleet's own
+    (~/.claude/hooks, the same files the Claude pane runs), so option 2 is
+    the correct answer; option 3 would run the agent without them, silently.
+    """
+    return "Hooks need review" in content and "2. Trust all and continue" in content
+
+
+#: The Codex composer row and the footer under it, as they look once the boot
+#: banner has scrolled away: ``› Use /skills to list available skills`` over
+#: ``qwen38-27b default · /home/ywatanabe/proj/local-coder``. The footer's
+#: second word is the reasoning effort Codex is running with.
+_CODEX_COMPOSER_MARKER = "\u203a"
+_CODEX_FOOTER = re.compile(
+    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh) \u00b7 /", re.M
+)
+_CODEX_TAIL_ROWS = 8
+
+
+def _detect_codex_done(content: str) -> bool:
+    """Codex is at its input prompt and no picker remains.
+
+    Two shapes, both measured. At boot the "OpenAI Codex (vX)" box with a
+    permissions row ("YOLO mode" when sac turns the sandbox off) is on screen.
+    After the first turn that box has scrolled away for good, and the idle
+    screen is the composer row (``›``) with the model/effort/cwd footer under
+    it. Until 2026-09-05 only the first shape counted, so every dispatch to a
+    Codex agent after its first turn was refused as "a modal is blocking the
+    input" — measured on handyman-01, which had been idle at its composer.
+    """
+    if "Press enter to continue" in content or "Press enter to confirm" in content:
+        return False
+    if "OpenAI Codex (v" in content and "permissions:" in content:
+        return True
+    tail = "\n".join(content.rstrip().splitlines()[-_CODEX_TAIL_ROWS:])
+    return _CODEX_COMPOSER_MARKER in tail and _CODEX_FOOTER.search(tail) is not None
+
+
+def _detect_hermes_contributor_tier(content: str) -> bool:
+    """Hermes' Meta contributor-tier data-training confirmation (2026-09-23).
+
+    "CONTRIBUTOR TIER — TRAINS ON YOUR DATA ... Use this model for this
+    invocation? [y/N]" — Hermes asks this at TUI boot when the resolved
+    model is a Meta contributor tier. The fleet runs the contributor tier
+    deliberately (free, full authority, training accepted), so the
+    correct answer is always "y". Must out-rank everything except the
+    resume picker — it blocks boot the same way.
+    """
+    return (
+        "CONTRIBUTOR TIER" in content
+        and "Use this model for this invocation? [y/N]" in content
+    )
+
+
+def _detect_done(content: str) -> bool:
+    """Check if the TUI is at its main input prompt (all prompts done).
+
+    Claude's status bar shows "bypass permissions" when ready; Codex has its
+    own banner (:func:`_detect_codex_done`).
+    """
+    if "bypass permissions" in content and "Enter to confirm" not in content:
+        return True
+    return _detect_codex_done(content)
 
 
 # Default prompt handlers — checked by priority, order-agnostic.
 # Detection uses numbered options + prompt text for reliability.
 # To add a new prompt, append a PromptHandler or call register_prompt().
 PROMPT_HANDLERS: list[PromptHandler] = [
+    PromptHandler(
+        name="hermes-contributor-tier",
+        detect=_detect_hermes_contributor_tier,
+        keys=["y", "Enter"],  # fleet runs the contributor tier deliberately
+        priority=1,
+    ),
+    PromptHandler(
+        name="codex-dir-trust",
+        detect=_detect_codex_dir_trust,
+        keys=["Enter"],  # cursor already on "1. Yes, continue"
+        priority=1,
+    ),
+    PromptHandler(
+        name="codex-hooks-review",
+        detect=_detect_codex_hooks_review,
+        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
+        priority=1,
+    ),
     PromptHandler(
         name="bypass-permissions",
         detect=_detect_bypass_permissions,

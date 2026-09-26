@@ -25,8 +25,6 @@ smoke tests.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 import time
@@ -35,6 +33,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _install_fresh_creds(home: Path) -> Path:
@@ -290,7 +289,7 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
         f"  host: {host}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n"
-        "    image: ~/.scitex/agent-container/containers/sac-base.sif\n"
+        "    image: sac-base\n"
         "    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
@@ -301,7 +300,7 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
 
 
 def _record_live_singleton(
-    state_db_path: Path, env_save_restore, name: str, host: str
+    state_store_path: Path, env_save_restore, name: str, host: str
 ) -> None:
     """Redirect state.db + record an active ``instances`` row for ``name``
     on ``host`` so :func:`_resolve_singleton_skip`'s liveness gate sees
@@ -316,11 +315,11 @@ def _record_live_singleton(
     """
     import importlib
 
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_db_path))
-    import scitex_agent_container._state.state_db as _state_db_mod
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_store_path))
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
-    _state_db_mod.record_instance_start(
+    importlib.reload(_state_store_mod)
+    _state_store_mod.record_instance_start(
         name=name,
         host=host,
         a2a_port=19200,
@@ -402,9 +401,9 @@ class TestSingletonHostSkip:
         env_save_restore.set(
             "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
         )
-        import scitex_agent_container._state.state_db as _state_db_mod
+        import scitex_agent_container._state.state_store as _state_store_mod
 
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "nowhere-host")
         runner = CliRunner()
         # Act
@@ -505,7 +504,7 @@ class TestResumeAndForeground:
         _record_live_singleton(
             tmp_path / "state.db", env_save_restore, "mini1", "nowhere-host"
         )
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="mini2",
@@ -823,7 +822,7 @@ class TestStartNoRedispatchJsonA2aPort:
     ):
         """``port: auto`` spec → JSON ``a2a_port`` is an int (resolved by allocator)."""
         # Arrange — redirect HOME + state.db so the allocator + spec dir
-        # operate in tmp. ``state_db`` and ``port_allocator`` cache the
+        # operate in tmp. ``state_store`` and ``port_allocator`` cache the
         # default path at import time, so we reload them after env mutation.
         import importlib
 
@@ -832,7 +831,7 @@ class TestStartNoRedispatchJsonA2aPort:
             "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
         )
         import scitex_agent_container._state.port_allocator as _pa
-        import scitex_agent_container._state.state_db as _sdb
+        import scitex_agent_container._state.state_store as _sdb
 
         importlib.reload(_sdb)
         importlib.reload(_pa)
@@ -860,7 +859,7 @@ class TestStartNoRedispatchJsonA2aPort:
             "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
         )
         import scitex_agent_container._state.port_allocator as _pa
-        import scitex_agent_container._state.state_db as _sdb
+        import scitex_agent_container._state.state_store as _sdb
 
         importlib.reload(_sdb)
         importlib.reload(_pa)
@@ -975,7 +974,7 @@ def _write_group_agent_spec(home: Path, name: str, *, host: str, groups_yaml: st
         f"  host: {host}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n"
-        "    image: ~/.scitex/agent-container/containers/sac-base.sif\n"
+        "    image: sac-base\n"
         "    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
@@ -1095,7 +1094,7 @@ class TestGroupOption:
         _record_live_singleton(
             tmp_path / "state.db", env_save_restore, "mini1", "nowhere-host"
         )
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="mini2",

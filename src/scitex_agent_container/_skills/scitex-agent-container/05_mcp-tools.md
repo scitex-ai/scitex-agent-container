@@ -26,7 +26,7 @@ sac mcp doctor                             # verify
 ```bash
 sac mcp start                          # stdio (default)
 sac mcp start --http --port 8970       # HTTP transport
-sac mcp doctor                         # version + tool count + registration
+sac mcp doctor                         # image-frozen venv identity + version + tool registration
 sac mcp list-tools [--json]            # enumerate tools
 sac mcp install [--claude-code]        # config snippet
 ```
@@ -79,7 +79,7 @@ Get the live list any time with `sac mcp list-tools` (or, from Python,
 
 ## Mutating verbs
 
-`agent_start`, `agent_stop`, `agent_restart`, `db_clean`, `db_tick`,
-`db_migrate` mutate state. The MCP server itself does not gate them —
+`agent_start`, `agent_stop`, `agent_restart`, `store_clean`, `store_tick`,
+`store_migrate` mutate state. The MCP server itself does not gate them —
 the host (Claude Code, custom embedder) is expected to mediate via its
 own permission flow before invoking the tool.

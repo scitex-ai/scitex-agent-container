@@ -67,7 +67,7 @@ import httpx
 import pytest
 
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_nodes import grant_send
+from scitex_agent_container._state.state_store_nodes import grant_send
 from tests.smoke._node_comms import (
     _await_subscribed_and_read_one,
     _bearer,
@@ -857,7 +857,7 @@ def _read_channel_events_for_target(db, target: str) -> list[dict]:
     "fixture must yield, not return" pattern matcher quiet while the
     underlying connection is already closed here.
     """
-    from scitex_agent_container._state.state_db_channel_store import (
+    from scitex_agent_container._state.state_store_channel_store import (
         new_channel_connection,
     )
 

@@ -132,7 +132,7 @@ def _resolve_host() -> str:
     # observability record; a resolver failure must degrade to a short
     # hostname and then to "unknown", never break the write.)
     try:
-        from .._state.state_db_hostname import resolve_host
+        from .._state.state_store_hostname import resolve_host
 
         return resolve_host(None)
     except Exception:  # stx-allow: fallback (reason: see inline comment)

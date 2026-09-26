@@ -57,9 +57,9 @@ operator. Best-effort throughout: this check never crashes a launch.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 #: The env var whose value IS the agent's identity on the card board.
 #: This is the CURRENT name; `scitex_cards._store` reads exactly this

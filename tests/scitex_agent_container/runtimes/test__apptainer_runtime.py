@@ -18,6 +18,7 @@ seams.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shlex
 import stat
@@ -28,6 +29,10 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.host_scratch import (
+    resolve_scratch_root,
+    scratch_agent_dir,
+)
 from scitex_agent_container.config import AgentConfig, ProxySpec
 from scitex_agent_container.config._types import (
     A2ASpec,
@@ -261,6 +266,32 @@ def test_argv_first_two_tokens_are_apptainer_exec(tmp_path: Path) -> None:
     )
     # Assert
     assert argv[0:2] == ["apptainer", "exec"]
+
+
+def test_argv_keeps_current_cct_names_and_drops_retired_names(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    cfg.env.update(
+        {
+            "CCT_BOT_TOKEN": "current",
+            "CCT_ALLOWED_USERS": "123",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": "old",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": "old",
+        }
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    env = _env_pairs(argv)
+    # Assert
+    assert (
+        env.get("CCT_BOT_TOKEN"),
+        env.get("CCT_ALLOWED_USERS"),
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN" in env,
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS" in env,
+    ) == ("current", "123", False, False)
 
 
 def test_argv_pwd_opens_at_workdir(tmp_path: Path) -> None:
@@ -612,6 +643,60 @@ def test_resolve_sif_uses_existing_local_sif_path(
     resolved = ApptainerContainerRuntime().resolve_sif(cfg)
     # Assert
     assert resolved == sif
+
+
+def test_resolve_sif_logical_sac_image_uses_host_live_link(
+    tmp_path: Path, apptainer_on_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — the source spec names a portable image, while this host's
+    # live link selects its locally distributed immutable build.
+    containers = home_redirect / ".scitex" / "agent-container" / "containers"
+    artifact = containers / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"host-specific immutable bytes")
+    (containers / "sac-base.sif").symlink_to(artifact)
+    cfg = _config(tmp_path, image="sac-base")
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved == artifact.resolve()
+
+
+def test_resolve_sif_missing_logical_sac_image_refuses_without_pull(
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    home_redirect: Path,
+    subprocess_shim,
+) -> None:
+    # Arrange — this host has not received the managed image.
+    cfg = _config(tmp_path, image="sac-base")
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert — never reinterpret the logical name as docker://sac-base.
+    assert (resolved, subprocess_shim.call_count("apptainer")) == (None, 0)
+
+
+def test_resolved_image_identity_records_target_path_and_sha256(
+    tmp_path: Path, apptainer_on_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    import hashlib
+
+    containers = home_redirect / ".scitex" / "agent-container" / "containers"
+    artifact = containers / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    payload = b"immutable-image"
+    artifact.write_bytes(payload)
+    (containers / "sac-base.sif").symlink_to(artifact)
+    runtime = ApptainerContainerRuntime()
+    runtime.resolve_sif(_config(tmp_path, image="sac-base"))
+    # Act
+    identity = runtime.resolved_image_identity()
+    # Assert
+    assert identity == {
+        "path": str(artifact.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
 
 
 def test_resolve_sif_returns_none_when_apptainer_missing(
@@ -1656,7 +1741,7 @@ def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
     apptainer_on_path: Path,
 ) -> None:
     # Arrange — the redaction must be scoped to secret-named keys; an
-    # ordinary env entry (e.g. the always-emitted state-db path) must
+    # ordinary env entry (e.g. the always-emitted agent name) must
     # still be readable verbatim for debugging.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
@@ -1668,7 +1753,7 @@ def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
 
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
-    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv_file.read_text()
+    assert "SAC_NAME=alpha" in argv_file.read_text()
 
 
 def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
@@ -1728,6 +1813,51 @@ def test_start_background_apptainer_subprocess_receives_the_real_secret(
     assert (
         _env_pairs(received).get("SAC_ANTHROPIC_API_KEY")
         == "sk-ant-oat01-supersecrettoken"
+    )
+
+
+def test_start_child_env_preserves_current_cct_and_scrubs_retired_ambient_names(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange
+    observed = tmp_path / "child-env.json"
+    script = apptainer_on_path.read_text(encoding="utf-8")
+    script = script.replace("import json, sys\n", "import json, os, sys\n")
+    script = script.replace(
+        "sys.exit(0)\n",
+        "if args[:1] == ['exec']:\n"
+        "    names = ['CCT_BOT_TOKEN', 'CCT_ALLOWED_USERS', "
+        "'CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN', "
+        "'CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS']\n"
+        "    Path(os.environ['SAC_TEST_ENV_LOG']).write_text("
+        "json.dumps({name: os.environ.get(name) for name in names}))\n"
+        "sys.exit(0)\n",
+    )
+    apptainer_on_path.write_text(script, encoding="utf-8")
+    env_save_restore.set("SAC_TEST_ENV_LOG", str(observed))
+    env_save_restore.set("CCT_BOT_TOKEN", "current")
+    env_save_restore.set("CCT_ALLOWED_USERS", "123")
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN", "old")
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS", "old")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    started = rt.start(cfg, foreground=True)
+    child_env = json.loads(observed.read_text(encoding="utf-8"))
+    # Assert
+    assert (started, child_env) == (
+        True,
+        {
+            "CCT_BOT_TOKEN": "current",
+            "CCT_ALLOWED_USERS": "123",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": None,
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": None,
+        },
     )
 
 
@@ -3094,7 +3224,7 @@ def test_fakeroot_not_doubled_when_operator_also_sets(tmp_path: Path) -> None:
 #
 # A --containall apptainer container otherwise gets a 64 MB session tmpfs
 # at /tmp, which fills mid-run during the full test suite. sac emits
-# --workdir <state_dir>/tmp-scratch to relocate /tmp onto the host
+# --workdir <scratch_root>/sac/agents/<agent>/apptainer-workdir to relocate /tmp
 # filesystem. See runtimes/_apptainer_tmpfs.py.
 
 
@@ -3110,7 +3240,7 @@ def test_tmpfs_default_emits_workdir_flag(tmp_path: Path) -> None:
     assert "--workdir" in argv
 
 
-def test_tmpfs_default_workdir_points_at_state_scratch(tmp_path: Path) -> None:
+def test_tmpfs_default_workdir_points_at_host_scratch(tmp_path: Path) -> None:
     # Arrange
     rt = ApptainerContainerRuntime()
     state_dir = tmp_path / "state"
@@ -3118,7 +3248,10 @@ def test_tmpfs_default_workdir_points_at_state_scratch(tmp_path: Path) -> None:
     # Act
     argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     # Assert
-    assert _flag_value(argv, "--workdir") == str(state_dir / "tmp-scratch")
+    scratch = resolve_scratch_root()
+    assert _flag_value(argv, "--workdir") == str(
+        scratch_agent_dir(Path(scratch.root), cfg.name) / "apptainer-workdir"
+    )
 
 
 def test_tmpfs_default_applies_without_apptainer_block(tmp_path: Path) -> None:
@@ -3142,7 +3275,10 @@ def test_tmpfs_override_size_still_emits_workdir(tmp_path: Path) -> None:
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _flag_value(argv, "--workdir") == str(tmp_path / "state" / "tmp-scratch")
+    scratch = resolve_scratch_root()
+    assert _flag_value(argv, "--workdir") == str(
+        scratch_agent_dir(Path(scratch.root), cfg.name) / "apptainer-workdir"
+    )
 
 
 def test_tmpfs_empty_opts_out_of_workdir(tmp_path: Path) -> None:

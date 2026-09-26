@@ -23,15 +23,17 @@ inbox-event injection:
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from collections import deque
 from typing import Any
 
-from .._env import getenv as _sac_env
+import scitex_logging as slogging
 
-log = logging.getLogger(__name__)
+from .._env import getenv as _sac_env
+from ..a2a._inbox_bus import DAEMON_SENDER
+
+log = slogging.getLogger(__name__)
 
 __all__ = [
     "_AUTO_ACK_RATE_MAX_DEFAULT",
@@ -77,6 +79,10 @@ def _should_auto_ack(event: dict[str, Any]) -> bool:
     if not event.get("from_agent"):
         return False
     if event.get("ack"):
+        return False
+    if event.get("kind") == "reaction":
+        return False
+    if event.get("from_agent") in ("system", DAEMON_SENDER):
         return False
     return True
 
@@ -176,7 +182,8 @@ async def _post_auto_ack(
     silently with a debug log — it carries no semantic payload and the
     operator's contract is to keep noise off the wire. The receive-side
     ``_should_auto_ack`` loop-guard above stays in place as belt-and-
-    suspenders.
+    suspenders. Rate admission happens only after this filter, so a local
+    non-emission cannot consume the budget reserved for wire traffic.
     """
     import uuid as _uuid
 
@@ -212,6 +219,8 @@ async def _post_auto_ack(
             target,
             msg_id,
         )
+        return
+    if not _auto_ack_rate_allow(target):
         return
     base = listen_url.rstrip("/")
     headers = {"Content-Type": "application/json"}

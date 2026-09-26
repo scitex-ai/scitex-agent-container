@@ -27,6 +27,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 
 from __future__ import annotations
 
+import pytest
+
 from scitex_agent_container._events import SUBJECT_DEGRADED, read_events
 from scitex_agent_container._reconcile._alarm import SUBSYSTEM
 from scitex_agent_container._reconcile._budget import load_history
@@ -41,8 +43,6 @@ from tests.scitex_agent_container._reconcile._fleet import (
     verdict_of,
     write_spec,
 )
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -274,10 +274,10 @@ def test_never_started_spec_is_not_started(registry, db_path, history, events):
 def test_remote_agent_is_not_restarted_locally(registry, db_path, history, events):
     # Arrange — the row belongs to another host, so its tmux is not ours to
     # read and a local restart would DUPLICATE a live remote agent.
-    from scitex_agent_container._state import state_db
+    from scitex_agent_container._state import state_store
 
     write_spec(registry, "alpha")
-    state_db.record_instance_start(name="alpha", host="host-b", pid=1, remote=True)
+    state_store.record_instance_start(name="alpha", host="host-b", pid=1, remote=True)
     recorder = Recorder()
     # Act
     run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)

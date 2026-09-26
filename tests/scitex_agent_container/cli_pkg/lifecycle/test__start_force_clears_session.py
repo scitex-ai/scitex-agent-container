@@ -1,6 +1,6 @@
-"""Tests for the ``--force`` session_id wipe seam.
+"""Tests for the forced fresh-session wipe seam.
 
-``sac agents start --force <name>`` must clear any persisted SDK
+``sac agents start --force --fresh <name>`` must clear any persisted SDK
 ``session_id`` resume marker so the next runtime.start cannot silently
 re-resume an aged-out conversation (server-side TTL is finite; a stale
 id surfaces as ``ProcessError: Command failed with exit code 1`` ~90s
@@ -10,6 +10,8 @@ The seam is :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
 — that is the entry point both the CLI (``sac agents start``) and the
 MCP/programmatic callers delegate to. Driving the test through
 ``agent_start`` covers every caller in one pass.
+
+Process force with ``session: continue`` must preserve both artifacts.
 
 These tests follow project conventions:
 
@@ -32,6 +34,9 @@ import pytest
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, no monkeypatch
@@ -217,7 +222,7 @@ def _write_spec(workdir_root: Path, *, name: str = "alpha") -> Path:
     spec = agent_dir / "spec.yaml"
     # Red-start ruling 2026-07-21: every field explicit (body wins).
     spec.write_text(explicitize_yaml(body))
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _seed_session_id(runtime_root: Path, name: str, sid: str) -> Path:
@@ -234,7 +239,7 @@ def _seed_session_id(runtime_root: Path, name: str, sid: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_force_removes_persisted_session_id_file(
+def test_force_fresh_removes_persisted_session_id_file(
     pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
@@ -256,19 +261,20 @@ def test_force_removes_persisted_session_id_file(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         force=True,
+        session_override="fresh",
     )
     # Assert
     assert not sid_path.exists()
 
 
-def test_force_leaves_other_runtime_state_alone(
+def test_force_fresh_leaves_other_runtime_state_alone(
     pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
     registry: Registry,
 ) -> None:
-    # Arrange: seed session_id plus unrelated runtime files that --force
+    # Arrange: seed session_id plus unrelated runtime files that --force --fresh
     # MUST NOT touch (heartbeat.json, stdout.log, quota.json, …).
     spec = _write_spec(tmp_path, name="alpha")
     _seed_session_id(runtime_root, "alpha", "stale-sid")
@@ -290,6 +296,7 @@ def test_force_leaves_other_runtime_state_alone(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         force=True,
+        session_override="fresh",
     )
     # Assert: every untouched file still exists with original contents.
     assert all(
@@ -322,6 +329,40 @@ def test_no_force_leaves_session_id(
     )
     # Assert
     assert sid_path.read_text(encoding="utf-8") == "preserve-me"
+
+
+def test_force_with_continue_session_preserves_id_and_history(
+    pg_schema: str,
+    tmp_path: Path,
+    runtime_root: Path,
+    isolated_home: Path,
+    registry: Registry,
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path, name="alpha")
+    sid_path = _seed_session_id(runtime_root, "alpha", "resume-me")
+    history = runtime_root / "alpha" / "session_id_history"
+    history.write_text("older\nresume-me\n", encoding="utf-8")
+    runtime = FakeRuntime(running=False, start_result=True)
+
+    # Act
+    lc.agent_start(
+        str(spec),
+        thread_factory=FakeThread,
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        force=True,
+        session_override="continue",
+    )
+
+    # Assert
+    assert (
+        sid_path.read_text(encoding="utf-8"),
+        history.read_text(encoding="utf-8"),
+        runtime.start_calls[0].claude.session,
+    ) == ("resume-me", "older\nresume-me\n", "continue")
 
 
 def test_missing_session_id_file_under_force_is_no_op(

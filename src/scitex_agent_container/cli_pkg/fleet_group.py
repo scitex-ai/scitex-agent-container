@@ -27,10 +27,12 @@ from pathlib import Path
 
 import click
 
+from .._logging import render_rich
 from .._state.host_config import build_ssh_argv, load
 from ._fleet_notify import fleet_notify as _fleet_notify_cmd
 from ._fleet_sync import fleet_sync
-from ._helpers import _json_flag, console
+from ._fleet_sync_code import fleet_sync_code
+from ._helpers import _json_flag
 
 
 @click.group(
@@ -176,14 +178,12 @@ def fleet_launch(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps({"plan": plan, "rows": []}, indent=2))
             return
-        console.print("[bold]DRY RUN[/bold]")
-        console.print(
-            f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
+        render_rich("[bold]DRY RUN[/bold]", __name__)
+        render_rich(f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
             if plan["rsync"]
-            else "  rsync:           (skipped)"
-        )
+            else "  rsync:           (skipped)", __name__)
         for n in names:
-            console.print(f"  start on {peer}: {n}")
+            render_rich(f"  start on {peer}: {n}", __name__)
         return
 
     # ---- rsync the spec dir to the peer ----
@@ -203,9 +203,7 @@ def fleet_launch(
                 rsync_argv.insert(1, "-e")
                 rsync_argv.insert(2, f"ssh -J {','.join(chain)}")
         if not as_json:
-            console.print(
-                f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/"
-            )
+            render_rich(f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/", __name__)
         rc = subprocess.run(rsync_argv).returncode
         if rc != 0:
             click.echo(f"error: rsync failed (exit {rc})", err=True)
@@ -235,9 +233,9 @@ def fleet_launch(
                 if proc.returncode == 0
                 else f"[red]fail[/red] exit={proc.returncode}"
             )
-            console.print(f"  start {name:<32} {status}")
+            render_rich(f"  start {name:<32} {status}", __name__)
             if proc.stderr.strip():
-                console.print(f"    [dim]{proc.stderr.strip()[:200]}[/dim]")
+                render_rich(f"    [dim]{proc.stderr.strip()[:200]}[/dim]", __name__)
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps({"plan": plan, "rows": rows}, indent=2))
@@ -247,10 +245,11 @@ def fleet_launch(
         raise SystemExit(1)
 
 
-# Cross-host spec audit — registered after the launch verb so the
-# import-time wiring stays linear. ``sync`` lives in its own module
-# (``_fleet_sync.py``) to keep this file under the project line-budget.
+# Cross-host audits — registered after the launch verb so the
+# import-time wiring stays linear. ``sync`` / ``sync-code`` live in
+# their own modules to keep this file under the project line-budget.
 fleet_group.add_command(fleet_sync)
+fleet_group.add_command(fleet_sync_code)
 
 
 # EOF

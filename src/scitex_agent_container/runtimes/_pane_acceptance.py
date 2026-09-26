@@ -37,7 +37,9 @@ from .prompts import is_ready
 #: on the spinner's word: "Slithering", "Bunning" and the rest ROTATE, so a
 #: vocabulary-based detector works right up until the word changes and then
 #: fails silently in the direction that loses work.
-_BUSY_MARKERS = ("tokens)", "without interrupting")
+#: Claude's two mid-turn shapes, and Codex's: its working line ends in
+#: "esc to interrupt" (measured 2026-09-05 on handyman-01).
+_BUSY_MARKERS = ("tokens)", "without interrupting", "esc to interrupt")
 
 #: Claude Code parks input typed while it is working and says so in the pane. A
 #: pane in this state ACCEPTS keystrokes and does not run them, which is the

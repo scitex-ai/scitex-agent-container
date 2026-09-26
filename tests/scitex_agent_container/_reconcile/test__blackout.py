@@ -25,7 +25,6 @@ from scitex_agent_container._reconcile._blackout import (
     is_fleet_blackout,
 )
 
-
 # --- the incident this exists for ----------------------------------------
 
 

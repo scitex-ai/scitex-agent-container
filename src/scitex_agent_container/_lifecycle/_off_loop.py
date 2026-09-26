@@ -64,11 +64,12 @@ is visible instead of quietly leaking threads.
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 from typing import Any, Callable, TypeVar
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -203,7 +204,7 @@ async def run_blocking(
     #     3.11.15  wait_for -> 13 swallowed   asyncio.timeout/bare await -> 0
     #     3.12.3   wait_for ->  0 swallowed   asyncio.timeout/bare await -> 0
     # `asyncio.timeout()` would fix it too but is 3.11+, and this package still
-    # declares `requires-python = ">=3.10"`. A bare await has no swallow branch
+    # declares `requires-python = ">=3.11"`. A bare await has no swallow branch
     # on ANY version: cancellation always propagates.
     deadline = loop.call_later(timeout_s, _on_deadline)
     try:

@@ -347,12 +347,13 @@ def test_missing_token_never_logs_at_error_level(
     assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
 
 
-def test_missing_token_warning_says_the_agent_still_starts(
+def test_missing_token_warning_distinguishes_hermes_from_degraded_harnesses(
     tmp_path: Path,
     secrets_envrc: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Arrange — the message must SAY it is non-fatal, not merely be non-fatal.
+    # Arrange — resolution stays non-fatal, while Hermes profile validation is
+    # deliberately stricter about a selected but incomplete rail.
     os.environ.pop(_SECRETS_VAR, None)
     dest = tmp_path / "home"
     dest.mkdir()
@@ -360,7 +361,10 @@ def test_missing_token_warning_says_the_agent_still_starts(
     with caplog.at_level(scitex_logging.WARNING):
         ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
     # Assert
-    assert "NOT a startup failure" in caplog.text
+    assert (
+        "THE AGENT STARTS NORMALLY for non-Hermes harnesses" in caplog.text
+        and "selected Hermes CCT profile instead refuses" in caplog.text
+    )
 
 
 def test_missing_token_warning_names_pool_source(
@@ -921,3 +925,45 @@ def test_prune_without_a_config_keeps_the_pre_spec_aware_behaviour(
         prune_tokenless_telegrammer_mcp(tmp_path)
     # Assert
     assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_stale_env_file_token_refreshed_from_declared_pool_slot(tmp_path):
+    """A truncated token left by an earlier deploy must not pin the agent.
+
+    Regression (2026-09-23): three lead agents carried 23-char truncated
+    tokens in dest/.env while the pool held the full 46-char values under
+    their DECLARED slots; every start failed bot_token_valid because the
+    .env value won and was never refreshed.
+    """
+    from scitex_agent_container.runtimes import _cct_token_pool as pool_mod
+    from scitex_agent_container.runtimes._cct_token_pool import ensure_cct_bot_token
+
+    dest = tmp_path / "home"
+    dest.mkdir()
+    (dest / ".env").write_text("CCT_BOT_TOKEN=1111111111:SHORTSTALE\n")
+
+    full = "2222222222:" + "A" * 35
+    assert len(full) == 46
+
+    class FakePool:
+        env = {"CCT_BOT_TOKEN_APPS_LEAD": full}
+        trusted = True
+
+    class FakeClaude:
+        channels = ["server:claude-code-telegrammer"]
+
+    class FakeConfig:
+        name = "scitex-apps-lead"
+        workdir = "/home/ywatanabe/proj/scitex-apps-lead"
+        claude = FakeClaude()
+        env = {"CCT_BOT_TOKEN_SLOT": "APPS_LEAD"}
+
+    real_read_pool = pool_mod.read_pool
+    pool_mod.read_pool = lambda: FakePool()
+    try:
+        ensure_cct_bot_token(FakeConfig(), dest)
+    finally:
+        pool_mod.read_pool = real_read_pool
+
+    body = (dest / ".env").read_text()
+    assert f"CCT_BOT_TOKEN={full}" in body

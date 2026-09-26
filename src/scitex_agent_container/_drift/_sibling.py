@@ -47,6 +47,8 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+from .._logging import write_stream
+
 # Operator-configurable list of ``.scitex`` tree roots (or their parents).
 # See the module docstring; entries are os.pathsep-separated.
 SIBLING_ROOTS_ENV = "SAC_SPEC_SIBLING_ROOTS"
@@ -269,7 +271,7 @@ def warn_if_newer_sibling(
                 log.warning(line)
         else:
             for line in lines:
-                print(line, file=stream, flush=True)
+                write_stream(line, stream, flush=True)
         return len(siblings)
     except (
         Exception

@@ -70,7 +70,7 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def listen_state_db(tmp_path: Path, pg_schema: str):
+def listen_state_store(tmp_path: Path, pg_schema: str):
     """Isolated state.db + registry/runtime dirs + channel store for the app.
 
     ``pg_schema`` JOINED ON 2026-08-28, AND ITS ABSENCE WAS THE FAILURE.
@@ -127,7 +127,7 @@ def listen_state_db(tmp_path: Path, pg_schema: str):
 
 
 @pytest.fixture
-def live_listen(listen_state_db):
+def live_listen(listen_state_store):
     """Boot the REAL ``sac listen`` app on a REAL loopback uvicorn port.
 
     Disables the listen lifespan's background loops (peer-sync, CI poll,

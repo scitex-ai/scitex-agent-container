@@ -8,7 +8,7 @@ deployments by design, and these tests prove it by never importing
 ``agents``.
 
 STATE-DB PLACEMENT IS NO LONGER ONE OF THE CONCERNS. Seven tests here
-pinned ``resolve_state_db_path`` — the directory, the filename, the
+pinned ``resolve_state_store_path`` — the directory, the filename, the
 name sanitiser, the override — and they went with the function when
 the OpenAI runner's conversation state moved to PostgreSQL. Nothing
 replaced them at this level: a store TARGET is not a path, and the

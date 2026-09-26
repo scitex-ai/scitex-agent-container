@@ -16,6 +16,21 @@ from pathlib import Path
 
 import yaml
 
+from ._delegation_types import DelegationSpec
+from ._engine_types import (
+    EngineDefaultError,
+    EngineError,
+    EngineSpec,
+    UnknownEngineError,
+    apply_engine,
+    select_engine,
+)
+from ._hermes_compression import HermesCompressionSpec
+from ._hermes_context_budget import (
+    HermesFleetBudgetError,
+    HermesFleetContextBudget,
+    derive_hermes_fleet_context_budget,
+)
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
 from ._provider_types import ProviderSpec
@@ -41,8 +56,15 @@ __all__ = [
     "AgentConfig",
     "ClaudeSpec",
     "ContainerSpec",
+    "DelegationSpec",
+    "EngineDefaultError",
+    "EngineError",
+    "EngineSpec",
     "HealthSpec",
     "HookSpec",
+    "HermesCompressionSpec",
+    "HermesFleetBudgetError",
+    "HermesFleetContextBudget",
     "HostsSpec",
     "ListenPort",
     "ProviderSpec",
@@ -51,11 +73,15 @@ __all__ = [
     "SchedulingSpec",
     "SkillsSpec",
     "StartupCommand",
+    "UnknownEngineError",
     "WatchdogSpec",
+    "apply_engine",
     "compose_effective_name",
+    "derive_hermes_fleet_context_budget",
     "load_config",
     "resolve_config",
     "resolve_hostname",
+    "select_engine",
     "substitute_hostnames",
     "validate_config",
 ]
@@ -101,10 +127,8 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
         )
 
     config = load_v3(raw, path)
-    # NOT gated: a missing assigned account is a CORRECTNESS problem that makes
-    # the agent fail to start, so it belongs on every load.
-    _warn_if_assigned_account_missing(config)
     if advise:
+        _warn_if_assigned_account_missing(config)
         _warn_if_startup_prompt_long(config)
     return config
 
@@ -126,14 +150,17 @@ def _config_logger():
 
 
 def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
-    """Soft-WARN (never fail) when ``spec.claude.account`` names an
-    account whose snapshot dir is absent at load time.
+    """Warn only when the selected Claude Code harness lacks its account.
 
-    Accounts may be created later or live on another host, so a missing
-    snapshot is not a hard error — but surfacing it at load time catches
-    typos before the agent silently falls back to the host live file at
-    start. Best-effort: any resolution hiccup is swallowed.
+    ``spec.claude.account`` remains in many migrated Hermes/Codex specs as
+    legacy/manual-choice metadata. Those harnesses do not authenticate with a
+    Claude Code OAuth snapshot, so warning about that inventory falsely claims
+    the stored account is active. Accounts may also live on another host, so a
+    missing snapshot is advisory rather than fatal. Best-effort: any resolution
+    hiccup is swallowed.
     """
+    if str(getattr(config, "harness", "") or "").strip().lower() != "anthropic":
+        return
     acct = getattr(getattr(config, "claude", None), "account", "") or ""
     if not acct:
         return
@@ -157,8 +184,8 @@ def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
 
 
 # A startup_prompt is a per-boot KICK, not durable context. Past these sizes it
-# is almost certainly role/rules/workflow PROSE that belongs in CLAUDE.md +
-# skills (see _warn_if_startup_prompt_long). Generous so a real boot-kick never
+# is almost certainly role/rules/workflow prose that belongs in the selected
+# harness's declared instruction projection + skills. Generous so a real boot-kick never
 # trips them; the trimmed proj-scitex-dev kick (~430 chars, 1 line) clears both.
 _STARTUP_PROMPT_WARN_CHARS = 600
 _STARTUP_PROMPT_WARN_LINES = 8
@@ -171,10 +198,10 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
     once at start, not persistent context. Durable ROLE / SCOPE / RULES /
     WORKFLOW prose therefore does NOT belong there: it bloats every boot, stale-
     replays on restart, and (multi-line) stresses the TUI paste-submit path. Such
-    prose belongs in the auto-loaded ``$HOME/.claude/CLAUDE.md`` (role + skill
-    ``@``-imports) and reusable rules in ``.claude/skills/`` — claude re-reads
-    those EVERY session. Keep startup_prompts to a short boot-KICK (what to DO on
-    start). Best-effort: any hiccup must never break config loading.
+    prose belongs in a harness-native instruction file declared under
+    ``to_home`` and reusable rules in a declared skills directory. Keep
+    startup_prompts to a short boot kick (what to do on start). Best-effort:
+    any hiccup must never break config loading.
     """
     try:
         for idx, prompt in enumerate(getattr(config, "startup_prompts", []) or []):
@@ -190,10 +217,9 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
                 f"'{getattr(config, 'name', '?')}' is long "
                 f"({n_chars} chars, {n_lines} lines). startup_prompts are pasted "
                 "as a per-boot user turn — durable ROLE / RULES / WORKFLOW prose "
-                "belongs in the auto-loaded $HOME/.claude/CLAUDE.md (role + skill "
-                "@-imports) and reusable rules in .claude/skills/, which claude "
-                "re-reads every session. Keep startup_prompts to a short boot-KICK "
-                "(what to DO on start); move the prose to CLAUDE.md + skills."
+                "belongs in a harness-native instruction file declared under "
+                "to_home and reusable rules in a declared skills directory. "
+                "Keep startup_prompts to a short boot kick (what to do on start)."
             )
     except Exception:  # stx-allow: fallback (reason: advisory only; never break load)
         pass

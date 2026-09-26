@@ -292,7 +292,7 @@ def has_active_row(name: str) -> bool:
     # legitimate no-row answer for the spec-host fallback decision — the
     # row-driven dispatcher already surfaced any real state.db fault)
     try:
-        from ..._state.state_db import list_active_instances
+        from ..._state.state_store import list_active_instances
 
         rows = list_active_instances(host=None)
     except Exception:

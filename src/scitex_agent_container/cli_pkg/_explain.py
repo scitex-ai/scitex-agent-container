@@ -14,9 +14,109 @@ from pathlib import Path
 
 import click
 
-from .._state._meta.secrets import _redact_env_entry as _redact
 from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
+from .._state._meta.secrets import _redact_env_entry as _redact
 from ..config import AgentConfig, load_config
+from ._explain_engine import engine_lines
+
+
+def _channel_lines(config: AgentConfig, channels: list[str]) -> list[str]:
+    """Show declarations, resolved ingress and tool exposure as distinct facts."""
+    from scitex_dev.status import Check, StatusCode
+
+    declared = set(channels)
+    mcp_names = set(getattr(config, "mcp_servers", {}) or {})
+    checks = []
+    checks.append(
+        Check.ok(
+            "sac_inbound_delivery",
+            "server:sac resolves to the explicit-ack SAC inbox consumer and the "
+            "canonical turn-exchange ledger",
+        )
+        if "server:sac" in declared
+        else Check.not_ok(
+            "sac_inbound_delivery",
+            "server:sac is not declared",
+            "add server:sac to spec.comms.channels",
+            cause=StatusCode(
+                kind="scitex",
+                code="NOT_RESOLVABLE",
+                message="server:sac is not declared; inspect `sac agents explain`",
+            ),
+        )
+    )
+    checks.append(
+        Check.ok(
+            "cards_inbound_delivery",
+            "server:scitex-cards resolves to durable poll, terminal-visible turn, "
+            "then positive confirmation",
+        )
+        if "server:scitex-cards" in declared
+        else Check.not_ok(
+            "cards_inbound_delivery",
+            "server:scitex-cards is not declared",
+            "add server:scitex-cards to spec.comms.channels",
+        )
+    )
+    if "server:scitex-cards" in declared:
+        from ..runtimes._channel_inbox_dispatcher_lifecycle import (
+            cards_store_check,
+            effective_cards_store,
+        )
+
+        cards_env, cards_store = effective_cards_store(config)
+        checks.append(cards_store_check(config.name, cards_store, cards_env))
+    card_tools = bool({"cards", "scitex-cards"} & mcp_names)
+    checks.append(
+        Check.ok(
+            "cards_tools",
+            "the scitex-cards MCP server is declared as a tools-only surface; "
+            "tools-only mode; this is tool exposure, not proof of inbound delivery",
+        )
+        if card_tools
+        else Check.not_ok(
+            "cards_tools",
+            "Cards inbound delivery is declared but no scitex-cards MCP tool server "
+            "is present",
+            "declare spec.mcp_servers.scitex-cards if this agent must operate Cards",
+            cause=StatusCode(
+                kind="scitex",
+                code="NOT_RESOLVABLE",
+                message="the Cards MCP server does not resolve; inspect `sac agents explain`",
+            ),
+        )
+    )
+    if (
+        "server:claude-code-telegrammer" in declared
+        and getattr(config, "harness", "") == "hermes"
+    ):
+        from ..runtimes._cct_rail_verdict import RAIL_UP, assess_cct_rail
+
+        rail = assess_cct_rail(config)
+        checks.append(
+            Check.ok("cct_inbound_delivery", rail.detail)
+            if rail.state == RAIL_UP
+            else Check.unknown(
+                "cct_inbound_delivery",
+                rail.detail,
+                rail.remedy(),
+            )
+        )
+    else:
+        checks.append(
+            Check.ok(
+                "cct_inbound_delivery",
+                "server:claude-code-telegrammer is omitted by declaration; CCT is optional",
+            )
+        )
+    lines = ["Channel resolution:"]
+    for check in checks:
+        wire = check.to_dict()
+        state = {True: "resolved", False: "unavailable", None: "unknown"}[wire["ok"]]
+        lines.append(f"  {check.name}: {state} — {check.detail}")
+        if check.hint:
+            lines.append(f"    Hint: {check.hint}")
+    return lines
 
 
 def _spec_path_for(name: str) -> Path | None:
@@ -30,21 +130,55 @@ def _spec_path_for(name: str) -> Path | None:
 
 
 def _argv_for(config: AgentConfig) -> list[str]:
-    """The real launch argv (binds + --pwd come straight from build_run_argv).
+    """The real launch argv, resolved through the selected runtime adapter.
 
     SIF resolution is best-effort — when no SIF resolves (apptainer absent) we
     still render the plan with a visible ``<unresolved>`` placeholder rather
     than failing, so ``explain`` works anywhere.
     """
-    from ..runtimes._apptainer_build_argv import build_run_argv
-    from ..runtimes._apptainer_runtime import ApptainerContainerRuntime
-    from ..runtimes.tui_session import state_dir_for_config
+    from .._lifecycle._runtime_select import _get_runtime
 
-    sif = ApptainerContainerRuntime().resolve_sif(config)
+    runtime = _get_runtime(config)
+
+    # TUI adapters own their full argv builder because the harness command is
+    # part of that adapter.  Using it here keeps explain on the same selection
+    # path as start without teaching this module Claude/Codex argv details.
+    default_argv = getattr(runtime, "_default_argv", None)
+    if callable(default_argv):
+        argv = default_argv(config)
+        if argv is not None:
+            return argv
+
+    # Headless wrapper adapters delegate the actual container launch to their
+    # selected container runtime.  Hermes is itself that runtime, so both paths
+    # converge here without a harness-specific fallback.
+    container = runtime
+    container_factory = getattr(runtime, "_container_runtime_for", None)
+    if callable(container_factory):
+        container = container_factory(config)
+    if container is None:
+        raise RuntimeError(
+            f"{type(runtime).__name__} cannot resolve its container runtime"
+        )
+
+    resolve_sif = getattr(container, "resolve_sif", None)
+    build_argv = getattr(container, "build_run_argv", None)
+    if not callable(resolve_sif) or not callable(build_argv):
+        raise RuntimeError(
+            f"{type(runtime).__name__} does not expose a launch-plan argv adapter"
+        )
+
+    state_dir_fn = getattr(runtime, "_state_dir", None)
+    if not callable(state_dir_fn):
+        state_dir_fn = getattr(container, "_state_dir", None)
+    if not callable(state_dir_fn):
+        raise RuntimeError(
+            f"{type(runtime).__name__} does not expose a state directory"
+        )
+
+    sif = resolve_sif(config)
     sif_path = sif if sif is not None else Path(config.image or "<unresolved>.sif")
-    return build_run_argv(
-        config, state_dir=state_dir_for_config(config), sif_path=sif_path, tui=True
-    )
+    return build_argv(config, state_dir=state_dir_fn(config), sif_path=sif_path)
 
 
 def _binds(argv: list[str]) -> list[tuple[str, str, str]]:
@@ -83,6 +217,23 @@ def _annotate(src: str, dst: str) -> str:
     if dst.endswith("/.scitex/todo"):
         return "shared todo store"
     return ""
+
+
+def _uvwork_line(config: AgentConfig) -> str:
+    """One line saying where ``/uvwork`` comes from — ADR-0024.
+
+    ``explain`` renders binds by walking the argv, so the ONE outcome it could
+    not show is the one that emits no bind: a host with no resolvable scratch
+    root. That is precisely the case an operator needs named, because
+    ``start`` will REFUSE on it (``_apptainer_scratch.ensure_uvwork_for_launch``)
+    while ``explain`` stays read-only. So the plan states the decision itself
+    rather than leaving the reader to notice an absence.
+    """
+    from ..runtimes._apptainer_scratch import plan_uvwork_bind
+
+    plan = plan_uvwork_bind(config)
+    prefix = "⚠ /uvwork — `start` WILL REFUSE" if plan.refused else "/uvwork"
+    return f"{prefix}: {plan.reason}"
 
 
 def _pwd_is_backed(pwd: str, binds: list[tuple[str, str, str]]) -> bool:
@@ -184,6 +335,57 @@ def _workdir_line(pwd: str, binds: list[tuple[str, str, str]]) -> str:
     return f"Workdir (--pwd): {pwd}   [{flag}]"
 
 
+def _worktree_policy_lines(config: AgentConfig) -> list[str]:
+    """Read-only resolution through the same executable gate as start."""
+    from .._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+        enforce_task_worktree_policy,
+    )
+
+    try:
+        proof = enforce_task_worktree_policy(config, provision=False)
+    except WorktreePolicyError as exc:
+        return ["Worktree policy: START WILL REFUSE", f"  {exc}"]
+    if proof is None:
+        return ["Worktree policy: not applicable (AgentProxy)"]
+    return [
+        f"Worktree policy: {proof.worktree_action}",
+        f"  authored: {proof.authored_workdir}",
+        f"  resolved: {proof.resolved_workdir}",
+        f"  branch: {proof.branch}",
+        f"  policy_sha256: {proof.policy_sha256}",
+        f"  projection_sha256: {proof.projection_sha256}",
+    ]
+
+
+def _delegation_line(config: AgentConfig) -> str:
+    """Effective spawn permission and child bound from the loaded spec."""
+    allowed = bool(getattr(getattr(config, "lineage", None), "may_spawn", True))
+    policy = getattr(config, "delegation", None)
+    maximum = getattr(policy, "max_concurrent_children", 2)
+    isolated = bool(getattr(policy, "worktree_isolation", True))
+    state = "enabled" if allowed else "disabled (delegate_task removed)"
+    isolation = "requested" if isolated else "off"
+    return (
+        f"Delegation: {state}; max children: {maximum}; "
+        f"Git worktree isolation: {isolation}"
+    )
+
+
+def _a2a_line(config: AgentConfig, *, port_reader=None) -> str:
+    """Render configured intent beside the durable resolved bridge port."""
+    from .._lifecycle._status import _a2a_status
+
+    status = _a2a_status(config.name, config, port_reader=port_reader)
+    configured = status["configured_port"]
+    resolved = status["resolved_port"]
+    return (
+        f"A2A port: configured={configured if configured is not None else 'none'}; "
+        f"resolved={resolved if resolved is not None else 'none'}; "
+        f"source={status['resolution_source']}"
+    )
+
+
 def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Short variant of :func:`render_plan` for ``sac agents start``'s
     refuse-without-``--yes`` preview.
@@ -194,6 +396,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     deep-merge. Use ``sac agents explain <name>`` (``render_plan``) for the
     full detail.
     """
+    policy_lines = _worktree_policy_lines(config)
     argv = _argv_for(config)
     binds = _binds(argv)
     pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
@@ -203,15 +406,19 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
     lines.append("")
     lines.append(_workdir_line(pwd, binds))
+    lines.extend(policy_lines)
 
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_a2a_line(config))
+    lines.append(_delegation_line(config))
     return "\n".join(lines)
 
 
 def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Return the human-readable effective launch plan for ``config``."""
+    policy_lines = _worktree_policy_lines(config)
     argv = _argv_for(config)
     binds = _binds(argv)
     pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
@@ -220,8 +427,14 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
 
     lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
 
+    # WHICH ENGINE, AND WHO DECIDED — the only defence against a fleet
+    # engine library that has diverged between hosts. See _explain_engine.
+    lines.append("")
+    lines += engine_lines(config, spec_path)
+
     lines.append("")
     lines.append(_workdir_line(pwd, binds))
+    lines.extend(policy_lines)
 
     lines.append("")
     lines.append("Mounts (apptainer.binds — the single source of truth):")
@@ -230,6 +443,9 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
         note = _annotate(src, dst)
         note = f"   [{note}]" if note else ""
         lines.append(f"  {src:<{width}}  →  {dst}  ({mode}){note}")
+
+    lines.append("")
+    lines.append(_uvwork_line(config))
 
     envs = _envs(argv)
     if envs:
@@ -240,13 +456,18 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
 
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     flags = getattr(claude, "flags", []) or []
-    channels = getattr(claude, "channels", []) or []
+    channels = getattr(getattr(config, "comms", None), "channels", []) or []
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_a2a_line(config))
+    lines.append(_delegation_line(config))
     if flags:
         lines.append(f"Flags: {' '.join(flags)}")
     if channels:
         lines.append(f"Channels: {', '.join(channels)}")
+    channel_resolution = _channel_lines(config, channels)
+    if channel_resolution:
+        lines += channel_resolution
 
     try:
         from ..runtimes.claude_md import build_skills_lines
@@ -351,7 +572,6 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
         created = apply_host_merge(config, tmp)
         by_dir: dict[str, int] = {}
         for link in created:
-            sub = link.parent
             # climb to the .claude/<subdir> name
             parts = link.relative_to(Path(tmp) / ".claude").parts
             key = parts[0] if parts else "?"

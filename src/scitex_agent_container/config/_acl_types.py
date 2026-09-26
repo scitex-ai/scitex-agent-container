@@ -16,7 +16,7 @@ the five clew capsule-isolation gaps:
 These are PURE declarations. Server-side enforcement reads the
 persisted values from the ``node_comms_policy`` table at ACL-check
 time (see :mod:`scitex_agent_container._listen._acl` and
-:mod:`scitex_agent_container._state.state_db_nodes`).
+:mod:`scitex_agent_container._state.state_store_nodes`).
 
 Defaults intentionally preserve pre-Phase-3 behaviour (everything
 ``"allow"`` / ``True`` / ``""``), so a spec that omits both
@@ -84,8 +84,9 @@ class A2ACommsToggle:
 
 @dataclass
 class CommsSpec:
-    """Top-level ``spec.comms`` block: outbound / inbound / a2a."""
+    """Harness-neutral communication declaration and access policy."""
 
+    channels: list[str] = field(default_factory=list)
     outbound: OutboundCommsSpec = field(default_factory=OutboundCommsSpec)
     inbound: InboundCommsSpec = field(default_factory=InboundCommsSpec)
     a2a: A2ACommsToggle = field(default_factory=A2ACommsToggle)

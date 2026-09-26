@@ -12,14 +12,14 @@ lines; one assertion per test (STX-TQ007).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import json
 import time
 from pathlib import Path
 
 import pytest
+
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture

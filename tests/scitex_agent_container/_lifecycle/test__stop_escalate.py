@@ -35,6 +35,9 @@ from scitex_agent_container._lifecycle._stop_escalate import (
 )
 from scitex_agent_container.config import AgentConfig, load_config
 from scitex_agent_container.runtimes.base import RuntimeBase
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 # A child that IGNORES SIGTERM — the exact behaviour that made the stop leg
 # give up. It announces readiness on stdout so the test never races the
@@ -47,7 +50,6 @@ _SIGTERM_DEAF = (
     "sys.stdout.flush()\n"
     "time.sleep(300)\n"
 )
-
 
 
 class FakeThread:
@@ -69,6 +71,7 @@ class FakeThread:
 
     def start(self) -> None:
         self.started = True
+
 
 def _no_sleep(_seconds: float) -> None:
     return None
@@ -114,7 +117,7 @@ def _write_spec(tmp_path: Path, *, name: str = "alpha", runtime: str = "tui") ->
             "    post_stop: []\n"
         )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 @pytest.fixture(autouse=True)
@@ -607,8 +610,7 @@ def _restart(tmp_path: Path, runtime: Any, *, name: str = "alpha") -> bool:
 
 
 def test_restart_kills_the_runtime_that_ignored_sigterm(
-    pg_schema: str,
-    tmp_path: Path, deaf_proc: subprocess.Popen
+    pg_schema: str, tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange — the neurovista shape: a REAL process that ignores SIGTERM.
     _write_spec(tmp_path)
@@ -620,8 +622,7 @@ def test_restart_kills_the_runtime_that_ignored_sigterm(
 
 
 def test_restart_starts_the_replacement_after_escalating(
-    pg_schema: str,
-    tmp_path: Path, deaf_proc: subprocess.Popen
+    pg_schema: str, tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange
     _write_spec(tmp_path)
@@ -632,7 +633,9 @@ def test_restart_starts_the_replacement_after_escalating(
     assert runtime.start_calls == 1
 
 
-def test_restart_raises_when_the_survivor_cannot_be_killed(pg_schema, tmp_path: Path) -> None:
+def test_restart_raises_when_the_survivor_cannot_be_killed(
+    pg_schema, tmp_path: Path
+) -> None:
     # Arrange — up, and unkillable (no nameable pid).
     _write_spec(tmp_path)
     # Act
@@ -643,7 +646,9 @@ def test_restart_raises_when_the_survivor_cannot_be_killed(pg_schema, tmp_path: 
         call()
 
 
-def test_restart_never_starts_over_a_surviving_runtime(pg_schema, tmp_path: Path) -> None:
+def test_restart_never_starts_over_a_surviving_runtime(
+    pg_schema, tmp_path: Path
+) -> None:
     # Arrange
     _write_spec(tmp_path)
     runtime = _PidlessRuntime()

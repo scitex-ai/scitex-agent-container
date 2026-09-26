@@ -45,21 +45,6 @@ def _instances_store(pg_schema: str):
     yield
 
 
-# The generic ``_swap(name, fn)`` module-namespace helper lived here and is
-# gone with its last caller: every remaining swap targets a specific
-# collaborator (``os.kill``, ``post_turn_to_url``) and says so in its name.
-
-
-@contextmanager
-def _swap_os_kill(fn: Callable) -> Iterator[None]:
-    saved = send_mod.os.kill
-    send_mod.os.kill = fn  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        send_mod.os.kill = saved  # type: ignore[assignment]
-
-
 def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
     yaml_root = tmp_path / "agents"
     agent_dir = yaml_root / name
@@ -92,11 +77,11 @@ spec:
 
 
 @contextmanager
-def _empty_state_db(tmp_path: Path) -> Iterator[None]:
+def _empty_state_store(tmp_path: Path) -> Iterator[None]:
     """Point ``state.db`` at a fresh empty file for the duration.
 
     The local-send branch in ``send`` consults
-    ``state_db.list_active_instances()`` to decide whether an agent is
+    ``state_store.list_active_instances()`` to decide whether an agent is
     running locally with a bound a2a_port. Without isolation a row left
     by an earlier test in the shared default db (CI runs the whole
     suite) makes ``alpha`` look "running" and the send POSTs to a dead
@@ -109,12 +94,12 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
     """
     import importlib
 
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(tmp_path / "isolated-state.db")
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield
     finally:
@@ -122,7 +107,7 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 @pytest.fixture
@@ -147,7 +132,7 @@ def isolated_env(tmp_path):
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
     )
-    with _empty_state_db(tmp_path):
+    with _empty_state_store(tmp_path):
         try:
             yield tmp_path
         finally:
@@ -163,7 +148,7 @@ def isolated_env(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_invocation_without_prompt_or_key_exits_nonzero(isolated_env):
+def test_invocation_without_prompt_exits_nonzero(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -172,7 +157,7 @@ def test_invocation_without_prompt_or_key_exits_nonzero(isolated_env):
     assert result.exit_code != 0
 
 
-def test_invocation_without_prompt_or_key_reports_requirement_in_output(
+def test_invocation_without_prompt_reports_requirement_in_output(
     isolated_env,
 ):
     # Arrange
@@ -180,109 +165,17 @@ def test_invocation_without_prompt_or_key_reports_requirement_in_output(
     # Act
     result = runner.invoke(send, ["alpha"])
     # Assert
-    assert "Either PROMPT or --key is required" in result.output
+    assert "PROMPT is required" in result.output
 
 
-def test_invocation_with_both_prompt_and_key_exits_nonzero(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
-    # Assert
-    assert result.exit_code != 0
-
-
-def test_invocation_with_both_prompt_and_key_reports_mutual_exclusion(
-    isolated_env,
-):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
-    # Assert
-    assert "mutually exclusive" in result.output
-
-
-# ---------------------------------------------------------------------------
-# --key ESC: SIGINT delivery
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def alpha_with_pid(isolated_env):
-    """isolated_env plus a recorded pid file for the alpha agent."""
-    (isolated_env / "state" / "alpha" / "pid").write_text("4242")
-    return isolated_env
-
-
-def _invoke_key_esc_capturing_kill():
-    """Run ``send alpha --key ESC`` and return (result, kill_call)."""
-    kill_call: dict = {}
-    with _swap_os_kill(lambda pid, sig: kill_call.update(pid=pid, sig=sig)):
-        runner = CliRunner()
-        result = runner.invoke(send, ["alpha", "--key", "ESC"])
-    return result, kill_call
-
-
-def test_key_esc_with_recorded_pid_exits_zero(alpha_with_pid):
-    # Arrange
-    invoke = _invoke_key_esc_capturing_kill
-    # Act
-    result, _ = invoke()
-    # Assert
-    assert result.exit_code == 0, result.output
-
-
-@pytest.mark.parametrize(
-    "field,expected",
-    [
-        ("pid", 4_242),
-        ("sig", 2),  # signal.SIGINT
-    ],
-)
-def test_key_esc_delivers_sigint_to_recorded_pid(alpha_with_pid, field, expected):
-    # Arrange
-    invoke = _invoke_key_esc_capturing_kill
-    # Act
-    _, kill_call = invoke()
-    # Assert
-    assert kill_call[field] == expected
-
-
-def test_key_unsupported_exits_nonzero(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
-    # Assert
-    assert result.exit_code != 0
-
-
-def test_key_unsupported_reports_not_supported(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
-    # Assert
-    assert "not supported" in result.output
-
-
-def test_key_esc_without_pid_file_exits_nonzero(isolated_env):
+def test_send_no_longer_exposes_a_key_option(isolated_env):
+    """Terminal control is not a prompt-delivery transport."""
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(send, ["alpha", "--key", "ESC"])
     # Assert
-    assert result.exit_code != 0
-
-
-def test_key_esc_without_pid_file_reports_not_running(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "ESC"])
-    # Assert
-    assert "not running" in result.output
+    assert "no such option" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -371,9 +264,9 @@ def remote_send_env(tmp_path):
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["SAC_HOST"] = "lead-host"
     os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -386,12 +279,12 @@ def remote_send_env(tmp_path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
     # Arrange — seed a row with NO a2a_port (the proj-scitex-stats case).
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=None)
     runner = CliRunner()
@@ -403,14 +296,15 @@ def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
 
 def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_env):
     # Arrange — seed remote row + stub post_turn_to_url collaborator.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["url"] = url
         captured["text"] = text
+        captured["wait_for_final"] = wait_for_final
         return "REMOTE-REPLY"
 
     import scitex_agent_container._network.peer as _peer_mod
@@ -420,16 +314,19 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     try:
         runner = CliRunner()
         # Act
-        result = runner.invoke(send, ["zeta", "hi"])
+        runner.invoke(send, ["zeta", "hi"])
     finally:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert
-    assert captured.get("url") == "ssh://peer-x:18888/v1/turn"
+    assert (
+        captured.get("url"),
+        captured.get("wait_for_final"),
+    ) == ("ssh://peer-x:18888/v1/turn", False)
 
 
 def test_remote_send_prints_reply_from_peer(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     import scitex_agent_container._network.peer as _peer_mod
@@ -473,30 +370,34 @@ def _swap_peer_post_turn_to_url(fn: Callable) -> Iterator[None]:
 
 def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env):
     # Arrange — seed a LOCAL row (host == current SAC_HOST) with a port.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["url"] = url
+        captured["wait_for_final"] = wait_for_final
         return "LOCAL-REPLY"
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
         CliRunner().invoke(send, ["local-a", "hi"])
     # Assert
-    assert captured.get("url") == "http://127.0.0.1:19005/v1/turn"
+    assert (
+        captured.get("url"),
+        captured.get("wait_for_final"),
+    ) == ("http://127.0.0.1:19005/v1/turn", False)
 
 
 def test_local_send_forwards_the_prompt_text(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["text"] = text
         return "LOCAL-REPLY"
 
@@ -509,7 +410,7 @@ def test_local_send_forwards_the_prompt_text(remote_send_env):
 
 def test_local_send_prints_reply_from_loopback(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
@@ -521,7 +422,7 @@ def test_local_send_prints_reply_from_loopback(remote_send_env):
 
 def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
@@ -533,12 +434,12 @@ def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
 
 def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env):
     # Arrange — a LOCAL row WITHOUT a bound port must not be POSTed to.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
     posted: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         posted["url"] = url
         return "SHOULD-NOT-HAPPEN"
 
@@ -552,11 +453,11 @@ def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env
 def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_env):
     """The old name for this was "falls through to resume" — it no longer does."""
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         return "SHOULD-NOT-HAPPEN"
 
     # Act
@@ -569,11 +470,11 @@ def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_e
 def test_local_send_failure_wraps_peer_error(remote_send_env):
     # Arrange
     from scitex_agent_container._network.peer import PeerError
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         raise PeerError("connection refused")
 
     # Act
@@ -581,3 +482,54 @@ def test_local_send_failure_wraps_peer_error(remote_send_env):
         result = CliRunner().invoke(send, ["local-a", "hi"])
     # Assert
     assert "local send failed" in result.output
+
+
+def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
+    remote_send_env,
+):
+    # Arrange — exact non-final receipt shape returned by Hermes in production.
+    from scitex_agent_container._network.peer import PeerTimeoutPending
+    from scitex_agent_container._state.state_store import record_instance_start
+
+    exchange_id = "xch_20260914T071511Z_scitex-compute-03_208629"
+    poll_hint = f"curl -sS http://127.0.0.1:19005/v1/exchanges/{exchange_id}"
+    receipt = {
+        "exchange_id": exchange_id,
+        "receipt": {
+            "state": "pending",
+            "final": False,
+            "delivery_mode": "steer",
+        },
+        "status_code": {
+            "kind": "http",
+            "code": 202,
+            "message": f"accepted; poll `/v1/exchanges/{exchange_id}`",
+        },
+    }
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+
+    def pending_post(
+        url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True
+    ):
+        raise PeerTimeoutPending(
+            "accepted exchange remains pending",
+            status="exchange_pending",
+            timeout_s=timeout_s,
+            raw_body=receipt,
+            exchange_id=exchange_id,
+            poll_hint=poll_hint,
+        )
+
+    # Act
+    with _swap_peer_post_turn_to_url(pending_post):
+        result = CliRunner().invoke(send, ["local-a", "hi"])
+    output = result.output
+    # Assert
+    assert (
+        result.exit_code,
+        exchange_id in output,
+        poll_hint in output,
+        '"state": "pending"' in output,
+        '"final": false' in output,
+        "DELIVERED and SUBMITTED" not in output,
+    ) == (0, True, True, True, True, True)

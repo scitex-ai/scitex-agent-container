@@ -183,8 +183,11 @@ class TestResolvePeerUrl:
             "spec:\n  runtime: apptainer\n"
         )
         resolve_yaml_to(agent_yaml)
+
         # Act
-        action = lambda: resolve_peer_url("delta")
+        def action():
+            return resolve_peer_url("delta")
+
         # Assert
         with pytest.raises(PeerError, match="no spec.a2a.port"):
             action()
@@ -203,7 +206,7 @@ class TestResolvePeerUrl:
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path):
+def isolated_state_store(tmp_path: Path):
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` (explicit save/restore).
 
     The reload picked up a module-level ``DEFAULT_DB_PATH`` until 2026-08-30.
@@ -217,7 +220,7 @@ def isolated_state_db(tmp_path: Path):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(db)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -247,14 +250,14 @@ def _write_auto_port_yaml(tmp_path: Path) -> Path:
 
 class TestResolvePeerUrlCrossHostFallback:
     def test_remote_instances_row_resolves_to_ssh_url(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML (no static port, no local allocator
         # claim) + a remote instances row recording the peer-resolved
         # bound port and host.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", bound_port=19123, remote=True
@@ -265,13 +268,13 @@ class TestResolvePeerUrlCrossHostFallback:
         assert url == "ssh://spartan:19123/v1/turn"
 
     def test_remote_instances_row_without_local_claim_does_not_raise(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — same shape; the pre-fix behaviour was a PeerError
         # ("port: auto and no bound port recorded").
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", bound_port=19123, remote=True
@@ -286,14 +289,14 @@ class TestResolvePeerUrlCrossHostFallback:
         assert raised == []
 
     def test_legacy_row_without_bound_port_falls_back_to_a2a_port(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — a row written before the family-tree columns existed
         # carries the port only in ``a2a_port``; the fallback must still
         # resolve it.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", a2a_port=19200, bound_port=None
@@ -304,14 +307,17 @@ class TestResolvePeerUrlCrossHostFallback:
         assert url == "ssh://spartan:19200/v1/turn"
 
     def test_no_instances_row_still_raises_auto_port_error(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML, NO instances row, NO local claim:
         # the honest "is the agent running?" error must still fire.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
+
         # Act
-        action = lambda: resolve_peer_url("clew")
+        def action():
+            return resolve_peer_url("clew")
+
         # Assert
         with pytest.raises(PeerError, match="no bound port recorded"):
             action()
@@ -325,7 +331,9 @@ class TestResolvePeerUrlCrossHostFallback:
 class TestPostTurnToUrl:
     def test_url_not_ending_in_v1_turn_raises_peer_error(self) -> None:
         # Arrange
-        action = lambda: post_turn_to_url("http://x:1/foo", "hi")
+        def action():
+            return post_turn_to_url("http://x:1/foo", "hi")
+
         raised: list[BaseException] = []
         # Act
         try:
@@ -335,7 +343,7 @@ class TestPostTurnToUrl:
         # Assert
         assert raised and "must end in /v1/turn" in str(raised[0])
 
-    def test_roundtrip_against_local_server_returns_echoed_reply(self) -> None:
+    def test_roundtrip_resolves_canonical_exchange_receipt(self) -> None:
         """Spin up a tiny http.server on 127.0.0.1 that mimics /v1/turn
         and assert post_turn_to_url returns the canned reply."""
         # Arrange
@@ -348,18 +356,43 @@ class TestPostTurnToUrl:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
 
+        exchange_id = "xch_20260913T000000Z_local_abcdef"
+
         class _Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                json.loads(self.rfile.read(length).decode("utf-8"))
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "exchange_id": exchange_id,
+                            "status_code": {
+                                "kind": "http",
+                                "code": 202,
+                                "message": (
+                                    f"accepted; poll `/v1/exchanges/{exchange_id}`"
+                                ),
+                            },
+                        }
+                    ).encode("utf-8")
+                )
+
+            def do_GET(self):  # noqa: N802
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(
                     json.dumps(
                         {
-                            "text": f"echo:{body.get('text', '')}",
-                            "exit_after": body.get("exit_after", False),
+                            "exchange_id": exchange_id,
+                            "status_code": {
+                                "kind": "http",
+                                "code": 200,
+                                "message": "delivery accepted",
+                            },
                         }
                     ).encode("utf-8")
                 )
@@ -376,7 +409,7 @@ class TestPostTurnToUrl:
                 f"http://127.0.0.1:{port}/v1/turn", "hello", timeout_s=5.0
             )
             # Assert
-            assert reply == "echo:hello"
+            assert exchange_id in reply
         finally:
             server.shutdown()
             server.server_close()
@@ -384,9 +417,9 @@ class TestPostTurnToUrl:
 
     def test_unreachable_url_wraps_transport_failure_in_peer_error(self) -> None:
         # Arrange — port 1 on loopback is unrouteable → URLError → PeerError.
-        action = lambda: post_turn_to_url(
-            "http://127.0.0.1:1/v1/turn", "x", timeout_s=1.0
-        )
+        def action():
+            return post_turn_to_url("http://127.0.0.1:1/v1/turn", "x", timeout_s=1.0)
+
         raised: list[BaseException] = []
         # Act
         try:
@@ -440,9 +473,11 @@ class TestPostTurnHttpErrorPaths:
         server, thread, port = _start_local_server(handler)
         try:
             # Act
-            action = lambda: post_turn_to_url(
-                f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
-            )
+            def action():
+                return post_turn_to_url(
+                    f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
+                )
+
             # Assert
             with pytest.raises(PeerError, match="HTTP 500"):
                 action()
@@ -479,9 +514,11 @@ class TestPostTurnHttpErrorPaths:
         server, thread, port = _start_local_server(handler)
         try:
             # Act
-            action = lambda: post_turn_to_url(
-                f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
-            )
+            def action():
+                return post_turn_to_url(
+                    f"http://127.0.0.1:{port}/v1/turn", "hi", timeout_s=5.0
+                )
+
             # Assert
             with pytest.raises(PeerError, match="malformed body"):
                 action()
@@ -509,7 +546,9 @@ class TestResolvePeerUrlMissingYaml:
         _resolve.resolve_config = _raiser
         try:
             # Act
-            action = lambda: resolve_peer_url("ghost")
+            def action():
+                return resolve_peer_url("ghost")
+
             # Assert
             with pytest.raises(PeerError, match="ghost"):
                 action()
@@ -525,15 +564,45 @@ class TestPostTurnEndToEnd:
         import http.server
         import json as _json
 
+        exchange_id = "xch_20260913T000000Z_yaml_abcdef"
+
         class _Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
                 length = int(self.headers.get("Content-Length", "0"))
-                body = _json.loads(self.rfile.read(length).decode("utf-8"))
+                self.rfile.read(length)
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    _json.dumps(
+                        {
+                            "exchange_id": exchange_id,
+                            "status_code": {
+                                "kind": "http",
+                                "code": 202,
+                                "message": (
+                                    f"accepted; poll `/v1/exchanges/{exchange_id}`"
+                                ),
+                            },
+                        }
+                    ).encode("utf-8")
+                )
+
+            def do_GET(self):  # noqa: N802
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(
-                    _json.dumps({"text": f"ack:{body['text']}"}).encode("utf-8")
+                    _json.dumps(
+                        {
+                            "exchange_id": exchange_id,
+                            "status_code": {
+                                "kind": "http",
+                                "code": 200,
+                                "message": "delivery accepted",
+                            },
+                        }
+                    ).encode("utf-8")
                 )
 
             def log_message(self, *a, **kw):
@@ -553,7 +622,7 @@ class TestPostTurnEndToEnd:
             # Act
             reply = post_turn("gamma", "ping", timeout_s=5.0)
             # Assert
-            assert reply == "ack:ping"
+            assert exchange_id in reply
         finally:
             server.shutdown()
             server.server_close()
@@ -566,16 +635,20 @@ class TestPostTurnEndToEnd:
 
 
 class TestPostTurnViaSsh:
-    def test_ssh_fallback_returns_reply_from_remote_curl(self, subprocess_shim) -> None:
-        # Arrange — fake ssh prints a JSON envelope to stdout.
+    def test_ssh_fallback_rejects_synchronous_text(self, subprocess_shim) -> None:
+        # Arrange — legacy ssh peer prints a synchronous text envelope.
         import json as _json
 
         stdout = _json.dumps({"text": "remote-ack"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
+
         # Act
-        reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
-        assert reply == "remote-ack"
+        with pytest.raises(PeerError, match="canonical xch_"):
+            action()
 
     def test_ssh_fallback_invokes_ssh_with_target_host(self, subprocess_shim) -> None:
         # Arrange
@@ -584,12 +657,17 @@ class TestPostTurnViaSsh:
         stdout = _json.dumps({"text": "ok"}) + "\n"
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
         # Act
-        post_turn_to_url("ssh://my-host:19000/v1/turn", "hi", timeout_s=2.0)
+        try:
+            post_turn_to_url("ssh://my-host:19000/v1/turn", "hi", timeout_s=2.0)
+        except PeerError:
+            pass
         # Assert
         argv = subprocess_shim.argv_for("ssh")
         assert "my-host" in argv
 
-    def test_ssh_fallback_skips_banner_lines_before_json(self, subprocess_shim) -> None:
+    def test_ssh_banner_then_synchronous_text_is_rejected(
+        self, subprocess_shim
+    ) -> None:
         # Arrange — .bashrc banner precedes the JSON body.
         import json as _json
 
@@ -598,20 +676,25 @@ class TestPostTurnViaSsh:
             "Last login: yesterday\n" + _json.dumps({"text": "after-banner"}) + "\n"
         )
         subprocess_shim.install("ssh", stdout=stdout, exit=0)
+
         # Act
-        reply = post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
-        assert reply == "after-banner"
+        with pytest.raises(PeerError, match="canonical xch_"):
+            action()
 
     def test_ssh_nonzero_exit_raises_peer_error_with_stderr(
         self, subprocess_shim
     ) -> None:
         # Arrange
         subprocess_shim.install("ssh", stdout="", stderr="permission denied", exit=255)
+
         # Act
-        action = lambda: post_turn_to_url(
-            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
-        )
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
         with pytest.raises(PeerError, match="permission denied"):
             action()
@@ -619,10 +702,11 @@ class TestPostTurnViaSsh:
     def test_ssh_non_json_stdout_raises_peer_error(self, subprocess_shim) -> None:
         # Arrange
         subprocess_shim.install("ssh", stdout="not json at all\n", exit=0)
+
         # Act
-        action = lambda: post_turn_to_url(
-            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
-        )
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
         with pytest.raises(PeerError, match="non-JSON"):
             action()
@@ -630,10 +714,11 @@ class TestPostTurnViaSsh:
     def test_ssh_empty_stdout_raises_peer_error(self, subprocess_shim) -> None:
         # Arrange
         subprocess_shim.install("ssh", stdout="", exit=0)
+
         # Act
-        action = lambda: post_turn_to_url(
-            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
-        )
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
         with pytest.raises(PeerError, match="non-JSON"):
             action()
@@ -643,10 +728,11 @@ class TestPostTurnViaSsh:
         import json as _json
 
         subprocess_shim.install("ssh", stdout=_json.dumps({"other": 1}) + "\n", exit=0)
+
         # Act
-        action = lambda: post_turn_to_url(
-            "ssh://mba:18888/v1/turn", "hi", timeout_s=2.0
-        )
+        def action():
+            return post_turn_to_url("ssh://mba:18888/v1/turn", "hi", timeout_s=2.0)
+
         # Assert
         with pytest.raises(PeerError, match="malformed body"):
             action()
@@ -654,8 +740,11 @@ class TestPostTurnViaSsh:
     def test_ssh_url_without_host_raises_peer_error(self) -> None:
         # Arrange
         bad_url = "ssh:///v1/turn"
+
         # Act
-        action = lambda: post_turn_to_url(bad_url, "hi", timeout_s=1.0)
+        def action():
+            return post_turn_to_url(bad_url, "hi", timeout_s=1.0)
+
         # Assert
         with pytest.raises(PeerError, match="malformed ssh URL"):
             action()

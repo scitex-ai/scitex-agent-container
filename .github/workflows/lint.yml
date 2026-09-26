@@ -93,12 +93,15 @@ jobs:
           version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
+      - name: Prepare job-scoped lint scratch
+        run: bash .github/ci/prepare-bare-scratch.sh lint 3.12 LINT_VENV
+
       - name: Ruff check
         run: |
           set -euo pipefail
-          uv venv --python 3.12 .venv
-          uv pip install --python .venv/bin/python ruff
-          .venv/bin/ruff check \
+          uv venv --python 3.12 "$LINT_VENV"
+          uv pip install --python "$LINT_VENV/bin/python" ruff
+          "$LINT_VENV/bin/ruff" check \
             --select F401,F811 \
             --extend-per-file-ignores '**/__init__.py:F401' \
             src/ tests/
@@ -135,4 +138,8 @@ jobs:
       - name: No raw print() in src/ (T201)
         run: |
           set -euo pipefail
-          .venv/bin/ruff check --select T201,T203 src/
+          "$LINT_VENV/bin/ruff" check --select T201,T203 src/
+
+      - name: Remove this job's lint scratch
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh lint 3.12

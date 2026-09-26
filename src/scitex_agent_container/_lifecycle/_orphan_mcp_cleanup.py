@@ -49,12 +49,13 @@ Hard guarantees:
 
 from __future__ import annotations
 
-import logging
 import os
 import signal
 from typing import Any, Callable, Iterable
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 __all__ = ["kill_orphan_mcp_children", "MCP_CMDLINE_MARKERS"]
 
@@ -90,7 +91,7 @@ def _default_iter_processes() -> Iterable[Any]:
     handled inside :func:`kill_orphan_mcp_children` rather than at
     module import — sac itself must import cleanly on minimal hosts.
     """
-    import psutil  # noqa: WPS433 — imported here so absence is defensive
+    import psutil
 
     return psutil.process_iter(["pid", "cmdline", "environ"])
 
@@ -224,7 +225,7 @@ def kill_orphan_mcp_children(
         killed.append(pid)
         if dry_run:
             continue
-        # stx-allow: fallback (reason: the orphan may have already exited between snapshot and kill — ESRCH / EPERM / OSError must not propagate; we logged the intent and move on)
+        # stx-allow: fallback (reason: the orphan may have already exited between snapshot and kill — ESRCH / EPERM / OSError must not propagate because orphan cleanup is best effort)
         try:
             killer(pid, signal.SIGKILL)
             log.info(

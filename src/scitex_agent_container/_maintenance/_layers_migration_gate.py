@@ -31,9 +31,10 @@ must not be zero — and refuses while either side has an unmeasurable agent.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import load_config
 from ..runtimes._hook_arming_diff import HookArmingDiff, diff_hook_arming
@@ -44,7 +45,7 @@ from ..runtimes._hook_origin_manifest import hook_origins
 # two different agents had two different problems.
 from ._layers_migration_plan import _reason
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ def fleet_arming_snapshot(spec_paths: "list[Path]") -> ArmingSnapshot:
             origins[agent] = agent_arming(load_config(path))
         except Exception as exc:
             logger.error("arming snapshot: could not measure %s — %s", path, exc)
-            unmeasurable.append(_reason(agent, exc))
+            unmeasurable.append(_reason(agent, path, exc))
     return ArmingSnapshot(origins=origins, unmeasurable=tuple(unmeasurable))
 
 

@@ -30,19 +30,23 @@ container-engine selector to LAUNCH-MODE selector. Accepted values
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ..config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
+    CODEX_SDK,
+    CODEX_TUI,
+    HERMES_TUI,
     resolve_harness_key,
     runtime_spellings_for,
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _get_runtime(config: AgentConfig):
@@ -95,6 +99,24 @@ def _get_runtime(config: AgentConfig):
     # that keeps the message — and a per-read stderr line would
     # contaminate CliRunner-captured ``--json`` output (the same ruling
     # that placed the deprecation warnings below on the start path).
+    if getattr(config, "kind", "Agent") == "AgentProxy":
+        # A proxy is not a harness: resolve by launch mode alone (an
+        # empty mapping states no harness, so only ``runtime`` selects).
+        key = resolve_harness_key({"runtime": runtime})
+    else:
+        # The key first, so the guard can be told which entry this path
+        # launches; an unknown ``runtime`` spelling raises
+        # UnmappableHarnessError (a ValueError) naming both spec values
+        # and the v4 card.
+        key = resolve_harness_key(config)
+    if key == HERMES_TUI:
+        from ..runtimes.hermes_tui import HermesTuiSessionRuntime
+
+        return HermesTuiSessionRuntime()
+    if key == CODEX_SDK:
+        from ..runtimes.codex_session import CodexSessionRuntime
+
+        return CodexSessionRuntime()
     ensure_harness_matches_claude_launch(
         config,
         launching=(
@@ -103,17 +125,14 @@ def _get_runtime(config: AgentConfig):
             else "ClaudeSessionRuntime (the headless claude-agent-sdk runner)"
         ),
         log=False,
+        launching_key=key,
     )
-    if getattr(config, "kind", "Agent") == "AgentProxy":
-        # A proxy is not a harness: resolve by launch mode alone (an
-        # empty mapping states no harness, so only ``runtime`` selects).
-        key = resolve_harness_key({"runtime": runtime})
-    else:
-        # Post-guard the harness is Anthropic-family, so the key is one
-        # of the two Claude entries; an unknown ``runtime`` spelling
-        # raises UnmappableHarnessError (a ValueError) naming both spec
-        # values and the v4 card.
-        key = resolve_harness_key(config)
+    if key == CODEX_TUI:
+        # The same tmux-backed pane runtime as the Claude TUI; the registry
+        # entry owns the argv shape (codex binary + `-c` overrides).
+        from ..runtimes.tui_session import TuiSessionRuntime
+
+        return TuiSessionRuntime()
     if key == CLAUDE_CODE_TUI:
         from ..runtimes.tui_session import TuiSessionRuntime
 

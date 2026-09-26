@@ -15,11 +15,11 @@ from ._attach import attach
 from ._cleanup import cleanup
 from ._delete import delete
 from ._forget import forget
+from ._fork import fork
 from ._rename import rename
 from ._restart import restart
 from ._start import start
 from ._stop import stop
-from ._twin import twin
 
 __all__ = [
     "start",
@@ -29,6 +29,6 @@ __all__ = [
     "forget",
     "cleanup",
     "attach",
-    "twin",
+    "fork",
     "rename",
 ]

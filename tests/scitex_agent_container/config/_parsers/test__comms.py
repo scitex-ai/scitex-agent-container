@@ -54,6 +54,30 @@ def test_parse_comms_a2a_listen_false() -> None:
     assert parsed.a2a.listen is False
 
 
+def test_parse_comms_channels_are_deduplicated_in_order() -> None:
+    # Arrange
+    spec = {
+        "comms": {
+            "channels": ["server:sac", "server:scitex-cards", "server:sac"]
+        }
+    }
+    # Act
+    parsed = parse_comms(spec)
+    # Assert
+    assert parsed.channels == ["server:sac", "server:scitex-cards"]
+
+
+@pytest.mark.parametrize("channels", ["server:sac", [""], [1], {}])
+def test_parse_comms_channels_reject_invalid_shape(channels: object) -> None:
+    # Arrange
+    spec = {"comms": {"channels": channels}}
+    # Act
+    with pytest.raises(ValueError, match="spec.comms.channels"):
+        parse_comms(spec)
+    # Assert
+    pass
+
+
 def test_parse_comms_rejects_unknown_key() -> None:
     """Typos at the YAML surface fail loud rather than silently degrading."""
     # Arrange

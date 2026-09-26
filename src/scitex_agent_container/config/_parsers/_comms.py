@@ -97,15 +97,21 @@ def parse_comms(spec: dict) -> CommsSpec:
         raise ValueError(
             f"spec.comms must be a mapping, got {type(raw).__name__}: {raw!r}"
         )
-    unknown = set(raw.keys()) - {"outbound", "inbound", "a2a"}
+    unknown = set(raw.keys()) - {"channels", "outbound", "inbound", "a2a"}
     if unknown:
         raise ValueError(
             f"spec.comms contains unknown keys {sorted(unknown)}; "
-            "valid keys are 'outbound', 'inbound', 'a2a'."
+            "valid keys are 'channels', 'outbound', 'inbound', and 'a2a'."
         )
+    channels = raw.get("channels", [])
+    if not isinstance(channels, list) or not all(
+        isinstance(item, str) and item.strip() for item in channels
+    ):
+        raise ValueError("spec.comms.channels must be a list of non-empty strings")
     outbound = _direction(raw.get("outbound"), key="spec.comms.outbound")
     inbound = _direction(raw.get("inbound"), key="spec.comms.inbound")
     return CommsSpec(
+        channels=list(dict.fromkeys(item.strip() for item in channels)),
         outbound=OutboundCommsSpec(**outbound),
         inbound=InboundCommsSpec(**inbound),
         a2a=_a2a_toggle(raw.get("a2a")),

@@ -49,11 +49,10 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
+from .._logging import render_rich
 
-# Env override for the user-scope fleet registry dir. Mirrors the
-# ``SCITEX_AGENT_CONTAINER_STATE_DB`` override used by the state DB: it
-# lets the command be pointed at an isolated on-disk registry (tests /
+# Env override for the user-scope fleet registry dir. It lets the command be
+# pointed at an isolated on-disk registry (tests /
 # a non-default install root) without touching the production default.
 _REGISTRY_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
 
@@ -108,7 +107,7 @@ def refresh_acl(dry_run: bool) -> None:
       $ sac agents refresh-acl --dry-run
     """
     from .._lifecycle._spawn_gate import persist_acl_policy
-    from .._state.state_db_nodes import read_comms_policy
+    from .._state.state_store_nodes import read_comms_policy
     from ..config import load_config
     from ..config._group_resolver import all_named_groups
 
@@ -130,11 +129,9 @@ def refresh_acl(dry_run: bool) -> None:
 
     specs = _fleet_spec_paths(registry)
     if not specs:
-        console.print(
-            f"[yellow]No fleet agent specs under {registry} "
+        render_rich(f"[yellow]No fleet agent specs under {registry} "
             "(only _shared/_template dirs, or empty). Nothing to "
-            "refresh.[/yellow]"
-        )
+            "refresh.[/yellow]", __name__)
         return
 
     refreshed = 0
@@ -149,7 +146,7 @@ def refresh_acl(dry_run: bool) -> None:
             config = load_config(spec)
         except Exception as exc:  # stx-allow: fallback (reason: see above)
             errors.append((spec, str(exc)))
-            console.print(f"[red]FAILED[/red] {spec}: {exc}")
+            render_rich(f"[red]FAILED[/red] {spec}: {exc}", __name__)
             continue
 
         name = config.name
@@ -167,21 +164,17 @@ def refresh_acl(dry_run: bool) -> None:
         old_disp = ", ".join(old_groups) or "(none)"
         new_disp = ", ".join(new_groups) or "(none)"
         if old_groups == new_groups:
-            console.print(f"{name}: {old_disp} (unchanged)")
+            render_rich(f"{name}: {old_disp} (unchanged)", __name__)
         else:
             changed += 1
-            console.print(f"{name}: {old_disp} -> {new_disp}")
+            render_rich(f"{name}: {old_disp} -> {new_disp}", __name__)
 
     mode = "would refresh" if dry_run else "refreshed"
-    console.print(
-        f"\n[bold]{refreshed} {mode}, {changed} changed"
-        f"{', ' + str(len(errors)) + ' failed' if errors else ''}.[/bold]"
-    )
+    render_rich(f"\n[bold]{refreshed} {mode}, {changed} changed"
+        f"{', ' + str(len(errors)) + ' failed' if errors else ''}.[/bold]", __name__)
     if errors:
-        console.print(
-            f"[red]{len(errors)} spec(s) failed to load — "
-            "fix the named file(s) above and re-run.[/red]"
-        )
+        render_rich(f"[red]{len(errors)} spec(s) failed to load — "
+            "fix the named file(s) above and re-run.[/red]", __name__)
         raise SystemExit(1)
 
 

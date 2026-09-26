@@ -41,13 +41,14 @@ Design rules
 
 from __future__ import annotations
 
-import logging
 import secrets
 import time
 from enum import Enum
 from typing import Callable, Optional
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 # The TUI is responsive (not mid-turn) when these markers are absent
 # from the tail. Keep the list tight — false positives turn ALIVE
@@ -56,7 +57,9 @@ DEFAULT_BUSY_MARKERS: tuple[str, ...] = (
     "Working\u2026",  # "Working…"
     "Ruminating\u2026",
     "Thinking\u2026",
+    "Pondering",
     "esc to interrupt",  # the "esc to interrupt" line accompanies active generation
+    "Ctrl+C to interrupt",  # Hermes' active-turn control line
 )
 
 # Tail window for busy-marker classification. Matches the window used

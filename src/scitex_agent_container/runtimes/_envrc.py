@@ -51,15 +51,16 @@ no-op, exactly as before).
 
 from __future__ import annotations
 
-import logging
 import os
 import shlex
 import subprocess
 from pathlib import Path
 
+import scitex_logging as slogging
+
 from ._to_home_text import _is_legacy_identity_var
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Shell-internal vars that legitimately differ between two otherwise-identical
 # bash invocations (or are set by bash itself) — never part of the
@@ -206,11 +207,11 @@ def _folded_env(loaded: dict[str, str], baseline: dict[str, str]) -> dict[str, s
       so a stale ``SCITEX_TODO_AGENT`` that once landed in ``dest/.env`` cannot
       SELF-PERPETUATE: the fold sources ``dest/.env`` as its base, so any such
       orphan var (set by no cascade ``.envrc``) re-enters the diff and is
-      re-baked every deploy — and scitex-todo's MCP now HARD-REJECTS any call
+      re-baked every deploy — and the card MCP now HARD-REJECTS any call
       when ``SCITEX_TODO_AGENT`` is present (INCIDENT 2026-07-05/06 write-
       outage). The current ``_ID`` identity vars are deliberately NOT dropped:
       the ``.env`` is the container ``--env-file`` and the materialized
-      ``.mcp.json`` expands ``${SCITEX_TODO_AGENT_ID}`` from it.
+      ``.mcp.json`` expands ``${SCITEX_CARDS_AGENT_ID}`` from it.
     """
     return {
         key: val

@@ -34,8 +34,8 @@ def test_resolve_provider_returns_dict_for_known_deepseek():
     entry = resolve_provider(name)
     # Assert
     assert entry == {
-        "base_url": "https://api.deepseek.com/anthropic",
-        "auth_token_env": "DEEPSEEK_API_KEY",
+        "base_url": "http://scitex-compute-04:18775",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
     }
 
 
@@ -49,6 +49,16 @@ def test_resolve_provider_returns_local_codex_gateway():
         "base_url": "http://127.0.0.1:18765",
         "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
     }
+
+
+def test_resolve_codex_subscription_has_no_endpoint_or_key_override():
+    # Arrange
+    name = "codex-subscription"
+    # Act
+    entry = resolve_provider(name)
+
+    # Assert
+    assert entry == {"base_url": None, "auth_token_env": None}
 
 
 def test_resolve_provider_returns_none_for_unknown_name():
@@ -81,7 +91,14 @@ def test_resolve_provider_returns_copy_not_shared_reference():
 
 def test_list_providers_includes_registered_backends():
     # Arrange
-    expected = {"mimo", "deepseek", "anthropic", "codex", "xiaomi"}
+    expected = {
+        "mimo",
+        "deepseek",
+        "external-gateway",
+        "anthropic",
+        "codex",
+        "xiaomi",
+    }
     # Act
     names = set(list_providers())
     # Assert
@@ -102,6 +119,27 @@ def test_xiaomi_alias_resolves_to_same_backend_as_mimo():
     xiaomi = resolve_provider("xiaomi")
     # Assert
     assert xiaomi == resolve_provider("mimo")
+
+
+def test_deepseek_alias_resolves_to_neutral_external_gateway():
+    # Arrange
+    # Act
+    direct = resolve_provider("deepseek")
+    neutral = resolve_provider("external-gateway")
+    # Assert
+    assert direct == neutral
+
+
+def test_resolve_provider_returns_local_free_gateway():
+    # Arrange
+    name = "scitex-free"
+    # Act
+    entry = resolve_provider(name)
+    # Assert
+    assert entry == {
+        "base_url": "http://127.0.0.1:18779/v1",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
+    }
 
 
 # The harness registry (``spec.harness``) used to be a second, unrelated

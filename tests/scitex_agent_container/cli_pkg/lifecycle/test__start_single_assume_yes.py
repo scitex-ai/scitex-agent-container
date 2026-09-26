@@ -23,8 +23,6 @@ assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 from pathlib import Path
@@ -35,6 +33,7 @@ import pytest
 from scitex_agent_container.cli_pkg.lifecycle._start_single import (
     run_single_targets,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Env fixtures — in-SIF markers, listen base URL, and SAC_ASSUME_YES.

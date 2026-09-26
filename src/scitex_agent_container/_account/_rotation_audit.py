@@ -36,7 +36,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 #: Filename of the append-only audit log, relative to the accounts store.
 AUDIT_FILENAME = "rotation-audit.jsonl"
@@ -113,14 +115,14 @@ def _resolve_host() -> str:
     """Best-effort canonical host label for the audit record.
 
     Prefers the same resolver the rest of sac uses
-    (``_state.state_db_hostname.resolve_host``) so the audit host matches
+    (``_state.state_store_hostname.resolve_host``) so the audit host matches
     what appears elsewhere; falls back to ``socket.gethostname()``.
     """
     # stx-allow: fallback (reason: host resolution is a cosmetic label on
     # the audit record; a resolver import/lookup failure must degrade to
     # the short hostname, never break the audit write.)
     try:
-        from .._state.state_db_hostname import resolve_host
+        from .._state.state_store_hostname import resolve_host
 
         return resolve_host(None)
     except Exception:  # stx-allow: fallback (reason: see inline comment)

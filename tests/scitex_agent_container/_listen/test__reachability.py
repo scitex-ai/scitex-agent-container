@@ -153,7 +153,7 @@ def test_remote_agent_reports_null_subscribers_not_zero():
 
 def test_row_without_a_host_is_observed_locally():
     """The publish path treats a host-less name as local (see
-    ``state_db_nodes.is_local_node``), so the local broker IS authoritative
+    ``state_store_nodes.is_local_node``), so the local broker IS authoritative
     for it and a zero there is a real observation."""
     # Arrange
     row = {"name": "hostless", "pid": 1}

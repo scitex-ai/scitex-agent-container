@@ -31,9 +31,9 @@ import scitex_agent_container as sac  # noqa: E402
         ("agent", "find"),
         ("agent", "recall"),
         ("agent", "health"),
-        ("db", "clean"),
-        ("db", "tick"),
-        ("db", "migrate"),
+        ("store", "clean"),
+        ("store", "tick"),
+        ("store", "migrate"),
         ("host", "list"),
         ("host", "validate"),
         ("host", "probe"),
@@ -60,7 +60,7 @@ def test_nested_verb_is_callable(submodule: str, verb: str) -> None:
 
 @pytest.mark.parametrize(
     "noun",
-    ["agent", "db", "host", "image", "template", "account", "skills", "mcp"],
+    ["agent", "store", "host", "image", "template", "account", "skills", "mcp"],
 )
 def test_every_submodule_listed_in_package_all(noun: str) -> None:
     """The eight noun submodules must appear in ``sac.__all__`` so
@@ -84,7 +84,7 @@ def test_no_flat_verb_duplicates_at_package_root() -> None:
         "validate_config",
         "peer",
         "agent",
-        "db",
+        "store",
         "host",
         "image",
         "template",

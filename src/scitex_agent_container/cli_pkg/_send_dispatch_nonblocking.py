@@ -41,7 +41,7 @@ from typing import Any
 
 from ._send_diagnosis import diagnose_send_failure
 from ._send_status_code import dispatch_accepted_status_code
-from ._send_track import build_track_command, build_track_command_argv, resolve_track_strategy
+from ._send_track import build_track_command, build_track_command_argv
 
 __all__ = ["dispatch_nonblocking", "unknown_lookup_payload"]
 
@@ -173,15 +173,10 @@ def dispatch_nonblocking(
             "diagnosis": diagnosis,
         }
 
-    # WHICH VERB ACTUALLY REACHES THIS AGENT. Resolving the route here is what
-    # stops the caller having to know whether the target runs TUI or SDK — the
-    # detail that used to leak, and used to fail silently in the "delivered"
-    # direction. Only the ROUTE is resolved (cheap); the paste/arrival/submit
-    # half of delivery is deliberately not run, so this path stays non-blocking.
-    # See :mod:`._send_track`.
+    # The tracking command always uses the native HTTP path. In particular it
+    # never inspects tmux and never selects the retired terminal-paste verb.
     verified = diagnosis.get("port_reachable") is True
-    strategy = resolve_track_strategy(name)
-    track_command = build_track_command(name, prompt, strategy=strategy)
+    track_command = build_track_command(name, prompt)
     payload: dict[str, Any] = {
         "status": "dispatched",
         "agent": name,
@@ -203,9 +198,7 @@ def dispatch_nonblocking(
         # Derived from the same builder as ``track_command`` above, so the two
         # renderings cannot disagree about the verb. They used to be two
         # independent literals.
-        "track_command_argv": build_track_command_argv(
-            name, prompt, strategy=strategy
-        ),
+        "track_command_argv": build_track_command_argv(name, prompt),
         "note": (
             "non-blocking dispatch: the prompt was NOT yet delivered. Run "
             "`track_command` in a backgrounded shell to deliver it and "

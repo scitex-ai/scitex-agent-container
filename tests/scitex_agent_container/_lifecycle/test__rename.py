@@ -120,12 +120,12 @@ def _carried_names() -> list[str]:
     store's own connection.
 
     The directory half of a rename is asserted where it now lives, in
-    ``_state/test_state_db_comms_nodes.py``.
+    ``_state/test_state_store_comms_nodes.py``.
     """
-    from scitex_agent_container._state.state_db_channel_store import (
+    from scitex_agent_container._state.state_store_channel_store import (
         new_channel_connection,
     )
-    from scitex_agent_container._state.state_db_instances import (
+    from scitex_agent_container._state.state_store_instances import (
         list_active_instances,
     )
 
@@ -148,7 +148,7 @@ def _carried_grants() -> list[tuple[str, str]]:
     ``list_comms_grants``, which excludes revoked rows — so this photographs
     what the ACL gate would actually authorise, not what the table holds.
     """
-    from scitex_agent_container._state.state_db_grants import list_comms_grants
+    from scitex_agent_container._state.state_store_grants import list_comms_grants
 
     return sorted((g["sender"], g["target"]) for g in list_comms_grants())
 
@@ -429,15 +429,6 @@ def test_rename_removes_the_old_spec_dir(pg_schema: str, renamed: World):
 def test_rename_rewrites_the_board_identity_in_the_spec(pg_schema: str, renamed: World):
     # Arrange
     expected = f"SCITEX_TODO_AGENT_ID={NEW}"
-    # Act
-    text = renamed.layout.spec_file(NEW).read_text()
-    # Assert
-    assert expected in text
-
-
-def test_rename_rewrites_the_state_db_path_in_the_spec(pg_schema: str, renamed: World):
-    # Arrange
-    expected = f"SCITEX_AGENT_CONTAINER_STATE_DB=/state/{NEW}/state.db"
     # Act
     text = renamed.layout.spec_file(NEW).read_text()
     # Assert

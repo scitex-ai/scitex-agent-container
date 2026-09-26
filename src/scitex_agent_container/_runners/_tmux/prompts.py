@@ -11,12 +11,13 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 
 # Unicode whitespace Claude's Ink TUI renders where an ASCII space is expected.
@@ -269,12 +270,59 @@ def prompt_line_index(content: str) -> int | None:
     return idx
 
 
-def _detect_done(content: str) -> bool:
-    """Check if claude is at the main input prompt (all TUI prompts done).
+def _detect_codex_dir_trust(content: str) -> bool:
+    """Codex's first-boot directory-trust picker (harness codex, 2026-09-05).
 
-    The status bar shows "bypass permissions" when ready.
+    "Do you trust the contents of this directory? ... 1. Yes, continue /
+    2. No, quit / Press enter to continue" — the cursor already sits on
+    option 1, so Enter alone accepts. Lower-case "enter" and different
+    wording keep it out of every Claude detector above; measured on the
+    first live codex pane (handyman-01), where the drain sat at this
+    screen until its timeout.
     """
-    return "bypass permissions" in content and "Enter to confirm" not in content
+    return (
+        "Do you trust the contents of this directory" in content
+        and "1. Yes, continue" in content
+    )
+
+
+def _detect_codex_hooks_review(content: str) -> bool:
+    """Codex's "Hooks need review" picker (harness codex, 2026-09-05).
+
+    Shown once the shim has copied the fleet's hooks into CODEX_HOME/hooks.json:
+    "49 hooks are new or changed. Hooks can run outside the sandbox after you
+    trust them. 1. Review hooks / 2. Trust all and continue / 3. Continue
+    without trusting (hooks won't run)". The hooks ARE the fleet's own
+    (~/.claude/hooks, the same files the Claude pane runs), so option 2 is
+    the correct answer; option 3 would silently run the agent without them.
+    Measured on handyman-01 at 09:36 UTC.
+    """
+    return "Hooks need review" in content and "2. Trust all and continue" in content
+
+
+def _detect_codex_done(content: str) -> bool:
+    """Codex is at its input prompt: the banner box is up and no picker remains.
+
+    The Codex TUI never prints Claude's "bypass permissions" status line; its
+    ready state is the "OpenAI Codex (vX)" box with the permissions row
+    ("YOLO mode" when sac turns the sandbox off) and no pending picker.
+    """
+    return (
+        "OpenAI Codex (v" in content
+        and "permissions:" in content
+        and "Press enter to continue" not in content
+    )
+
+
+def _detect_done(content: str) -> bool:
+    """Check if the TUI is at its main input prompt (all pickers done).
+
+    Claude's status bar shows "bypass permissions" when ready; Codex has its
+    own banner (:func:`_detect_codex_done`).
+    """
+    if "bypass permissions" in content and "Enter to confirm" not in content:
+        return True
+    return _detect_codex_done(content)
 
 
 # Default prompt handlers — checked by priority, order-agnostic.
@@ -322,6 +370,18 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_file_trust,
         keys=["y", "Enter"],  # "Do you trust the files in this folder?"
         priority=7,
+    ),
+    PromptHandler(
+        name="codex-dir-trust",
+        detect=_detect_codex_dir_trust,
+        keys=["Enter"],  # cursor already on "1. Yes, continue"
+        priority=1,
+    ),
+    PromptHandler(
+        name="codex-hooks-review",
+        detect=_detect_codex_hooks_review,
+        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
+        priority=1,
     ),
     PromptHandler(
         name="file-trust-radio",

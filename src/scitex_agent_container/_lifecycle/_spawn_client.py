@@ -5,7 +5,7 @@ Lets an agent running INSIDE an apptainer container ask the host's
 canonical (ADR-0010 mechanism #3) spawn path — the only sanctioned
 agent-driven spawn, because the listen-server gate
 (:func:`_listen._acl.check_spawn`) and the lineage recorder
-(:func:`_state.state_db_nodes.record_lineage`) run on every accepted
+(:func:`_state.state_store_nodes.record_lineage`) run on every accepted
 request. Apptainer-in-apptainer is avoided structurally: the child is
 booted on the bare host, never nested.
 
@@ -46,12 +46,13 @@ request is a single one-shot POST — no streaming, no async.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 __all__ = ["SpawnRequestError", "request_spawn"]
 

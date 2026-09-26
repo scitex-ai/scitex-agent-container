@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import click
 
-from .._state.state_db_nodes import (
+from .._state.state_store_nodes import (
     CommsNodeConflictError,
     register_comms_node,
 )

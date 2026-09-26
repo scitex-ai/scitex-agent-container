@@ -17,16 +17,16 @@ import json
 import subprocess
 from pathlib import Path
 
-
 from scitex_agent_container._lifecycle._birth_certificate import (
     SPEC_SHA_UNRESOLVABLE,
+    compiled_launch_snapshot,
     compiled_spec_snapshot,
     spec_git_sha,
     write_birth_certificate,
 )
-from scitex_agent_container._state.state_db_incarnations import get_incarnation
+from scitex_agent_container._lifecycle._worktree_policy import WorktreePolicyProof
+from scitex_agent_container._state.state_store_incarnations import get_incarnation
 from scitex_agent_container.config import AgentConfig
-
 
 # ---------------------------------------------------------------------------
 # compiled_spec_snapshot — redaction by key shape
@@ -78,6 +78,53 @@ def test_snapshot_is_json_serializable(tmp_path: Path) -> None:
     text = json.dumps(compiled_spec_snapshot(cfg), default=str)
     # Assert
     assert json.loads(text)["name"] == "alpha"
+
+
+def test_launch_snapshot_records_exact_apptainer_artifact_identity() -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    identity = {"path": "/images/sac-base-1.sif", "sha256": "abc123"}
+    # Act
+    snapshot = compiled_launch_snapshot(cfg, image_identity=identity)
+    # Assert
+    assert snapshot["launch_artifacts"]["apptainer_image"] == identity
+
+
+def test_launch_snapshot_records_exact_storage_paths() -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    identity = {
+        "overlay": "/scratch/sac/agents/alpha/overlay",
+        "apptainer_workdir": "/scratch/sac/agents/alpha/apptainer-workdir",
+    }
+    # Act
+    snapshot = compiled_launch_snapshot(cfg, storage_identity=identity)
+    # Assert
+    assert snapshot["launch_artifacts"]["storage"] == identity
+
+
+def test_launch_snapshot_records_worktree_policy_identity() -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
+        policy_id="scitex.worktree.v1",
+        schema_version=1,
+        policy_sha256="a" * 64,
+        projection_sha256="b" * 64,
+        repo_root="/repo/.worktrees/feature-x",
+        branch="feature/x",
+        surface="linked-worktree",
+    )
+
+    # Act
+    snapshot = compiled_launch_snapshot(cfg)
+    policy = snapshot["launch_artifacts"]["worktree_policy"]
+
+    # Assert
+    assert (policy["policy_sha256"], policy["projection_sha256"]) == (
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +224,7 @@ def test_certificate_records_unresolvable_sha_honestly(pg_schema: str) -> None:
     # Act
     write_birth_certificate(cfg, "inc-b3")
     # Assert
-    assert get_incarnation("inc-b3")["spec_git_sha"] == (
-        SPEC_SHA_UNRESOLVABLE
-    )
+    assert get_incarnation("inc-b3")["spec_git_sha"] == (SPEC_SHA_UNRESOLVABLE)
 
 
 def test_certificate_records_the_spec_repo_head(pg_schema: str, tmp_path: Path) -> None:
@@ -203,7 +248,9 @@ def test_certificate_compiled_spec_is_redacted_json(pg_schema: str) -> None:
     assert stored["env"]["API_KEY"] == "<redacted:API_KEY>"
 
 
-def test_certificate_compiled_spec_carries_residency(pg_schema: str, tmp_path: Path) -> None:
+def test_certificate_compiled_spec_carries_residency(
+    pg_schema: str, tmp_path: Path
+) -> None:
     # Arrange: a compiled config declaring the v4 residency axis — the
     # birth certificate must record it (provenance for "why did this
     # incarnation end at oneshot-complete?").
@@ -215,6 +262,31 @@ def test_certificate_compiled_spec_carries_residency(pg_schema: str, tmp_path: P
     stored = json.loads(get_incarnation("inc-b7")["compiled_spec_json"])
     # Assert
     assert stored["residency"] == ONE_SHOT
+
+
+def test_certificate_row_carries_policy_hashes(pg_schema: str) -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
+        policy_id="scitex.worktree.v1",
+        schema_version=1,
+        policy_sha256="a" * 64,
+        projection_sha256="b" * 64,
+        repo_root="/repo/.worktrees/feature-x",
+        branch="feature/x",
+        surface="linked-worktree",
+    )
+
+    # Act
+    written = write_birth_certificate(cfg, "inc-policy")
+    row = get_incarnation("inc-policy")
+
+    # Assert
+    assert (written, row["policy_sha256"], row["projection_sha256"]) == (
+        True,
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 def test_certificate_failure_is_false_not_raise(pg_schema: str) -> None:

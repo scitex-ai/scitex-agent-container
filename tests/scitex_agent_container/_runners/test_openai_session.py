@@ -41,9 +41,9 @@ from typing import Any
 import pytest
 
 from scitex_agent_container._runners._harness_session import (
+    HarnessSession,
     Message,
     NormalizedEvent,
-    HarnessSession,
     ToolSpec,
 )
 from scitex_agent_container._runners._openai_pg_session import PostgresAgentSession
@@ -681,7 +681,7 @@ def test_session_state_round_trips_through_postgres(
 ):
     """A turn WRITTEN by one session object is READ by a different one.
 
-    The replacement for ``test_start_creates_the_state_db_file``, which
+    The replacement for ``test_start_creates_the_state_store_file``, which
     asserted that a file appeared on disk. There is no file; the property
     that mattered was never the file but that conversation state SURVIVES
     the session object, so this reads it back through a second

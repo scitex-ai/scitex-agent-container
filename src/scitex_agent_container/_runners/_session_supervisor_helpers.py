@@ -26,14 +26,15 @@ re-export, the test suite's direct ``_resume_candidate`` import, the
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
+
 from ._session_state import read_session_id, read_session_id_history
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "_drain_failed_inbox",

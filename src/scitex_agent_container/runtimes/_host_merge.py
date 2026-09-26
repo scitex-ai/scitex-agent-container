@@ -56,16 +56,17 @@ fallback: a partial/stale view is never served.
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
+
+import scitex_logging as slogging
 
 # Directory basenames pruned from the host walk (git worktrees etc.) — shared
 # with the rest of SAC's heavy walkers.
 from .._workdir._walk_exclusions import is_excluded_walk_dir
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # The ``~/.claude`` subdirectories that get the host deep-merge for full
 # developers. ``commands`` (slash-commands) and ``skills`` are pure additive

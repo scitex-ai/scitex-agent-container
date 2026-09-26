@@ -25,13 +25,16 @@ from pathlib import Path
 import click
 
 from .. import _build_priority
+from .._logging import render_rich
 from . import (
+    _image_activation_cmds,
+    _image_distribute_cmd,
     _image_inventory_cmds,
     _image_remote_bake,
     _image_repro_build,
     _image_source_build,
 )
-from ._helpers import HelpRecursiveGroup, console
+from ._helpers import HelpRecursiveGroup
 from ._helpers._console import logger
 
 # Module-level overridable reference for the source-bundled build path.
@@ -163,10 +166,13 @@ def image_group() -> None:
 image_group.add_command(_image_inventory_cmds.image_list)
 image_group.add_command(_image_inventory_cmds.image_status)
 image_group.add_command(_image_inventory_cmds.image_snapshot)
+image_group.add_command(_image_activation_cmds.image_switch)
+image_group.add_command(_image_activation_cmds.image_rollback)
 
 # Periodic remote bake (Spartan lease) + pull/verify/atomic-swap —
 # extracted to _image_remote_bake / _remote_bake_core (512-line budget).
 image_group.add_command(_image_remote_bake.image_bake_remote)
+image_group.add_command(_image_distribute_cmd.image_distribute)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +254,22 @@ def image_build(
     if flag_error:
         click.echo(f"error: {flag_error}", err=True)
         sys.exit(2)
+
+    def_path = _RECIPES_DIR / _LAYERS[layer]
+    if not def_path.is_file():
+        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
+        sys.exit(1)
+
+    # Programmatic callers can invoke the Click command without traversing
+    # the installed console bootstrap. Keep the same guard here, before even
+    # ``_ensure_containers_dir`` creates the artifact root.
+    pkg_root = _RECIPES_DIR.parent
+    try:
+        _image_source_build.assert_source_provenance(pkg_root)
+    except _image_source_build.SourceProvenanceMismatch as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
     out_dir = _ensure_containers_dir()
     # Existing-artefact notice. A SIF rebuild is now ATOMIC (delegated to
     # scitex-container's ``build``): it lands a fresh timestamped SIF and
@@ -285,11 +307,6 @@ def image_build(
             err=True,
         )
         sys.exit(2)
-    def_path = _RECIPES_DIR / _LAYERS[layer]
-    if not def_path.is_file():
-        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
-        sys.exit(1)
-
     # Source-bundled build: the shipped .def files install sac from
     # /opt/scitex-agent-container-src, which gets there via a %files
     # copy of a sibling directory next to the .def at build time. The
@@ -302,8 +319,6 @@ def image_build(
     # build leaves the prior image intact (atomic, rollback-safe). The
     # non-build verbs (sandbox, update, freeze, list, status, snapshot)
     # also delegate to the scitex-container backend.
-    pkg_root = _RECIPES_DIR.parent
-
     # Layered .defs (currently: ``scitex``) bootstrap off a prior layer's
     # SIF (``From: ./sac-base.sif``). Resolve the prerequisite here — the
     # helper FAILS LOUD when it is missing so apptainer never FATAL's on a
@@ -362,7 +377,7 @@ def image_build(
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
-    console.print(f"[green]built[/green] {output}")
+    render_rich(f"[green]built[/green] {output}", __name__)
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +406,7 @@ def image_sandbox(source: str, output: Path | None) -> None:
     result = sandbox_create(
         source=src_path, containers_dir=_CONTAINERS_DIR, output_dir=output
     )
-    console.print(f"[green]sandbox[/green] {result}")
+    render_rich(f"[green]sandbox[/green] {result}", __name__)
 
 
 # ---------------------------------------------------------------------------
@@ -441,42 +456,7 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
     sandbox_to_sif = _load_apptainer().sandbox_to_sif
 
     result = sandbox_to_sif(sandbox_dir=sandbox_dir, output_sif=output_sif)
-    console.print(f"[green]frozen[/green] {result}")
-
-
-# ---------------------------------------------------------------------------
-# switch
-# ---------------------------------------------------------------------------
-@image_group.command("switch")
-@click.argument("version", type=str)
-def image_switch(version: str) -> None:
-    """Atomically switch to a different SIF version.
-
-    \b
-    Example:
-      $ sac image switch 2.28.15
-    """
-    switch_version = _load_apptainer().switch_version
-
-    switch_version(version=version, containers_dir=_CONTAINERS_DIR)
-    console.print(f"[green]switched[/green] -> {version}")
-
-
-# ---------------------------------------------------------------------------
-# rollback
-# ---------------------------------------------------------------------------
-@image_group.command("rollback")
-def image_rollback() -> None:
-    """Restore the previous SIF version.
-
-    \b
-    Example:
-      $ sac image rollback
-    """
-    rollback = _load_apptainer().rollback
-
-    prev = rollback(containers_dir=_CONTAINERS_DIR)
-    console.print(f"[green]rolled back[/green] -> {prev}")
+    render_rich(f"[green]frozen[/green] {result}", __name__)
 
 
 # ---------------------------------------------------------------------------

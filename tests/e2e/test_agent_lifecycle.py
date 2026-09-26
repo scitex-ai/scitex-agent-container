@@ -28,8 +28,6 @@ stop --force`` so a failing assert does not leave a container behind.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 import shutil
 import subprocess
@@ -39,6 +37,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.conftest import wait_for_status
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 pytestmark = [
     pytest.mark.e2e,
@@ -74,7 +73,7 @@ def _write_minimal_spec(home: Path, name: str) -> Path:
               host: ${{HOSTNAME}}
               workdir: {home}/work
               apptainer:
-                image: {home}/.scitex/agent-container/containers/sac-base.sif
+                image: sac-base
                 binds: []
               claude:
                 model: haiku

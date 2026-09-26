@@ -66,7 +66,7 @@ def _raise_at(step_to_fail: str):
 
 
 @pytest.fixture
-def board(tmp_path: Path):
+def board(tmp_path: Path, pg_schema: str):
     yield from isolated_board(tmp_path)
 
 
@@ -124,9 +124,7 @@ def test_the_plan_counts_every_card_that_would_be_reassigned(
     assert set(plan.card_ids) == expected
 
 
-def test_building_a_plan_moves_no_card(
-    layout: Layout, board: Path, cards: list[str]
-):
+def test_building_a_plan_moves_no_card(layout: Layout, board: Path, cards: list[str]):
     """--dry-run must be exactly that, on the board too."""
     # Arrange
     expected = set(cards)

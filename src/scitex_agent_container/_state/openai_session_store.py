@@ -51,7 +51,7 @@ agents between hosts (``_state/relocation_pg.py`` exists for precisely that).
 Under SINGLE_WRITER the first host to write a session would own it forever, and
 the ordinary act of moving an agent to another machine would turn its next turn
 into an illegal write. The same reasoning ``port_allocator_store`` and
-``state_db_grants`` give for their own stores applies here, one level up: the
+``state_store_grants`` give for their own stores applies here, one level up: the
 record has no single stable owning node.
 
 THE STORE HANDLE IS CACHED PER PROCESS

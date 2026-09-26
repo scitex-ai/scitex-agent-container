@@ -27,9 +27,11 @@ import yaml as _yaml
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._agents_cct_audit import (
+    _materialized_hermes_rail,
     _short_pool_label,
     cct_audit,
 )
+from scitex_agent_container.config import AgentConfig
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
 
 _CHANNEL = "server:claude-code-telegrammer"
@@ -276,3 +278,94 @@ def test_the_table_rendering_never_carries_a_token_value(
     result = _run(fleet)
     # Assert
     assert _SECRET not in result.output
+
+
+def test_hermes_audit_requires_materialized_mcp_and_matching_turn_url(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    config = AgentConfig(name="business", harness="hermes", runtime="tui")
+    config.a2a.port = 19007
+    config.claude.channels = [_CHANNEL]
+    profile = tmp_path / ".hermes" / "config.yaml"
+    profile.parent.mkdir()
+    profile.write_text(
+        _yaml.safe_dump(
+            {
+                "mcp_servers": {
+                    "claude-code-telegrammer": {
+                        "command": "bun",
+                        "env": {
+                            "CLAUDE_CODE_TELEGRAMMER_TURN_URL": (
+                                "http://127.0.0.1:19007/v1/turn"
+                            )
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Act
+    observed, override, detail = _materialized_hermes_rail(config, home=tmp_path)
+
+    # Assert
+    assert (observed["state"], override, detail) == ("ready", None, "")
+
+
+def test_hermes_audit_downgrades_a_broken_generated_profile(tmp_path: Path) -> None:
+    # Arrange
+    config = AgentConfig(name="business", harness="hermes", runtime="tui")
+    config.a2a.port = 19007
+    config.claude.channels = [_CHANNEL]
+    profile = tmp_path / ".hermes" / "config.yaml"
+    profile.parent.mkdir()
+    profile.write_text("mcp_servers: {}\n", encoding="utf-8")
+
+    # Act
+    observed, override, detail = _materialized_hermes_rail(config, home=tmp_path)
+
+    # Assert
+    assert (
+        observed["state"],
+        override,
+        "canonical MCP entry" in detail,
+    ) == ("broken", "down", True)
+
+
+def test_hermes_audit_accepts_materialized_port_for_auto_spec(tmp_path: Path) -> None:
+    # Arrange: authority remains declarative while the generated profile
+    # records the concrete claim chosen at start.
+    config = AgentConfig(name="business", harness="hermes", runtime="tui")
+    config.a2a.port = "auto"
+    config.claude.channels = [_CHANNEL]
+    profile = tmp_path / ".hermes" / "config.yaml"
+    profile.parent.mkdir()
+    profile.write_text(
+        _yaml.safe_dump(
+            {
+                "mcp_servers": {
+                    "claude-code-telegrammer": {
+                        "env": {
+                            "CLAUDE_CODE_TELEGRAMMER_TURN_URL": (
+                                "http://127.0.0.1:19007/v1/turn"
+                            )
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Act
+    observed, override, detail = _materialized_hermes_rail(config, home=tmp_path)
+
+    # Assert
+    assert (
+        observed["state"],
+        override,
+        detail,
+        observed["expected_turn_url"],
+    ) == ("ready", None, "", "auto (resolved at start)")

@@ -16,8 +16,9 @@ import json as json_mod
 
 import click
 
+from .._logging import render_rich
 from .._mcp._tools import _subagent
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 
 @click.group(
@@ -108,7 +109,7 @@ def _render_table(states: list[dict]) -> None:
     from rich.table import Table
 
     if not states:
-        console.print("[dim](no Claude Code subagents found for this project)[/dim]")
+        render_rich("[dim](no Claude Code subagents found for this project)[/dim]", __name__)
         return
     table = Table(show_header=True, header_style="bold")
     table.add_column("id")
@@ -126,7 +127,7 @@ def _render_table(states: list[dict]) -> None:
             "yes" if s.get("has_completed_marker") else "",
             (s.get("description") or "")[:80],
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 __all__ = ["subagent_group"]

@@ -19,9 +19,9 @@ no `metadata.name` field).
 
 ## Quick links
 
-- Annotated full example: [`examples/agents/full-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml) — every supported field with inline comments
-- Minimal example: [`examples/agents/minimal-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml)
-- Quickstart with `startup_prompts`: [`examples/agents/hello-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml)
+- Annotated full example: [`examples/agents/full-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml) — every supported field with inline comments
+- Minimal example: [`examples/agents/minimal-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml)
+- Quickstart with `startup_prompts`: [`examples/agents/hello-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml)
 
 ## Top-level shape
 
@@ -69,18 +69,29 @@ spec:
     ready_poll_interval_seconds: 0.5
     ready_timeout_seconds: 60
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
-  context_management:                    # context auto-management (compact/restart/noop)
-    trigger_at_percent: 70
-    strategy: noop                       # compact | restart | noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
+  available_harnesses:
+    hermes:
+      session: { mode: continue, max_age_minutes: 4320 }
+      background_review: false
+      # run_budget_seconds: 900  # optional; one-shot/eval jobs only
+      compression:
+        threshold: 0.80
+        threshold_tokens: null           # optional absolute trigger cap
+        target_ratio: 0.20
+        tail_mode: lean
+        in_place: true
+  comms:
+    channels: [server:sac, server:scitex-cards]
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
   telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
   hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
 
   startup_commands:                      # SHELL before claude starts (list of {delay, command} dicts)
     - { delay: 0, command: "echo hi" }
-  startup_prompts:  [...]                # TEXT fed to claude as first user msg
+  startup_prompts:  [...]                # TEXT fed to the selected harness as first user msg
   session: continue                      # top-level shortcut overriding spec.claude.session
 
   host:  gpu-box                         # mutually exclusive: singleton on one peer
@@ -148,7 +159,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
 | `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
+| `startup_prompts[]`  | list of strings            | Required explicitly; `[]` means no startup turn; no implicit prompt fallback |
 
 ### `spec.apptainer` — engine knobs
 
@@ -167,6 +178,103 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `relaxed`     | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). TODO: wire into `ApptainerSpec`. |
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 
+### `spec.available_harnesses.claude-code.account`
+
+`account` pins a Claude Code harness to one saved Anthropic OAuth account by
+its `sac account list` slug. It belongs to the harness that consumes the
+credential, not to the legacy `spec.claude` compatibility block:
+
+```yaml
+spec:
+  harness: claude-code
+  available_harnesses:
+    claude-code:
+      account: scitex-01-scitex-ai
+      session: {mode: continue, max_age_minutes: null}
+      approval_policy: never
+      watchdog:
+        enabled: false
+        interval: 1.5
+        responses: {y_n: "1", y_y_n: "2", waiting: /speak-and-call}
+```
+
+The slug must be a non-empty string with no surrounding whitespace. At the
+parser boundary SAC folds it into the typed Claude runtime configuration, so
+the existing start preflight checks that exact stored-account preference and
+the auth bind resolves its snapshot. `account` is rejected on other harness
+entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
+
+### `spec.available_harnesses.<key>.compression` — Hermes only
+
+Hermes context compaction is configured beside the Hermes harness that owns
+the behavior. The block is optional; omitting it preserves SAC's current
+Hermes defaults: `threshold: 0.80`, `threshold_tokens: null`,
+`target_ratio: 0.20`, `tail_mode: lean`, and `in_place: true`.
+`threshold_tokens`, when set, is a positive integer absolute cap: Hermes
+compacts at the lower of the ratio-derived trigger and this value while the
+model's truthful `context_length` remains unchanged. The ratios must satisfy
+`0 < target_ratio < threshold < 1`; `tail_mode` is `lean` or `legacy`, and
+`in_place` is a boolean.
+
+For agents sharing one engine, derive the absolute trigger from fresh engine
+KV capacity rather than adding their independent model windows. SAC's
+fail-closed helper reserves 25%, divides the remainder by the sharing agents,
+and rounds down to a binary token boundary. Six agents sharing an observed
+`max_total_num_tokens: 2180096` therefore use `threshold_tokens: 262144`:
+their six triggers total 1,572,864 tokens and leave 607,232 tokens of reserve.
+A missing or stale capacity observation is an error. A 524,288-token trigger
+is suitable only for a controlled single-agent canary; six such triggers total
+3,145,728 and are not a safe fleet steady state.
+The derivation helper is intentionally pure and does not rewrite running
+agents. An operator or deployment planner must put its `threshold_tokens`
+result in each selected Hermes harness block; normal spec loading then carries
+that value into the compiled Hermes profile on the next authorized restart.
+The same block under Claude Code, Codex, or another harness is rejected rather
+than silently ignored. The former top-level `spec.context_management` example
+was removed because that tolerated legacy key has no runtime consumer.
+
+### `spec.available_harnesses.hermes.background_review`
+
+This boolean controls Hermes' automatic post-turn review. It defaults to
+`false`, so SAC-managed Hermes agents do not silently issue a second request
+over the full conversation after completing foreground work. Set it to `true`
+only when that extra review traffic is intentional. SAC compiles the value to
+Hermes' internal `auxiliary.background_review.enabled` setting.
+
+On 2026-09-12, aligned Hermes and inference-server logs showed an automatic
+review replaying about 691,000 tokens while the next foreground turn began on
+the same conversation. After the gateway restarted and cancelled the review,
+the foreground turn performed a cold prefill and took about 276 seconds. This
+field makes that high-cost behavior declared and testable rather than implicit.
+
+### `spec.available_harnesses.hermes.run_budget_seconds`
+
+This optional positive integer gives one Hermes run a wall-clock checkpoint for
+one-shot/eval jobs that already have an external deadline. It is unset by
+default for agentic SAC sessions, so Hermes runs to completion and does not
+receive the 80%-elapsed wrap-up instruction. When explicitly set, SAC compiles
+the value to Hermes' internal `agent.run_budget_seconds` setting. This is not a
+hard kill and does not trigger context compression; it injects a one-time
+wrap-up notice and tightens implicit stale-call timeouts.
+
+SAC separately emits Hermes' `agent.max_turns: none` sentinel for agentic
+sessions. This keeps Hermes' own tool loop unbounded while leaving
+`spec.autonomous.max_turns` as the independent safety cap for SAC's outer
+drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.
+
+Telegram is an edge transport, not a per-agent dependency. Select the CCT
+Telegram channel only on the human-facing gateway agent (normally
+`scitex-lead`); application agents communicate through Cards, SAC, or A2A.
+For each spec that explicitly selects CCT, SAC owns one poller using that
+spec's declared token. SAC neither creates nor requires a separate BotFather
+token for every agent. Selecting the same Telegram bot in several agent specs
+would create competing pollers and is not a supported topology.
+
+A CCT turn is acknowledged only after Hermes proves the exact delivery marker
+visible in its native session. The receipt identifies `agent`, `delivery_id`,
+and `exchange_id`, so a gateway or web client can report and retry the turn
+without an operator watching or attaching to the TUI.
+
 ### `spec.claude` — SDK knobs
 
 | Field                       | Type                                  | Description                                                       |
@@ -176,11 +284,33 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
-| `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
+| `continue_max_age_minutes`  | int                                   | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
-| `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+### `spec.comms` — harness-neutral communication
+
+`spec.comms.channels` declares inbound communication adapters once for the
+agent. The selected harness does not own this list. SAC adapts the same
+declaration to Claude Code, Hermes, or Codex while preserving the same durable
+SAC/Cards identity and exchange ledger.
+
+```yaml
+spec:
+  comms:
+    channels:
+      - server:sac
+      - server:scitex-cards
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
+```
+
+With `available_harnesses`, a `channels` key inside a harness entry is rejected
+with a relocation hint. Older direct `spec.claude.channels` specs remain
+readable only for the fleet migration window; new specs must use
+`spec.comms.channels`.
 
 #### Available models (`spec.claude.model`)
 
@@ -220,7 +350,7 @@ pinned regex catches this early.
 | `health.interval`           | seconds between probes                                                                   |
 | `health.timeout`            | per-probe timeout                                                                        |
 | `health.method`             | `sdk-alive` (only value accepted by the validator). NOTE: the parser default is the legacy string `multiplexer-alive`; with the validator pin in place, any explicit value other than `sdk-alive` is rejected at load time. |
-| `autonomous.idle_kick_after_s` | int seconds — nudge cadence when no tool activity (default 120)                       |
+| `autonomous.idle_kick_after_s` | int seconds — minimum nudge cadence when no tool activity (default 120). A Hermes TUI applies its 60-second anti-busy-loop floor, then adds a deterministic per-agent 0–59 second cadence offset. |
 | `restart.policy`            | `never` \| `on-failure` \| `always`                                                      |
 | `restart.max_retries`       | int                                                                                      |
 | `restart.backoff.initial`   | seconds before first retry                                                               |
@@ -232,12 +362,30 @@ pinned regex catches this early.
 | `autonomous.max_turns`      | int                                                                                      |
 | `autonomous.kick_text`      | nudge sent when the agent pauses                                                         |
 
+For an owning Hermes TUI, enabling this block arms Hermes' native session
+heartbeat at launch. The heartbeat fires only while the run is idle and the
+native input queue is empty, so queued human guidance/steering takes priority.
+Each wake asks the agent to re-read Cards, verify assignment and ownership,
+and reject overlap before editing. SAC does not poll Cards or issue model
+turns on a timer itself. Hermes cron remains the right mechanism for a
+wall-clock job; the session heartbeat is the right mechanism for an idle
+worker that should look for another durable Card.
+When an external CI/review status is merely pending, the wake contract records
+that evidence and returns idle for a later heartbeat rather than holding an
+active turn open with polling sleeps. A real running test, build, or useful
+process is not a polling sleep and may still be monitored normally.
+The exact Hermes stagger interprets the first eight SHA-256 digest bytes of the
+agent name as an unsigned big-endian integer, takes
+`integer mod min(60, configured_interval)` seconds, and adds that to the
+configured/floored interval. It is stable across restarts and hosts, and the
+configured value remains the minimum idle backoff.
+
 ### `spec.a2a` / `spec.listen` — network endpoints
 
 | Field        | Description                                                                          |
 |--------------|--------------------------------------------------------------------------------------|
 | `a2a.host`   | Bind interface for the per-agent A2A sidecar (default `127.0.0.1`).                  |
-| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists in `state.db`, surfaces via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
+| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists it in the shared PostgreSQL store, and surfaces it via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
 | `listen[]`   | LIST of side-port DECLARATIONS (NOT a single port override). Each item: `{port, proto, path, name, owner}`. `proto`: `tcp` (default) / `udp` / `unix`. Entries that fail validation (`tcp`/`udp` needs `port>0`; `unix` needs `path`) are silently dropped. **The container does NOT bind these — declarations only**, surfaced on the AgentCard for peers. The host-level `sac listen` server port (default 7878) is configured in `~/.scitex/agent-container/config.yaml` under `listen.port`, NOT here. |
 
 The per-agent sidecar binds the **same URL shape** as `sac listen`
@@ -348,14 +496,14 @@ Authoring contract:
   not enforce an apptainer `--net` policy.
 - Runs in `sac-proxy.sif` — see `containers/sac-proxy.def`.
 
-See [`examples/agents/proxy-agent/spec.yaml`](https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml)
+See [`examples/agents/proxy-agent/spec.yaml`](https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml)
 for a complete minimal example.
 
 ## Examples
 
-Copy from [`examples/agents/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents):
+Copy from [`examples/agents/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents):
 
-- [`full-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent) — annotated spec exercising every supported field (plus `to_home/` layout)
-- [`minimal-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent) — bare minimum, no `to_home`
-- [`hello-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/hello-agent) — quickstart with `startup_prompts`
-- [`proxy-agent/`](https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent) — `kind: AgentProxy` forwarder example
+- [`full-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/full-agent) — annotated spec exercising every supported field (plus `to_home/` layout)
+- [`minimal-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/minimal-agent) — bare minimum, no `to_home`
+- [`hello-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/hello-agent) — quickstart with `startup_prompts`
+- [`proxy-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/proxy-agent) — `kind: AgentProxy` forwarder example

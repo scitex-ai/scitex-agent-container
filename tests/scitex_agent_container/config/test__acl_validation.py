@@ -52,6 +52,24 @@ def test_validate_phase3_acl_flags_unknown_top_level_comms_key() -> None:
     assert any("spec.comms.sideways is not a valid key" in e for e in errs)
 
 
+def test_validate_phase3_acl_accepts_neutral_channels() -> None:
+    # Arrange
+    spec = {"comms": {"channels": ["server:sac", "server:scitex-cards"]}}
+    # Act
+    errs = validate_phase3_acl(spec)
+    # Assert
+    assert errs == []
+
+
+def test_validate_phase3_acl_rejects_scalar_channels() -> None:
+    # Arrange
+    spec = {"comms": {"channels": "server:sac"}}
+    # Act
+    errs = validate_phase3_acl(spec)
+    # Assert
+    assert errs == ["spec.comms.channels must be a list of non-empty strings"]
+
+
 def test_validate_phase3_acl_rejects_non_mapping_outbound() -> None:
     """``spec.comms.outbound`` as a scalar is rejected with a type error."""
     # Arrange

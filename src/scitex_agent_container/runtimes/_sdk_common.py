@@ -420,7 +420,7 @@ def build_sdk_options(
         if extra:
             kwargs.update(extra)
 
-    # spec.claude.channels → dev-channels flag + sac MCP sidecar.
+    # spec.comms.channels → dev-channels flag + sac MCP sidecar.
     # See ``_sdk_channels.apply_channels`` for the two gated concerns
     # (any-channel dev-flag vs server:sac-only sidecar registration).
     apply_channels(kwargs, channels, a2a_port, agent_name)

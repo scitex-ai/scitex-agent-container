@@ -1,8 +1,8 @@
 """The ``a2a_ports`` claim ledger — storage adapter, on PostgreSQL only.
 
 Extracted from :mod:`.port_allocator` so that module stays under the per-file
-line cap, the same way :mod:`.state_db_grants` was carved out of
-:mod:`.state_db_nodes`. The split is by RESPONSIBILITY rather than by size
+line cap, the same way :mod:`.state_store_grants` was carved out of
+:mod:`.state_store_nodes`. The split is by RESPONSIBILITY rather than by size
 alone: this file knows how a claim is STORED, and ``port_allocator`` knows
 which port an agent should get. Its surface is re-exported from
 ``port_allocator`` so the existing import sites are unchanged.
@@ -95,6 +95,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any
 
+import scitex_logging as slogging
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.store import Store
 
@@ -102,6 +104,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: greppable across the migration and in operator muscle memory.
 #: ``scitex_dev.store`` renders it as four physical tables (``<name>_rows``,
 #: ``_oplog``, ``_identity``, ``_cursor``).
+logger = slogging.getLogger(__name__)
+
 STORE_NAME = "a2a_ports"
 
 #: Recorded on every write as the acting component.
@@ -125,7 +129,7 @@ def _schema() -> Any:
     """The claim-ledger schema.
 
     Built lazily so importing this module does not import scitex-dev; the
-    original was equally lazy about ``state_db``, for the same reason
+    original was equally lazy about ``state_store``, for the same reason
     (import cost off the hot path).
 
     ``port`` is the sole IDENTITY (the store requires IMMUTABLE on
@@ -194,7 +198,7 @@ def open_port_store() -> "Store":
     in :func:`port_store` instead, so the agent-start path does not pay the
     connect per call.
 
-    MULTI_WRITER, for the reason ``state_db_grants`` gives about its own
+    MULTI_WRITER, for the reason ``state_store_grants`` gives about its own
     store: a claim has no single stable owner. It is written by the host that
     starts the agent and released by whoever stops it, and a cross-host
     ``sac agents stop`` is routine — under SINGLE_WRITER that ordinary stop
@@ -246,7 +250,21 @@ def port_store() -> "Store":
         if _STORE_CACHE is not None:
             cached_key, cached_pid, cached = _STORE_CACHE
             if cached_key == target and cached_pid == pid:
-                return cached
+                if not _handle_is_closed(cached):
+                    return cached
+                # The peer closed the connection under the cache (a pooler
+                # or server restart, an idle cut) and psycopg has already
+                # marked it closed. Every later call would raise
+                # "the connection is closed" forever — measured 2026-09-05:
+                # the tui-bridge-supervisor skipped every tick for two hours
+                # on two hosts (card sac-tui-bridge-supervisor-skips-every-
+                # tick-after-its-db-connection-closes-20260905). A closed
+                # handle is not a handle; reopen and say so once.
+                logger.warning(
+                    "port_store: the cached claim-ledger connection is "
+                    "closed (pid %d); reopening it",
+                    pid,
+                )
             # A fork inherited the parent's connection through the same fd:
             # closing it HERE would send a termination on the parent's
             # socket. Only the same process that opened a handle may close
@@ -257,6 +275,20 @@ def port_store() -> "Store":
         fresh = open_port_store()
         _STORE_CACHE = (target, pid, fresh)
         return fresh
+
+
+def _handle_is_closed(store: "Store") -> bool:
+    """True when the store's psycopg connection reports itself closed.
+
+    A LOCAL check, no round trip: psycopg sets ``connection.closed`` the
+    moment an operation finds the peer gone, and the message every later
+    call raises ("the connection is closed") is exactly this flag. A
+    handle with no such attribute (a dialect that is not psycopg) is
+    treated as open — this guard exists for the one failure that was
+    measured, not to second-guess every backend.
+    """
+    connection = getattr(store, "_connection", None)
+    return bool(getattr(connection, "closed", False))
 
 
 def _reset_store_cache() -> None:

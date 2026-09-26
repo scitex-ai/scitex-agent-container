@@ -183,7 +183,7 @@ def remote_instance_rows(
     namespace so the suite's real-attribute seams keep working.
     """
     from ..._state.auth_state import verdict_for
-    from ..._state.state_db import list_active_instances
+    from ..._state.state_store import list_active_instances
     from ...config import load_config
     from . import _agent_list as _al
 
@@ -209,11 +209,13 @@ def remote_instance_rows(
             continue
         spec_path = specs.get(name)
         labels: dict[str, str] = {}
+        cfg = None
         # stx-allow: fallback (label filtering is best-effort; an unreadable
         # spec yields empty labels, never a crash of the list)
         try:
             if spec_path is not None:
-                labels = load_config(str(spec_path)).labels
+                cfg = load_config(str(spec_path))
+                labels = cfg.labels
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             labels = {}
         if machine and labels.get("machine") != machine:
@@ -232,6 +234,7 @@ def remote_instance_rows(
                 or port_claims.get(name),
                 "spec_path": spec_path,
                 "labels": labels,
+                "cfg": cfg,
             }
         )
 
@@ -247,6 +250,7 @@ def remote_instance_rows(
         name = cand["name"]
         host = cand["host"]
         spec_path = cand["spec_path"]
+        cfg = cand["cfg"]
         # Account from the on-disk spec — the SAME spec-derived label
         # ``defined_agent_rows`` uses. The remote agent's spec DOES live on the
         # master's disk (that is how it was ssh-dispatched), so this kills the
@@ -255,18 +259,35 @@ def remote_instance_rows(
         # value needs a DB column and is a separate follow-up.) Best-effort: an
         # unreadable spec yields "" so the list never crashes on it.
         account = ""
-        if spec_path is not None:
+        if cfg is not None:
             # stx-allow: fallback (a broken/unreadable spec must not crash the
             # list; "" is the honest empty, exactly as before this change)
             try:
-                account = _al._safe_account_for(load_config(str(spec_path)))
+                account = _al._safe_account_for(cfg)
             except Exception:  # stx-allow: fallback (reason: see inline comment)
                 account = ""
+        status = statuses.get(name, "unknown")
+        # The coordinator can prove remote LIVENESS through ssh, but it did not
+        # observe that host's launch selection.  Its local copy of spec.yaml may
+        # be stale and an explicit --engine never edits it, so dressing those
+        # values as the selected Engine/Model would be a false authority claim.
+        # Fleet fan-out rows do not take this path: the owning host builds those
+        # rows itself and returns birth-bound identity in the same bounded ssh
+        # request.  This fallback therefore stays explicit and unknown.
+        identity = {
+            "runtime": "unknown",
+            "harness": "unknown",
+            "engine": "unknown",
+            "model": "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "owning_host_status_unavailable",
+        }
         row: dict = {
             "name": name,
             # A probe that could not OBSERVE the peer is "unknown" (hidden from
             # the default view, counted in the footer), never a false "running".
-            "status": statuses.get(name, "unknown"),
+            "status": status,
             "screen": "-",
             "multiplexer": None,
             "started_at": cand["started_at"],
@@ -274,8 +295,11 @@ def remote_instance_rows(
             "host_display": _al._host_display_for(host, display_host),
             "path": str(spec_path or ""),
             "a2a_port": cand["a2a_port"],
-            "account": account,
+            "stored_credential": account,
+            "account": account,  # deprecated inventory alias
+            **identity,
             "remote": True,
+            "liveness_unknown": status == "unknown",
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))
         row.update(verdict_for(None))

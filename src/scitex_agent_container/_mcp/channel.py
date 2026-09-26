@@ -36,12 +36,13 @@ container and no spec; its AgentCard is synthesised by
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from collections import deque
 from typing import Any
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 # Bounded ring buffer of recently received events so the a2a_reply +
 # a2a_ack tools can look up the original sender by msg_id without the
@@ -64,6 +65,10 @@ _CHANNEL_SOURCE_DEFAULT = "sac"
 # lives in ``_channel_auto_ack`` so this receive-side adapter stays under
 # the size budget. Re-exported here for historical import paths:
 # ``from scitex_agent_container._mcp.channel import _post_auto_ack``.
+from ._channel_agentic_feedback import (  # noqa: E402
+    absorb_agentic_feedback,
+    is_agentic_feedback_event,
+)
 from ._channel_auto_ack import (  # noqa: E402,F401
     _AUTO_ACK_RATE_MAX_DEFAULT,
     _AUTO_ACK_RATE_WINDOW_DEFAULT,
@@ -129,13 +134,13 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     Every ``meta`` value is stringified via :func:`_meta_str` — the
     client schema rejects non-string values (see that helper).
     ``meta.ts`` is rendered as ISO-8601 UTC via
-    :func:`_state.state_db_channel.format_ts_iso` so a receiving
+    :func:`_state.state_store_channel.format_ts_iso` so a receiving
     session sees ``<channel ts="2026-04-21T09:30:00Z" ...>`` instead
     of the raw unix-seconds float the bus stores. On-disk storage of
     ``channel_events.ts`` is unchanged — only the rendered form
     here is ISO-8601.
     """
-    from .._state.state_db_channel import format_ts_iso
+    from .._state.state_store_channel import format_ts_iso
 
     source = (
         os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
@@ -214,6 +219,14 @@ async def _push_channel_event(
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
+    # Semantic feedback is model-authored on the peer. Verify its exact nonce,
+    # update our sender-owned ledger, and keep the protocol envelope out of the
+    # model's ordinary inbox. Automatic receive hooks never originate it.
+    if is_agentic_feedback_event(event):
+        _recent.append(event)
+        absorb_agentic_feedback(event, agent=agent_name)
+        return
+
     # Sender-side absorption: a structural reaction-ack updates the
     # dispatch ledger and is then suppressed from session injection.
     # The event is still buffered into ``_recent`` so a2a_inbox callers
@@ -254,8 +267,9 @@ async def _push_channel_event(
 
     # Post-delivery receipts: contentless auto-ack (legacy noise-filtered
     # path) + structural reaction-ack (the comm-miss-detectable signal,
-    # lead a2a 1781e82a). Both are best-effort and share the per-sender
-    # rate cap; see ``_channel_post_deliver.run_post_deliver_receipts``.
+    # lead a2a 1781e82a). Both are best-effort; only a receipt that can
+    # reach the wire consumes the per-sender rate budget. See
+    # ``_channel_post_deliver.run_post_deliver_receipts``.
     await run_post_deliver_receipts(
         event,
         agent_name=agent_name,
@@ -272,6 +286,8 @@ async def _serve(
     listen_url: str,
     bearer: str | None,
     turn_url: str | None = None,
+    subscribe: bool = True,
+    register_node: bool = True,
 ) -> None:
     """Drive the MCP session **and** the SSE consumer over the given
     streams, keeping a handle to the session so the consumer can push.
@@ -328,12 +344,12 @@ async def _serve(
                     bearer=bearer,
                     turn_url=turn_url,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged loudly, never silent)
+            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged to stderr by the MCP process logger)
                 log.warning("sac channel: delivering inbox event failed: %s", exc)
 
-        sse_task: asyncio.Task[None] = asyncio.create_task(
-            _consume_sse(sse_url, bearer, on_event)
-        )
+        sse_task: asyncio.Task[None] | None = None
+        if subscribe:
+            sse_task = asyncio.create_task(_consume_sse(sse_url, bearer, on_event))
 
         # ADR-0014 + lead-row-port-zero bug fix (2026-06-03):
         # Self-register THIS channel into ``comms_nodes`` so the federated
@@ -343,8 +359,19 @@ async def _serve(
         # and periodic ``updated_at`` refresh. Best-effort: a failed write
         # logs a warning but never kills the SSE consumer or the MCP
         # handshake. Cancelled in ``finally`` alongside the SSE task.
-        reg_task: asyncio.Task[None] = asyncio.create_task(
-            _refresh_comms_node(name=name, listen_url=listen_url)
+        reg_task: asyncio.Task[None] | None = None
+        if register_node:
+            reg_task = asyncio.create_task(
+                _refresh_comms_node(name=name, listen_url=listen_url)
+            )
+
+        # Missing semantic ACKs are durable control-plane state, not a reason
+        # to resend the original task. The worker emits only nonce reminders,
+        # stops on verified ACK/terminal status, and escalates at its deadline.
+        from ._channel_nudge_worker import run_nudge_scheduler
+
+        nudge_task = asyncio.create_task(
+            run_nudge_scheduler(agent=name, listen_url=listen_url, bearer=bearer)
         )
 
         try:
@@ -358,12 +385,30 @@ async def _serve(
                         False,
                     )
         finally:
-            sse_task.cancel()
-            reg_task.cancel()
+            # These are our tasks, not fire-and-forget work.  Cancelling
+            # without joining them lets their open HTTP transports outlive
+            # the MCP session (and made Python 3.13 wait forever for the
+            # corresponding test server connections to drain).
+            owned_tasks = tuple(
+                task for task in (sse_task, reg_task, nudge_task) if task is not None
+            )
+            for task in owned_tasks:
+                task.cancel()
+            # An anyio task-group cancellation remains active throughout its
+            # cancelled scope.  Shield only this bounded cleanup so every
+            # owned task observes cancellation and closes its transports
+            # before _serve returns; the outer cancellation still propagates.
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 async def _run(
-    name: str, listen_url: str, bearer: str | None, turn_url: str | None = None
+    name: str,
+    listen_url: str,
+    bearer: str | None,
+    turn_url: str | None = None,
+    *,
+    subscribe: bool = True,
 ) -> None:
     from mcp.server.stdio import stdio_server
 
@@ -375,6 +420,7 @@ async def _run(
             listen_url=listen_url,
             bearer=bearer,
             turn_url=turn_url,
+            subscribe=subscribe,
         )
 
 
@@ -398,6 +444,7 @@ def main(
     name: str | None = None,
     listen_url: str | None = None,
     turn_url: str | None = None,
+    send_only: bool = False,
 ) -> None:
     """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env.
 
@@ -416,6 +463,10 @@ def main(
     ``turn_url`` (WI-1) is the agent's own ``/v1/turn`` endpoint; when set,
     each received bus event WAKES the session by driving a turn there so a
     push to an idle agent is processed immediately (push ≡ Telegram).
+
+    ``send_only`` keeps outbound A2A tools and node registration but starts
+    no inbox subscriber. Managed agents use it because their daemon owns the
+    durable SAC and Cards subscriptions.
     """
     discovered_listen_url: str | None = None
     if name is None:
@@ -441,7 +492,7 @@ def main(
         or os.environ.get("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
     )
     bearer = os.environ.get("SAC_LISTEN_BEARER")
-    asyncio.run(_run(name, listen, bearer, turn_url))
+    asyncio.run(_run(name, listen, bearer, turn_url, subscribe=not send_only))
 
 
 __all__ = ["main"]

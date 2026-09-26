@@ -35,12 +35,13 @@ must always emit valid JSON.
 from __future__ import annotations
 
 import json
-import logging
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 # Path of the baked manifest INSIDE a base SIF, written by the apptainer
 # ``.def`` ``%post`` step (``containers/apptainer-*.def``). Read via

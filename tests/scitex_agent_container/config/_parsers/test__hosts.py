@@ -155,7 +155,8 @@ def test_parse_scheduling_invalid_mode_value_raises_value_error():
     # Arrange — ``swarm`` is not a recognized scheduling mode.
     spec = {"scheduling": {"mode": "swarm"}}
     # Act
-    call = lambda: parse_scheduling(spec)
+    def call():
+        return parse_scheduling(spec)
     # Assert
     with pytest.raises(ValueError, match="mode"):
         call()
@@ -165,7 +166,8 @@ def test_parse_scheduling_non_mapping_block_raises_value_error():
     # Arrange — list is not a mapping.
     spec = {"scheduling": ["a"]}
     # Act
-    call = lambda: parse_scheduling(spec)
+    def call():
+        return parse_scheduling(spec)
     # Assert
     with pytest.raises(ValueError, match="mapping"):
         call()
@@ -230,7 +232,8 @@ def test_parse_scheduling_empty_list_block_raises_value_error():
     # Arrange — falsy non-dict (empty list) must not be silently coerced to {}.
     spec = {"scheduling": []}
     # Act
-    call = lambda: parse_scheduling(spec)
+    def call():
+        return parse_scheduling(spec)
     # Assert
     with pytest.raises(ValueError, match="mapping"):
         call()

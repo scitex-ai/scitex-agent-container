@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,6 +27,11 @@ from typing import Any, Iterator
 import pytest
 from click.testing import CliRunner
 
+from _scitex_agent_container_bootstrap import (
+    ImageBuildSourceMismatch,
+    assert_image_build_source_authority,
+)
+from scitex_agent_container.cli_pkg import _image_activation
 from scitex_agent_container.cli_pkg import image_group as ig
 from scitex_agent_container.cli_pkg.image_group import image_group
 
@@ -65,6 +72,7 @@ class _FakeApptainerBackend:
             "switch_version": None,
             "rollback": rollback_result,
             "status": status_result if status_result is not None else [],
+            "list_builds": status_result if status_result is not None else [],
         }
         self._raises = raises or {}
 
@@ -94,6 +102,15 @@ class _FakeApptainerBackend:
 
     def status(self, *a, **kw):
         return self._record("status", a, kw)
+
+    def list_builds(self, *a, **kw):
+        entries = self._record("list_builds", a, kw)
+        layer = str(a[1])
+        return [
+            entry
+            for entry in entries
+            if Path(str(entry.get("sif", ""))).parent.name == layer
+        ]
 
 
 @contextmanager
@@ -299,6 +316,250 @@ def test_build_errors_when_recipe_def_file_is_missing(home_tmp):
         ig._RECIPES_DIR = saved_recipes  # type: ignore[assignment]
     # Assert
     assert result.exit_code == 1 and "recipe not found" in result.output
+
+
+@contextmanager
+def _use_environment_package_root(root: Path):
+    saved = ig._image_source_build._environment_package_root
+    ig._image_source_build._environment_package_root = lambda: root
+    try:
+        yield
+    finally:
+        ig._image_source_build._environment_package_root = saved
+
+
+def test_plain_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    # Arrange
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    # Act
+    with _use_environment_package_root(selected_root):
+        with _use_source_builder(result=Path("/tmp/should-not-build.sif")) as calls:
+            result = CliRunner().invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert (
+        result.exit_code == 1
+        and calls == []
+        and "SAC source provenance is mixed" in result.output
+        and "loaded package root:" in result.output
+        and f"active-environment package root: {selected_root}" in result.output
+    )
+
+
+def test_reproducible_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    # Arrange
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    # Act
+    with _use_environment_package_root(selected_root):
+        with _use_reproducible_builder() as calls:
+            result = CliRunner().invoke(
+                image_group, ["build", "base", "--yes", "--reproducible"]
+            )
+
+    # Assert
+    assert (
+        result.exit_code == 1
+        and calls == []
+        and "SAC source provenance is mixed" in result.output
+        and "loaded build-helper root:" in result.output
+        and f"active-environment package root: {selected_root}" in result.output
+    )
+
+
+def test_mixed_source_refusal_precedes_artifact_directory_creation(home_tmp):
+    # Arrange
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    artifact_root = home_tmp / "must-not-be-created"
+    saved_containers = ig._CONTAINERS_DIR
+    ig._CONTAINERS_DIR = artifact_root
+    try:
+        # Act
+        with _use_environment_package_root(selected_root):
+            result = CliRunner().invoke(image_group, ["build", "base", "--yes"])
+    finally:
+        ig._CONTAINERS_DIR = saved_containers
+    # Assert
+    assert (result.exit_code, artifact_root.exists()) == (1, False)
+
+
+def test_bootstrap_mismatch_names_both_roots_and_recovery_hint(home_tmp):
+    # Arrange
+    canonical = home_tmp / "canonical"
+    expected = canonical / "src" / "scitex_agent_container"
+    expected.mkdir(parents=True)
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    purelib = home_tmp / "venv" / "site-packages"
+    dist_info = purelib / "scitex_agent_container-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+    )
+    (dist_info / "direct_url.json").write_text(
+        '{"url":"' + canonical.as_uri() + '","dir_info":{"editable":true}}'
+    )
+    # Act
+    try:
+        assert_image_build_source_authority(
+            ["image", "build", "base", "-y"],
+            metadata_paths=(purelib,),
+            runtime_root=stale,
+            working_dir=home_tmp,
+        )
+    except ImageBuildSourceMismatch as exc:
+        message = str(exc)
+    else:
+        message = ""
+    # Assert
+    assert (
+        "before filesystem or image mutation" in message,
+        f"runtime-loaded package root: {stale}" in message,
+        f"editable direct_url authority: {expected}" in message,
+        "unset PYTHONPATH" in message,
+    ) == (True, True, True, True)
+
+
+def _sac_checkout(root: Path) -> Path:
+    """Create the minimum real filesystem shape the bootstrap recognizes."""
+    package = root / "src" / "scitex_agent_container"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    bootstrap = root / "src" / "_scitex_agent_container_bootstrap"
+    bootstrap.mkdir()
+    (bootstrap / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "scitex-agent-container"\n', encoding="utf-8"
+    )
+    return package
+
+
+def test_bootstrap_refuses_runtime_source_different_from_cwd_checkout(home_tmp):
+    # Arrange — no editable dist-info is available. CWD is still an explicit
+    # source selection when it is inside a recognizable SAC checkout.
+    intended = _sac_checkout(home_tmp / "intended")
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    nested_cwd = intended.parents[1] / "tests" / "unit"
+    nested_cwd.mkdir(parents=True)
+    # Act
+    try:
+        assert_image_build_source_authority(
+            ["image", "build", "base", "-y"],
+            metadata_paths=(),
+            runtime_root=stale,
+            working_dir=nested_cwd,
+        )
+    except ImageBuildSourceMismatch as exc:
+        message = str(exc)
+    else:
+        message = ""
+    # Assert
+    assert (
+        "before filesystem or image mutation" in message,
+        f"command-working-directory package root: {intended}" in message,
+        f"runtime-loaded package root: {stale}" in message,
+        "unset PYTHONPATH" in message,
+    ) == (True, True, True, True)
+
+
+def test_bootstrap_accepts_runtime_source_matching_cwd_checkout(home_tmp):
+    # Arrange
+    package = _sac_checkout(home_tmp / "selected")
+    # Act
+    result = assert_image_build_source_authority(
+        ["image", "build", "base", "-y"],
+        metadata_paths=(),
+        runtime_root=package,
+        working_dir=package.parents[1],
+    )
+    # Assert
+    assert result is None
+
+
+def test_bootstrap_does_not_treat_an_arbitrary_cwd_as_source_authority(home_tmp):
+    # Arrange — image builds remain CWD-independent outside a SAC checkout.
+    runtime = home_tmp / "installed" / "scitex_agent_container"
+    runtime.mkdir(parents=True)
+    elsewhere = home_tmp / "unrelated-project"
+    elsewhere.mkdir()
+    # Act
+    result = assert_image_build_source_authority(
+        ["image", "build", "base", "-y"],
+        metadata_paths=(),
+        runtime_root=runtime,
+        working_dir=elsewhere,
+    )
+    # Assert
+    assert result is None
+
+
+def test_bootstrap_cwd_authority_does_not_mask_version_warning(home_tmp):
+    # Arrange — the same mismatch must remain observable to `sac --version`;
+    # the destructive-build guard has no authority to silence that command.
+    intended = _sac_checkout(home_tmp / "intended")
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    # Act
+    result = assert_image_build_source_authority(
+        ["--version"],
+        metadata_paths=(),
+        runtime_root=stale,
+        working_dir=intended.parents[1],
+    )
+    # Assert
+    assert result is None
+
+
+def test_bootstrap_shadow_process_stops_before_stale_cli_import(home_tmp):
+    # Arrange
+    canonical = home_tmp / "canonical"
+    (canonical / "src" / "scitex_agent_container").mkdir(parents=True)
+    purelib = home_tmp / "venv" / "site-packages"
+    dist_info = purelib / "scitex_agent_container-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+    )
+    (dist_info / "direct_url.json").write_text(
+        '{"url":"' + canonical.as_uri() + '","dir_info":{"editable":true}}'
+    )
+    stale_src = home_tmp / "stale" / "src"
+    stale_package = stale_src / "scitex_agent_container"
+    stale_package.mkdir(parents=True)
+    (stale_package / "__init__.py").write_text("")
+    marker = home_tmp / "stale-cli-imported"
+    (stale_package / "cli.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path(os.environ['SAC_BOOTSTRAP_TEST_MARKER']).write_text('mutated')\n"
+    )
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    script = (
+        "import sys\nfrom pathlib import Path\n"
+        "from _scitex_agent_container_bootstrap import "
+        "assert_image_build_source_authority\n"
+        "assert_image_build_source_authority("
+        "['image','build','base','-y'], metadata_paths=(Path(sys.argv[1]),))\n"
+        "import scitex_agent_container.cli\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join((str(stale_src), str(repo_src)))
+    env["SAC_BOOTSTRAP_TEST_MARKER"] = str(marker)
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(purelib)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    # Assert
+    assert (
+        result.returncode,
+        marker.exists(),
+        "unset PYTHONPATH" in result.stderr,
+    ) == (1, False, True)
 
 
 def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
@@ -741,6 +1002,32 @@ def test_list_json_emits_kind_sif_for_sif_files(home_tmp):
     assert result.exit_code == 0 and data[0]["kind"] == "sif"
 
 
+def test_list_json_reports_a_dangling_sif_symlink(home_tmp):
+    # Arrange
+    ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+    link = ig._CONTAINERS_DIR / "retired.sif"
+    link.symlink_to(ig._CONTAINERS_DIR / "missing.sif")
+    runner = CliRunner()
+
+    # Act
+    result = runner.invoke(image_group, ["list", "--json"])
+    data = json.loads(result.stdout)
+
+    # Assert
+    assert result.exit_code == 0 and data == [
+        {
+            "package": "agent-container",
+            "name": "retired.sif",
+            "path": str(link),
+            "kind": "sif",
+            "size_bytes": 0,
+            "mtime": link.lstat().st_mtime,
+            "resolves_to": "missing.sif",
+            "target_state": "dangling",
+        }
+    ]
+
+
 def test_list_json_stdout_holds_nothing_but_the_document(home_tmp):
     # Arrange — `sac image list --json` used to print a human
     # "scan root: .../*/containers/" banner to STDOUT before the payload,
@@ -760,33 +1047,146 @@ def test_list_json_stdout_holds_nothing_but_the_document(home_tmp):
 # ---------------------------------------------------------------------------
 
 
-def test_switch_delegates_to_backend_and_reports_target_version(home_tmp):
+def _install_layer_versions(
+    containers: Path, layer: str, versions: tuple[str, ...]
+) -> list[Path]:
+    image_name = f"sac-{layer}"
+    layer_dir = containers / image_name
+    layer_dir.mkdir(parents=True)
+    artifacts = []
+    for index, version in enumerate(versions, start=1):
+        artifact = layer_dir / f"{image_name}-{version}.sif"
+        artifact.write_bytes(version.encode())
+        os.utime(artifact, ns=(index, index))
+        artifacts.append(artifact)
+    current = artifacts[-1]
+    (layer_dir / f"{image_name}.sif").symlink_to(current.name)
+    (containers / f"{image_name}.sif").symlink_to(Path(image_name) / current.name)
+    return artifacts
+
+
+def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
     # Arrange
-    backend = _FakeApptainerBackend()
-    runner = CliRunner()
-    # Act
-    with _use_backend(backend):
-        result = runner.invoke(image_group, ["switch", "2.0.0"])
-    # Assert
-    assert (
-        result.exit_code == 0
-        and "switched" in result.output
-        and backend.calls["switch_version"][0][1]["version"] == "2.0.0"
+    # The production SAC layout, not scitex-container's legacy
+    # current.sif / scitex-v<version>.sif convention.
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "scitex", ("2026-0914-010000", "2026-0914-020000")
     )
-
-
-def test_rollback_prints_previous_version_returned_by_backend(home_tmp):
-    # Arrange
-    backend = _FakeApptainerBackend(rollback_result="1.0.0")
     runner = CliRunner()
     # Act
-    with _use_backend(backend):
-        result = runner.invoke(image_group, ["rollback"])
+    result = runner.invoke(
+        image_group,
+        ["switch", "2026-0914-010000", "--layer", "scitex"],
+    )
     # Assert
-    assert result.exit_code == 0 and "1.0.0" in result.output
+    inner = ig._CONTAINERS_DIR / "sac-scitex" / "sac-scitex.sif"
+    top = ig._CONTAINERS_DIR / "sac-scitex.sif"
+    actual = (
+        result.exit_code,
+        "switched scitex" in result.output,
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (0, True, artifacts[0], artifacts[0])
+    assert actual == expected
 
 
-def test_status_with_empty_backend_payload_reports_no_containers(home_tmp):
+def test_rollback_activates_immediately_older_base_image(home_tmp):
+    # Arrange
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["rollback"])
+    # Assert
+    inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    actual = (
+        result.exit_code,
+        "2026-0914-010000" in result.output,
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (0, True, artifacts[0], artifacts[0])
+    assert actual == expected
+
+
+def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
+    # Arrange
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    top.unlink()
+    top.symlink_to(Path("sac-base") / artifacts[0].name)
+
+    # Act
+    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base"])
+
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, RuntimeError),
+        "links disagree" in str(result.exception),
+        (ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif").resolve(),
+        top.resolve(),
+    )
+    expected = (True, True, True, artifacts[1], artifacts[0])
+    assert actual == expected
+
+
+def test_switch_rejects_path_traversal_version(home_tmp):
+    # Arrange
+    runner = CliRunner()
+
+    # Act
+    result = runner.invoke(image_group, ["switch", "../outside"])
+
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, ValueError),
+        "invalid SAC image version" in str(result.exception),
+    )
+    assert actual == (True, True, True)
+
+
+def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
+    # Arrange
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    saved_atomic_symlink = _image_activation._atomic_symlink
+
+    def _fail_new_top_once(link: Path, target: str) -> None:
+        if link == top and target.endswith("2026-0914-010000.sif"):
+            raise OSError("injected second-link failure")
+        saved_atomic_symlink(link, target)
+
+    _image_activation._atomic_symlink = _fail_new_top_once
+    # Act
+    try:
+        result = CliRunner().invoke(
+            image_group, ["switch", "2026-0914-010000", "--layer", "base"]
+        )
+    finally:
+        _image_activation._atomic_symlink = saved_atomic_symlink
+
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, OSError),
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (True, True, artifacts[1], artifacts[1])
+    assert actual == expected
+
+
+def test_status_with_no_active_build_reports_no_active_images(home_tmp):
     # Arrange
     backend = _FakeApptainerBackend(status_result=[])
     runner = CliRunner()
@@ -794,14 +1194,21 @@ def test_status_with_empty_backend_payload_reports_no_containers(home_tmp):
     with _use_backend(backend):
         result = runner.invoke(image_group, ["status"])
     # Assert
-    assert result.exit_code == 0 and "no containers" in result.output
+    assert result.exit_code == 0 and "no active SAC images" in result.output
 
 
-def test_status_renders_rebuild_marker_for_entries_with_needs_rebuild_true(home_tmp):
+def test_status_renders_active_current_layout_image(home_tmp):
     # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x" * 1024)
     entries = [
-        {"name": "alpha", "sif_size": "100MB", "needs_rebuild": False},
-        {"name": "beta", "sif_size": "200MB", "needs_rebuild": True},
+        {
+            "ts": "2026-0912-140710",
+            "sif": str(artifact),
+            "verified": True,
+            "active": True,
+        }
     ]
     backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
@@ -811,14 +1218,47 @@ def test_status_renders_rebuild_marker_for_entries_with_needs_rebuild_true(home_
     # Assert
     assert (
         result.exit_code == 0
-        and "alpha" in result.output
-        and "REBUILD" in result.output
+        and "sac-base" in result.output
+        and "verified" in result.output
+        and "2026-0912-140710" in result.output
     )
 
 
-def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
+def test_status_discovers_real_current_artifact_store_layout(home_tmp):
     # Arrange
-    entries = [{"name": "a", "sif_size": "1MB", "needs_rebuild": False}]
+    layer_dir = ig._CONTAINERS_DIR / "sac-base"
+    layer_dir.mkdir(parents=True)
+    artifact = layer_dir / "sac-base-2026-0912-140710.sif"
+    artifact.write_bytes(b"x" * 1024)
+    artifact.with_suffix(".verified").write_text("round-trip verified\n")
+    (ig._CONTAINERS_DIR / "sac-base.sif").symlink_to(Path("sac-base") / artifact.name)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["status", "--json"])
+    data = json.loads(result.stdout)
+    # Assert
+    assert (
+        result.exit_code,
+        data[0]["name"],
+        data[0]["version"],
+        data[0]["verification"],
+        data[0]["sif_size_bytes"],
+    ) == (0, "sac-base", "2026-0912-140710", "verified", 1024)
+
+
+def test_status_json_reports_active_artifact_fields(home_tmp):
+    # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x" * 1024)
+    entries = [
+        {
+            "ts": "2026-0912-140710",
+            "sif": str(artifact),
+            "verified": None,
+            "active": True,
+        }
+    ]
     backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
     # Act
@@ -826,7 +1266,42 @@ def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
         result = runner.invoke(image_group, ["status", "--json"])
     data = json.loads(result.stdout)
     # Assert
-    assert result.exit_code == 0 and data == entries
+    assert (result.exit_code, data) == (
+        0,
+        [
+            {
+                "name": "sac-base",
+                "version": "2026-0912-140710",
+                "sif_path": str(artifact),
+                "sif_size_bytes": 1024,
+                "sif_date": data[0]["sif_date"],
+                "verification": "unknown",
+            }
+        ],
+    )
+
+
+def test_status_ignores_inactive_builds(home_tmp):
+    # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-120102.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x")
+    backend = _FakeApptainerBackend(
+        status_result=[
+            {
+                "ts": "2026-0912-120102",
+                "sif": str(artifact),
+                "verified": True,
+                "active": False,
+            }
+        ]
+    )
+    runner = CliRunner()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["status"])
+    # Assert
+    assert result.exit_code == 0 and "no active SAC images" in result.output
 
 
 def test_snapshot_with_no_output_flag_writes_json_to_stdout(home_tmp):

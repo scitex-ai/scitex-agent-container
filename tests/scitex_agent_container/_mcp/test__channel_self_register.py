@@ -39,7 +39,7 @@ import yaml
 def db_path(tmp_path: Path, env_save_restore):
     p = tmp_path / "state.db"
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     yield p
@@ -132,7 +132,7 @@ def test_register_self_node_writes_comms_nodes_row_for_lead_name(
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info is not None
@@ -148,7 +148,7 @@ def test_register_self_node_records_port_parsed_from_listen_url(
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["a2a_port"] == 7878
@@ -164,7 +164,7 @@ def test_register_self_node_uses_canonical_host_from_config(
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["host"] == "lead-host"
@@ -184,7 +184,7 @@ def test_register_self_node_records_this_host_as_the_origin(
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["source_host"] == socket.gethostname()
@@ -212,7 +212,7 @@ def test_register_self_node_is_idempotent_for_same_name(
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     # Assert
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
 
     rows = [r for r in list_comms_nodes() if r["name"] == "lead"]
     assert len(rows) == 1
@@ -227,7 +227,7 @@ def test_register_self_node_refresh_advances_updated_at(
     import time
 
     from scitex_agent_container._mcp._channel_self_register import register_self_node
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     register_self_node(name="lead", listen_url="http://127.0.0.1:7878")
     first_updated_at = lookup_comms_node(name="lead")["updated_at"]
@@ -251,7 +251,7 @@ def test_register_self_node_writes_no_row_when_listen_url_has_port_zero(
     # function MUST refuse rather than persist a 0 port (which is what
     # broke `sac a2a peers` resolution in the first place).
     from scitex_agent_container._mcp._channel_self_register import register_self_node
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
 
     # Act
     register_self_node(name="lead", listen_url="http://127.0.0.1:0/")
@@ -308,7 +308,7 @@ def test_refresh_node_writes_initial_row_on_first_tick(
     # so a caller doesn't have to call register_self_node separately
     # before kicking off the loop.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     async def _drive_one_tick() -> None:
         task = asyncio.create_task(
@@ -333,7 +333,7 @@ def test_refresh_node_advances_updated_at_across_ticks(
 ) -> None:
     # Arrange — let the loop tick twice; updated_at must advance.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     captured: dict[str, float] = {}
 
@@ -406,7 +406,7 @@ def test_refresh_node_makes_lead_resolvable_via_resolve_node_host(
     # Arrange — drive one refresh tick (the same path channel.py
     # _serve() schedules at startup) then ask the production resolver.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
-    from scitex_agent_container._state.state_db_nodes import resolve_node_host
+    from scitex_agent_container._state.state_store_nodes import resolve_node_host
 
     async def _drive_one_tick() -> None:
         task = asyncio.create_task(

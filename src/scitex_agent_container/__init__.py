@@ -12,11 +12,11 @@ Public surface — CLI-tree-shaped noun submodules::
 
     sac.agent.list()                  # `sac agent list`
     sac.agent.start("head-nas")       # `sac agent start head-nas`
-    sac.db.clean()                    # `sac db clean`
+    sac.store.clean()                    # `sac store clean`
     sac.host.list()                   # `sac host list`
     sac.skills.get("02_quick-start")  # `sac dev skills get 02_quick-start`
 
-Each noun submodule (`agent`, `db`, `host`, `image`, `template`,
+Each noun submodule (`agent`, `store`, `host`, `image`, `template`,
 `account`, `skills`, `mcp`) re-exports its verbs under bare names
 that mirror the CLI subcommand tree. The same function objects power
 both the Python API and the MCP server (per scitex MCP §6 parity).
@@ -40,11 +40,11 @@ if TYPE_CHECKING:
     from scitex_agent_container._api import (  # noqa: F401
         account,
         agent,
-        db,
         host,
         image,
         mcp,
         skills,
+        store,
         template,
     )
     from scitex_agent_container._network import peer  # noqa: F401
@@ -83,7 +83,7 @@ __all__ = [
     # Each verb is the same function object the MCP server registers
     # (e.g. `sac.agent.list is _mcp._tools._agent.agent_list`).
     "agent",
-    "db",
+    "store",
     "host",
     "image",
     "template",
@@ -100,7 +100,7 @@ __all__ = [
 _API_NAMES = {
     "account",
     "agent",
-    "db",
+    "store",
     "host",
     "image",
     "mcp",

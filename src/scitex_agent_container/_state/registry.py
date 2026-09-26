@@ -9,16 +9,31 @@ from pathlib import Path
 
 from .._runtime_paths import runtime_base_dir
 
+
 # ``SCITEX_AGENT_CONTAINER_REGISTRY_DIR`` still wins (explicit override);
 # its FALLBACK routes through ``runtime_base_dir`` so the single
 # ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` knob relocates the registry too.
 # Unset env => identical to ``~/.scitex/agent-container/runtime/registry``.
-REGISTRY_DIR = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
-        str(runtime_base_dir() / "registry"),
+def _registry_dir_from_env() -> Path:
+    """Resolve the registry root AT CALL TIME rather than at import.
+
+    ``REGISTRY_DIR`` below is bound when this module is imported, so a test that
+    sets the env var afterwards had no effect — which is why tests had to stub
+    the whole collaborator (the shape PA-306 objects to). Resolving per call
+    lets a test point a REAL ``Registry`` at ``tmp_path`` with an env var and
+    leave the code path genuinely exercised.
+    """
+    return Path(
+        os.environ.get(
+            "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
+            str(runtime_base_dir() / "registry"),
+        )
     )
-)
+
+
+# Kept for importers that read the module attribute; new code should rely on
+# ``Registry()`` resolving this per call.
+REGISTRY_DIR = _registry_dir_from_env()
 
 
 def _default_session_probe(session: str) -> bool | None:
@@ -68,7 +83,8 @@ class Registry:
     """File-based registry for tracking running agent instances."""
 
     def __init__(self, registry_dir: Path | None = None) -> None:
-        self.dir = registry_dir or REGISTRY_DIR
+        # Resolved per call, so an env override applies even after import.
+        self.dir = registry_dir or _registry_dir_from_env()
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, name: str) -> Path:

@@ -41,13 +41,14 @@ health check is worse than none. See ``docs/mcp-load-resilience.md``.
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 # Critical MCP servers → the capability surface each one gates. These are
 # LOOKUP KEYS into the ``.mcp.json`` the fleet deploys — a file sac does NOT
@@ -56,7 +57,7 @@ CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "scitex-agent-container": (
         "host_exec_local (run host commands)",
         "agent_spawn / agent_start / agent_restart (manage peers)",
-        "db_clean / db_tick / db_migrate (instance registry)",
+        "store_clean / store_tick / store_migrate (instance registry)",
         "host_exec / host_list (multi-host)",
     ),
     "scitex-cards": (

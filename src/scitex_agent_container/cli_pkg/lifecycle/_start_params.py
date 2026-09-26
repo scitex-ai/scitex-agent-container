@@ -17,7 +17,7 @@ from pathlib import Path
 
 import click
 
-from .._helpers import console
+from ..._logging import render_rich
 
 
 def classify_targets(
@@ -116,10 +116,8 @@ def expand_params_targets(
         click.echo(f"Error: {exc}", err=True)
         sys.exit(2)
     if not as_json:
-        console.print(
-            f"[bold]--params-file[/bold]  expanded "
-            f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]"
-        )
+        render_rich(f"[bold]--params-file[/bold]  expanded "
+            f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]", __name__)
     return tuple(str(p) for p in materialised)
 
 

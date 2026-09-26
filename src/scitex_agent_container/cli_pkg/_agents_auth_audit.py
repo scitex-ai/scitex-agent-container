@@ -42,7 +42,8 @@ from rich.table import Table
 from .._authheal._journal import Journal, log_path
 from .._authheal._liveness import DEFAULT_OBSERVE_S, LIVE, corroborate
 from .._authheal._positional import ALIVE, DEAD, UNKNOWN, classify_positional
-from ._helpers import _json_flag, console
+from .._logging import render_rich
+from ._helpers import _json_flag
 
 _VERDICT_STYLE = {
     "ok": ("OK", "green"),
@@ -158,7 +159,7 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
     journal = Journal.open(log_path())
     journal.event("AUDIT-START", f"observe={observe_s:.0f}s (read-only, no restarts)")
     if not journal.usable:
-        console.print(f"[yellow]NOTE: no log — {journal.detail}[/yellow]")
+        render_rich(f"[yellow]NOTE: no log — {journal.detail}[/yellow]", __name__)
 
     rows = _rows(observe_s, journal)
     bad = [r for r in rows if r["false_positive"]]
@@ -178,7 +179,7 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
         raise SystemExit(1 if bad else 0)
 
     if not rows:
-        console.print("[dim](no running tui-* agents on this host)[/dim]")
+        render_rich("[dim](no running tui-* agents on this host)[/dim]", __name__)
         return
 
     table = Table(title="auth verdict vs pane layout (read-only audit)")
@@ -197,16 +198,14 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
             "changed" if r["liveness"] == LIVE else r["liveness"],
             "[red]FALSE POSITIVE[/red]" if r["false_positive"] else "",
         )
-    console.print(table)
-    console.print(f"[dim]full log: {journal.path}[/dim]")
+    render_rich(table, __name__)
+    render_rich(f"[dim]full log: {journal.path}[/dim]", __name__)
 
     if bad:
-        console.print(
-            f"\n[red]{len(bad)} agent(s) are flagged AUTH-FAILED but their "
+        render_rich(f"\n[red]{len(bad)} agent(s) are flagged AUTH-FAILED but their "
             f"banner is HISTORY:[/red] {', '.join(r['agent'] for r in bad)}\n"
             "  Restarting these would destroy live work. An automated restarter "
-            "MUST NOT be enabled while this count is non-zero."
-        )
+            "MUST NOT be enabled while this count is non-zero.", __name__)
     raise SystemExit(1 if bad else 0)
 
 

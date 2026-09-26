@@ -26,12 +26,13 @@ share the same in-SIF signal.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 
 __all__ = [

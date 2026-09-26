@@ -97,8 +97,20 @@ __all__ = ["SUBSYSTEM", "record_pass_completed", "record_reports"]
 
 SUBSYSTEM = "rate-limit-resume"
 _SUBJECT_KIND = "agent"
-_DEGRADED = (Verdict.FAILED, Verdict.OVER_BUDGET, Verdict.RESET_UNKNOWN)
-_HEALTHY = (Verdict.RESUMED,)
+_DEGRADED = (
+    Verdict.FAILED,
+    Verdict.OVER_BUDGET,
+    Verdict.RESET_UNKNOWN,
+    # The model-switch remedy's two unresolved ends, admitted for exactly the
+    # reason the three above are: sac tried and cannot fix this itself. A cap
+    # still rendered after all three steps needs a human at that pane, and a
+    # switch whose outcome the pane will not show needs the same human — the
+    # second more urgently, because it is the one that could otherwise be
+    # mistaken for a recovery.
+    Verdict.SWITCH_FAILED,
+    Verdict.SWITCH_UNVERIFIED,
+)
+_HEALTHY = (Verdict.RESUMED, Verdict.SWITCHED)
 
 
 def _verdict_for(report: Any) -> SubjectVerdict | None:

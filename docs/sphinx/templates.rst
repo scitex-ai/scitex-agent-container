@@ -54,6 +54,6 @@ instantiate:
 
     cp -r examples/agents/hello-agent \\
        ~/.scitex/agent-container/agents/my-agent
-    # The to_home/ sibling (CLAUDE.md / .mcp.json / .env / state.md /
+    # The to_home/ sibling (AGENTS.md / .mcp.json / .env / state.md /
     # .claude/{commands,skills,hooks}/) is all optional.
     sac agents start my-agent

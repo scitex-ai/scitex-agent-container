@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING
 from ..config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
+    CODEX_TUI,
     HARNESS_DESCRIPTORS,
+    HERMES_TUI,
     OPENAI_AGENTS,
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
@@ -168,41 +170,58 @@ def build_inner_argv(
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
-        # Same v4 step-2 guard as the SDK branch below: the interactive
-        # claude TUI is just as wrong a vendor for a non-Anthropic
-        # harness (and this branch never had even the dead check).
-        ensure_harness_matches_claude_launch(
-            config, launching="the interactive claude TUI"
-        )
+        tui_options = {
+            "tui_mcp_config": tui_mcp_config,
+            "tui_channel_mcp": tui_channel_mcp,
+            "tui_dev_channels": tui_dev_channels,
+            "tui_settings": tui_settings,
+        }
         # v4 step 4: the registry entry owns the argv shape. The entry is
         # keyed by the caller's already-decided launch mode (``tui=True``
         # came from TuiSessionRuntime), never re-derived from the config —
         # direct/dry-run callers pass configs whose ``runtime`` field this
-        # builder must not second-guess.
-        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
-            config,
-            {
-                "tui_mcp_config": tui_mcp_config,
-                "tui_channel_mcp": tui_channel_mcp,
-                "tui_dev_channels": tui_dev_channels,
-                "tui_settings": tui_settings,
-            },
-        )
+        # builder must not second-guess. The HARNESS axis picks the pane's
+        # program: codex (2026-09-05) or Claude Code.
+        from ..config._harness_registry import resolve_harness_key
+        from ._apptainer_codex_env import codex_harness_active
+
+        harness_key = resolve_harness_key(config)
+        if harness_key == HERMES_TUI:
+            runner_tail = HARNESS_DESCRIPTORS[harness_key].inner_argv(
+                config, tui_options
+            )
+        elif codex_harness_active(config):
+            ensure_harness_matches_claude_launch(
+                config, launching="the interactive codex TUI", launching_key=CODEX_TUI
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CODEX_TUI].inner_argv(config, tui_options)
+        else:
+            # Same v4 step-2 guard as the SDK branch below: the interactive
+            # claude TUI is just as wrong a vendor for a non-Anthropic
+            # harness (and this branch never had even the dead check).
+            ensure_harness_matches_claude_launch(
+                config, launching="the interactive claude TUI"
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
+                config, tui_options
+            )
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
-        # v4 step-2 loudness: refuse a wrong-vendor launch on the REAL
-        # field (the dead ``config.provider`` read used to sit here and
-        # silently fell through to the Claude runner). Post-guard the
-        # harness is Anthropic-family, so the SDK entry is the only
-        # runner-hosted candidate; key-based launch of other entries is
-        # migration step 7.
-        ensure_harness_matches_claude_launch(
-            config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
-        )
-        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
-            config, {"one_shot": one_shot}
-        )
+        from ..config._harness_registry import CODEX_SDK, resolve_harness_key
+
+        harness_key = resolve_harness_key(config)
+        if harness_key == CODEX_SDK:
+            runner_tail = HARNESS_DESCRIPTORS[CODEX_SDK].inner_argv(
+                config, {"one_shot": one_shot}
+            )
+        else:
+            ensure_harness_matches_claude_launch(
+                config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
+                config, {"one_shot": one_shot}
+            )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
     # Alias step is unconditional (every agent gets it); startup_cmds steps
@@ -333,7 +352,7 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
             runner_argv.append("--print-stream")
     # spec.a2a.{port,host} → --a2a-port / --a2a-host (the sidecar bind).
     runner_argv += _a2a_argv(config)
-    # spec.claude.channels → one --channels arg per entry. When the set
+    # spec.comms.channels → one internal --channels arg per entry. When the set
     # contains 'server:sac', the daemon runner threads it into
     # build_sdk_options, which auto-registers the 'sac mcp channel' stdio
     # MCP so the long-lived SDK session subscribes to its inbox SSE and

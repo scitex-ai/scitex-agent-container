@@ -9,7 +9,7 @@ named ``_template_<kind>/`` (e.g. ``_template_python_developer/``,
 directory carrying ``spec.yaml`` + ``to_home/`` and whatever else the
 kind needs, with literal placeholder tokens of the form
 ``SAC_PLACEHOLDER_<NAME>`` baked into the files (workdir paths, install
-targets, labels, STATE_DB names, …).
+targets, labels, state-store names, …).
 
 ``sac agents create <name> --template <kind>`` instantiates such a template
 by *copying the whole tree* to ``<base-dir>/<name>/`` and substituting

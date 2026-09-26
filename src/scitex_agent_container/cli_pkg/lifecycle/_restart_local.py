@@ -15,14 +15,12 @@ from __future__ import annotations
 import json as _json
 import time
 
-import click
-
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_restart
 from ..._state.host_config import load as _load_host_config
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
-from .._helpers import console
+from .._helpers import system_msg
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
 from ._restart_remote import _dispatch_remote_restart, brokered_restart
@@ -68,7 +66,7 @@ def _refuse_fresh_on_bare_host(name: str, *, as_json: bool) -> tuple[dict, bool]
         f"--force --fresh"
     )
     if not as_json:
-        click.echo(msg, err=True)
+        system_msg(msg, style="error")
     return {"name": name, "error": msg, "fresh": True}, False
 
 
@@ -89,12 +87,34 @@ def _observe_run(name: str, *, min_ts: float | None = None, wait_s: float = 0.0)
     return read_beat_identity(name, min_ts=min_ts, wait_s=wait_s)
 
 
-def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
+def _restart_locally(
+    name: str,
+    *,
+    as_json: bool,
+    engine: str | None = None,
+    drain_timeout_s: float = 0.0,
+) -> tuple[dict, bool]:
     """Perform the restart on THIS host (ssh-dispatching to a peer if needed).
 
     Reached only when :func:`._restart_remote.must_broker_to_host` said
     this process can act. Human console output is printed here when ``not
     as_json``; JSON emission is left to the caller.
+
+    ``engine`` (CLI ``--engine <key>``) selects one of the backends the
+    spec declares under ``spec.engines`` for the START leg of this
+    restart, and it is honoured on BOTH legs. The cross-host ssh dispatch
+    below FORWARDS it to the peer, so the flag means the same thing
+    wherever the command is typed.
+
+    IT DID NOT UNTIL 2026-09-05, AND THE OLD SHAPE IS WORTH RECORDING. The
+    dispatch ran first and a refusal was printed afterwards, saying the
+    engine "would be silently dropped" — future conditional, for something
+    that had already happened. By the time anyone read it the peer had
+    restarted the agent on its DEFAULT engine, the lead had closed the old
+    instances row and opened a new one, and the CLI reported
+    ``restarted: false``. The message described a hypothetical while the real
+    state had already moved, and "the flag was refused" and "the flag was
+    ignored and the work was done anyway" are not the same event.
     """
     # Set when the start leg no-op'd over a live agent instead of cycling
     # it, or when the postcondition check refuted the cycle; surfaced as
@@ -111,8 +131,21 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
     peers = _load_host_config().peers
     envelope_holder: dict = {}
 
-    def _handler(peer, row, ps, _name=name, _holder=envelope_holder):
-        _holder.update(_dispatch_remote_restart(peer, row, ps, _name))
+    def _handler(
+        peer,
+        row,
+        ps,
+        _name=name,
+        _holder=envelope_holder,
+        _engine=engine,
+        _drain_timeout_s=drain_timeout_s,
+    ):
+        dispatch_kwargs = {}
+        if _drain_timeout_s > 0:
+            dispatch_kwargs["drain_timeout_s"] = _drain_timeout_s
+        _holder.update(
+            _dispatch_remote_restart(peer, row, ps, _name, _engine, **dispatch_kwargs)
+        )
         _holder["_peer"] = peer
 
     dispatched = try_dispatch_remote(name, "restart", peers, handler=_handler)
@@ -148,15 +181,16 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
         }
         if not as_json:
             if remote_ok:
-                console.print(
-                    f"[green]Agent '{name}' restarted on "
-                    f"'{envelope_holder.get('_peer')}'[/green]"
+                system_msg(
+                    f"Agent '{name}' restarted on '{envelope_holder.get('_peer')}'",
+                    style="success",
                 )
             else:
-                console.print(
-                    f"[red]Agent '{name}' NOT restarted on "
+                system_msg(
+                    f"Agent '{name}' NOT restarted on "
                     f"'{envelope_holder.get('_peer')}' — the peer reported "
-                    f"the start leg failed.[/red]"
+                    f"the start leg failed.",
+                    style="error",
                 )
         return out, remote_ok
 
@@ -202,7 +236,10 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
     before = read_run_identity(name)
     session_before = _observe_run(name)
     restart_began = time.time()
-    _result = agent_restart(name)
+    restart_kwargs = {"engine_override": engine}
+    if drain_timeout_s > 0:
+        restart_kwargs["drain_timeout_s"] = drain_timeout_s
+    _result = agent_restart(name, **restart_kwargs)
     restarted = _result is not False
     if outcome_kind(_result) == KIND_ALREADY_RUNNING:
         restarted = False
@@ -251,7 +288,6 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
     CANNOT VERIFY, in the abstention's own words.
     """
     if restarted:
-        console.print(f"[green]Agent '{name}' restarted[/green]")
         # Only a True verdict may be labelled "verified". A None verdict
         # is an ABSTENTION, and printing it under that word is how an
         # unchecked restart came to read as a checked one — while "NOT
@@ -262,56 +298,70 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
             label = "CANNOT VERIFY"
         else:  # pragma: no cover — a False verdict forces restarted=False upstream
             label = "NOT verified"
-        console.print(f"[dim]{label}: {verdict.reason}[/dim]")
+        style = "success" if verdict.verified else "warning"
+        system_msg(f"Agent '{name}' restarted — {label}: {verdict.reason}", style=style)
         return
     if no_op_reason == _NOT_CYCLED:
-        console.print(f"[red]Agent '{name}' NOT restarted — {verdict.reason}[/red]")
-        console.print(
-            f"[yellow]Force the cycle with:\n"
-            f"  sac agents start {name} -y --force[/yellow]"
+        system_msg(
+            f"Agent '{name}' NOT restarted — {verdict.reason}\n"
+            f"Force the cycle with:\n  sac agents start {name} -y --force",
+            style="error",
         )
         return
     if no_op_reason is not None:
-        console.print(
-            f"[red]Agent '{name}' NOT restarted — it was already "
+        system_msg(
+            f"Agent '{name}' NOT restarted — it was already "
             f"running and the start leg no-op'd, so nothing cycled. "
-            f"It is still the OLD process on its OLD credentials.[/red]"
-        )
-        console.print(
-            f"[yellow]Force the cycle with:\n"
-            f"  sac agents start {name} -y --force[/yellow]"
+            f"It is still the OLD process on its OLD credentials.\n"
+            f"Force the cycle with:\n  sac agents start {name} -y --force",
+            style="error",
         )
         return
-    console.print(
-        f"[red]Agent '{name}' NOT restarted — the stop ran but the "
+    system_msg(
+        f"Agent '{name}' NOT restarted — the stop ran but the "
         f"START leg failed. The agent is either DOWN, or still the "
-        f"OLD process on its OLD credentials.[/red]"
-    )
-    console.print(
-        f"[yellow]Most common cause: the previous session ignored "
+        f"OLD process on its OLD credentials.\n"
+        f"Most common cause: the previous session ignored "
         f"SIGTERM, so start hit the duplicate-session guard.\n"
         f"Recover with:\n"
         f"  tmux kill-session -t tui-{name}\n"
-        f"  sac agents start {name} -y --fresh[/yellow]"
+        f"  sac agents start {name} -y --fresh",
+        style="error",
     )
 
 
-def _restart_via_broker(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
+def _restart_via_broker(
+    name: str,
+    *,
+    as_json: bool,
+    fresh: bool,
+    drain_timeout_s: float = 0.0,
+) -> tuple[dict, bool]:
     """Hand the whole restart to the host listen and report ITS verdict."""
-    out, ok = brokered_restart(name, fresh=fresh)
+    broker_kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        broker_kwargs["drain_timeout_s"] = drain_timeout_s
+    out, ok = brokered_restart(name, **broker_kwargs)
     if not as_json:
         verb = "fresh-restarted" if fresh else "restarted"
         if out.get("scheduled"):
-            console.print(f"[yellow]Agent '{name}' restart SCHEDULED on host[/yellow]")
-            console.print(f"[dim]{out.get('verified_reason')}[/dim]")
-        elif ok:
-            console.print(f"[green]Agent '{name}' {verb} via host listen[/green]")
-            console.print(f"[dim]verified: {out.get('verified_reason')}[/dim]")
-        else:
-            console.print(
-                f"[red]Agent '{name}' NOT {verb} via host listen "
-                f"(returncode="
-                f"{out.get('host_response', {}).get('returncode')})[/red]"
+            system_msg(
+                f"Agent '{name}' restart SCHEDULED on host — "
+                f"{out.get('verified_reason')}",
+                style="warning",
             )
-            console.print(_json.dumps(out.get("host_response")))
+        elif ok:
+            system_msg(
+                f"Agent '{name}' {verb} via host listen — "
+                f"verified: {out.get('verified_reason')}",
+                style="success",
+            )
+        else:
+            system_msg(
+                f"Agent '{name}' NOT {verb} via host listen "
+                f"(returncode="
+                f"{out.get('host_response', {}).get('returncode')}) — "
+                f"{_json.dumps(out.get('host_response'))}",
+                style="error",
+            )
     return out, ok

@@ -49,6 +49,8 @@ import json as json_mod
 
 import click
 
+from .._logging import render_rich
+
 __all__ = ["fleet_account_options", "run_fleet_account_list", "rows_from_stored"]
 
 # What we ask each peer for. ``--passive`` is the safety flag (property 1
@@ -249,8 +251,8 @@ def run_fleet_account_list(
     from ._helpers._agent_list_fleet import DEFAULT_HOST_TIMEOUT_S, collect_fleet
     from ._helpers._agent_list_fleet_model import UnknownHostFilter
     from ._helpers._agent_list_fleet_render import hosts_payload, print_fleet_header
-    from ._helpers._console import console
     from ._helpers._agent_list_host import _resolve_display_host
+    from ._helpers._console import console
 
     local_host = _resolve_display_host()
     try:
@@ -284,11 +286,9 @@ def run_fleet_account_list(
         return
 
     print_fleet_header(console, listing)
-    console.print(
-        "[dim]passive read: freshness from each host's expiresAt, usage from "
+    render_rich("[dim]passive read: freshness from each host's expiresAt, usage from "
         "its cache. Nothing here refreshes a token (a refresh rotates a "
-        "single-use credential every other host is still using).[/dim]"
-    )
+        "single-use credential every other host is still using).[/dim]", __name__)
     rows = []
     for entry in listing.agents:
         rows.extend(rows_from_stored([entry], str(entry.get("host") or "—")))
@@ -304,15 +304,13 @@ def run_fleet_account_list(
             )
         else:
             missing = ", ".join(r.host for r in listing.unanswered)
-            console.print(
-                f"[yellow]No accounts on the host(s) that answered — but "
+            render_rich(f"[yellow]No accounts on the host(s) that answered — but "
                 f"{missing} did not answer, so this is NOT evidence that the "
-                f"fleet has none.[/yellow]"
-            )
+                f"fleet has none.[/yellow]", __name__)
         return
     if by_host:
-        console.print(render_stored_table(rows))
+        render_rich(render_stored_table(rows), __name__)
     else:
         from ._account_list_collapse import render_accounts_table
 
-        console.print(render_accounts_table(rows))
+        render_rich(render_accounts_table(rows), __name__)

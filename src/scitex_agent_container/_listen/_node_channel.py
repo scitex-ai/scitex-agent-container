@@ -18,17 +18,15 @@ card responsibility that stays in ``server.py``.
 from __future__ import annotations
 
 import asyncio
-
-
 import json
-import logging
 from typing import Any
 
+import scitex_logging as slogging
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .._lifecycle._off_loop import run_blocking
-from .._state.state_db_channel import persist_event
+from .._state.state_store_channel import persist_event
 from ..a2a._delivery_report import report_zero_delivery
 from ..a2a._inbox_bus import (
     mint_acl_deny_synthetic_notification,
@@ -51,7 +49,7 @@ from ._nodes import Broker, NodeRegistry
 # see that module's docstring for the split.
 __all__ = ["_forward_to_remote", "node_message_send", "node_inbox_stream"]
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 async def node_message_send(request: Request) -> Response:
@@ -109,9 +107,9 @@ async def node_message_send(request: Request) -> Response:
     # The destination re-runs the ACL check against the same
     # ``metadata.from_agent`` we received, so cross-group denials
     # fire at the receiving host (handoff §4 acceptance).
-    from .._state.state_db import _resolve_host as _resolve_local_host
-    from .._state.state_db_forward import resolve_forward_target
-    from .._state.state_db_nodes import is_local_node
+    from .._state.state_store import _resolve_host as _resolve_local_host
+    from .._state.state_store_forward import resolve_forward_target
+    from .._state.state_store_nodes import is_local_node
 
     # Prefer the per-app ``local_host`` configured at ``create_app``
     # time; fall back to the env-based resolver for callers that
@@ -127,7 +125,7 @@ async def node_message_send(request: Request) -> Response:
     # SYN would stall THIS whole daemon — every request it is serving, not
     # just this one — for as long as the connect takes. The store's DSN now
     # carries an explicit ``connect_timeout`` (see
-    # ``state_db_comms_nodes_store``), which bounds that to seconds; the
+    # ``state_store_comms_nodes_store``), which bounds that to seconds; the
     # thread hop is what keeps even those seconds off the loop.
     if not await asyncio.to_thread(
         is_local_node, name=name, local_host=local_host
@@ -247,7 +245,7 @@ async def node_message_send(request: Request) -> Response:
             # is atomic (check + upsert in one tx) so a concurrent
             # burst publishes at most one synthetic frame per window.
             if sender_id:
-                from .._state.state_db_acl_deny_notify import (
+                from .._state.state_store_acl_deny_notify import (
                     should_notify_acl_deny,
                 )
 
@@ -282,7 +280,7 @@ async def node_message_send(request: Request) -> Response:
             # not on content. If the receiver unblocks, the
             # sender resends.
             if sender_id and _looks_like_cross_group_deny(reason):
-                from .._state.state_db_pending_approval import (
+                from .._state.state_store_pending_approval import (
                     record_pending_prompt,
                 )
 

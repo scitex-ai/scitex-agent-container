@@ -47,7 +47,7 @@ point — see :data:`NEVER_SYNCED`.
 Why classification is the deliverable
 -------------------------------------
 sac shipped a cross-host path until 2026-08-29, and it was unsafe in a way
-that was invisible: ``state_db_export.import_state`` did
+that was invisible: ``state_store_export.import_state`` did
 ``INSERT OR IGNORE INTO <t>``. A byte-identical duplicate and a row that
 CONTRADICTED the local one both yielded ``rowcount == 0``. The importer's
 success value was also its didn't-happen value, so two hosts could disagree
@@ -156,7 +156,7 @@ def _data(
 # ---------------------------------------------------------------------------
 # The cross-host directory (ADR-0014): "agent <name> is reachable at
 # host:a2a_port". LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
-# field by ``_state.state_db_comms_nodes_store``. It was the one table sac
+# field by ``_state.state_store_comms_nodes_store``. It was the one table sac
 # synced, and that sync was provably lossy: INSERT OR IGNORE carries
 # neither an update nor a tombstone, so the old module admitted deletion
 # propagation "will need an UPDATE-shaped sync (future work)". There is
@@ -188,7 +188,7 @@ COMMS_NODES = Schema.build(
 # HISTORY — append-only; merging must never lose a branch.
 # ---------------------------------------------------------------------------
 # The spawn DAG. LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
-# field by ``_state.state_db_lineage_store``; what follows describes a
+# field by ``_state.state_store_lineage_store``; what follows describes a
 # schema the fleet is running, not one it is planning.
 #
 # One record per CHILD (a child has exactly one parent, ever), so distinct
@@ -248,10 +248,10 @@ LINEAGE = Schema.build(
 # mass kill; it was one now_iso() per GC sweep, and they had died 10h46m
 # apart). MEASURED TRAP: immutability starts at the FIRST STAMPED VALUE and
 # writing None counts, so every writer strips unset fields from its payload
-# (``state_db_instances_store.strip_unset``) or the tombstone never lands.
+# (``state_store_instances_store.strip_unset``) or the tombstone never lands.
 #
 # LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for field by
-# ``_state.state_db_instances_store``. Checking this declaration against the
+# ``_state.state_store_instances_store``. Checking this declaration against the
 # real DDL and against every reader in ``src/`` found gaps BOTH ways, and
 # closing them HERE is the point of this module: the declaration is what
 # says what sac's rows mean.
@@ -269,7 +269,7 @@ LINEAGE = Schema.build(
 #
 # ``bound_port`` is a FOLD, not a drop: the DDL had it beside ``a2a_port``
 # and every writer set both from ONE value. Two columns holding one fact is
-# how the two drift, and they had — ``state_db_forward`` records a live row
+# how the two drift, and they had — ``state_store_forward`` records a live row
 # where the split answered "where do I send this" two ways. One field here;
 # the row codec mirrors it out under both KEYS so no reader changes shape.
 INSTANCES = Schema.build(
@@ -279,6 +279,11 @@ INSTANCES = Schema.build(
         "host": _identity(FieldKind.TEXT),
         "name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True, indexed=True),
         "pid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "process_start_time": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "process_uid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "control_group": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "scope_unit": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "scope_invocation_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "a2a_port": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "screen": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "workdir": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
@@ -295,6 +300,23 @@ INSTANCES = Schema.build(
         "spawned_by": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "started_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
         "last_heartbeat_at": _data(FieldKind.TEXT, MergeRule.MAX),
+        "heartbeat_boot_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_seq": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_state": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_agent_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_spec_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_runtime": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_harness": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_engine": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_model": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_session_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_monotonic_ns": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_observed_at": _data(FieldKind.REAL, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_progress_at": _data(FieldKind.REAL, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_progress_seq": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_card_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_card_role": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "lease_expires_at": _data(FieldKind.REAL, MergeRule.LAST_WRITER_WINS),
         "iter_count": _data(FieldKind.INTEGER, MergeRule.MAX),
         "input_tokens": _data(FieldKind.INTEGER, MergeRule.MAX),
         "output_tokens": _data(FieldKind.INTEGER, MergeRule.MAX),
@@ -373,7 +395,7 @@ COMMS_GRANTS = Schema.build(
 # ``time.time()`` -- which is what ``updated_at`` holds -- has not. MAX then
 # keeps the LOSING write's larger timestamp and the record advertises itself
 # as fresher than the write that supplied its data: a stale ACL reading as
-# current. See ``state_db_acl_policy_store`` for the same argument at the
+# current. See ``state_store_acl_policy_store`` for the same argument at the
 # point the value is actually written.
 NODE_COMMS_POLICY = Schema.build(
     "sac_node_comms_policy",

@@ -34,7 +34,7 @@ def db_path(tmp_path: Path, pg_schema: str):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -59,7 +59,7 @@ class _RuntimeStub:
 
 
 def _active_names(host: str | None = None) -> list[str]:
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         _resolve_host,
         list_active_instances,
     )
@@ -94,7 +94,7 @@ def test_record_local_instance_creates_active_row(db_path, tmp_path) -> None:
 def test_record_local_instance_persists_resolved_a2a_port(db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-2", runtime="apptainer")
     _claim_port("rec-2", 7901)
@@ -105,10 +105,40 @@ def test_record_local_instance_persists_resolved_a2a_port(db_path, tmp_path) -> 
     assert row["a2a_port"] == 7901
 
 
+def test_live_spec_incarnation_owns_same_origin_comms_pointer(
+    db_path, tmp_path, caplog
+) -> None:
+    # Arrange — the listener's generic self-peer pointer predates the launch.
+    from scitex_agent_container._lifecycle._instances import record_local_instance
+    from scitex_agent_container._state.state_store import _resolve_host
+    from scitex_agent_container._state.state_store_nodes import (
+        lookup_comms_node,
+        register_comms_node,
+    )
+
+    name = "rec-spec-owner"
+    host = _resolve_host(None)
+    register_comms_node(name=name, host=host, a2a_port=7878, kind="self-peer")
+    _claim_port(name, 19003)
+    cfg = AgentConfig(name=name, runtime="apptainer")
+    caplog.set_level("INFO", logger="scitex_agent_container._lifecycle._instances")
+    # Act
+    incarnation_id = record_local_instance(cfg, _RuntimeStub(tmp_path))
+    info = lookup_comms_node(name=name)
+    # Assert — routing and the operator log identify the winning incarnation.
+    observed = (
+        None if info is None else info["a2a_port"],
+        incarnation_id is not None,
+        f"incarnation_id={incarnation_id}" in caplog.text,
+        "result=replaced" in caplog.text,
+    )
+    assert observed == (19003, True, True, True)
+
+
 def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
     # Arrange — local row's bound_port mirrors the allocator-claimed port.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-bp", runtime="apptainer")
     _claim_port("rec-bp", 7902)
@@ -122,7 +152,7 @@ def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
 def test_record_local_instance_marks_remote_false(db_path, tmp_path) -> None:
     # Arrange — a local start records remote=0 (it ran on THIS host).
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-loc", runtime="apptainer")
     # Act
@@ -139,7 +169,7 @@ def test_record_local_instance_records_cli_spawned_by_without_sac_name(
     saved = os.environ.pop("SAC_NAME", None)
     saved_long = os.environ.pop("SCITEX_AGENT_CONTAINER_NAME", None)
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-cli", runtime="apptainer")
     try:
@@ -162,7 +192,7 @@ def test_record_local_instance_records_parent_spawned_by_from_sac_name(
     saved = os.environ.get("SAC_NAME")
     os.environ["SAC_NAME"] = "parent-bot"
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-child", runtime="apptainer")
     try:
@@ -193,7 +223,7 @@ def test_record_local_instance_supersedes_stale_active_row(db_path, tmp_path) ->
     # Arrange — two records for the same name; the unique partial index
     # would reject the second unless the first is ended first.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     cfg = AgentConfig(name="rec-4", runtime="apptainer")
     rt = _RuntimeStub(tmp_path)

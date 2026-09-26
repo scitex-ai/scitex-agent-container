@@ -21,7 +21,7 @@ import pytest
 import yaml as _yaml
 from click.testing import CliRunner
 
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_nodes import (
     read_comms_policy,
     record_comms_policy,
 )

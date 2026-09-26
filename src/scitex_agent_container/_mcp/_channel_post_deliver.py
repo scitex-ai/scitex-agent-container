@@ -11,8 +11,9 @@ Both receipts share the same shape on the caller's side:
 * They are best-effort — a failed receipt MUST NOT block delivery or
   kill the long-lived SSE consumer. Every failure logs loudly (warning)
   but never re-raises.
-* They share the per-sender sliding-window rate cap so any loop or
-  storm self-terminates with the same budget.
+* Only receipts that can reach the wire consume the per-sender
+  sliding-window rate budget. The legacy contentless auto-ack is filtered
+  locally and therefore cannot exhaust capacity needed by a real reaction.
 
 This module owns the single entry point
 :func:`run_post_deliver_receipts` so :mod:`channel` has one call site
@@ -21,8 +22,9 @@ instead of two large gated blocks (and re-passes the line ceiling).
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import scitex_logging as slogging
 
 from ._channel_auto_ack import (
     _auto_ack_enabled,
@@ -36,7 +38,7 @@ from ._channel_reaction_ack import (
     should_emit_reaction_ack,
 )
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 __all__ = ["run_post_deliver_receipts"]
 
@@ -64,10 +66,11 @@ async def run_post_deliver_receipts(
        suppress it, and threads the original ``dispatch_id`` so the
        sender's adapter marks the matching dispatch row REACTED.
 
-    Both gated calls share the per-sender sliding-window rate cap
-    (``_auto_ack_rate_allow``) — a runaway sender that overruns the
-    budget is denied BOTH receipts at once, so a structural-ack storm
-    cannot mask an auto-ack loop or vice versa.
+    The structural reaction uses the per-sender sliding-window rate cap
+    (``_auto_ack_rate_allow``). The legacy contentless auto-ack does not:
+    its sender-side filter drops it before the wire, and accounting a
+    non-emission used to double-charge every normal delivery and falsely
+    report an ack loop.
 
     Caller-side preconditions: ``agent_name`` and ``listen_url`` must
     be set for either receipt to fire (the channel adapter only runs
@@ -87,7 +90,6 @@ async def run_post_deliver_receipts(
         _auto_ack_enabled()
         and _should_auto_ack(event)
         and isinstance(sender, str)
-        and _auto_ack_rate_allow(sender)
     ):
         try:
             await _post_auto_ack(
@@ -96,7 +98,7 @@ async def run_post_deliver_receipts(
                 listen_url=listen_url,
                 bearer=bearer,
             )
-        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
+        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged to stderr by the MCP process logger)
             log.warning(
                 "sac channel: auto-ack to %r failed: %s",
                 sender,
@@ -117,7 +119,7 @@ async def run_post_deliver_receipts(
                 listen_url=listen_url,
                 bearer=bearer,
             )
-        except Exception as exc:  # stx-allow: fallback (reason: best-effort reaction-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
+        except Exception as exc:  # stx-allow: fallback (reason: best-effort reaction-ack; a failed receipt must not block injection or kill the SSE consumer — logged to stderr by the MCP process logger)
             log.warning(
                 "sac channel: reaction-ack to %r failed: %s",
                 sender,

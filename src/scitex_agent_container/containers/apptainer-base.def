@@ -49,10 +49,16 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # path below against the build CWD, which the CLI sets to that
     # staging dir. See sac image build for the staging implementation.
     scitex-agent-container-src /opt/scitex-agent-container-src
+    scitex-cards-src /opt/scitex-cards-src
+    hermes-agent-src /opt/hermes-agent
 
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
+    export TMPDIR=/opt/.sac-build-tmp
+    mkdir -p "$TMPDIR"
+    chmod 1777 "$TMPDIR"
+    trap 'rm -rf /opt/.sac-build-tmp' EXIT
 
     # ---- 1. apt: system packages ---------------------------------------
     # Dev-CLIs ship from apt where Ubuntu 24.04 carries them — faster
@@ -211,7 +217,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         apptainer uidmap squashfs-tools
 
     # ---- 3. Node.js + npm globals --------------------------------------
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y --no-install-recommends nodejs
     mkdir -p /opt/npm-global
     npm config set prefix /opt/npm-global
@@ -223,6 +229,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         @typescript-eslint/eslint-plugin \
         jsonlint \
         @mermaid-js/mermaid-cli \
+        opencode-ai@1.18.31 \
         @anthropic-ai/claude-code@latest
 
     # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
@@ -622,13 +629,51 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
     # weaken ``--reinstall-package``: that stays the stronger lever for
     # sac's own rebuild-from-staged-source.
+    # Cards 0.52.1 is pinned to its exact, verified release commit and exported
+    # by the build frontend. This is not a moving branch ref and the local path
+    # is explicit in the resolver transaction. Filesystem
+    # requirements cannot carry a PEP 440 comparator; SAC's project metadata
+    # honestly declares the supported floor (scitex-cards>=0.52.1), while the
+    # local candidate reports 0.52.1 and the commit marker proves its content.
+    # Keep both runtime extras explicit even though that source currently
+    # promotes their dependencies to core: the aliases are the install-time
+    # contract that fastmcp and psycopg must remain resolvable.
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
+        --reinstall-package scitex-cards \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards>=0.49.1" \
+        "/opt/scitex-cards-src[mcp,postgres]" \
         "/opt/scitex-agent-container-src[all,dev]"
 
-    # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
+    # ---- 6c. Hermes harness + official TUI ---------------------------
+    # Hermes is a harness available to every SAC agent, not a separate image
+    # product. Its exact source commit is staged beside SAC before the base
+    # build. Keep its Python environment isolated from /opt/venv-sac because
+    # Hermes owns a fully pinned lockfile and a narrower Python compatibility
+    # range.
+    HERMES_ROOT=/opt/hermes-agent
+    UV_CACHE_DIR=/tmp/sac-hermes-uv-cache \
+        uv sync --project "$HERMES_ROOT" --frozen --no-dev \
+        --extra messaging --extra mcp
+    rm -rf /tmp/sac-hermes-uv-cache
+    ln -sf "$HERMES_ROOT/.venv/bin/hermes" /usr/local/bin/hermes
+
+    # Build the official Ink TUI from the same pinned source. The upstream
+    # root package-lock covers the ui-tui workspace, so npm ci is deterministic.
+    npm ci --prefix "$HERMES_ROOT" --workspace ui-tui --include=dev
+    npm run --prefix "$HERMES_ROOT" build --workspace ui-tui
+    node --check "$HERMES_ROOT/ui-tui/dist/entry.js"
+    rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
+    npm cache clean --force
+
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/ywatanabe1989/hermes-agent.git"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
+    test -x "$HERMES_ROOT/.venv/bin/hermes"
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.2"'
+    test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
+
+    # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
     # silently shipped scitex-todo 0.7.50 — days and two minor releases
     # behind — and NOTHING failed. The bake was green, `sac versions`
@@ -682,6 +727,11 @@ fatal build error.
 import importlib.metadata as md
 import sys
 
+# Clean starts require this exact psutil capability for inbox sidecar
+# reconciliation and Hermes stale-session recovery.  An unhandled ImportError
+# rejects the image before publication.
+from psutil import process_iter as _psutil_process_iter  # noqa: F401
+
 # Both imports ARE staleness probes: each raises ImportError (unhandled →
 # non-zero exit → dead build) on a stale bake, naming the missing symbol.
 
@@ -701,6 +751,8 @@ import sys
 # it as dead because nothing references the name, and removing it on that
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
+from scitex_cards._messaging import canonical_agent_identity
+from scitex_cards._notification_watch import _doorbell_status  # noqa: F401
 from scitex_cards._throughput import WIP_STATUSES
 
 # scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
@@ -785,7 +837,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.49.1``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.52.1``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -882,6 +934,8 @@ else:
 # states must never occupy a WIP slot.
 if "in_progress" not in WIP_STATUSES:
     failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
+    failures.append("scitex-cards #1003 DM recipient canonicalization is absent")
 terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
 if terminal:
     failures.append(
@@ -975,13 +1029,34 @@ EOF
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
     # those earlier entries do NOT shadow the npm claude symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    export HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
+    export HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
+
+%test
+    # The image must not be published with a console entry point whose
+    # packaged target is absent. Apptainer runs this after %post and fails
+    # the build before scitex-container atomically promotes the SIF.
+    /opt/venv-sac/bin/sac --version
+    env -i \
+        PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+        HOME=/tmp \
+        XDG_CONFIG_HOME=/tmp/.config \
+        XDG_DATA_HOME=/tmp/.local/share \
+        XDG_CACHE_HOME=/tmp/.cache \
+        XDG_STATE_HOME=/tmp/.local/state \
+        BUN_INSTALL_CACHE_DIR=/tmp/.bun-cache \
+        /opt/npm-global/bin/opencode --version
 
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
+    org.scitex.hermes.version 0.21.2
+    org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
+    org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
+    org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
 
 %help
     scitex-agent-container :base layer.

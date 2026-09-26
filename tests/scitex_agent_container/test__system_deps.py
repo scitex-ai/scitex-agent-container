@@ -20,6 +20,12 @@ agent's search.
 
 No mocks (PA-306): the real provider, and the real entry-point metadata.
 AAA markers, one assertion per test.
+
+The trailing ``kind="script"`` entry (hermes-agent) is the exception to
+three apt-shaped assertions below: it carries no apt name, its purpose
+justifies a user-space installer rather than an image-build package, and
+the provider set is no longer apt-only. Each carve-out names the entry it
+excludes so a second script-kind dep cannot slip in unexamined.
 """
 
 from __future__ import annotations
@@ -28,7 +34,12 @@ from importlib.metadata import entry_points
 
 import pytest
 
-from scitex_agent_container._system_deps import provide
+from scitex_agent_container._system_deps import (
+    HERMES_INSTALL_ARGS,
+    HERMES_INSTALL_URL,
+    HERMES_VERIFY_COMMAND,
+    provide,
+)
 
 _GROUP = "scitex_dev.system_deps"
 
@@ -75,6 +86,8 @@ def test_every_dep_carries_a_purpose():
 def test_purposes_are_more_than_a_restatement_of_the_package():
     # Arrange: "ripgrep — installs ripgrep" would pass a bare non-empty
     # check and carry nothing. The purpose has to say what BREAKS without it.
+    # The hermes-agent purpose justifies a user-space installer rather than
+    # an image-build package, so it is held to the same bar, not excluded.
     deps = provide()
     # Act
     thin = [d.package for d in deps if len(d.purpose.split()) < 6]
@@ -124,3 +137,40 @@ def test_the_entry_point_resolves_to_this_provider(sac_entry_point):
     loaded = ep.load()
     # Assert
     assert loaded is provide
+
+
+def test_hermes_agent_is_the_only_script_kind_dep():
+    # Arrange: kinds do not mix silently -- exactly one entry may install
+    # user-space, and it must be the Hermes harness.
+    deps = provide()
+    # Act
+    script = sorted(d.package for d in deps if d.kind == "script")
+    # Assert
+    assert script == ["hermes-agent"]
+
+
+def test_hermes_agent_pins_an_https_installer():
+    # Arrange: the fleet-wide install must not be downgradeable on the wire.
+    deps = provide()
+    # Act
+    urls = [d.install_url for d in deps if d.package == "hermes-agent"]
+    # Assert
+    assert urls == [HERMES_INSTALL_URL]
+
+
+def test_hermes_agent_install_stays_non_interactive():
+    # Arrange: a fleet install that stops to ask is not an install.
+    deps = provide()
+    # Act
+    args = [d.install_args for d in deps if d.package == "hermes-agent"]
+    # Assert
+    assert args == [HERMES_INSTALL_ARGS]
+
+
+def test_hermes_agent_carries_a_verify_command():
+    # Arrange: observation is the only accepted proof an install took.
+    deps = provide()
+    # Act
+    verifiers = [d.verify_command for d in deps if d.package == "hermes-agent"]
+    # Assert
+    assert verifiers == [HERMES_VERIFY_COMMAND]

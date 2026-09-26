@@ -26,7 +26,6 @@ Plus three lifecycle pieces:
 from __future__ import annotations
 
 import json
-import logging
 import os
 import signal
 import threading
@@ -34,12 +33,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
 import yaml
 
 from .._env import getenv as _sac_env
 from .._network import hub_client
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 _FAILBACK_POLL_INTERVAL_S = 60.0
 

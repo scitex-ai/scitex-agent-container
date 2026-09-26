@@ -27,11 +27,11 @@ from typing import Iterator
 from scitex_agent_container._mcp._tools import (
     _account,
     _agent,
-    _db,
     _host,
     _image,
     _info,
     _skills,
+    _store,
     register_all_tools,
 )
 from scitex_agent_container._mcp._tools import (
@@ -45,7 +45,7 @@ from scitex_agent_container._mcp._tools import (
 # ---------------------------------------------------------------------------
 
 
-_LEAF_MODULES = (_agent, _db, _host, _image, _account, _info, _h)
+_LEAF_MODULES = (_agent, _store, _host, _image, _account, _info, _h)
 
 
 @contextmanager
@@ -250,41 +250,41 @@ def test_agent_restart_with_name_dispatches_text_argv():
 
 
 # ---------------------------------------------------------------------------
-# _db — argv contract per verb
+# _store — argv contract per verb
 # ---------------------------------------------------------------------------
 
 
-def test_db_clean_with_stale_seconds_dispatches_json_argv():
+def test_store_clean_with_stale_seconds_dispatches_json_argv():
     # Arrange
     with _recording() as captured:
         # Act
-        _db.db_clean(heartbeat_stale_seconds=120)
+        _store.store_clean(heartbeat_stale_seconds=120)
     # Assert
     assert captured[-1] == (
         "json",
-        ["db", "clean", "--heartbeat-stale-seconds", "120", "--json"],
+        ["store", "clean", "--heartbeat-stale-seconds", "120", "--json"],
     )
 
 
-def test_db_tick_with_stale_seconds_dispatches_text_argv():
+def test_store_tick_with_stale_seconds_dispatches_text_argv():
     # Arrange
     with _recording() as captured:
         # Act
-        _db.db_tick(heartbeat_stale_seconds=42)
+        _store.store_tick(heartbeat_stale_seconds=42)
     # Assert
     assert captured[-1] == (
         "text",
-        ["db", "tick", "--heartbeat-stale-seconds", "42"],
+        ["store", "tick", "--heartbeat-stale-seconds", "42"],
     )
 
 
-def test_db_migrate_with_defaults_dispatches_bare_text_argv():
+def test_store_migrate_with_defaults_dispatches_bare_text_argv():
     # Arrange
     with _recording() as captured:
         # Act
-        _db.db_migrate()
+        _store.store_migrate()
     # Assert
-    assert captured[-1] == ("text", ["db", "migrate"])
+    assert captured[-1] == ("text", ["store", "migrate"])
 
 
 # ---------------------------------------------------------------------------

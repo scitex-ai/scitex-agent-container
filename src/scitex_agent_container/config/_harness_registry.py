@@ -31,15 +31,13 @@ unmappable combination raises :class:`UnmappableHarnessError` naming
 both spec values and the card (the operator's errors-reach-the-caller
 directive).
 
-WHAT THIS STEP DOES NOT CHANGE (behavior-preserving by contract):
+CURRENT LIFECYCLE COVERAGE:
 
-  * The step-2 refusal (PR #1039) still owns wrong-vendor protection:
-    a ``harness: openai`` spec resolves to a real registry key here, but
-    the lifecycle launch path still cannot START it —
-    ``ensure_harness_matches_claude_launch`` refuses before any dispatch
-    site consults a descriptor. Step 7 moved the openai RUNNER onto the
-    shared session daemon; key-based LAUNCH of non-Anthropic harnesses
-    stays behind that refusal until the canary step proves the runner.
+  * ``harness: codex`` + ``runtime: headless`` launches the persistent
+    Codex app-server runner. The daemon accepts neutral SAC/Cards/CCT
+    envelopes and maps mid-turn arrivals to native ``turn/steer``.
+  * ``harness: openai`` resolves to a registry key but remains refused by
+    lifecycle selection until that runner receives its own launch adapter.
   * The ``SAC_PROVIDER`` ops-only env override keeps its own surface
     (``runtimes/_apptainer_provider.resolve_agent_harness``); this
     resolver reads the SPEC axes only.
@@ -69,6 +67,8 @@ __all__ = [
     "CLAUDE_AGENT_SDK",
     "CLAUDE_CODE_TUI",
     "CODEX_SDK",
+    "CODEX_TUI",
+    "HERMES_TUI",
     "HARNESS_DESCRIPTORS",
     "HarnessDescriptor",
     "OPENAI_AGENTS",
@@ -112,6 +112,18 @@ OPENAI_AGENTS = "openai-agents"
 #: ``runtimes._apptainer_codex_env.codex_env_flags``).
 CODEX_SDK = "codex-sdk"
 
+#: The interactive ``codex`` TUI in a tmux PTY (``spec.harness: codex`` with
+#: ``spec.runtime: tui`` / unset). The shape 107 of 119 fleet specs run
+#: Claude Code in, opened to the codex harness on 2026-09-05 (operator
+#: ruling: the fleet prepares to leave Claude Code, gradually). Renders
+#: through ``runtimes._apptainer_inner_argv_codex``.
+CODEX_TUI = "codex-tui"
+
+#: Hermes' official Ink TUI in a tmux PTY. Hermes is intentionally TUI-only
+#: on the production v3 lifecycle; its gateway/headless control plane remains
+#: outside this registration until that separate rollout is approved.
+HERMES_TUI = "hermes-tui"
+
 
 class UnmappableHarnessError(ValueError):
     """``spec.harness`` + ``spec.runtime`` select no registered harness.
@@ -140,15 +152,24 @@ def _v4_card() -> str:
 # their ``RUNNER_MODULE*`` re-exports from the DESCRIPTORS, not from these.
 # ---------------------------------------------------------------------------
 
-from ._harness_callables import (  # noqa: F401 (re-export)
+from ._harness_callables import (  # noqa: E402
     CLAUDE_SESSION_RUNNER as _CLAUDE_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402
     CODEX_SESSION_RUNNER as _CODEX_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402
     OPENAI_SESSION_RUNNER as _OPENAI_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402,F401 (re-export)
     _claude_env_and_binds,
     _claude_sdk_inner_argv,
     _claude_tui_inner_argv,
     _codex_env_and_binds,
     _codex_sdk_inner_argv,
+    _codex_tui_inner_argv,
+    _hermes_env_and_binds,
+    _hermes_tui_inner_argv,
     _noop_prepare_home,
     _openai_agents_inner_argv,
     _openai_env_and_binds,
@@ -212,6 +233,34 @@ class HarnessDescriptor:
     #: the shared ``to_home`` machinery. Default no-op (per the design).
     prepare_home: Callable[..., None] = field(default=_noop_prepare_home)
 
+    #: THIS harness's OWN name for "how big is the context window", or
+    #: ``None`` when it does not take one through the environment.
+    #:
+    #: It lives in the descriptor because the alternative was a branch:
+    #: ``runtimes/_apptainer_provider`` used to emit
+    #: ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` only when the launch resolved to
+    #: the DEFAULT harness — so an engine's ``max_context_tokens`` reached
+    #: one vendor's program and silently reached nobody else's. That is a
+    #: privilege granted by an ``if``, not by a measurement. As a
+    #: descriptor column every harness answers the same question in the
+    #: same place, and a harness that answers ``None`` says so explicitly
+    #: (codex takes its window as ``-c model_context_window`` on the argv,
+    #: rendered by ``runtimes/_apptainer_inner_argv_codex``).
+    context_window_env: str | None = None
+
+    #: ADDITIONAL ``spec.harness`` spellings that select this entry.
+    #:
+    #: THE PROGRAM NAMES ARE THE HONEST ONES. ``anthropic`` is a VENDOR
+    #: word standing in for a PROGRAM, and this axis names programs —
+    #: ``codex`` already does, which is why it reads correctly and its
+    #: siblings do not. Both spellings are accepted for the compatibility
+    #: window (the same window ``spec.provider`` has), so a spec may be
+    #: written ``harness: claude-code`` today. THE DIRECTION REVERSES in
+    #: the deletion PR that closes this migration: the program name
+    #: becomes canonical and the vendor word becomes the alias. Aliasing
+    #: first, flipping second, keeps the corpus loading through it.
+    spec_harness_aliases: frozenset[str] = field(default_factory=frozenset)
+
 
 #: THE registry. One entry per harness; a fourth harness is one more row.
 HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
@@ -220,6 +269,8 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
         HarnessDescriptor(
             key=CLAUDE_CODE_TUI,
             spec_harness="anthropic",
+            spec_harness_aliases=frozenset({"claude-code", "claude"}),
+            context_window_env="CLAUDE_CODE_MAX_CONTEXT_TOKENS",
             spec_runtimes=frozenset({"", "tui"}),
             runner_module=None,  # inner process is the `claude` binary
             inner_argv=_claude_tui_inner_argv,
@@ -234,7 +285,14 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             # "apptainer" is the pre-2026-06-13 container-engine spelling,
             # honoured as a back-compat alias of the SDK runner (see
             # _runtime_select.warn_if_legacy_apptainer_runtime).
-            spec_runtimes=frozenset({"apptainer", "claude-agent-sdk"}),
+            spec_harness_aliases=frozenset({"claude-code", "claude"}),
+            context_window_env="CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            # "headless" is the vendor-NEUTRAL spelling of this launch
+            # mode; "claude-agent-sdk" names a vendor SDK and "apptainer"
+            # a container engine — neither is what a LAUNCH MODE is. All
+            # three are accepted; new specs are scaffolded with the
+            # neutral one.
+            spec_runtimes=frozenset({"apptainer", "claude-agent-sdk", "headless"}),
             runner_module=_CLAUDE_SESSION_RUNNER,
             inner_argv=_claude_sdk_inner_argv,
             hosted="runner",
@@ -245,6 +303,7 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
         HarnessDescriptor(
             key=OPENAI_AGENTS,
             spec_harness="openai",
+            spec_harness_aliases=frozenset({"openai-agents"}),
             # Sole entry of its family — the harness axis alone selects it
             # (the runtime axis names Anthropic launch modes; #1039's
             # refusal keeps those paths from ever launching this entry).
@@ -262,12 +321,23 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             env_and_binds=_openai_env_and_binds,
         ),
         HarnessDescriptor(
+            key=CODEX_TUI,
+            spec_harness="codex",
+            # Mirrors claude-code-tui: an unset ``runtime`` selects the
+            # interactive pane (operator directive 2026-06-15), so a spec
+            # that flips ``harness: anthropic`` to ``codex`` keeps its shape.
+            spec_runtimes=frozenset({"", "tui"}),
+            runner_module=None,  # inner process is the `codex` binary
+            inner_argv=_codex_tui_inner_argv,
+            hosted="external",
+            beat_writer="host-probe",  # pane-activity epoch, host-stamped
+            can_resume=True,  # `codex resume <id>` / `resume --last`
+            env_and_binds=_codex_env_and_binds,
+        ),
+        HarnessDescriptor(
             key=CODEX_SDK,
             spec_harness="codex",
-            # Sole entry of its family, like openai-agents: the runtime
-            # axis spells ANTHROPIC launch modes ("tui" / the legacy
-            # container-engine values), so it cannot discriminate here.
-            spec_runtimes=frozenset(),
+            spec_runtimes=frozenset({"headless"}),
             runner_module=_CODEX_SESSION_RUNNER,
             inner_argv=_codex_sdk_inner_argv,
             # RUNNER, not "external" — and the distinction is subtler
@@ -299,6 +369,17 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             # exercises the accept side of the registry-derived gate.
             can_resume=True,
             env_and_binds=_codex_env_and_binds,
+        ),
+        HarnessDescriptor(
+            key=HERMES_TUI,
+            spec_harness="hermes",
+            spec_runtimes=frozenset({"tui"}),
+            runner_module=None,
+            inner_argv=_hermes_tui_inner_argv,
+            hosted="external",
+            beat_writer="host-probe",
+            can_resume=True,
+            env_and_binds=_hermes_env_and_binds,
         ),
     )
 }
@@ -340,12 +421,13 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
         from ._harness_types import DEFAULT_AGENT_HARNESS
 
         harness = (
-            str(getattr(spec, "harness", "") or DEFAULT_AGENT_HARNESS)
-            .strip()
-            .lower()
+            str(getattr(spec, "harness", "") or DEFAULT_AGENT_HARNESS).strip().lower()
         )
         runtime = str(getattr(spec, "runtime", "") or "")
 
+    from ._harness_lookup import canonical_harness
+
+    harness = canonical_harness(harness) or harness
     family = [
         descriptor
         for descriptor in HARNESS_DESCRIPTORS.values()
@@ -358,14 +440,15 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
             f"family. Known harnesses: {', '.join(known_harnesses())}. "
             f"(v4 harness registry — card {_v4_card()})"
         )
-    if len(family) == 1:
+    # A sole row with NO runtime spellings (openai-agents) is selected by
+    # harness alone. A sole row that DOES claim spellings (Hermes TUI) is
+    # intentionally mode-restricted and must still pass through the matcher.
+    if len(family) == 1 and not family[0].spec_runtimes:
         return family[0].key
     for descriptor in family:
         if runtime in descriptor.spec_runtimes:
             return descriptor.key
-    mappings = "; ".join(
-        f"{sorted(d.spec_runtimes)} → {d.key!r}" for d in family
-    )
+    mappings = "; ".join(f"{sorted(d.spec_runtimes)} → {d.key!r}" for d in family)
     raise UnmappableHarnessError(
         f"Unsupported runtime: spec.runtime={runtime!r} maps to no "
         f"registered harness under spec.harness={harness!r}. Accepted "

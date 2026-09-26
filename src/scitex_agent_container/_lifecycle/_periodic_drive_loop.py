@@ -34,9 +34,11 @@ import logging
 import time
 from typing import Any, Iterable
 
+import scitex_logging as slogging
+
 from ._periodic_drive import PeriodicDriveEnvelope, _AgentState, sweep
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _log_emit_outcome(log: logging.Logger, agent: str, task: asyncio.Task) -> None:

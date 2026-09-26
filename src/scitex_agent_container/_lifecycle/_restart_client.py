@@ -36,12 +36,14 @@ Stdlib-only on purpose — mirrors :mod:`._spawn_client`: ``urllib``
 from __future__ import annotations
 
 import json
-import logging
+import math
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 __all__ = ["RestartRequestError", "request_restart"]
 
@@ -139,8 +141,8 @@ def _parse_body(raw: bytes) -> Any:
     try:
         return json.loads(raw)
     except ValueError:
-        # stx-allow: fallback (reason: non-JSON body surfaced verbatim to
-        # the caller via RestartRequestError.body — never silently dropped
+        # stx-allow: fallback (reason: non-JSON body is returned verbatim in
+        # RestartRequestError.body — never silently dropped
         # or converted into a fake success).
         return raw.decode("utf-8", errors="replace")
 
@@ -175,6 +177,7 @@ def request_restart(
     *,
     caller: str | None = None,
     fresh: bool = False,
+    drain_timeout_s: float = 0.0,
     base_url: str | None = None,
     bearer: str | None = None,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
@@ -222,6 +225,18 @@ def request_restart(
     """
     if not isinstance(name, str) or not name:
         raise RestartRequestError("name must be a non-empty string")
+    try:
+        parsed_drain_timeout = float(drain_timeout_s)
+    except (TypeError, ValueError):
+        parsed_drain_timeout = float("nan")
+    if (
+        isinstance(drain_timeout_s, bool)
+        or not math.isfinite(parsed_drain_timeout)
+        or parsed_drain_timeout < 0
+    ):
+        raise RestartRequestError(
+            "drain_timeout_s must be a finite non-negative number"
+        )
 
     base = _resolve_base_url(base_url)
     tok = _resolve_bearer(bearer)
@@ -234,6 +249,8 @@ def request_restart(
     # when a fresh (no-resume) restart is requested.
     if fresh:
         body["fresh"] = True
+    if parsed_drain_timeout > 0:
+        body["drain_timeout_seconds"] = parsed_drain_timeout
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents/{name}/restart"

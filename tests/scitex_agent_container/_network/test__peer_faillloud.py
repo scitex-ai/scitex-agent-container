@@ -18,8 +18,6 @@ through ``resolve_config``. Conforms to STX-TQ002 (AAA markers), STX-TQ003
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import os
 from pathlib import Path
@@ -27,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._network.peer import PeerError, resolve_peer_url
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +59,7 @@ def resolve_yaml_to():
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path):
+def isolated_state_store(tmp_path: Path):
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` (explicit save/restore).
 
     The reload picked up a module-level ``DEFAULT_DB_PATH`` until 2026-08-30.
@@ -71,7 +70,7 @@ def isolated_state_db(tmp_path: Path):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(db)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -119,13 +118,13 @@ def _write_static_local_yaml(tmp_path: Path) -> Path:
 
 class TestUnresolvableInstanceFailsLoud:
     def test_no_live_instance_with_history_names_last_known_host(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML, no local allocator claim, and an
         # ENDED prior instance row recording the last-known host.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import (
+        from scitex_agent_container._state.state_store import (
             record_instance_start,
             record_instance_stop,
         )
@@ -141,12 +140,12 @@ class TestUnresolvableInstanceFailsLoud:
             resolve_peer_url("clew")
 
     def test_no_live_instance_refuses_to_assume_local(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — same ended-history shape.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import (
+        from scitex_agent_container._state.state_store import (
             record_instance_start,
             record_instance_stop,
         )
@@ -162,7 +161,7 @@ class TestUnresolvableInstanceFailsLoud:
             resolve_peer_url("clew")
 
     def test_no_registry_history_at_all_still_raises_loud(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML, no allocator claim, NO instances row.
         env_save_restore.set("SAC_HOST", "lead-host")
@@ -181,14 +180,14 @@ class TestUnresolvableInstanceFailsLoud:
 
 class TestStaleLocalContradictsRemoteFailsLoud:
     def test_static_local_port_with_fresh_remote_row_raises(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — a STATIC loopback port in the YAML would resolve
         # local, but the cross-host registry holds a FRESH remote=True
         # row on another host (the #192 unbreakable wrong state).
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_static_local_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan-bm001", bound_port=19500, remote=True
@@ -200,12 +199,12 @@ class TestStaleLocalContradictsRemoteFailsLoud:
             resolve_peer_url("clew")
 
     def test_contradiction_error_names_the_holding_host(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_static_local_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan-bm001", bound_port=19500, remote=True
@@ -217,7 +216,7 @@ class TestStaleLocalContradictsRemoteFailsLoud:
             resolve_peer_url("clew")
 
     def test_static_local_port_without_remote_row_resolves_local(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — a static local port and NO contradicting remote row
         # must still resolve to the loopback URL (no false-positive raise).
@@ -229,13 +228,13 @@ class TestStaleLocalContradictsRemoteFailsLoud:
         assert url == "http://127.0.0.1:18888/v1/turn"
 
     def test_local_row_does_not_contradict_local_resolution(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — a local (remote=False) instances row must NOT trigger
         # the contradiction guard.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_static_local_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="lead-host", bound_port=18888, remote=False

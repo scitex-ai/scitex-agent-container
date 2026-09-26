@@ -30,12 +30,13 @@ guard's exit code — a different risk class, kept out of this module on purpose
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from .._runtime_paths import runtime_base_dir
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 _MANIFEST_NAME = "hook-origins.json"
 _HOOKS_PREFIX = "hooks."

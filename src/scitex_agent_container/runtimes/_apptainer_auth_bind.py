@@ -294,9 +294,9 @@ def ensure_credentials_bind_target(
         if not placeholder.exists():
             placeholder.touch()
     except OSError as exc:  # stx-allow: fallback (reason: a placeholder-create failure must not block launch — the bind may still land if the target exists for another reason; logged for the operator)
-        import logging
+        import scitex_logging as slogging
 
-        logging.getLogger(__name__).warning(
+        slogging.getLogger(__name__).warning(
             "credentials bind-target placeholder %s could not be created "
             "(container_home=%s): %s",
             placeholder,

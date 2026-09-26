@@ -79,6 +79,7 @@ from .._events import (
     degraded_state_path,
     emit_subject_verdicts,
 )
+from .._logging import write_stream
 from ._cct_rail_verdict import (
     RAIL_DOWN,
     RAIL_NOT_REQUESTED,
@@ -327,12 +328,12 @@ def alarm_cct_rail(
     try:
         send(_summary(verdict), _detail(verdict))
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
+        write_stream(
             f"[cct-rail] {verdict.agent}: recorded in sac's event log, but the "
             f"lead blocker push FAILED — {exc}. NOBODY HAS BEEN PAGED; this "
             f"agent is {verdict.state} on Telegram and the only account of it "
             f"is the event log.",
-            file=stream,
+            stream,
         )
         return "recorded"
     return "paged"

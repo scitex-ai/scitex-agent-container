@@ -93,7 +93,7 @@ def _active_row_for(name: str) -> dict | None:
     first match is the newest.
     """
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
     except Exception:  # pragma: no cover - import guarded only for safety
         return None
     try:

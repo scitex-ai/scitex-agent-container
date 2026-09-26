@@ -22,8 +22,10 @@ No mocks — pure-function cases, a recording-runner seam, and real ``tmux``.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from typing import Iterator
@@ -36,6 +38,33 @@ from scitex_agent_container._runners._tmux.tmux import TmuxManager
 requires_tmux = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="tmux binary not on PATH"
 )
+
+
+@pytest.fixture(autouse=True)
+def private_tmux_socket() -> Iterator[None]:
+    """Give each real-tmux test its own server.
+
+    The suite runs with many xdist workers.  Sharing tmux's user-default
+    socket lets an unrelated test (or an operator session on a self-hosted
+    runner) change the server while this file verifies an exact target.
+    ``TMUX_TMPDIR`` preserves real tmux behavior while isolating ownership.
+    """
+    key = "TMUX_TMPDIR"
+    previous = os.environ.get(key)
+    # tmux uses a Unix-domain socket whose path is capped at roughly 108
+    # bytes.  pytest's nested per-run paths can exceed that limit, so this
+    # private random directory deliberately starts directly below /tmp.
+    socket_root = tempfile.mkdtemp(prefix=f"sac-tmux-{os.getpid()}-", dir="/tmp")
+    os.chmod(socket_root, 0o700)
+    os.environ[key] = socket_root
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+        shutil.rmtree(socket_root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +136,9 @@ def test_send_text_literal_targets_the_exact_session_form() -> None:
     runner = _RunnerRecorder()
     # Act
     TmuxManager.send_text_literal("tui-x", "hello", runner=runner)
-    # Assert — the argv carries "=tui-x:", so a prefix can never land the
-    # text in a sibling's pane.
-    assert runner.argvs[0][:4] == ["tmux", "send-keys", "-t", "=tui-x:"]
+    # Assert — the paste argv carries "=tui-x:", so a prefix can never land
+    # the text in a sibling's pane.
+    assert runner.argvs[1][-2:] == ["-t", "=tui-x:"]
 
 
 # ---------------------------------------------------------------------------

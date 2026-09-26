@@ -12,10 +12,12 @@ host home via the shared ``env_save_restore`` fixture (no monkeypatch) so
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from scitex_agent_container.runtimes._host_commands import (
     deploy_host_claude_commands,
+    snapshot_drift,
 )
 from scitex_agent_container.runtimes._to_home import materialize_to_home
 
@@ -114,3 +116,60 @@ class TestHostCommandPrecedenceViaMaterialize:
         # Assert — the per-agent command overwrites the host one.
         landed = agent_home / ".claude" / "commands" / "foo.md"
         assert landed.read_text() == "AGENT VERSION\n"
+
+
+class TestSnapshotDrift:
+    """Launch-time commands-snapshot drift check (card sac-launch-compares-
+the-copied-commands-snapshot-to-the-dotfiles-ref-and-logs-divergence-20260905).
+
+    The snapshot is the command file the agent will read (runtime home);
+    the source is the dotfiles / host original. Identical sha256 → no line.
+    """
+    def test_identical_pair_is_silent(self, tmp_path):
+        # Arrange — snapshot and source are byte-identical.
+        cmd = tmp_path / "commands"
+        cmd.mkdir()
+        snap = cmd / "constitution.md"
+        snap.write_text("rule one\nrule two\n")
+        src = tmp_path / "ref" / "constitution.md"
+        src.parent.mkdir()
+        src.write_text("rule one\nrule two\n")
+        # Act
+        lines = snapshot_drift([(snap, src)])
+        # Assert — identical files produce
+        assert lines == []
+    def test_differing_pair_names_both_hashes(self, tmp_path):
+        # Arrange — snapshot has 4 lines, source has 3.
+        cmd = tmp_path / "commands"
+        cmd.mkdir()
+        snap = cmd / "constitution.md"
+        snap.write_text("one\ntwo\nthree\nfour\n")
+        src = tmp_path / "ref" / "constitution.md"
+        src.parent.mkdir()
+        src.write_text("one\ntwo\nthree\n")
+        # Act
+        lines = snapshot_drift([(snap, src)])
+        # Assert — exactly one line, naming both hashes and both counts.
+        sh = hashlib.sha256(snap.read_bytes()).hexdigest()[:8]
+        rh = hashlib.sha256(src.read_bytes()).hexdigest()[:8]
+        expected = (
+            f"commands/constitution.md: snapshot {sh} (4 lines) != "
+            f"source {rh} (3 lines) — restart to pick up"
+        )
+        assert lines == [expected]
+    def test_missing_source_gets_one_line(self, tmp_path):
+        # Arrange — snapshot exists; the source path was never written.
+        cmd = tmp_path / "commands"
+        cmd.mkdir()
+        snap = cmd / "constitution.md"
+        snap.write_text("one\ntwo\n")
+        src = tmp_path / "ref" / "constitution.md"
+        # Act
+        lines = snapshot_drift([(snap, src)])
+        # Assert — one line naming the missing source.
+        sh = hashlib.sha256(snap.read_bytes()).hexdigest()[:8]
+        expected = (
+            f"commands/constitution.md: snapshot {sh} (2 lines) — "
+            "source missing — restart to pick up"
+        )
+        assert lines == [expected]

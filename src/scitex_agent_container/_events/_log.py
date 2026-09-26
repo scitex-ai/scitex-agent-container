@@ -67,6 +67,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .._logging import write_stream
+
 __all__ = [
     "EVENT_LOG_ENV",
     "EVENT_LOG_FILENAME",
@@ -157,7 +159,7 @@ def _resolve_host() -> str:
     # record; a resolver failure must degrade to a short hostname and then to
     # "unknown", never break the write it annotates.)
     try:
-        from .._state.state_db_hostname import resolve_host
+        from .._state.state_store_hostname import resolve_host
 
         return resolve_host(None)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
@@ -234,12 +236,9 @@ def log_event(
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return True
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
-            f"[sac-events] FAILED to record {event} for "
+        write_stream(f"[sac-events] FAILED to record {event} for "
             f"{subsystem}/{subject or 'fleet'} at {target} — {exc}. The pass "
-            f"itself was UNAFFECTED, but this decision is now unrecorded.",
-            file=stream,
-        )
+            f"itself was UNAFFECTED, but this decision is now unrecorded.", stream)
         return False
 
 

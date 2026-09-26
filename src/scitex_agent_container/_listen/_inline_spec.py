@@ -88,14 +88,18 @@ def materialize_inline_spec(
          with HTTP 400 + ``kind="spec_invalid"`` carrying a per-entry
          ``reason`` sub-shade enum. Mirrors PR-1's wire shape so the
          caller can branch on ``kind`` + per-entry ``reason``.
-      6. ``kind="already_exists"`` for the overwrite-guard collision.
+      6. ``kind="already_exists"`` for the overwrite-guard collision or an
+         authority-managed symlink. ``overwrite=True`` may replace a regular,
+         host-owned spec, but never writes through a symlink installed by
+         ``sac agents link-specs``.
       7. ``kind="spec_invalid"`` for write failure (disk full, RO fs).
 
     Args:
         name: target agent name.
         spec: the inline v3 Agent spec dict from the POST body.
-        overwrite: 409 if a spec already exists at the target path
-            unless this is ``True``.
+        overwrite: 409 if a regular, host-owned spec already exists at the
+            target path unless this is ``True``. Authority-managed symlinks
+            are never overwritten; update their source and redeploy instead.
         caller: PR-2 — the spawning node's name. ``None`` (or an
             unknown caller) disables bind-translate and the spec is
             forwarded to the preflight unchanged. The same caller
@@ -186,6 +190,18 @@ def materialize_inline_spec(
         Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "agents" / name
     )
     spec_path = primary / "spec.yaml"
+    if primary.is_symlink() or spec_path.is_symlink():
+        return JSONResponse(
+            {
+                "error": (
+                    f"spec at {spec_path} is authority-managed through a symlink; "
+                    "inline spawn cannot overwrite it. Update the authoritative "
+                    "source and redeploy with 'sac agents link-specs'"
+                ),
+                "kind": "already_exists",
+            },
+            status_code=409,
+        )
     if spec_path.exists() and not overwrite:
         return JSONResponse(
             {

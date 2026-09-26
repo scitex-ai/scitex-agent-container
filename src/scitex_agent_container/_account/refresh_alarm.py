@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._events import SUBJECT_DEGRADED, log_event
+from .._logging import write_stream
 
 STATE_FILENAME = "refresh-alarm-state.json"
 
@@ -233,12 +234,9 @@ def alert_failed_refreshes(
         try:
             send(name, _build_summary(name, error), _build_detail(result, now_ts))
         except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-            print(
-                f"  {name:20s}  ALERT DELIVERY FAILED — {exc} "
+            write_stream(f"  {name:20s}  ALERT DELIVERY FAILED — {exc} "
                 "(refresh failure NOT yet acknowledged; will retry on the "
-                "next refresh run)",
-                file=stream,
-            )
+                "next refresh run)", stream)
             continue
         state[name] = {
             "alerted_at": now_ts,
@@ -247,22 +245,16 @@ def alert_failed_refreshes(
         }
         dirty = True
         alerted.append(name)
-        print(
-            f"  {name:20s}  ALERTED operator (recorded in sac's event log, "
+        write_stream(f"  {name:20s}  ALERTED operator (recorded in sac's event log, "
             "pushed at the lead blocker rail; deduped until this account "
-            "refreshes OK again)",
-            file=stream,
-        )
+            "refreshes OK again)", stream)
 
     if dirty:
         # stx-allow: fallback (reason: a dedupe-state write failure may cause one duplicate alert next run — preferable to crashing the refresh; the failure itself is printed loudly)
         try:
             _save_state(path, state)
         except OSError as exc:
-            print(
-                f"[refresh-alarm] failed to persist dedupe state at {path}: {exc}",
-                file=stream,
-            )
+            write_stream(f"[refresh-alarm] failed to persist dedupe state at {path}: {exc}", stream)
     return alerted
 
 

@@ -42,6 +42,11 @@ from pathlib import Path
 import click
 
 from . import _remote_bake_core as core
+from ._bake_lock import (
+    BakeAlreadyRunningError,
+    acquire_bake_lock,
+    release_bake_lock,
+)
 from ._remote_bake_core import (
     BakeVerdict,
     PullVerdict,
@@ -262,6 +267,21 @@ def image_bake_remote(
         # trap is a measured incident shape).
         containers_dir = Path.home() / ".scitex" / "agent-container" / "containers"
 
+    # ONE BAKE AT A TIME PER CONTAINERS DIR. Measured 2026-09-06/07: a
+    # supervisor restart began a SECOND ~7.6G pull of the same artifact
+    # while the first was mid-transfer; both used `rsync --partial`, so
+    # the newcomer resumed from the incumbent's partial AND wrote its own
+    # temp. scitex-compute-03 went 17G free -> 3.8G with three concurrent
+    # pulls, and earlier the same evening the identical loop drove the
+    # disk to zero and the ecosystem supervisor to 273 restarts.
+    #
+    # DECLINING IS EXIT 0, NOT A FAILURE. The caller is a supervised job
+    # under Restart=always: a non-zero exit here would be read as a crash
+    # and restarted, which is precisely the loop this prevents. Nothing
+    # went wrong when a second bake declines — the first one is doing the
+    # work.
+    containers_dir.mkdir(parents=True, exist_ok=True)
+
     failures: list[str] = []
     # One-line-per-failure summaries for the headline. The full reason is
     # multi-line by design (remote stderr, remedy), and a headline that
@@ -298,9 +318,38 @@ def image_bake_remote(
         click.echo(f"bake: {outcome.verdict.value} {outcome.sif}")
         if bake_only:
             continue
-        pull = core.pull_and_publish(
-            host=host, outcome=outcome, containers_dir=containers_dir, retain=retain
-        )
+        # ONE PULL AT A TIME PER CONTAINERS DIR — the lock wraps the
+        # TRANSFER it guards, not the whole command. Measured: a supervisor
+        # restart began a SECOND ~7.6G rsync of the same artifact while the
+        # first ran; both use --partial, so the newcomer resumed from the
+        # incumbent's partial AND wrote its own temp. compute-03 went 17G
+        # free -> 3.8G with three concurrent pulls.
+        #
+        # WHY NOT AT THE TOP OF THE COMMAND, measured the hard way: `--bake
+        # -only` never pulls and a FAILED bake never reaches here, so an
+        # earlier lock guarded paths that touch no disk — and did it on the
+        # DEFAULT containers dir under $HOME, which CI's two matrix legs
+        # share on one self-hosted runner. Four unrelated tests declined and
+        # develop went red. Scoping to the transfer fixes both: nothing that
+        # does not pull ever waits, and every caller reaching here passes an
+        # explicit dir, so tests isolate by construction.
+        #
+        # DECLINING IS NOT FAILING — a supervised job under Restart=always
+        # must not read "someone else is fetching this" as a crash.
+        try:
+            _pull_lock = acquire_bake_lock(containers_dir=containers_dir)
+        except BakeAlreadyRunningError as exc:
+            click.echo(f"publish: SKIPPED — {exc}")
+            continue
+        try:
+            pull = core.pull_and_publish(
+                host=host,
+                outcome=outcome,
+                containers_dir=containers_dir,
+                retain=retain,
+            )
+        finally:
+            release_bake_lock(_pull_lock)
         click.echo(f"publish: {pull.verdict.value} — {pull.detail}")
         if pull.verdict is PullVerdict.FAILED:
             failure_heads.append(

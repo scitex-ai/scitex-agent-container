@@ -41,11 +41,11 @@ from typing import Any
 
 import click
 
-from ..._state.state_db_instances import (
+from ..._state.state_store_instances import (
     list_active_instances,
     record_instance_stop,
 )
-from ..._state.state_db_nodes import unregister_comms_node
+from ..._state.state_store_nodes import unregister_comms_node
 
 __all__ = ["forget"]
 
@@ -62,7 +62,7 @@ def _refusal_message(name: str, active_rows: list[dict]) -> str:
     """
     hosts = sorted({r.get("host", "?") for r in active_rows})
     return (
-        f"refusing to forget {name!r}: state.db shows {len(active_rows)} "
+        f"refusing to forget {name!r}: the shared store shows {len(active_rows)} "
         f"live instance row(s) on host(s) {hosts!r}. If you are SURE the "
         f"agent is gone and want the rows dropped anyway, re-run with "
         f"--force. If the agent is reachable, prefer "
@@ -116,7 +116,7 @@ def _forget_one(name: str, *, force: bool, dry_run: bool) -> dict[str, Any]:
     is_flag=True,
     default=False,
     help=(
-        "Forget even if state.db shows the agent as live. Without "
+        "Forget even if the shared store shows the agent as live. Without "
         "--force, a live instance row aborts (use `sac agents stop "
         "--force <name>` to try the remote stop first)."
     ),
@@ -126,7 +126,7 @@ def _forget_one(name: str, *, force: bool, dry_run: bool) -> dict[str, Any]:
     "dry_run",
     is_flag=True,
     default=False,
-    help="Report what would be forgotten without mutating state.db.",
+    help="Report what would be forgotten without mutating the shared store.",
 )
 @click.option(
     "--json",

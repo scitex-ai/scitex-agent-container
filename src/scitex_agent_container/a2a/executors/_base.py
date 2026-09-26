@@ -15,10 +15,10 @@ artifact events as output appears.
 from __future__ import annotations
 
 import asyncio
-import logging
 from abc import abstractmethod
 from typing import Any
 
+import scitex_logging as slogging
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
@@ -28,7 +28,7 @@ from a2a.types.a2a_pb2 import Part as PbPart
 
 from scitex_agent_container.a2a._handlers import HandlerError
 
-log = logging.getLogger(__name__)
+log = slogging.getLogger(__name__)
 
 
 def _text_part(text: str) -> PbPart:

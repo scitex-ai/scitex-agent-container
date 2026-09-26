@@ -1,9 +1,10 @@
 """Static contract: ``apptainer-base.def``'s scitex-cards install must PROVIDE
 fastmcp and psycopg — by an extra, or by core at a high enough floor.
 
-The pin is BARE: ``scitex-cards>=0.32.0``. Both deps are core from 0.32.0
-(psycopg from 0.31.8), so there is no extras subset left to pick wrong, and the
-floor is what carries the guarantee.
+The normal registry install is governed by SAC's project dependency floor. A
+temporary exact-source delivery names ``/opt/scitex-cards-src[mcp,postgres]``
+instead: the extras preserve both runtime capabilities, while the same project
+dependency remains the honest supported-version floor in the resolver graph.
 
 This docstring has been WRONG THREE TIMES: it said "must install
 scitex-cards[mcp]", then "the pin is ``scitex-cards[all]``", each time
@@ -46,11 +47,13 @@ import re
 from pathlib import Path
 
 import pytest
+import tomllib
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BASE_DEF = (
     _REPO_ROOT / "src" / "scitex_agent_container" / "containers" / "apptainer-base.def"
 )
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 # The capability floor the fleet actually depends on: the WIP-gate fix
 # (scitex-todo #356, first released in 0.8.0) — the gate counts ``in_progress``
@@ -89,6 +92,19 @@ def base_def_text() -> str:
     return _BASE_DEF.read_text()
 
 
+@pytest.fixture(scope="module")
+def project_requirement() -> str:
+    # Arrange
+    dependencies = tomllib.loads(_PYPROJECT.read_text())["project"]["dependencies"]
+    # Act
+    matches = [
+        requirement for requirement in dependencies if "scitex-cards" in requirement
+    ]
+    # Assert
+    assert len(matches) == 1, matches
+    return matches[0]
+
+
 def _uv_pip_install_block(text: str) -> str:
     """Return the first ``uv pip install ...`` continuation chunk joined."""
     lines = text.splitlines()
@@ -121,6 +137,46 @@ def _requirement_floor(requirement: str) -> tuple[int, ...] | None:
     # shorter tuple sorts before a longer one sharing its prefix.
     parts += [0] * (3 - len(parts))
     return tuple(parts)
+
+
+def _effective_floor(
+    install_requirement: str, project_requirement: str
+) -> tuple[int, ...] | None:
+    """Return the install floor, including a staged source's project constraint.
+
+    A filesystem requirement cannot carry a PEP 440 comparator.  In the staged
+    case the local candidate is still resolved in the same transaction as SAC,
+    whose project metadata declares the supported scitex-cards floor.  Only the
+    exact staged path may use that declaration; an arbitrary unversioned
+    registry requirement must continue to fail closed.
+    """
+    floor = _requirement_floor(install_requirement)
+    if floor is not None:
+        return floor
+    if install_requirement.split("[", 1)[0] != "/opt/scitex-cards-src":
+        return None
+    return _requirement_floor(project_requirement)
+
+
+@pytest.mark.parametrize(
+    ("install_requirement", "project_requirement", "expected"),
+    [
+        ("/opt/scitex-cards-src[mcp,postgres]", "scitex-cards>=0.52.1", (0, 52, 1)),
+        ("/opt/scitex-cards-src[mcp,postgres]", "scitex-cards", None),
+        ("scitex-cards", "scitex-cards>=0.52.1", None),
+    ],
+)
+def test_effective_floor_trusts_the_project_floor_only_for_the_exact_staged_path(
+    install_requirement: str,
+    project_requirement: str,
+    expected: tuple[int, ...] | None,
+) -> None:
+    # Arrange
+    expected_floor = expected
+    # Act
+    floor = _effective_floor(install_requirement, project_requirement)
+    # Assert
+    assert floor == expected_floor
 
 
 # ---------------------------------------------------------------------------
@@ -234,28 +290,43 @@ def test_uv_pip_install_block_can_provide_psycopg(base_def_text: str) -> None:
 
 
 def test_uv_pip_install_block_pins_scitex_todo_minimum_version(
-    base_def_text: str,
+    base_def_text: str, project_requirement: str
 ) -> None:
     # Arrange — an UNVERSIONED requirement takes whatever happens to be newest
     # on the bake day and then freezes it into every downstream layer.
     block = _uv_pip_install_block(base_def_text)
     requirement = _scitex_todo_requirement(block)
     # Act
-    floor = _requirement_floor(requirement)
+    floor = _effective_floor(requirement, project_requirement)
     # Assert
     assert floor is not None, (
-        "scitex-cards install must carry a version specifier (>=, == or ~=)"
-        f" in apptainer-base.def; got {requirement!r} in:\n{block}"
+        "scitex-cards install must carry a version specifier (>=, == or ~=),"
+        " directly or through SAC's project dependency for the exact staged"
+        f" source; got install={requirement!r}, project={project_requirement!r}"
+        f" in:\n{block}"
     )
 
 
+def test_project_floor_excludes_cards_that_read_the_retired_local_config(
+    project_requirement: str,
+) -> None:
+    # Arrange — v0.52.0 predates Cards #1005. It still consults
+    # ~/.scitex/cards/config.json and can therefore route one unattended client
+    # to the retired loopback database instead of scitex-dev's shared store.
+    minimum = (0, 52, 1)
+    # Act
+    floor = _requirement_floor(project_requirement)
+    # Assert
+    assert floor is not None and floor >= minimum, project_requirement
+
+
 def test_scitex_todo_floor_is_at_least_the_wip_gate_capability(
-    base_def_text: str,
+    base_def_text: str, project_requirement: str
 ) -> None:
     # Arrange — below the WIP-gate fix (scitex-todo #356, first released in
     # 0.8.0) every agent's WIP gate counts DEFERRED + CANCELLED cards as open.
     block = _uv_pip_install_block(base_def_text)
-    floor = _requirement_floor(_scitex_todo_requirement(block))
+    floor = _effective_floor(_scitex_todo_requirement(block), project_requirement)
     # Act
     meets_capability = floor is not None and floor >= _WIP_GATE_MIN_VERSION
     # Assert

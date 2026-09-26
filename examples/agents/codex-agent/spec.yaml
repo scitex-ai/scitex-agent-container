@@ -19,7 +19,7 @@ spec:
   workdir: /home/agent/work
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    image: sac-scitex
     binds: []
     env: {}
     raw_args: []

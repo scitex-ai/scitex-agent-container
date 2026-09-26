@@ -111,8 +111,8 @@ from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
 from .._logging import get_logger
-from .._state.state_db_acl_policy_store import POLICY_STORE
-from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
+from .._state.state_store_acl_policy_store import POLICY_STORE
+from .._state.state_store_nodes import comms_policy_row_exists, resolve_group_names
 from ..config._group_resolver import groups_intersect
 from ._acl import deny_response
 from ._host_exec_child import (

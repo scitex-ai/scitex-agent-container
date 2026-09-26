@@ -28,11 +28,11 @@ store.
 from __future__ import annotations
 
 import json
-import logging
 import socket
 from pathlib import Path
 from typing import Any
 
+import scitex_logging as slogging
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes
@@ -43,7 +43,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from scitex_agent_container._lifecycle._off_loop import run_blocking
-from scitex_agent_container._state.state_db_channel import (
+from scitex_agent_container._state.state_store_channel import (
     persist_event,
 )
 from scitex_agent_container.a2a._card import (
@@ -55,12 +55,11 @@ from scitex_agent_container.a2a._card import (
 )
 from scitex_agent_container.a2a._delivery_report import report_zero_delivery
 from scitex_agent_container.a2a._handlers import HANDLERS
+from scitex_agent_container.a2a._inbox_ack import inbox_ack_route
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
 
-log = logging.getLogger(__name__)
-
-
+log = slogging.getLogger(__name__)
 # ---------------------------------------------------------------------
 # Per-agent SDK plumbing
 # ---------------------------------------------------------------------
@@ -281,6 +280,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             get_inbox_stream,
             methods=["GET"],
         ),
+        inbox_ack_route("/agents/{name}/inbox/ack", known_names=ctx.yamls),
         Route(
             "/agents/{name}/_active",
             get_active_tasks,
@@ -345,6 +345,13 @@ async def _publish_channel_event(
     for src in (params.get("metadata"), message.get("metadata")):
         if isinstance(src, dict):
             sac_meta.update(src)
+    kind_meta = sac_meta.get("kind")
+    if kind_meta is not None and not isinstance(kind_meta, str):
+        kind_meta = None
+    extra_meta = sac_meta.get("extra")
+    if not isinstance(extra_meta, dict) or not extra_meta:
+        extra_meta = None
+
     event = mint_event(
         name,
         content=text,
@@ -360,6 +367,9 @@ async def _publish_channel_event(
         # two auto-ack adapters ping-ponged forever. Mirrors the host
         # control-plane path in ``_listen/server.py``.
         ack=bool(sac_meta.get("ack", False)),
+        dispatch_id=sac_meta.get("dispatch_id"),
+        kind=kind_meta,
+        extra=extra_meta,
     )
 
     # WI-1 durability: persist BEFORE publishing. If the store is
@@ -394,13 +404,13 @@ def _base_url(request: Request) -> str:
 from scitex_agent_container.a2a._build import (  # noqa: E402
     agent_name_from_yaml as _agent_name_from_yaml,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     build_executor as _build_executor,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     load_yaml as _load_yaml,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     select_handler_key as _select_handler_key,
 )
 

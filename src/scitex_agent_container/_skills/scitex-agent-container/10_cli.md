@@ -19,7 +19,7 @@ sac agents restart <name>               # Stop then start, preserving session_id
 sac agents rename <old> <new> --dry-run # Show every location a rename would touch (exact; changes nothing)
 sac agents rename <old> <new> -y        # Rename EVERYWHERE, atomically (rolls back on any failure)
 sac agents delete <name> -y             # Stop, deregister, and remove the agent's dir
-sac db clean                            # Sweep dead instance rows (replaces legacy registry clean)
+sac store clean                            # Sweep dead instance rows (replaces legacy registry clean)
 ```
 
 ### `rename` — why it is a verb and not a `mv`
@@ -30,11 +30,11 @@ board. `rename` moves all of them together, or none:
 | # | Location |
 |---|---|
 | 1 | spec dir — `~/.scitex/agent-container/agents/<name>/` |
-| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, `SCITEX_AGENT_CONTAINER_STATE_DB`, and `SCITEX_TODO_AGENT_ID` |
+| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, and `SCITEX_TODO_AGENT_ID` |
 | 3 | overlay dir — `.../containers/overlays/<name>/` |
 | 4 | runtime + state dir — `.../runtime/<name>/` (bound into the container at `/state/<name>`) |
 | 5 | registry entry — `.../runtime/registry/<name>.json` |
-| 6 | `state.db` — every table that keys on the agent name (identity **and** history) |
+| 6 | shared PostgreSQL state-store records keyed by the agent name (identity **and** history) |
 | 7 | **task cards** — reassigned via scitex-todo's own `reassign_task` |
 
 Step 7 is the reason the verb exists. The board knows an agent by
@@ -73,9 +73,6 @@ sac agents find <capability>            # Find agents with a specific capability
 
 ```bash
 sac agents send <name> "<prompt>"          # Resume the agent's session for one more turn
-sac agents send <name> --key ESC           # Cancel the current turn (SIGINT to the runner pid)
-sac agents send <name> --no-stream         # Buffer the reply instead of streaming
-sac agents send <name> "..." -- --debug    # Anything after `--` is forwarded verbatim to claude
 ```
 
 Reads `session_id` from the per-agent state dir and shells out to `claude --resume <sid> -p ...` inside the agent's `workdir`. See `15_claude-session.md` for the long-lived alternative that keeps the SDK client open across turns.
@@ -148,7 +145,7 @@ sac accounts sync-live                # Mirror the live credential into its matc
 sac accounts watch-live               # Daemon: auto-sync the moment `claude /login` rewrites the live credential
 sac accounts switch <name>            # Switch active credentials
 sac accounts watch-quota              # Monitor quota and auto-rotate credentials
-sac db clean                          # Sweep dead instance rows
+sac store clean                          # Sweep dead instance rows
 sac event ingest                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 
@@ -176,7 +173,7 @@ Run `sac list-python-apis -vv` for the full signature tree.
 
 ## Conventions
 
-- **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac db clean`).
+- **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac store clean`).
 - **`--json` always available** on inspection commands so dashboards can consume them.
 - **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart` — the CLI resolves yaml paths to agent names internally.
 

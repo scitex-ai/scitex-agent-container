@@ -60,12 +60,13 @@ once the turn completes, carrying ``final_response``, the thread id as
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, AsyncIterator, Mapping, Sequence
+
+import scitex_logging as slogging
 
 from ._harness_session import Message, NormalizedEvent, RunResult
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "CodexSession",
@@ -208,8 +209,10 @@ class CodexSession:
 
     Lifecycle mirrors the Protocol: one :meth:`start` (spawn the codex
     app-server, open or RESUME a thread), N :meth:`send` turns (each one
-    ``thread.run``, streaming :class:`NormalizedEvent`, terminating in
-    ``kind="result"``), then :meth:`close`.
+    opens a native turn handle and streams :class:`NormalizedEvent`,
+    terminating in ``kind="result"``), then :meth:`close`. While a handle
+    is active, :meth:`steer` and :meth:`interrupt` expose Codex's native
+    app-server control methods with a turn-id precondition.
 
     Args:
         agent_name: sac agent identity — used for logging only; codex
@@ -272,6 +275,7 @@ class CodexSession:
         self.codex_bin = codex_bin
         self._codex: Any = None
         self._thread: Any = None
+        self._active_turn: Any = None
         self._started = False
 
     # -- HarnessSession surface ----------------------------------------
@@ -320,7 +324,7 @@ class CodexSession:
         self._started = True
 
     async def send(self, message: Message) -> AsyncIterator[NormalizedEvent]:
-        """Run one turn via ``thread.run`` and yield normalized events.
+        """Run one native turn handle and yield normalized events.
 
         The last event of a completed turn is ``kind="result"`` carrying
         the :class:`RunResult`; a failing turn yields ``kind="error"``
@@ -329,13 +333,28 @@ class CodexSession:
         if not self._started:
             raise CodexSessionError("CodexSession.send() called before start().")
 
+        if self._active_turn is not None:
+            raise CodexSessionError(
+                "CodexSession.send() called while another turn is active; "
+                "use steer() for mid-turn input."
+            )
+
+        turn = None
         try:
-            result = await self._thread.run(message.content)
+            # Keep the native handle rather than using ``thread.run``.  The
+            # handle is the app-server's control surface for deterministic
+            # mid-turn ``turn/steer`` and ``turn/interrupt`` requests.
+            turn = await self._thread.turn(message.content)
+            self._active_turn = turn
+            result = await turn.run()
         except asyncio.CancelledError:  # cooperative cancellation stays loud
             raise
         except Exception as exc:  # stx-allow: fallback (reason: SDK/subprocess/network surface is broad; the Protocol contract is a turn-ending kind="error" event, not an exception mid-iteration)
             yield NormalizedEvent(kind="error", error=str(exc), raw=exc)
             return
+        finally:
+            if self._active_turn is turn:
+                self._active_turn = None
 
         for item in getattr(result, "items", None) or ():
             normalized = normalize_thread_item(item)
@@ -360,6 +379,74 @@ class CodexSession:
             raw=result,
         )
 
+    @property
+    def active_turn_id(self) -> str | None:
+        """Return the app-server turn id while a turn is active."""
+        turn = self._active_turn
+        value = getattr(turn, "id", None) if turn is not None else None
+        return str(value) if value else None
+
+    async def steer(
+        self,
+        message: Message,
+        *,
+        expected_turn_id: str | None = None,
+    ) -> str:
+        """Apply input to the active Codex turn through native ``turn/steer``.
+
+        ``expected_turn_id`` is SAC's local precondition.  The installed SDK
+        also sends that same active id to app-server as its required
+        ``expectedTurnId`` field.  A missing or changed turn therefore fails
+        loudly instead of silently becoming a later queued turn.
+        """
+        if not self._started:
+            raise CodexSessionError("CodexSession.steer() called before start().")
+        turn = self._active_turn
+        active_id = self.active_turn_id
+        if turn is None or active_id is None:
+            raise CodexSessionError("CodexSession.steer() requires an active turn.")
+        if expected_turn_id is not None and expected_turn_id != active_id:
+            raise CodexSessionError(
+                f"active Codex turn changed: expected {expected_turn_id!r}, "
+                f"observed {active_id!r}."
+            )
+        try:
+            response = await turn.steer(message.content)
+        except Exception as exc:  # stx-allow: fallback (reason: expose the SDK/RPC refusal as the harness's typed operational error)
+            raise CodexSessionError(
+                f"codex turn/steer failed for {self.agent_name!r}: {exc}"
+            ) from exc
+        response_id = getattr(response, "turn_id", None) or getattr(
+            response, "turnId", None
+        )
+        if response_id is not None and str(response_id) != active_id:
+            raise CodexSessionError(
+                f"codex turn/steer acknowledged unexpected turn "
+                f"{response_id!r}; active turn is {active_id!r}."
+            )
+        return active_id
+
+    async def interrupt(self, *, expected_turn_id: str | None = None) -> str:
+        """Interrupt the active Codex turn with the same id precondition."""
+        if not self._started:
+            raise CodexSessionError("CodexSession.interrupt() called before start().")
+        turn = self._active_turn
+        active_id = self.active_turn_id
+        if turn is None or active_id is None:
+            raise CodexSessionError("CodexSession.interrupt() requires an active turn.")
+        if expected_turn_id is not None and expected_turn_id != active_id:
+            raise CodexSessionError(
+                f"active Codex turn changed: expected {expected_turn_id!r}, "
+                f"observed {active_id!r}."
+            )
+        try:
+            await turn.interrupt()
+        except Exception as exc:  # stx-allow: fallback (reason: expose the SDK/RPC refusal as the harness's typed operational error)
+            raise CodexSessionError(
+                f"codex turn/interrupt failed for {self.agent_name!r}: {exc}"
+            ) from exc
+        return active_id
+
     async def close(self) -> None:
         """Tear down the session: close the app-server subprocess.
 
@@ -371,6 +458,7 @@ class CodexSession:
         """
         codex, self._codex = self._codex, None
         self._thread = None
+        self._active_turn = None
         self._started = False
         if codex is None:
             return

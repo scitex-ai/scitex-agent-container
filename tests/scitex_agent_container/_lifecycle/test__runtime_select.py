@@ -42,6 +42,7 @@ from scitex_agent_container.config._harness_types import (
     HarnessRuntimeMismatchError,
 )
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,15 @@ def test_get_runtime_returns_tui_session_for_runtime_tui():
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, TuiSessionRuntime)
+
+
+def test_get_runtime_returns_hermes_tui_for_hermes_tui_spec():
+    # Arrange
+    config = AgentConfig(name="alpha", harness="hermes", runtime="tui")
+    # Act
+    runtime = _get_runtime(config)
+    # Assert
+    assert isinstance(runtime, HermesTuiSessionRuntime)
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +330,9 @@ def test_get_runtime_raises_harness_mismatch_for_openai_harness():
     # Act
     try:
         _get_runtime(config)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert isinstance(raised, HarnessRuntimeMismatchError)
@@ -333,7 +345,9 @@ def test_get_runtime_openai_harness_refusal_names_what_the_spec_asked():
     # Act
     try:
         _get_runtime(config)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert raised is not None and "harness='openai'" in str(raised)
@@ -347,7 +361,9 @@ def test_get_runtime_openai_harness_refusal_names_what_would_launch():
     # Act
     try:
         _get_runtime(config)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert raised is not None and "TuiSessionRuntime" in str(raised)
@@ -360,7 +376,9 @@ def test_get_runtime_openai_harness_refusal_names_the_decision_site():
     # Act
     try:
         _get_runtime(config)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert — file:line of the decision, so the reader lands on the guard.
     assert raised is not None and "_runtime_select.py:" in str(raised)
@@ -373,7 +391,9 @@ def test_get_runtime_openai_harness_refusal_names_the_v4_card():
     # Act
     try:
         _get_runtime(config)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
@@ -387,7 +407,9 @@ def test_get_runtime_openai_harness_refusal_names_the_v4_card():
 def test_get_runtime_returns_tui_session_for_default_harness():
     # Arrange — default harness is "anthropic" (DEFAULT_AGENT_HARNESS);
     # with no harness stated and runtime="", we still get TUI.
-    config = SimpleNamespace(name="epsilon")  # runtime defaults to "", harness defaults to anthropic
+    config = SimpleNamespace(
+        name="epsilon"
+    )  # runtime defaults to "", harness defaults to anthropic
     # Act
     rt = _get_runtime(config)
     # Assert
@@ -401,3 +423,45 @@ def test_get_runtime_returns_claude_session_for_anthropic_harness():
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, ClaudeSessionRuntime)
+
+
+# ---------------------------------------------------------------------------
+# codex-tui (2026-09-05): the selector maps the codex pane to the TUI runtime
+# ---------------------------------------------------------------------------
+
+
+def test_get_runtime_returns_tui_session_for_harness_codex():
+    # Arrange -- a spec that only flipped harness: anthropic -> codex.
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, TuiSessionRuntime)
+
+
+def test_get_runtime_returns_codex_session_for_headless_codex_runner():
+    # Arrange
+    from scitex_agent_container.runtimes.codex_session import CodexSessionRuntime
+
+    config = AgentConfig(
+        name="hm", runtime="headless", workdir="/tmp/hm", harness="codex"
+    )
+
+    # Act
+    runtime = _get_runtime(config)
+
+    # Assert
+    assert isinstance(runtime, CodexSessionRuntime)
+
+
+def test_get_runtime_still_refuses_the_openai_harness():
+    # Arrange -- the vendor guard is untouched for every other family.
+    config = AgentConfig(name="oa", runtime="", workdir="/tmp/oa", harness="openai")
+    # Act
+    try:
+        _get_runtime(config)
+        raised = None
+    except HarnessRuntimeMismatchError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)

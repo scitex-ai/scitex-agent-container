@@ -641,6 +641,57 @@ def test_validate_raw_rejects_non_string_image():
     assert any("spec.apptainer.image" in e and "string" in e for e in errors)
 
 
+def test_validate_raw_rejects_timestamped_managed_image_artifact():
+    # Arrange — immutable artifacts are incarnation state, never portable spec.
+    raw = _spec_with(
+        {
+            "apptainer": {
+                "image": (
+                    "/scratch/u/sac-images/h/sac-base/"
+                    "sac-base-2026-0912-140710.sif"
+                )
+            }
+        }
+    )
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert any("portable logical image name 'sac-base'" in e for e in errors)
+
+
+def test_validate_raw_rejects_stable_managed_image_filesystem_link():
+    # Arrange
+    raw = _spec_with(
+        {
+            "apptainer": {
+                "image": "~/.scitex/agent-container/containers/sac-base.sif"
+            }
+        }
+    )
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert any("portable logical image name 'sac-base'" in e for e in errors)
+
+
+def test_validate_raw_accepts_logical_managed_image():
+    # Arrange
+    raw = _spec_with({"apptainer": {"image": "sac-base"}})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [error for error in errors if "spec.apptainer.image" in error]
+
+
+def test_validate_raw_accepts_custom_image_with_managed_basename():
+    # Arrange — the CI inline-spec fixture creates this exact shape.
+    raw = _spec_with({"apptainer": {"image": "/tmp/ci-build/sac-base.sif"}})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [error for error in errors if "spec.apptainer.image" in error]
+
+
 def test_validate_raw_rejects_non_string_dockerfile():
     """``spec.dockerfile`` is no longer interpreted (docker ripout
     2026-05-13), but a non-string value still surfaces a type error
@@ -695,9 +746,7 @@ def _loaded_config_with_image(tmp_path):
                         "host": "${HOSTNAME}",
                         "workdir": "/home/agent/work",
                         "apptainer": {
-                            "image": (
-                                "~/.scitex/agent-container/containers/sac-scitex.sif"
-                            ),
+                            "image": "sac-scitex",
                             "binds": [],
                         },
                         "claude": {"model": "claude-opus-4-8[1m]"},
@@ -718,7 +767,7 @@ def test_image_round_trips_into_apptainer_image(_loaded_config_with_image):
     # Act
     value = cfg.apptainer.image
     # Assert — v3: AgentConfig.apptainer.image is populated from yaml.
-    assert value == "~/.scitex/agent-container/containers/sac-scitex.sif"
+    assert value == "sac-scitex"
 
 
 def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image):
@@ -727,7 +776,7 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
     # Act
     value = cfg.image
     # Assert — v3: AgentConfig.image mirrors spec.apptainer.image.
-    assert value == "~/.scitex/agent-container/containers/sac-scitex.sif"
+    assert value == "sac-scitex"
 
 
 # ---------------------------------------------------------------------------

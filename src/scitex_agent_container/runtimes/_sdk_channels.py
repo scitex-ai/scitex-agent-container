@@ -1,18 +1,17 @@
-"""``spec.claude.channels`` → claude dev-channels flag + sac MCP sidecar.
+"""Resolved ``spec.comms.channels`` → harness channel adapters.
 
 Extracted from ``_sdk_common.build_sdk_options`` so the channel wiring has
 one focused home (and its own test surface).
 
-claude renders ``<channel ...>`` tags — the ONLY way a channel notification
-ADVANCES a turn in an SDK session — solely when the bundled ``claude`` binary
-is started with ``--dangerously-load-development-channels`` listing the
-channel set. ``apply_channels`` sets that flag and, for ``server:sac``,
-auto-registers sac's own bus-adapter MCP.
+Harness-owned channels such as the Lead CCT edge still use the selected
+harness's native channel facility. Durable SAC and Cards ingress is different:
+the resident daemon is its single subscriber, so ``apply_channels`` must expose
+outbound tools without creating a competing inbound consumer.
 
 Two separate concerns, gated independently:
 
-  (a) dev-channels flag — fire for ANY ``spec.claude.channels`` entry, value
-      = comma-joined set of every requested channel. This is what lets a
+  (a) dev-channels flag — fire for harness-owned channel entries, excluding
+      daemon-owned ``server:sac`` / ``server:scitex-cards``. This lets a
       per-agent channel work, e.g. an agent running its OWN telegrammer bot
       via ``server:claude-code-telegrammer`` (whose backing stdio MCP the
       spec author supplies through ``to_home/.mcp.json``). The gate was
@@ -21,10 +20,9 @@ Two separate concerns, gated independently:
       claude never turned on rendering and the notifications were silently
       ignored (the "store fills, no turn appears" silent-failure class).
 
-  (b) ``sac mcp channel`` MCP auto-registration — ``server:sac`` ONLY. That
-      sidecar is sac's own bus adapter; it must never be auto-wired for a
-      foreign channel. Backing MCPs for non-sac channels come from the
-      spec's ``to_home/.mcp.json`` (already merged into ``mcp_servers``).
+  (b) ``sac mcp channel --send-only`` MCP auto-registration — ``server:sac``
+      ONLY. It exposes the outbound A2A tools but deliberately does not consume
+      the inbox already owned by the daemon.
 
 Wake-on-push diagnostics (bug #41 hardening, 2026-06-07):
   ``_wire_telegrammer_wake`` (concern (c)) used to silently no-op on every
@@ -43,13 +41,14 @@ Wake-on-push diagnostics (bug #41 hardening, 2026-06-07):
 from __future__ import annotations
 
 import json as _json
-import logging as _logging
 import os as _os
 import shutil as _shutil
 from dataclasses import dataclass
 from pathlib import Path as _Path
 
-_log = _logging.getLogger(__name__)
+import scitex_logging as slogging
+
+_log = slogging.getLogger(__name__)
 
 
 class SacBinaryNotFoundError(RuntimeError):
@@ -162,6 +161,10 @@ def merge_home_mcp_servers(mcp_servers: dict) -> dict:
         if name in merged or not isinstance(entry, dict):
             continue  # registry config wins; skip non-dict junk
         e = _resolve_env_refs_local(dict(entry))
+        if name == _TELEGRAMMER_MCP_KEY and isinstance(e.get("env"), dict):
+            from ._cct_env_contract import scrub_retired_cct_env
+
+            scrub_retired_cct_env(e["env"])
         e.setdefault("type", "stdio")
         merged[name] = e
     return merged
@@ -215,10 +218,10 @@ class ChannelPlan:
 
 def compute_channel_plan(
     channels: list[str] | None,
-    a2a_port: int | None,
+    a2a_port: int | str | None,
     agent_name: str,
 ) -> ChannelPlan:
-    """Resolve ``spec.claude.channels`` into the shared channel-wiring plan.
+    """Resolve ``spec.comms.channels`` into the shared channel-wiring plan.
 
     Pure — no I/O, no kwargs/argv mutation. Both runtimes wire the SAME
     ``channels`` set (the SDK comma-joins them into the single
@@ -234,17 +237,21 @@ def compute_channel_plan(
         telegrammer channel is requested AND an a2a port is resolved.
     """
     chset = _dedupe_channels(channels or [])
+    # A read-only consumer can load the declarative ``auto`` sentinel before
+    # agent_start has replaced it with the claimed integer. Wiring requires
+    # the resolved value; absence here means no URL, never ``int("auto")``.
+    resolved_port = a2a_port if isinstance(a2a_port, int) and a2a_port > 0 else None
     sac_sidecar_args: tuple[str, ...] | None = None
     if any(c.strip() == "server:sac" for c in (channels or [])):
         args = ["mcp", "channel", "--name", agent_name]
-        if a2a_port is not None:
-            args += ["--turn-url", f"http://127.0.0.1:{int(a2a_port)}/v1/turn"]
+        if resolved_port is not None:
+            args += ["--turn-url", f"http://127.0.0.1:{resolved_port}/v1/turn"]
         sac_sidecar_args = tuple(args)
     telegrammer_turn_url: str | None = None
-    if a2a_port is not None and any(
+    if resolved_port is not None and any(
         c.strip() == _TELEGRAMMER_CHANNEL for c in (channels or [])
     ):
-        telegrammer_turn_url = f"http://127.0.0.1:{int(a2a_port)}/v1/turn"
+        telegrammer_turn_url = f"http://127.0.0.1:{resolved_port}/v1/turn"
     return ChannelPlan(
         channels=tuple(chset),
         sac_sidecar_args=sac_sidecar_args,
@@ -258,14 +265,14 @@ def apply_channels(
     a2a_port: int | None,
     agent_name: str,
 ) -> None:
-    """Wire ``spec.claude.channels`` into the ``ClaudeAgentOptions`` kwargs.
+    """Adapt resolved ``spec.comms.channels`` to ``ClaudeAgentOptions``.
 
     Mutates ``kwargs`` in place:
 
-      * sets ``extra_args["dangerously-load-development-channels"]`` to the
-        comma-joined channel set when ANY channel is requested (concern (a));
-      * registers the ``sac mcp channel`` stdio MCP under ``mcp_servers["sac"]``
-        when ``server:sac`` is among the channels (concern (b)).
+      * sets ``extra_args["dangerously-load-development-channels"]`` only for
+        harness-owned channels (concern (a));
+      * registers ``sac mcp channel --send-only`` under
+        ``mcp_servers["sac"]`` when ``server:sac`` is declared (concern (b)).
 
     No-op when ``channels`` is empty/None.
     """
@@ -273,12 +280,17 @@ def apply_channels(
         return
 
     plan = compute_channel_plan(channels, a2a_port, agent_name)
-    if plan.channels:
+    harness_owned = tuple(
+        channel
+        for channel in plan.channels
+        if channel not in {"server:sac", "server:scitex-cards"}
+    )
+    if harness_owned:
         extra_args = kwargs.setdefault("extra_args", {})
         if isinstance(extra_args, dict):
             extra_args.setdefault(
                 "dangerously-load-development-channels",
-                ",".join(plan.channels),
+                ",".join(harness_owned),
             )
 
     if plan.sac_sidecar_args is not None:
@@ -294,7 +306,7 @@ def apply_channels(
             mcps["sac"] = {
                 "type": "stdio",
                 "command": _resolve_sac_binary(),
-                "args": list(plan.sac_sidecar_args),
+                "args": [*plan.sac_sidecar_args, "--send-only"],
             }
 
     _wire_telegrammer_wake(kwargs, channels, a2a_port)
@@ -474,7 +486,7 @@ def validate_telegrammer_wake_wiring(
     if a2a_port is None:
         agent_clause = f" for agent {agent_name!r}" if agent_name else ""
         raise TelegrammerWakeWiringError(
-            f"spec.claude.channels{agent_clause} requests "
+            f"spec.comms.channels{agent_clause} requests "
             f"{_TELEGRAMMER_CHANNEL!r} but spec.a2a.port is unset/null. "
             f"Without an /v1/turn endpoint the standalone telegrammer "
             f"poller has no URL to POST inbound Telegram messages to, so "
@@ -483,5 +495,5 @@ def validate_telegrammer_wake_wiring(
             f"retry the start. To run without the wake (legacy "
             f"notifications/claude/channel-only behaviour, only renders for "
             f"already-active turns), remove "
-            f"{_TELEGRAMMER_CHANNEL!r} from spec.claude.channels."
+            f"{_TELEGRAMMER_CHANNEL!r} from spec.comms.channels."
         )

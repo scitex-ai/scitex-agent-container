@@ -28,6 +28,18 @@ _MOVEMENT_DEFAULTS: dict = {
     "heartbeat_at": "",
 }
 
+# Board identity, CANONICAL FIRST; the retired predecessor is a fallback only.
+_BOARD_ID_ENVS = ("SCITEX_CARDS_AGENT_ID", "SCITEX_TODO_AGENT_ID")
+
+
+def _board_identity() -> str:
+    """This process's board identity, or ``""`` when neither var is set."""
+    for var in _BOARD_ID_ENVS:
+        value = os.environ.get(var, "")
+        if value:
+            return value
+    return ""
+
 
 def _movement_fields(name: str) -> dict:
     """Return the three movement keys for ``name`` (always all-present).
@@ -71,6 +83,13 @@ def build_agent_row(
     errors,
     liveness_unknown: bool,
     labels,
+    runtime: str = "",
+    harness: str = "",
+    engine: str = "",
+    model: str = "",
+    billing_mode: str = "unspecified",
+    auth_identity: str = "unknown",
+    runtime_identity_source: str = "unknown",
     probe_runtime: str | None = None,
     probe_error: str | None = None,
 ) -> dict:
@@ -82,9 +101,9 @@ def build_agent_row(
     way (operator mandate, lead a2a 1781e82a) so a JSON consumer never has to
     test for their existence.
 
-    The optional keys (``validation_errors`` / ``liveness_unknown`` /
-    ``labels``) are attached only when they carry something, keeping an
-    ordinary row free of empty noise.
+    ``liveness_unknown`` is always explicit because heartbeat overlays must
+    distinguish a successful direct process verdict from a legacy status
+    string. Other optional keys are attached only when they carry something.
     """
     row: dict = {
         "name": name,
@@ -96,13 +115,21 @@ def build_agent_row(
         "host_display": host_display,
         "path": spec_path,
         "a2a_port": a2a_port,
+        "stored_credential": account_label,
+        # Deprecated compatibility alias. This is inventory, never proof of use.
         "account": account_label,
+        "runtime": runtime,
+        "harness": harness,
+        "engine": engine,
+        "model": model,
+        "billing_mode": billing_mode,
+        "auth_identity": auth_identity,
+        "runtime_identity_source": runtime_identity_source,
     }
     row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
     if errors:
         row["validation_errors"] = errors
-    if liveness_unknown:
-        row["liveness_unknown"] = True
+    row["liveness_unknown"] = bool(liveness_unknown)
     # HOW the status was reached. ``probe_runtime`` names the adapter that
     # actually answered, so ``status: "stopped"`` with
     # ``probe_runtime: "ClaudeSessionRuntime"`` on a ``tui`` agent IS the
@@ -131,10 +158,16 @@ def build_agent_row(
     # into something the OUTPUT ITSELF reveals, which is the only version of
     # that rule that survives being forgotten.
     #
-    # Identity comes from SCITEX_TODO_AGENT_ID, the same variable every agent
+    # Identity comes from SCITEX_CARDS_AGENT_ID, the same variable every agent
     # already stamps its card writes with — deliberately NOT the hostname or
     # the spec, because those answer a different question. When it is unset
     # (a human at a shell), no row is marked and nothing changes.
-    if name and name == os.environ.get("SCITEX_TODO_AGENT_ID", ""):
+    #
+    # CANONICAL FIRST. This read used to name only the RETIRED
+    # SCITEX_TODO_AGENT_ID, so the self row was never marked in a container
+    # launched from a current spec — the exact case the marker exists for.
+    # The retired name stays as a fallback for containers still running an
+    # old-name spec, and goes away with the legacy shim.
+    if name and name == _board_identity():
         row["is_self"] = True
     return row

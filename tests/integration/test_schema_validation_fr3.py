@@ -99,7 +99,8 @@ class TestUnknownFieldRejection:
         }
         path = _write_yaml(data)
         # Act
-        action = lambda: load_config(path)
+        def action():
+            return load_config(path)
         # Assert
         with pytest.raises(ValueError, match="cardinality_enforced_at_hub"):
             action()
@@ -111,7 +112,8 @@ class TestUnknownFieldRejection:
         data = {**_BASE, "stale_field": "oops"}
         path = _write_yaml(data)
         # Act
-        action = lambda: load_config(path)
+        def action():
+            return load_config(path)
         # Assert
         with pytest.raises(ValueError, match="stale_field"):
             action()

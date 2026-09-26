@@ -338,36 +338,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # $SCITEX_CARDS_DB IS PASSED EXPLICITLY, and that is load-bearing too. A
-      # `run:` step gets a NON-INTERACTIVE shell which sources no profile, so
-      # an unset DSN does not fail — it silently resolves to a local
-      # `cards.db` FILE that no board reads. Worse, this host answers on BOTH
-      # :5442 and :55432 with the same `store_uuid` but different row counts
-      # (3496 vs 3793) — two divergent databases wearing one identity, so the
-      # field meant to detect a split cannot detect this one. The script
-      # re-checks the resolved backend and refuses to write rather than
-      # guessing. `vars.SCITEX_CARDS_DB` overrides without a workflow edit.
+      # $SCITEX_STORE_DSN IS PASSED EXPLICITLY, and that is load-bearing too.
+      # A `run:` step gets a NON-INTERACTIVE shell which sources no profile.
+      # Cards 0.52.1 delegates ambient resolution to scitex-dev and no longer
+      # reads the Cards-specific SQLite-era variable. Exporting that old name
+      # made the rail fall through to a roleless DSN; PgBouncer correctly
+      # rejected it while both test legs were green. The project-scoped role
+      # below already has a libpq credential in the runner user's ~/.pgpass;
+      # no credential appears in this workflow.
       #
       # uv BY ABSOLUTE PATH: the runner service's PATH is the system default
       # and does NOT include ~/.local/bin, so a bare `uv` is not found here
       # even though it is on the operator's interactive PATH.
       - name: Write the CI verdict to the card and notify the pushing agent
         env:
-          # THE FALLBACK NAMES A LOGIN ROLE, and that is the whole fix here.
-          # It used to be `postgresql://scitex_cards@...`. `scitex_cards` was
-          # the cluster's shared superuser and was demoted to NOLOGIN on
-          # 2026-08-24 with its password removed from every ~/.pgpass, so this
-          # step began failing on EVERY push with
-          #   fe_sendauth: no password supplied
-          # while the test legs themselves passed — a green suite reported as
-          # a red run, on develop and on every open PR at once.
-          #
-          # `ywatanabe__cli` is the interactive/tooling login leaf. libpq
-          # matches it in the runner user's ~/.pgpass, so no credential
-          # appears here. Verified from the runner's own host both with and
-          # without PGPASSFILE exported, because this step runs in a
-          # non-interactive shell that sources no profile.
-          SCITEX_CARDS_DB: ${{ vars.SCITEX_CARDS_DB || 'postgresql://ywatanabe__cli@127.0.0.1:55432/scitex_cards' }}
+          SCITEX_STORE_DSN: postgresql://ywatanabe__scitex-agent-container@scitex-primary:55432/scitex
           TEST_RESULT: ${{ needs.test.result }}
           # Reads the FAILED JOBS' logs so a red verdict names the failing
           # test. Deliberately the per-JOB log endpoint: this job is itself

@@ -65,7 +65,7 @@ spec:
   workdir: /home/me/proj/my-project
 
   apptainer:
-    image: /home/me/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     raw_args:
       - --userns

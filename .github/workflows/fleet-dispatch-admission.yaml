@@ -1,0 +1,103 @@
+name: fleet-dispatch-admission
+
+# Executable admission gate for fleet work dispatch. A dispatcher calls this
+# workflow and proceeds only when the exact run succeeds. Merely reading/logging
+# fleet pressure is not admission. Unknown inventory, missing token, missing p90,
+# unknown work kind, and DRAIN routine work all make this check red.
+on:
+  workflow_call:
+    inputs:
+      work_kind:
+        description: "feature|routine|nice_to_have|operator_p0|security|dependency_unblock|bug_fix|integration|review"
+        required: true
+        type: string
+    secrets:
+      SAC_FLEET_INVENTORY_READ_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      work_kind:
+        description: "Dispatch class"
+        required: true
+        type: choice
+        options:
+          - feature
+          - routine
+          - nice
+          - operator-P0
+          - security
+          - dependency-unblock
+          - bug-fix
+          - integration
+          - review
+  repository_dispatch:
+    types: [fleet-dispatch-admission]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: fleet-dispatch-admission-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 5
+    env:
+      FLEET_READ_TOKEN: ${{ secrets.SAC_FLEET_INVENTORY_READ_TOKEN }}
+      P90_MINUTES: ${{ vars.GREEN_TO_MERGE_P90_MINUTES }}
+    steps:
+      - name: Require fleet inventory authority
+        run: |
+          set -euo pipefail
+          if [ -z "$FLEET_READ_TOKEN" ]; then
+            echo "::error::FLEET_READ_TOKEN is absent — fleet pressure is unreadable; dispatch rejected"
+            exit 1
+          fi
+
+      - name: Check out the reviewed admission policy
+        uses: actions/checkout@v4
+
+      - name: Measure organization integration pressure
+        id: metrics
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.SAC_FLEET_INVENTORY_READ_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const p90 = process.env.P90_MINUTES || "";
+            if (!/^\d+(\.\d+)?$/.test(p90)) {
+              core.setFailed("GREEN_TO_MERGE_P90_MINUTES is absent or unreadable; dispatch rejected");
+              return;
+            }
+            const open = await github.rest.search.issuesAndPullRequests({
+              q: `org:${org} is:pr is:open`,
+              per_page: 1,
+            });
+            const green = await github.rest.search.issuesAndPullRequests({
+              q: `org:${org} is:pr is:open status:success`,
+              per_page: 1,
+            });
+            if (open.data.incomplete_results || green.data.incomplete_results) {
+              core.setFailed("GitHub Search returned incomplete_results=true; dispatch rejected");
+              return;
+            }
+            core.setOutput("open_prs", String(open.data.total_count));
+            core.setOutput("open_green", String(green.data.total_count));
+            core.setOutput("p90_minutes", p90);
+
+      - name: Enforce dispatch admission
+        env:
+          OPEN_GREEN: ${{ steps.metrics.outputs.open_green }}
+          OPEN_PRS: ${{ steps.metrics.outputs.open_prs }}
+          P90_MINUTES: ${{ steps.metrics.outputs.p90_minutes }}
+          WORK_KIND: ${{ inputs.work_kind || github.event.client_payload.work_kind || '' }}
+        run: |
+          set -euo pipefail
+          python3 .github/ci/integration_policy.py admit \
+            --open-green "$OPEN_GREEN" \
+            --open-prs "$OPEN_PRS" \
+            --p90-minutes "$P90_MINUTES" \
+            --work-kind "$WORK_KIND"

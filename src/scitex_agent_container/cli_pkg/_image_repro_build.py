@@ -50,7 +50,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from ._image_source_build import stage_build_context
+from .._logging import render_rich
+from ._image_build_lock import image_build_lock
+from ._image_source_build import (
+    stage_layer_build_context,
+)
 
 
 def _default_container_build_reproducible(
@@ -104,6 +108,8 @@ def build_layer_reproducible(
     force: bool = True,
     bootstrap_sif: Path | None = None,
     verify: bool = True,
+    stage_cards: Callable[[Path], Path] | None = None,
+    stage_hermes: Callable[[Path], Path] | None = None,
 ) -> Any:
     """Build a sac SIF through scitex-container's reproducible round trip.
 
@@ -156,21 +162,26 @@ def build_layer_reproducible(
         Propagated from :func:`stage_build_context` if inputs are missing.
     """
     artifact_dir = output_dir / f"sac-{layer}"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with image_build_lock(artifact_dir, layer=layer):
+        staging_dir = artifact_dir / "build-context"
+        staged_def = stage_layer_build_context(
+            layer=layer,
+            pkg_root=pkg_root,
+            def_path=def_path,
+            staging_dir=staging_dir,
+            bootstrap_sif=bootstrap_sif,
+            stage_cards=stage_cards,
+            stage_hermes=stage_hermes,
+        )
 
-    staging_dir = artifact_dir / "build-context"
-    staged_def = stage_build_context(
-        pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
-    )
-
-    return _container_build_reproducible(
-        def_path=staged_def,
-        output_dir=output_dir,
-        cwd=staging_dir,
-        image_name=f"sac-{layer}",
-        force=force,
-        verify=verify,
-    )
+        return _container_build_reproducible(
+            def_path=staged_def,
+            output_dir=output_dir,
+            cwd=staging_dir,
+            image_name=f"sac-{layer}",
+            force=force,
+            verify=verify,
+        )
 
 
 def describe_result(result: Any) -> list[str]:
@@ -242,7 +253,6 @@ def run_build(
 
     import click
 
-    from ._helpers import console
 
     try:
         result = build_layer_reproducible(
@@ -257,7 +267,7 @@ def run_build(
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
-    console.print(f"[green]built[/green] {result.sif}")
+    render_rich(f"[green]built[/green] {result.sif}", __name__)
     for line in describe_result(result):
         click.echo(line)
     return result

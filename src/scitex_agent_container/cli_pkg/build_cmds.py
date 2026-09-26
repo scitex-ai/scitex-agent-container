@@ -8,8 +8,9 @@ import sys
 
 import click
 
+from .._logging import render_rich
 from ..config import load_config, resolve_config, validate_config
-from ._helpers import agent_name_complete, console
+from ._helpers import agent_name_complete
 
 
 @click.command()
@@ -31,14 +32,14 @@ def check(name_or_path: str) -> None:
     try:
         config_path = resolve_config(name_or_path)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
+        render_rich(f"[red]Error: {exc}[/red]", __name__)
         sys.exit(1)
 
     errors = validate_config(config_path)
     if errors:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        render_rich(f"[red]Config validation failed: {config_path}[/red]", __name__)
         for error in errors:
-            console.print(f"  [red]- {error}[/red]")
+            render_rich(f"  [red]- {error}[/red]", __name__)
         sys.exit(1)
 
     # advise=True: this is THE command that answers "is this spec well-formed?",
@@ -49,12 +50,10 @@ def check(name_or_path: str) -> None:
     try:
         config = load_config(config_path, advise=True)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error loading config: {exc}[/red]")
+        render_rich(f"[red]Error loading config: {exc}[/red]", __name__)
         sys.exit(1)
 
-    console.print(
-        f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]"
-    )
+    render_rich(f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]", __name__)
 
     all_ok = True
 
@@ -64,10 +63,10 @@ def check(name_or_path: str) -> None:
     backend = "apptainer"
     backend_bin = shutil.which(backend)
     if backend_bin:
-        console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
+        render_rich(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]", __name__)
     else:
         all_ok = False
-        console.print(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]")
+        render_rich(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]", __name__)
 
     # Python (used by hooks / pre-start scripts)
     try:
@@ -75,17 +74,15 @@ def check(name_or_path: str) -> None:
             ["python3", "--version"], capture_output=True, text=True, timeout=5
         )
         if proc.returncode == 0:
-            console.print(
-                f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
-            )
+            render_rich(f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]", __name__)
         else:
             all_ok = False
-            console.print(f"  {'python:':30s} [red]FAIL[/red]")
+            render_rich(f"  {'python:':30s} [red]FAIL[/red]", __name__)
     except (
         FileNotFoundError
     ):  # stx-allow: fallback (reason: file may not exist on first use)
         all_ok = False
-        console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
+        render_rich(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]", __name__)
 
     # D4 — warn (don't fail) on bind targets that mirror host paths.
     # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
@@ -100,12 +97,25 @@ def check(name_or_path: str) -> None:
     if not _check_raw_args(config):
         all_ok = False
 
+    # `host:` as a ROUTE, not merely a string. Every runtime path already
+    # refuses an unroutable pin; until this call existed the PREFLIGHT was the
+    # one place that said "Ready to deploy" about an agent nobody could start.
+    if not _check_host_route(config):
+        all_ok = False
+
+    # `provider.auth_token_env` as a WORKING KEY, not merely a resolvable
+    # string. The start-time guard is an EMPTINESS test, so a placeholder
+    # passes it and the agent boots into an unbroken run of 401s behind a
+    # green heartbeat (measured 2026-09-07; see _provider_auth_probe). Only
+    # the backend can tell a well-formed string from a working key, so this
+    # is the one check in this command that asks something over the network.
+    if not _check_provider_auth(config):
+        all_ok = False
+
     if all_ok:
-        console.print("[green]Ready to deploy.[/green]")
+        render_rich("[green]Ready to deploy.[/green]", __name__)
     else:
-        console.print(
-            "[red]Preflight checks failed. Fix the issues above before deploying.[/red]"
-        )
+        render_rich("[red]Preflight checks failed. Fix the issues above before deploying.[/red]", __name__)
         sys.exit(1)
 
 
@@ -122,15 +132,161 @@ def _check_raw_args(config) -> bool:
     ap = getattr(config, "apptainer", None)
     raw = list(getattr(ap, "raw_args", None) or []) if ap is not None else []
     if not raw:
-        console.print(f"  {'raw_args:':30s} [green]OK (none declared)[/green]")
+        render_rich(f"  {'raw_args:':30s} [green]OK (none declared)[/green]", __name__)
         return True
     try:
         validate_raw_args(raw, agent=getattr(config, "name", None))
     except ApptainerArgvError as exc:
-        console.print(f"  {'raw_args:':30s} [red]FAIL[/red]")
-        console.print(f"[red]{exc}[/red]")
+        render_rich(f"  {'raw_args:':30s} [red]FAIL[/red]", __name__)
+        render_rich(f"[red]{exc}[/red]", __name__)
         return False
-    console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
+    render_rich(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]", __name__)
+    return True
+
+
+def _check_provider_auth(config) -> bool:
+    """Report whether the provider key in ``config`` actually authenticates.
+
+    Thin console wrapper: the verdict logic, its positive control, and the
+    measured incident that motivates it live in
+    :mod:`._provider_auth_probe`.
+
+    Generic providers fail only on evidence that the key is wrong. Hermes
+    chat-completions providers additionally fail when the actual inference
+    path cannot prove a successful selected-model response, or reports a
+    different model identity. An unreachable backend still warns, matching
+    :func:`_check_host_route`'s refusal to convict on absent evidence.
+    """
+    from ._provider_auth_probe import (
+        INACTIVE,
+        OK,
+        UNRESOLVED,
+        probe_provider_auth,
+    )
+
+    verdict = probe_provider_auth(config)
+    label = "provider key:"
+
+    if verdict.state == INACTIVE:
+        render_rich(f"  {label:30s} [green]OK (no provider declared)[/green]", __name__)
+        return True
+
+    if verdict.state == OK:
+        render_rich(f"  {label:30s} [green]OK ({verdict.detail})[/green]", __name__)
+        return True
+
+    if verdict.is_failure:
+        render_rich(f"  {label:30s} [red]FAIL[/red]", __name__)
+        render_rich(f"[red]{verdict.detail}[/red]", __name__)
+        # An unresolvable key already stops `start`; a REJECTED one does not,
+        # which is why this check exists. Say which of the two happened.
+        if verdict.state == UNRESOLVED:
+            render_rich("[red]  (start would also refuse this spec)[/red]", __name__)
+        return False
+
+    render_rich(f"  {label:30s} [yellow]WARN ({verdict.detail})[/yellow]", __name__)
+    return True
+
+
+def _check_host_route(config) -> bool:
+    """Report whether ``spec.host`` names a machine sac can dispatch to.
+
+    FAILS the preflight rather than warning, for the same reason
+    :func:`_check_raw_args` does: every runtime path already treats an
+    unroutable ``host:`` as fatal, so passing one is not a deviation the
+    operator might have chosen. It is a wrong answer to the only question this
+    command exists to ask.
+
+    MEASURED 2026-09-05. Two live specs pinned ``host: scitex-02`` and
+    ``host: scitex-01``. Both names were retired on 2026-08-12 when the peer
+    table was re-keyed to ``scitex-compute-0N`` (config.yaml records why: the
+    short forms resolve nowhere in DNS). The re-key updated the registry and
+    left those two specs pointing at names that no longer exist::
+
+        sac agents start <agent>
+            -> spec.host is neither this machine nor a registered peer
+        agent_spawn <agent>
+            -> ssh: Could not resolve hostname scitex-02 (rc=255)
+        sac agents check <agent>
+            -> exit 0, "Ready to deploy."          <-- the bug this closes
+
+    Both runtime paths failed correctly and loudly for two months. Only the
+    preflight was green, so an agent that COULD NOT start read as one that
+    simply had not. A peer's card waited on a review from one of them for two
+    months and was nearly closed as "the agent did not respond" rather than
+    "the agent could not be started" -- two very different records.
+
+    NO REACHABILITY PROBE, deliberately. The resolver is called without an
+    oracle, so a registered peer that is merely DOWN stays UNKNOWN, and UNKNOWN
+    never rejects (see :mod:`.lifecycle._host_chain`). This command answers "is
+    this spec well-formed?"; "is that machine up right now?" is
+    ``sac host probe``'s question. Folding them would cost an ssh round-trip
+    per check and fail preflights on a transient blip -- turning a spec
+    validator into a fleet monitor.
+
+    Degrades to WARN when the peer table or this machine's own hostname cannot
+    be resolved. With no registry to judge against there is no EVIDENCE of a
+    bad name, and rejecting on absent evidence is the exact UNKNOWN-collapse
+    the routing modules forbid.
+    """
+    from .lifecycle._host_chain import UNROUTABLE, chain_hosts
+
+    spec_host = getattr(getattr(config, "hosts_spec", None), "host", None)
+    if not chain_hosts(spec_host):
+        render_rich(f"  {'host:':30s} [green]OK (unpinned - starts on this machine)"
+            f"[/green]", __name__)
+        return True
+
+    # stx-allow: fallback (reason: an unloadable peer table or unresolvable
+    # local hostname is absence of evidence, not evidence of a bad pin; the
+    # check degrades to a warning rather than rejecting a spec it cannot judge)
+    try:
+        from .._state.host_config import load as _load_host_config
+        from ..config._host import resolve_hostname
+        from .lifecycle._host_identity import _local_host_names
+
+        peers = _load_host_config().peers
+        current_host = resolve_hostname()
+        local_names = _local_host_names(current_host)
+    except Exception as exc:
+        render_rich(f"  {'host:':30s} [yellow]WARN (cannot verify pin: {exc})[/yellow]", __name__)
+        return True
+
+    from .lifecycle._host_routing import (
+        format_route_error,
+        resolve_spec_host_route,
+    )
+
+    route = resolve_spec_host_route(
+        spec_host, current_host, peers, local_names=local_names
+    )
+    if route.kind == UNROUTABLE and not peers:
+        # An EMPTY peer table cannot convict a name. On a machine that has
+        # never been given a `peers:` section every non-local pin would
+        # otherwise fail here, turning \"this fleet is not configured yet\"
+        # into \"your spec is wrong\" -- the misattributed-error shape this
+        # whole check exists to remove.
+        render_rich(f"  {'host:':30s} [yellow]WARN (not this machine, and no peers "
+            f"are registered to check it against)[/yellow]", __name__)
+        return True
+
+    if route.kind == UNROUTABLE:
+        render_rich(f"  {'host:':30s} [red]FAIL[/red]", __name__)
+        render_rich("[red]"
+            + format_route_error(
+                config.name,
+                spec_host,
+                route,
+                peers,
+                verb="start",
+                current_host=current_host or "",
+                local_names=local_names,
+            )
+            + "[/red]", __name__)
+        return False
+
+    where = "this machine" if route.kind == "local" else f"peer {route.peer}"
+    render_rich(f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]", __name__)
     return True
 
 
@@ -157,12 +313,8 @@ def _warn_host_mirroring_bind_targets(config) -> None:
         if not target:
             continue
         if any(target.startswith(p) for p in _HOST_MIRRORING_TARGET_PREFIXES):
-            console.print(
-                f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
-                f"host path; container-canonical convention is /srv/, /work/, "
-                f"/opt/, /data/.\n       See "
-                f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
-            )
+            render_rich(f"WARN {config.name}: bind {target} mirrors host path "
+                f"(use /srv/, /work/, /opt/, /data/; D4).", __name__, level="warning")
 
 
 def _bind_target(bind: str) -> str:
@@ -195,16 +347,16 @@ def validate(name_or_path: str) -> None:
     """
     try:
         config_path = resolve_config(name_or_path)
-    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
-        console.print(f"[red]Error: {exc}[/red]")
+    except Exception as exc:  # stx-allow: fallback (reason: resolution error written to stderr)
+        render_rich(f"[red]Error: {exc}[/red]", __name__)
         sys.exit(1)
     errors = validate_config(config_path)
     if not errors:
-        console.print(f"[green]Config is valid: {config_path}[/green]")
+        render_rich(f"[green]Config is valid: {config_path}[/green]", __name__)
     else:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
+        render_rich(f"[red]Config validation failed: {config_path}[/red]", __name__)
         for error in errors:
-            console.print(f"  [red]- {error}[/red]")
+            render_rich(f"  [red]- {error}[/red]", __name__)
         sys.exit(1)
 
 

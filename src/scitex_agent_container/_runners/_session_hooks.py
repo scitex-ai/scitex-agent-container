@@ -40,13 +40,14 @@ does NOT crash the agent — the turn already completed; the hook returns
 
 from __future__ import annotations
 
-import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-log = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+log = slogging.getLogger(__name__)
 
 # Async seam: (report, requester, dispatch_id) -> awaitable. The runner
 # binds it to the real completion-push emitter; tests bind it to a real

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .._runners._tmux._target import exact_target
 from ._verdict import (
     ALIVE,
     DEAD,
@@ -27,7 +28,6 @@ from ._verdict import (
     UNKNOWN,
     Signal,
 )
-from .._runners._tmux._target import exact_target
 from ._verdict_tmux import session_name_for_config
 
 __all__ = [

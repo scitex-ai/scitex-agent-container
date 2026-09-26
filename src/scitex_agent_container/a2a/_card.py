@@ -84,14 +84,17 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     agent_base = f"{base}/agents/{name}"
 
     # ADR-0004 — surface sac MCP push channel on the v1 AgentCard.
-    # `spec.claude.channels: [server:sac]` means an in-session MCP push
+    # `spec.comms.channels: [server:sac]` means an in-session SAC push
     # subscriber is attached (the `sac mcp channel` sidecar consuming
     # `/agents/<name>/inbox/stream`). This is orthogonal to A2A's
     # task-level pushNotifications (`tasks/pushNotificationConfig/*`)
     # so we advertise it under `capabilities.extensions[]` per the
     # v1 spec, not by overloading `pushNotifications`.
+    comms_block = spec.get("comms") or {}
     claude_block = spec.get("claude") or {}
-    declared_channels = list(claude_block.get("channels") or [])
+    declared_channels = list(
+        comms_block.get("channels") or claude_block.get("channels") or []
+    )
     has_sac_channel = any(
         isinstance(c, str) and c.strip() == "server:sac" for c in declared_channels
     )
@@ -103,8 +106,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
                 "description": (
                     "In-session MCP push: `sac mcp channel` subscribes to "
                     "`/agents/<name>/inbox/stream` and delivers events as "
-                    "`notifications/claude/channel` to the agent's Claude "
-                    "session."
+                    "the event to the selected harness adapter."
                 ),
                 "required": False,
                 "params": {
@@ -113,6 +115,9 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
                         "a2a_send",
                         "a2a_reply",
                         "a2a_ack",
+                        "a2a_agentic_ack",
+                        "a2a_progress",
+                        "a2a_dispatch_status",
                         "a2a_peers",
                         "a2a_inbox",
                     ],

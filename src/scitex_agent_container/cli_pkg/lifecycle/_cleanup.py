@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``sac db clean`` (a.k.a. legacy ``clean-registry``) — drop stale entries."""
+"""``sac store clean`` (a.k.a. legacy ``clean-registry``) — drop stale entries."""
 
 from __future__ import annotations
 
 import click
 
+from ..._logging import render_rich
 from ..._state.registry import Registry
-from .._helpers import console
 
 
 @click.command(name="clean-registry")
@@ -51,9 +51,9 @@ def cleanup(dry_run: bool, yes: bool) -> None:
         raise SystemExit(2)
     cleaned = registry.cleanup_stale()
     if cleaned:
-        console.print(f"[green]Cleaned {cleaned} stale registry entries[/green]")
+        render_rich(f"[green]Cleaned {cleaned} stale registry entries[/green]", __name__)
     else:
-        console.print("[dim]No stale entries found.[/dim]")
+        render_rich("[dim]No stale entries found.[/dim]", __name__)
 
 
 __all__ = ["cleanup"]

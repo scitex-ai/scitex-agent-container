@@ -24,11 +24,12 @@ messages do NOT break the turn — only ``ResultMessage`` does.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+import scitex_logging as slogging
 
 from ._incarnation import WRITER_TURN_DRIVER
 from ._session_state import (
@@ -44,7 +45,7 @@ from ._session_state import (
 from ._session_tasks import handle_task_message, is_task_message
 from ._stderr_capture import enrich_detail_with_stderr
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _safe_repr(value: object) -> str:

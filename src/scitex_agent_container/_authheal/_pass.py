@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._authevents import log_restart_attempted, log_restart_outcome
+from .._logging import write_stream
 from .._reconcile._budget import (
     DEFAULT_PASS_CAP,
     Budget,
@@ -421,11 +422,8 @@ def auth_heal_pass(
                 save_history(history_file, budget.history, now=now)
             except OSError as exc:
                 budget.spent = budget.pass_cap
-                print(
-                    f"[login-expired-restart] CANNOT RECORD restarts to "
-                    f"{history_file} ({exc}) — halting this pass's restarts.",
-                    file=stream,
-                )
+                write_stream(f"[login-expired-restart] CANNOT RECORD restarts to "
+                    f"{history_file} ({exc}) — halting this pass's restarts.", stream)
 
     if apply and budget is not None:
         # stx-allow: fallback (reason: the end-of-pass write is housekeeping; its failure is already reported per-restart above and must not crash a pass that has done its work)
@@ -435,11 +433,8 @@ def auth_heal_pass(
             pass
 
     if budget is None and reports:
-        print(
-            f"[login-expired-restart] REFUSING to restart {len(reports)} wedged "
-            f"agent(s): {read.detail}",
-            file=stream,
-        )
+        write_stream(f"[login-expired-restart] REFUSING to restart {len(reports)} wedged "
+            f"agent(s): {read.detail}", stream)
 
     # Now say what we did NOT manage to look at. These reports carry no action
     # — they are added after every restart decision precisely so they cannot

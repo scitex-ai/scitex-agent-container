@@ -1,0 +1,96 @@
+{% comment %}
+Shared activity-timeline content. Included by timeline.html (standalone) and
+timeline_hub.html (Hub), so the surface works in both mounts.
+
+The timeline is a PROJECTION of signals SAC already published. Nothing here
+invents activity: an agent the control plane cannot be asked about renders as
+`unreachable` (an outage), never as quiet.
+
+The initial render is SERVER-side so the page is useful with JS off and before
+the first poll. The poll then refreshes it in place, bounded and deduped.
+{% endcomment %}
+<div class="agents-app" data-page="timeline"
+     data-refresh-seconds="{{ refresh_seconds }}"
+     data-timeline-url="{{ url_base }}/api/timeline">
+
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
+      <h1><i class="fas fa-wave-square"></i> Activity timeline</h1>
+      <span class="agents-sub">
+        Live signals from the SAC control plane — {{ listener }}
+        {% if identity %} · acting as <strong>{{ identity }}</strong>{% endif %}
+      </span>
+    </div>
+    <div class="agents-summary">
+      <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">entries</span></div>
+      <div class="sum-card good"><span class="sum-num" data-count="observed">{{ summary.observed }}</span><span class="sum-label">observed</span></div>
+      <div class="sum-card warn"><span class="sum-num" data-count="stale">{{ summary.stale }}</span><span class="sum-label">stale</span></div>
+      <div class="sum-card"><span class="sum-num" data-count="unreachable">{{ summary.unreachable }}</span><span class="sum-label">unreachable</span></div>
+    </div>
+  </header>
+
+  {% comment %}
+  Filters are real form controls so they work without JS (they are query
+  params the SERVER applies). The JS poll reads the same values, so the two
+  paths cannot diverge.
+  {% endcomment %}
+  <form class="timeline-filters" method="get" action="{{ url_base }}/timeline">
+    <label class="visually-hidden" for="tl-agent">Agent</label>
+    <select id="tl-agent" name="agent">
+      <option value="">All agents</option>
+      {% for name in agent_names %}
+      <option value="{{ name }}"{% if name == selected_agent %} selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+    <label class="visually-hidden" for="tl-kind">Signal</label>
+    <select id="tl-kind" name="kind">
+      <option value="">All signals</option>
+      {% for kind in kinds %}
+      <option value="{{ kind }}"{% if kind == selected_kind %} selected{% endif %}>{{ kind }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn">Apply</button>
+    <span class="tl-live" data-role="poller-state" aria-live="polite">
+      <i class="fas fa-circle"></i> auto-refresh every {{ refresh_seconds }}s
+    </span>
+  </form>
+
+  {% if not entries %}
+  <div class="agents-notice empty" role="status">
+    <i class="fas fa-inbox"></i>
+    <h2>No timeline entries</h2>
+    <p>{% if selected_agent or selected_kind %}No published signal matches this
+    filter.{% else %}The control plane has published no runtime activity for the
+    agents in your scope.{% endif %}</p>
+  </div>
+  {% else %}
+  <ol class="timeline" data-role="timeline">
+    {% for e in entries %}
+    <li class="tl-entry tl-{{ e.state }}" data-key="{{ e.key }}">
+      <span class="tl-dot {{ e.state }}" aria-hidden="true"></span>
+      <time class="tl-when" datetime="{{ e.iso }}">{{ e.relative }}</time>
+      <span class="tl-agent"><a href="{{ url_base }}/{{ e.agent }}/">{{ e.agent }}</a></span>
+      <span class="tl-kind">{{ e.kind }}</span>
+      <span class="tl-value">{% if e.value is not None %}{{ e.value }}{% else %}<span class="dim">—</span>{% endif %}</span>
+      <span class="tl-state tl-state-{{ e.state }}">{{ e.state_label }}</span>
+      {% if e.source %}<span class="tl-source dim">{{ e.source }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="dim timeline-note">
+    Only runner-published state is shown. <strong>Unknown</strong> means SAC
+    published no signal; <strong>stale</strong> means the last real observation
+    has aged past {{ stale_after_seconds|floatformat:0 }}s;
+    <strong>unreachable</strong> means the listener could not be asked, which is
+    an outage rather than silence. Entries are deduped, so a refresh does not
+    replay a row that has not changed.
+  </p>
+  {% endif %}
+
+  <div class="agents-bannor err timeline-error" data-role="timeline-error" role="alert" hidden>
+    <i class="fas fa-triangle-exclamation"></i>
+    <span>Refresh failed.</span>
+    <small data-role="timeline-error-text"></small>
+  </div>
+</div>

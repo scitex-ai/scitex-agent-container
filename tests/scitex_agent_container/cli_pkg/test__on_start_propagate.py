@@ -48,7 +48,7 @@ def _instances_store(pg_schema: str):
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path):
+def isolated_state_store(tmp_path: Path):
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` (explicit save/restore).
 
     The reload picked up a module-level ``DEFAULT_DB_PATH`` until 2026-08-30.
@@ -59,7 +59,7 @@ def isolated_state_db(tmp_path: Path):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(db)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -159,7 +159,7 @@ class TestArgvClassification:
 
 class TestPropagateRecordsOverrideHost:
     def test_records_lead_side_row_on_override_host(
-        self, isolated_state_db, capsys
+        self, isolated_state_store, capsys
     ) -> None:
         # Arrange — a successful remote start on the override host.
         runner = _started_runner("clew", port=19123)
@@ -168,12 +168,12 @@ class TestPropagateRecordsOverrideHost:
             "spartan-bm001", ["agents", "start", "clew"], runner=runner
         )
         # Assert — the recorded instances row's host IS the --on override.
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert rows[0]["host"] == "spartan-bm001"
 
-    def test_records_row_with_remote_flag_set(self, isolated_state_db) -> None:
+    def test_records_row_with_remote_flag_set(self, isolated_state_store) -> None:
         # Arrange
         runner = _started_runner("clew", port=19123)
         # Act
@@ -181,12 +181,12 @@ class TestPropagateRecordsOverrideHost:
             "spartan-bm001", ["agents", "start", "clew"], runner=runner
         )
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert bool(rows[0]["remote"]) is True
 
-    def test_records_remote_resolved_bound_port(self, isolated_state_db) -> None:
+    def test_records_remote_resolved_bound_port(self, isolated_state_store) -> None:
         # Arrange
         runner = _started_runner("clew", port=19123)
         # Act
@@ -194,13 +194,13 @@ class TestPropagateRecordsOverrideHost:
             "spartan-bm001", ["agents", "start", "clew"], runner=runner
         )
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert rows[0]["bound_port"] == 19123
 
     def test_appends_json_and_no_redispatch_to_remote_argv(
-        self, isolated_state_db
+        self, isolated_state_store
     ) -> None:
         # Arrange — capture the argv the runner is invoked with.
         seen: list[list[str]] = []
@@ -221,7 +221,7 @@ class TestPropagateRecordsOverrideHost:
         # Assert — both control flags appended for a parseable, non-recursive remote start.
         assert {"--json", "--no-redispatch"}.issubset(set(seen[0]))
 
-    def test_non_json_stdout_raises_loud_error(self, isolated_state_db) -> None:
+    def test_non_json_stdout_raises_loud_error(self, isolated_state_store) -> None:
         # Arrange — remote start succeeded (rc 0) but emitted non-JSON.
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(
@@ -236,7 +236,7 @@ class TestPropagateRecordsOverrideHost:
                 "spartan-bm001", ["agents", "start", "clew"], runner=_run
             )
 
-    def test_remote_failure_records_no_row(self, isolated_state_db) -> None:
+    def test_remote_failure_records_no_row(self, isolated_state_store) -> None:
         # Arrange — remote start failed (rc 1); no live instance to record.
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(
@@ -247,7 +247,7 @@ class TestPropagateRecordsOverrideHost:
             "spartan-bm001", ["agents", "start", "clew"], runner=_run
         )
         # Act
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         # Assert — nothing recorded for a failed remote start.
@@ -271,7 +271,7 @@ class TestPropagateRecordsOverrideHost:
 
 
 class TestFailLoudOnRemoteNonStart:
-    def test_skipped_status_returns_nonzero(self, isolated_state_db) -> None:
+    def test_skipped_status_returns_nonzero(self, isolated_state_store) -> None:
         # Arrange — remote start succeeded (rc 0) but skipped (host mismatch).
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(
@@ -296,7 +296,7 @@ class TestFailLoudOnRemoteNonStart:
         assert rc != 0
 
     def test_skipped_status_prints_reason_to_stderr(
-        self, isolated_state_db, capsys
+        self, isolated_state_store, capsys
     ) -> None:
         # Arrange
         def _run(peer, full_argv):
@@ -322,7 +322,7 @@ class TestFailLoudOnRemoteNonStart:
         captured = capsys.readouterr()
         assert "singleton prefers 'bm043'" in (captured.err + captured.out)
 
-    def test_skipped_status_records_no_row(self, isolated_state_db) -> None:
+    def test_skipped_status_records_no_row(self, isolated_state_store) -> None:
         # Arrange
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(
@@ -337,13 +337,13 @@ class TestFailLoudOnRemoteNonStart:
             "spartan-gpgpu011", ["agents", "start", "clew"], runner=_run
         )
         # Assert — a skipped remote did NOT start anything, so no row.
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert rows == []
 
     def test_dry_run_ok_status_is_silent_success(
-        self, isolated_state_db, capsys
+        self, isolated_state_store, capsys
     ) -> None:
         # Arrange — `--dry-run` propagated to the remote returns
         # status=dry_run_ok cleanly; this is the ONE non-"started" status
@@ -368,7 +368,7 @@ class TestFailLoudOnRemoteNonStart:
         assert rc == 0
 
     def test_remote_failure_echoes_remote_output_to_operator(
-        self, isolated_state_db, capsys
+        self, isolated_state_store, capsys
     ) -> None:
         # Arrange — remote rc != 0 (e.g. exception inside remote start);
         # captured stdout/stderr MUST surface so the operator can debug.
@@ -395,7 +395,7 @@ class TestFailLoudOnRemoteNonStart:
         merged = captured.err + captured.out
         assert "Permission denied loading spec.yaml" in merged
 
-    def test_remote_failure_returns_remote_rc(self, isolated_state_db) -> None:
+    def test_remote_failure_returns_remote_rc(self, isolated_state_store) -> None:
         # Arrange
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(

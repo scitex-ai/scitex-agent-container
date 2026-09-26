@@ -21,18 +21,16 @@ re-exports these names, so existing imports keep resolving.
 from __future__ import annotations
 
 import json as _json
-import logging
 import shlex
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from ..._logging import get_logger
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
-from ..._state.state_db import record_instance_start, record_instance_stop
-
-logger = logging.getLogger(__name__)
+from ..._state.state_store import record_instance_start, record_instance_stop
 
 __all__ = [
     "_dispatch_remote_restart",
@@ -80,17 +78,60 @@ def log_restart_decision(**entry: Any) -> None:
     """
     entry.setdefault("ts", time.time())
     path = _decision_log_path()
-    logger.info("restart decision: %s", entry)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(_json.dumps(entry, sort_keys=True, default=str) + "\n")
     except Exception as exc:  # stx-allow: fallback (best-effort audit log; must never shadow the real restart result)
-        logger.warning("restart decision log append failed at %s: %s", path, exc)
+        get_logger(__name__).warning(
+            "restart decision log append failed at %s: %s", path, exc
+        )
 
 
-def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> dict:
+def remote_restart_argv(
+    name: str, engine: str | None = None, *, drain_timeout_s: float = 0.0
+) -> list[str]:
+    """The argv the peer runs for a cross-host restart.
+
+    Split out from :func:`_dispatch_remote_restart` so the forwarding can be
+    asserted without an ssh round-trip. That matters more than it looks: the
+    defect this closes was invisible precisely because the argv was a literal
+    buried inside a function whose other half does network IO and database
+    writes, so nothing could examine it cheaply.
+
+    THE ENGINE TRAVELS WITH THE VERB. Until 2026-09-05 this list had no engine
+    field, and ``--engine`` was answered on the LEAD by a refusal printed AFTER
+    the dispatch had already restarted the agent on its default engine.
+    Forwarding it is the fix: the flag now means the same thing from any host,
+    which is the only way ``sac agents restart <a> --engine <e>`` can be one
+    command rather than a command plus a note about which machine to type it on.
+
+    A peer whose sac predates ``--engine`` REFUSES the unknown option, and the
+    caller raises with its stderr. That is deliberate. A silent start on the
+    wrong engine is the failure being removed, so a loud "no such option" is
+    strictly better than the peer quietly obeying half the request.
+    """
+    argv = ["sac", "agents", "restart", name, "--yes", "--json"]
+    if drain_timeout_s > 0:
+        argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
+    if engine:
+        argv += ["--engine", engine]
+    return argv
+
+
+def _dispatch_remote_restart(
+    peer: str,
+    row: dict,
+    peers: dict,
+    name: str,
+    engine: str | None = None,
+    drain_timeout_s: float = 0.0,
+) -> dict:
     """SSH into ``peer`` and run ``sac agents restart <name> --yes --json``.
+
+    ``engine`` (CLI ``--engine <key>``) is appended to the remote argv when
+    set, so a named engine chosen on the lead reaches the machine that
+    actually performs the restart.
 
     The remote restart closes the agent's old instance row and opens a
     fresh one on the peer. Mirror that on the lead side: close the stale
@@ -102,10 +143,14 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
     (no-silent-fallback rule). Returns the parsed JSON envelope from the
     peer's stdout.
     """
+    # login=True: the peer's login profile carries the fleet secrets the
+    # restart needs (the engine's auth_token_env among them); a bare ssh
+    # command sees none of them and the peer refuses the engine as "unset".
     ssh_argv = build_ssh_argv(
         peer,
-        ["sac", "agents", "restart", name, "--yes", "--json"],
+        remote_restart_argv(name, engine, drain_timeout_s=drain_timeout_s),
         peers,
+        login=True,
     )
     result = subprocess.run(
         ssh_argv,
@@ -210,7 +255,9 @@ def must_broker_to_host() -> bool:
     return is_in_sif()
 
 
-def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
+def _restart_via_host_bypass(
+    name: str, fresh: bool = False, *, drain_timeout_s: float = 0.0
+) -> dict:
     """Broker the restart to the HOST listen and return its JSON envelope.
 
     Mirrors the spawn broker (``agent_spawn`` → ``request_spawn``): the
@@ -223,7 +270,10 @@ def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
     """
     from ..._lifecycle._restart_client import request_restart
 
-    return request_restart(name, fresh=fresh)
+    kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        kwargs["drain_timeout_s"] = drain_timeout_s
+    return request_restart(name, **kwargs)
 
 
 def _parse_host_cli_envelope(stdout: Any) -> dict:
@@ -250,7 +300,9 @@ def _parse_host_cli_envelope(stdout: Any) -> dict:
     return {}
 
 
-def brokered_restart(name: str, *, fresh: bool = False) -> tuple[dict, bool]:
+def brokered_restart(
+    name: str, *, fresh: bool = False, drain_timeout_s: float = 0.0
+) -> tuple[dict, bool]:
     """Ask the host to restart ``name``; return ``(envelope, ok)``.
 
     The verdict is the HOST'S, never one invented here. The host CLI runs
@@ -276,7 +328,10 @@ def brokered_restart(name: str, *, fresh: bool = False) -> tuple[dict, bool]:
         (the host CLI exits 1 on any failed restart) but it is NOT a
         postcondition, so it never yields ``verified: true``.
     """
-    envelope = _restart_via_host_bypass(name, fresh=fresh)
+    restart_kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        restart_kwargs["drain_timeout_s"] = drain_timeout_s
+    envelope = _restart_via_host_bypass(name, **restart_kwargs)
     out: dict = {
         "name": name,
         "dispatched": False,

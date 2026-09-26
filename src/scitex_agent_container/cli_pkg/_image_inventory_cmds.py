@@ -25,7 +25,7 @@ from pathlib import Path
 
 import click
 
-from ._helpers import console
+from .._logging import render_rich
 
 
 @click.command("list")
@@ -48,9 +48,7 @@ def image_list(as_json: bool) -> None:
     root = ig._SCITEX_USER_STATE_ROOT
     entries: list[Path] = []
     entries.extend(sorted(root.glob("*/containers/*.sif")))
-    entries.extend(
-        sorted(p for p in root.glob("*/containers/*.sandbox") if p.is_dir())
-    )
+    entries.extend(sorted(p for p in root.glob("*/containers/*.sandbox") if p.is_dir()))
 
     def _dir_size_bytes(d: Path) -> int:
         total = 0
@@ -65,7 +63,21 @@ def image_list(as_json: bool) -> None:
     versions = []
     for p in entries:
         is_sandbox = p.is_dir()
-        size_bytes = _dir_size_bytes(p) if is_sandbox else p.stat().st_size
+        target_state = "available"
+        try:
+            artifact_stat = p.stat()
+        except OSError:  # stx-allow: fallback (reason: stale entries stay visible in the returned JSON or human stdout row instead of crashing the read-only listing)
+            try:
+                artifact_stat = p.lstat()
+            except OSError:  # stx-allow: fallback (reason: an entry deleted during the scan cannot supply stable metadata for the returned JSON or human stdout row)
+                continue
+            target_state = "dangling" if p.is_symlink() else "unreadable"
+        if is_sandbox:
+            size_bytes = _dir_size_bytes(p)
+        elif target_state == "dangling":
+            size_bytes = 0
+        else:
+            size_bytes = artifact_stat.st_size
         # RESOLVE THE SYMLINK. `sac-base.sif` is a symlink onto a DATED file
         # (`sac-base/sac-base-2026-0816-110731.sif`), and the listing printed
         # only the link name — so two hosts four days apart rendered
@@ -84,9 +96,10 @@ def image_list(as_json: bool) -> None:
                 "path": str(p),
                 "kind": "sandbox" if is_sandbox else "sif",
                 "size_bytes": size_bytes,
-                "mtime": p.stat().st_mtime,
+                "mtime": artifact_stat.st_mtime,
                 # The link target, "" when the entry is not a symlink.
                 "resolves_to": target,
+                "target_state": target_state,
             }
         )
     if as_json:
@@ -104,13 +117,11 @@ def image_list(as_json: bool) -> None:
         # landed.)
         click.echo(json.dumps(versions, indent=2, default=str))
         return
-    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
+    render_rich(f"[dim]scan root: {root}/*/containers/[/dim]", __name__)
     if not versions:
-        console.print(
-            f"[dim](no SIFs under {root}/*/containers/ — "
+        render_rich(f"[dim](no SIFs under {root}/*/containers/ — "
             f"run `sac image build base -y && sac image build scitex -y` to "
-            f"populate; downstream packages populate their own siblings)[/dim]"
-        )
+            f"populate; downstream packages populate their own siblings)[/dim]", __name__)
         return
     for v in versions:
         size_mb = v["size_bytes"] / (1024 * 1024)
@@ -124,9 +135,9 @@ def image_list(as_json: bool) -> None:
         # clean. The date is what makes that comparable at a glance.
         built = _dt.datetime.fromtimestamp(v["mtime"]).strftime("%Y-%m-%d %H:%M")
         suffix = f"  -> {v['resolves_to']}" if v.get("resolves_to") else ""
-        console.print(
-            f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}"
-        )
+        if v["target_state"] != "available":
+            suffix += f"  [red]{v['target_state'].upper()}[/red]"
+        render_rich(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}", __name__)
     # NECESSARY, NOT SUFFICIENT — do not let a fresh date retire the content
     # question. scitex-hpc measured a bake on 2026-07-18 whose build-context
     # source was develop HEAD (1e4870fd) while the INSTALLED wheel was pre-fix
@@ -140,7 +151,7 @@ def image_list(as_json: bool) -> None:
 @click.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def image_status(as_json: bool) -> None:
-    """Unified container dashboard (active version, sandboxes, sizes).
+    """Report the active immutable image for each SAC layer.
 
     \b
     Example:
@@ -149,20 +160,44 @@ def image_status(as_json: bool) -> None:
     """
     from . import image_group as ig
 
-    sc_status = ig._load_apptainer().status
-
-    info = sc_status(containers_dir=ig._CONTAINERS_DIR)
+    apptainer = ig._load_apptainer()
+    info = []
+    for layer in ig._LAYERS:
+        image_name = f"sac-{layer}"
+        builds = apptainer.list_builds(ig._CONTAINERS_DIR, image_name)
+        active = next((build for build in builds if build["active"]), None)
+        if active is None:
+            continue
+        sif = Path(active["sif"])
+        stat = sif.stat()
+        verified = active["verified"]
+        verification = (
+            "verified"
+            if verified is True
+            else "unverified"
+            if verified is False
+            else "unknown"
+        )
+        info.append(
+            {
+                "name": image_name,
+                "version": active["ts"],
+                "sif_path": str(sif),
+                "sif_size_bytes": stat.st_size,
+                "sif_date": _dt.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "verification": verification,
+            }
+        )
     if as_json:
         click.echo(json.dumps(info, indent=2, default=str))
         return
     if not info:
-        console.print(f"[dim](no containers in {ig._CONTAINERS_DIR})[/dim]")
+        render_rich(f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]", __name__)
         return
     for entry in info:
-        name = entry.get("name", "?")
-        size = entry.get("sif_size", "-")
-        rebuild = "REBUILD" if entry.get("needs_rebuild") else "ok"
-        console.print(f"  {name:30s}  {size!s:>10}  {rebuild}")
+        size_mb = entry["sif_size_bytes"] / (1024 * 1024)
+        render_rich(f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
+            f"{entry['verification']:10s}  {entry['version']}", __name__)
 
 
 @click.command("snapshot")
@@ -189,7 +224,7 @@ def image_snapshot(output: Path | None) -> None:
     payload = json.dumps(snap, indent=2, default=str)
     if output:
         output.write_text(payload)
-        console.print(f"[green]wrote[/green] {output}")
+        render_rich(f"[green]wrote[/green] {output}", __name__)
     else:
         click.echo(payload)
 

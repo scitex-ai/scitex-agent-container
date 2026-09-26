@@ -130,7 +130,8 @@ class TestExpired:
         creds = tmp_path / ".credentials.json"
         _write_creds(creds, expires_at_ms=_FROZEN_NOW_MS - _ONE_HOUR_MS)
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(RuntimeError, match=r"expired \d+ seconds ago"):
             action()
@@ -142,7 +143,8 @@ class TestExpired:
         creds = tmp_path / ".credentials.json"
         _write_creds(creds, expires_at_ms=_FROZEN_NOW_MS + _ONE_MIN_MS)
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(RuntimeError, match=r"expires in \d+ seconds"):
             action()
@@ -162,7 +164,8 @@ class TestFileShape:
         # Arrange
         creds = tmp_path / ".credentials.json"
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(FileNotFoundError, match=str(creds)):
             action()
@@ -174,7 +177,8 @@ class TestFileShape:
         creds = tmp_path / ".credentials.json"
         creds.write_text("this is not json {{{", encoding="utf-8")
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(ValueError, match="not valid JSON"):
             action()
@@ -186,7 +190,8 @@ class TestFileShape:
         creds = tmp_path / ".credentials.json"
         creds.write_text(json.dumps({"somethingElse": {}}), encoding="utf-8")
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(ValueError, match="claudeAiOauth"):
             action()
@@ -201,7 +206,8 @@ class TestFileShape:
             encoding="utf-8",
         )
         # Act
-        action = lambda: check_oauth_token_expiry(creds, now=_FROZEN_NOW)
+        def action():
+            return check_oauth_token_expiry(creds, now=_FROZEN_NOW)
         # Assert
         with pytest.raises(ValueError, match="expiresAt"):
             action()

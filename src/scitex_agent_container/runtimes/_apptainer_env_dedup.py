@@ -57,10 +57,11 @@ until :mod:`._apptainer_secret_env` lifts secrets out of it.
 
 from __future__ import annotations
 
-import logging
 from urllib.parse import urlsplit
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 #: apptainer's env flag, in both spellings that occur in real specs.
 _ENV_FLAG = "--env"

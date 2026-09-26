@@ -67,9 +67,9 @@ COMMAND_CATEGORIES = [
     ("Account", ["accounts"]),
     (
         "Network & Peer",
-        ["host", "peer", "a2a", "fleet", "listen"],
+        ["host", "peer", "a2a", "fleet", "listen", "gui"],
     ),
-    ("Registry & Events", ["db", "registry", "event"]),
+    ("Registry & Events", ["store", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Host hygiene", ["worktree"]),
     (
@@ -101,7 +101,7 @@ class _MainGroup(LazyGroup):
         # Noun groups
         "agents": f"{_PKG}.agent_group:agent_group",
         "subagent": f"{_PKG}.subagent_group:subagent_group",
-        "db": f"{_PKG}.db_group:db_group",
+        "store": f"{_PKG}.store_group:store_group",
         "dev": f"{_PKG}.dev_group:dev_group",
         "host": f"{_PKG}.host_group:host_group",
         "registry": f"{_PKG}.registry_group:registry_group",
@@ -126,6 +126,7 @@ class _MainGroup(LazyGroup):
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
+        "gui": f"{_PKG}.gui_group:gui_group",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
         # Mechanical gates over a DELEGATED code change. `guard deletions`
         # is the standing form of the detector that judged 36 local-model
@@ -247,10 +248,10 @@ class _MainGroup(LazyGroup):
     LAZY_SHORT_HELPS = {
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
-        "db": "Inspect and maintain the sac state database (state.db).",
+        "store": "Inspect and maintain the shared sac state store.",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",
-        "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
+        "registry": "Registry maintenance — folded into ``sac store`` (F-CS11).",
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
         "image": "Container image operations: build the runtime base image.",
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
@@ -267,6 +268,7 @@ class _MainGroup(LazyGroup):
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
+        "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
@@ -308,7 +310,7 @@ class _MainGroup(LazyGroup):
         "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),
         # Registry — ``registry clean`` is now ``db clean`` (F-CS11 phase 5);
         # send the top-level alias straight there to avoid double-redirect.
-        "clean-registry": (f"{_PKG}.lifecycle:cleanup", "sac db clean"),
+        "clean-registry": (f"{_PKG}.lifecycle:cleanup", "sac store clean"),
         "reconcile-singletons": (
             f"{_PKG}.priority_cmds:singleton_reconcile",
             "sac registry reconcile",
@@ -424,10 +426,12 @@ def cli_entry_point() -> None:
     # already is, not in a document.
     #
     # It is safe on the hot path because it reads ONE small cached JSON file
-    # written by `sac freshness refresh` — no network, no subprocess — and
-    # because every failure path inside it ends in silence. It warns only on
-    # a positively-STALE cached finding: a missing, expired or corrupt cache
-    # is UNKNOWN, and UNKNOWN says nothing at all.
+    # written by `sac freshness refresh` — no network. Only an already-stale
+    # daemon finding pays for one local `systemctl show`, so the restart
+    # prescribed by the warning can disprove it immediately; a failed live
+    # revalidation preserves the last positive cached warning. It warns only
+    # on a positively-STALE cached finding: a missing, expired or corrupt
+    # cache is UNKNOWN, and UNKNOWN says nothing at all.
     from .._freshness import warn_once
 
     warn_once()

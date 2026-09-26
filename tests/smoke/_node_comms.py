@@ -38,8 +38,8 @@ from pathlib import Path
 import httpx
 import yaml
 
-from scitex_agent_container._state.state_db_acl_policy import record_comms_policy
-from scitex_agent_container._state.state_db_nodes import record_lineage
+from scitex_agent_container._state.state_store_acl_policy import record_comms_policy
+from scitex_agent_container._state.state_store_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
 #: The one bearer the listen daemon admits. Every cast member presents

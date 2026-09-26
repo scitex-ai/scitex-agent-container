@@ -20,6 +20,7 @@ liveness checks use real PIDs of real processes.
 
 from __future__ import annotations
 
+import errno
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,16 @@ def BASE_UNREADABLE(sif, venv):
     """Base-probe seam: the probe could not run — UNKNOWN, never a verdict."""
     _base_probe_calls.append((str(sif), venv))
     return None
+
+
+def CROSS_DEVICE_RENAME(source: Path, destination: Path) -> None:
+    """The kernel result when ``.old`` resolves onto scratch storage."""
+    raise OSError(
+        errno.EXDEV,
+        os.strerror(errno.EXDEV),
+        str(source),
+        str(destination),
+    )
 
 
 def _sif(tmp_path: Path, target_name: str) -> Path:
@@ -312,6 +323,34 @@ def test_nothing_is_deleted_only_moved(tmp_path) -> None:
         / VENV.lstrip("/")
         / "lib/python3.12/site-packages/scitex_dev-0.38.0.dist-info/METADATA"
     ).is_file()
+
+
+def test_a_cross_filesystem_archive_is_copied_then_source_is_removed(tmp_path) -> None:
+    """An archive symlink onto scratch must not strand the stale upper venv."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    # Act
+    INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        now=FIXED_NOW,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
+        rename_fn=CROSS_DEVICE_RENAME,
+    )
+    archive = root / ".old" / ARCHIVE_STAMP / "upper" / VENV.lstrip("/")
+    # Assert
+    assert (
+        (root / "upper" / VENV.lstrip("/")).exists(),
+        (
+            archive
+            / "lib/python3.12/site-packages/scitex_dev-0.38.0.dist-info/METADATA"
+        ).is_file(),
+        INV.read_stamp(root),
+        list(archive.parent.glob(".venv-sac.partial-*")),
+    ) == (False, True, INV.sif_identity(link), [])
 
 
 def test_the_archive_sits_outside_the_upper_layer(tmp_path) -> None:

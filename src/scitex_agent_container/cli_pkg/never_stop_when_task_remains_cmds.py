@@ -35,12 +35,14 @@ import json
 import sys
 
 import click
+import scitex_logging as slogging
 
 from .._never_stop_when_task_remains._awaiting_operator import notice
 from .._never_stop_when_task_remains._decide import decide
 from .._never_stop_when_task_remains._detector import probe
 from .._never_stop_when_task_remains._identity import resolve_agent
 
+log = slogging.getLogger(__name__)
 
 def _drain_stdin() -> dict:
     """Read the Stop-hook payload so the hook never blocks on a full pipe.
@@ -94,19 +96,13 @@ def never_stop_when_task_remains(agent_flag: str) -> None:
         verdict = probe(agent)
         decision = decide(agent, verdict)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment above)
-        print(
-            f"never-stop-when-task-remains: gate crashed ({exc!r}); allowing the stop (fail-open)",
-            file=sys.stderr,
-        )
+        log.error(f"never-stop-when-task-remains: gate crashed ({exc!r}); allowing the stop (fail-open)")
         return
 
     if decision.log:
         if payload.get("stop_hook_active"):
-            print(
-                "never-stop-when-task-remains: (continuing from a prior stop hook)",
-                file=sys.stderr,
-            )
-        print(decision.log, file=sys.stderr)
+            log.error("never-stop-when-task-remains: (continuing from a prior stop hook)")
+        log.error(decision.log)
 
     # The executable's decision, forwarded verbatim — we add only what sac
     # owns (the fail-open / alarm systemMessage, and the awaiting-operator

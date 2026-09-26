@@ -29,15 +29,16 @@ OWN records outrank it:
 
 from __future__ import annotations
 
-import logging
 import os
 from datetime import timezone
 from pathlib import Path
 from typing import Iterable
 
+import scitex_logging as slogging
+
 from ._liveness_tick_detect import AgentLiveness, open_card_owners
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 # Tail window for the session.jsonl read. The last record lives at the end of
 # the file, so an O(1) tail beats an O(file) scan — and this now runs for
@@ -238,7 +239,7 @@ def _live_agent_pids() -> dict[str, int] | None:
     function never looked at their registry at all — which is precisely the
     absence-as-evidence confusion the ``None`` return exists to prevent."""
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = list_active_instances()
     except Exception as exc:  # stx-allow: fallback (registry unreadable → UNKNOWN, never "dead")

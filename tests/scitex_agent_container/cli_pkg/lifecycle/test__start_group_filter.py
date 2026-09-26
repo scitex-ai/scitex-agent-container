@@ -16,8 +16,6 @@ AAA, one assertion per test, no mocks/monkeypatch (STX-NM002).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 
@@ -27,6 +25,7 @@ from scitex_agent_container.cli_pkg.lifecycle._start_group_filter import (
     apply_group_targets,
     resolve_group_targets,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)

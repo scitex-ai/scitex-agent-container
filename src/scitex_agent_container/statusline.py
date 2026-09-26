@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from ._env import getenv as _sac_env
+from ._logging import render_content
 
 
 def _state_dir() -> Path:
@@ -191,7 +192,11 @@ def _short_host(host: str) -> str:
     :func:`_hostname`'s stated purpose — noticing the same agent name alive on
     two machines — survives intact.
     """
-    return host[len("scitex-") :] if host.startswith("scitex-") else host
+    # ``socket.gethostname()`` returns a short name on the compute fleet but
+    # an FQDN on HPC compute nodes.  The DNS suffix identifies the network,
+    # not the machine, and can consume half of the fixed-width status line.
+    short = host.split(".", 1)[0]
+    return short[len("scitex-") :] if short.startswith("scitex-") else short
 
 
 def _short_model(model: str) -> str:
@@ -315,7 +320,7 @@ def _display(raw: bytes) -> None:
     # stx-allow: fallback (reason: statusLine display must never raise; corrupt
     # or unexpected payload shape silently outputs nothing rather than aborting)
     try:
-        print(_render(json.loads(raw)), flush=True)
+        render_content(_render(json.loads(raw)))
     except Exception:
         pass
 

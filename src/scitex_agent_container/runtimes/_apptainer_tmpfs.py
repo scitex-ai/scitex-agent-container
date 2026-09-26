@@ -17,7 +17,9 @@ Apptainer's ``-W/--workdir <dir>`` flag relocates the in-container
 pins ``$HOME`` via ``--home`` so that part is moot) onto a host
 directory, replacing the tiny session tmpfs with the host filesystem's
 capacity. We create a per-agent scratch dir under
-``<state_dir>/tmp-scratch`` and emit ``--workdir <dir>``.
+``<scratch_root>/sac/agents/<agent>/apptainer-workdir`` and emit
+``--workdir <dir>``.  A host that explicitly declares ``scratch_root: none``
+keeps the historical ``<state_dir>/tmp-scratch`` placement.
 
 ``spec.apptainer.tmpfs_size`` (default ``"2G"``) is the **minimum
 free-space guarantee**: before launch we verify the host filesystem
@@ -46,11 +48,20 @@ import re
 import shutil
 from pathlib import Path
 
+import scitex_logging as slogging
+
+from .._state.host_scratch import (
+    ScratchRootError,
+    resolve_scratch_root,
+    scratch_agent_dir,
+)
+
 # apptainer-style size string: integer + M/MB/G/GB (K/KB rejected —
 # sub-MB scratch makes no sense for the test-suite workload this serves).
 # Mirrors the overlay_size grammar in _apptainer_build._create_overlay_image.
 _SIZE_RE = re.compile(r"^\s*(\d+)\s*([MG]B?)\s*$", re.IGNORECASE)
 _UNIT_BYTES = {"M": 1024**2, "MB": 1024**2, "G": 1024**3, "GB": 1024**3}
+logger = slogging.getLogger(__name__)
 
 
 class TmpfsSpaceError(RuntimeError):
@@ -89,7 +100,11 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
       * the operator already declared ``-W``/``--workdir`` in
         ``apptainer.raw_args`` (relaxed escape-hatch — don't duplicate).
 
-    Creates the scratch dir under ``<state_dir>/tmp-scratch``.
+    Resolves the directory under the host's canonical ``scratch_root`` without
+    creating it.  The real-launch preflight creates the selected directory;
+    argv construction, ``explain``, and dry-run remain read-only.  The
+    runtime-state fallback is used only for the explicit ``scratch_root: none``
+    decision or when a read-only explain cannot resolve host scratch.
 
     Does NOT check free space — that is :func:`verify_tmpfs_headroom`,
     called on the real launch path only. This function is reached by
@@ -101,7 +116,6 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
         return []
 
     scratch, _size, _need_bytes = resolved
-    scratch.mkdir(parents=True, exist_ok=True)
     return ["--workdir", str(scratch)]
 
 
@@ -139,7 +153,25 @@ def _resolve_scratch(config, state_dir: Path) -> tuple[Path, str, int] | None:
     if any(a in ("-W", "--workdir") for a in raw_args):
         return None
 
-    return state_dir.expanduser() / "tmp-scratch", size, parse_tmpfs_size_bytes(size)
+    try:
+        host_scratch = resolve_scratch_root()
+    except ScratchRootError as exc:
+        # ``build_run_argv`` is also a read-only explain surface.  The real
+        # launch will refuse through the canonical /uvwork launch gate; keep
+        # explain usable and state the fallback honestly.
+        logger.warning("apptainer workdir uses runtime fallback: %s", exc)
+        scratch = state_dir.expanduser() / "tmp-scratch"
+    else:
+        scratch = (
+            state_dir.expanduser() / "tmp-scratch"
+            if host_scratch.root is None
+            else scratch_agent_dir(
+                host_scratch.root,
+                getattr(config, "name", "") or state_dir.name,
+            )
+            / "apptainer-workdir"
+        )
+    return scratch, size, parse_tmpfs_size_bytes(size)
 
 
 def verify_tmpfs_headroom(config, state_dir: Path) -> None:

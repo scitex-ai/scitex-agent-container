@@ -172,7 +172,7 @@ def test_dry_run_does_not_invoke_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha", "--dry-run"])
     # Assert
     assert called == []
@@ -206,7 +206,7 @@ def test_refuse_without_yes_does_not_invoke_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha"])
     # Assert
     assert called == []
@@ -221,7 +221,7 @@ def test_happy_path_exits_zero():
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert result.exit_code == 0, result.output
@@ -232,7 +232,7 @@ def test_happy_path_forwards_name_to_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert called == ["alpha"]
@@ -242,7 +242,7 @@ def test_happy_path_reports_success():
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert "restarted" in result.output
@@ -268,7 +268,7 @@ def test_yaml_path_exits_zero(_yaml_path):
     with (
         _swap("resolve_with_prefix", lambda *_a, **_kw: str(_yaml_path)),
         _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved")),
-        _swap("agent_restart", lambda _name: None),
+        _swap("agent_restart", lambda _name, **_kw: None),
     ):
         result = runner.invoke(restart, [str(_yaml_path), "-y"])
     # Assert
@@ -283,7 +283,7 @@ def test_yaml_path_forwards_resolved_name(_yaml_path):
     with (
         _swap("resolve_with_prefix", lambda *_a, **_kw: str(_yaml_path)),
         _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved")),
-        _swap("agent_restart", lambda name: called.append(name)),
+        _swap("agent_restart", lambda name, **_kw: called.append(name)),
     ):
         runner.invoke(restart, [str(_yaml_path), "-y"])
     # Assert
@@ -296,7 +296,7 @@ def test_yaml_path_forwards_resolved_name(_yaml_path):
 # ---------------------------------------------------------------------------
 
 
-def _boom(_name: Any) -> None:
+def _boom(_name: Any, **_kw: Any) -> None:
     raise RuntimeError("boom")
 
 
@@ -329,7 +329,7 @@ def test_failure_reports_exception_message():
 
 
 @pytest.fixture
-def cross_host_state_db(tmp_path):
+def cross_host_state_store(tmp_path):
     """Per-test state.db at tmp_path; SCITEX_AGENT_CONTAINER_STATE_DB +
     module reload so the env override actually takes effect. The current
     host resolves to ``lead-host`` and one peer ``peer-x`` is declared.
@@ -347,9 +347,9 @@ def cross_host_state_db(tmp_path):
         "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
     )
     os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -362,13 +362,13 @@ def cross_host_state_db(tmp_path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 @pytest.fixture
-def remote_row_for_zeta(cross_host_state_db):
+def remote_row_for_zeta(cross_host_state_store):
     """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     # Port reads as a whole (carve-out, see _skills .../14_numeric-literals.md).
     port = 18_888
@@ -447,14 +447,26 @@ def test_cross_host_restart_ssh_argv_carries_restart_verb(
     assert "sac agents restart zeta" in argv
 
 
+def _remote_command_line(argv: list[str]) -> str:
+    """What the peer's shell runs: the `bash -lc` payload when wrapped, else the tail."""
+    import shlex as _shlex
+
+    if argv and argv[-1].startswith("bash -lc "):
+        return _shlex.split(argv[-1])[2]
+    return " ".join(argv[argv.index("--") + 1 :]) if "--" in argv else " ".join(argv)
+
+
 def test_cross_host_restart_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_shim):
-    # Arrange
+    # Arrange -- since 2026-09-05 the remote verb rides inside ONE
+    # `bash -lc '<cmd>'` element (the peer's login profile carries the fleet
+    # secrets an engine needs), so the flag is asserted on that inner command.
     runner = CliRunner()
     # Act
     runner.invoke(restart, ["zeta", "-y"])
     argv = _ssh_invocations(ssh_shim)[-1]
+    inner = _remote_command_line(argv)
     # Assert
-    assert "--json" in argv
+    assert "--json" in inner.split()
 
 
 def test_cross_host_restart_does_not_call_local_agent_restart(
@@ -464,7 +476,7 @@ def test_cross_host_restart_does_not_call_local_agent_restart(
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["zeta", "-y"])
     # Assert
     assert called == []
@@ -486,7 +498,7 @@ def test_cross_host_restart_json_envelope_marks_dispatched(
 
 def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_shim):
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act
@@ -503,26 +515,26 @@ def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_sh
 # ---------------------------------------------------------------------------
 
 
-def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim):
+def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_store, ssh_shim):
     # Arrange — no row seeded for ``solo``; agent_restart swapped to a recorder.
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["solo", "-y"])
     # Assert — local path taken (agent_restart called), no ssh dispatched.
     assert called == ["solo"] and _ssh_invocations(ssh_shim) == []
 
 
 def test_local_restart_json_envelope_marks_not_dispatched(
-    cross_host_state_db, ssh_shim
+    cross_host_state_store, ssh_shim
 ):
     import json as _json
 
     # Arrange — no row; local restart with --json. agent_restart no-op.
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
     envelope = _json.loads(result.stdout)
     # Assert — JSON envelope reports the local (non-dispatched) restart.
@@ -530,7 +542,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
 
 
 def test_local_restart_failure_json_envelope_carries_error(
-    cross_host_state_db, ssh_shim
+    cross_host_state_store, ssh_shim
 ):
     import json as _json
 
@@ -694,7 +706,7 @@ def test_fresh_does_not_call_local_agent_restart():
     with (
         _swap("must_broker_to_host", lambda: True),
         _swap("brokered_restart", _broker_ok),
-        _swap("agent_restart", lambda name: called.append(name)),
+        _swap("agent_restart", lambda name, **_kw: called.append(name)),
     ):
         runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
@@ -724,6 +736,27 @@ def test_brokered_restart_threads_fresh_to_the_host_client():
     assert seen == [("alpha", True)]
 
 
+def test_brokered_restart_threads_explicit_drain_timeout_to_host_client():
+    # Arrange
+    import scitex_agent_container.cli_pkg.lifecycle._restart_remote as remote_mod
+
+    seen: list[tuple[str, bool, float]] = []
+
+    def _client(name, fresh=False, *, drain_timeout_s=0.0):
+        seen.append((name, fresh, drain_timeout_s))
+        return {"returncode": 0, "stdout": ""}
+
+    saved = remote_mod._restart_via_host_bypass
+    remote_mod._restart_via_host_bypass = _client
+    # Act
+    try:
+        remote_mod.brokered_restart("alpha", drain_timeout_s=12.5)
+    finally:
+        remote_mod._restart_via_host_bypass = saved
+    # Assert
+    assert seen == [("alpha", False, 12.5)]
+
+
 # ---------------------------------------------------------------------------
 # Variadic NAME... + --all (operator TODO 2026-07-04): restart accepts
 # multiple names in one call and an --all flag that enumerates the same
@@ -733,8 +766,16 @@ def test_brokered_restart_threads_fresh_to_the_host_client():
 # ---------------------------------------------------------------------------
 
 
-def _ok_restart_one(name, *, as_json, fresh):
-    """Recorder stand-in for ``_restart_one`` — always succeeds."""
+def _ok_restart_one(name, *, as_json, fresh, engine=None):
+    """Recorder stand-in for ``_restart_one`` — always succeeds.
+
+    Carries ``engine`` because the real ``_restart_one`` takes it
+    (``--engine <key>``, ``spec.engines``) and the command passes it on
+    EVERY call, ``None`` included. A stand-in that omitted the parameter
+    would raise ``TypeError`` inside the CliRunner and turn every
+    loop-level assertion below into a test of the stand-in's signature
+    rather than of the fan-out it exists to exercise.
+    """
     return {"name": name, "restarted": True, "dispatched": False}, True
 
 
@@ -752,7 +793,7 @@ def test_multiple_names_restart_each_once():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -777,11 +818,84 @@ def test_multiple_names_json_emits_array():
     assert isinstance(payload, list) and len(payload) == 2
 
 
+# ---------------------------------------------------------------------------
+# ``--engine <key>`` (spec.engines, ADR-0024). The restart command owns two
+# facts about it: the key REACHES the per-agent restart, and a batch
+# selection REFUSES rather than applying one per-spec key to several specs.
+# Both are pinned here because the ``_restart_one`` seam is where the CLI
+# hands the engine over — the stand-ins above carry ``engine`` for exactly
+# this reason.
+# ---------------------------------------------------------------------------
+
+
+def test_engine_key_reaches_the_per_agent_restart():
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y", "--engine", "qwen38-27b"])
+    # Assert — the key the operator named, verbatim, not the default.
+    assert seen == ["qwen38-27b"]
+
+
+def test_no_engine_flag_hands_the_per_agent_restart_none():
+    # POSITIVE CONTROL for the test above: without the flag the same seam
+    # must receive ``None`` (use the spec's declared default), so
+    # "the key arrives" is a fact about the flag and not about the recorder.
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y"])
+    # Assert
+    assert seen == [None]
+
+
+def test_engine_with_several_names_refuses_rather_than_applying_one_key():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(
+            restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"]
+        )
+    # Assert — engine keys are per spec; a batch cannot share one.
+    assert result.exit_code == 2
+
+
+def test_engine_refusal_on_several_names_restarts_nobody():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"])
+    # Assert — refusing halfway would leave a split fleet; nobody is touched.
+    assert seen == []
+
+
 def test_all_flag_restarts_every_enumerated_agent():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -844,7 +958,7 @@ def test_one_failure_still_attempts_rest():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         if name == "bad":
             return {"name": name, "error": "boom"}, False
@@ -860,7 +974,7 @@ def test_one_failure_still_attempts_rest():
 
 def test_one_failure_exits_nonzero():
     # Arrange
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         if name == "bad":
             return {"name": name, "error": "boom"}, False
         return {"name": name, "restarted": True}, True
@@ -891,7 +1005,7 @@ def test_single_name_json_stays_bare_object():
     # Arrange — single explicit name must keep the historical bare-object shape.
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y", "--json"])
     payload = _json.loads(result.stdout)
     # Assert
@@ -912,7 +1026,7 @@ def test_all_running_restarts_only_running_agents():
     # Arrange — --all-running must enumerate via the RUNNING-only seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -932,7 +1046,7 @@ def test_all_registry_restarts_every_agent():
     # Arrange — --all-registry must enumerate via the full-fleet seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -953,7 +1067,7 @@ def test_all_alias_matches_all_registry_behaviour():
     # enumerate the FULL fleet, not the running-only subset.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -1131,7 +1245,7 @@ def test_in_sif_restart_of_a_resolvable_agent_is_brokered(in_sif_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker(brokered)),
-        _swap("agent_restart", lambda _name: True),
+        _swap("agent_restart", lambda _name, **_kw: True),
     ):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
@@ -1146,7 +1260,7 @@ def test_in_sif_restart_never_runs_the_local_restart(in_sif_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker([])),
-        _swap("agent_restart", lambda name: local.append(name)),
+        _swap("agent_restart", lambda name, **_kw: local.append(name)),
     ):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
@@ -1161,7 +1275,7 @@ def test_outside_a_sif_restart_runs_locally(bare_host_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker(brokered)),
-        _swap("agent_restart", lambda name: local.append(name)),
+        _swap("agent_restart", lambda name, **_kw: local.append(name)),
     ):
         runner.invoke(restart, ["local-me", "-y"])
     # Assert
@@ -1185,7 +1299,7 @@ def test_in_sif_without_a_listen_url_does_not_fall_back_to_local(
     local: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: local.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: local.append(name)):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
     assert local == []
@@ -1235,7 +1349,7 @@ def runtime_root(_isolate_runtime_root):
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path, pg_schema: str):
+def isolated_state_store(tmp_path, pg_schema: str):
     """Pin the ``instances`` registry at a real, EMPTY, per-test state.db.
 
     The postcondition now reads a SECOND witness — ``instances.screen``, the
@@ -1252,7 +1366,7 @@ def isolated_state_db(tmp_path, pg_schema: str):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(tmp_path / "state.db")
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -1289,7 +1403,7 @@ def _envelope(result):
 
 
 @pytest.fixture
-def armed_run_marker(runtime_root, isolated_state_db):
+def armed_run_marker(runtime_root, isolated_state_store):
     """Give ``verify-me`` a real run marker and PROVE the CLI can read it.
 
     Arming is checked HERE, not in each test: a fixture that silently
@@ -1308,7 +1422,7 @@ def armed_run_marker(runtime_root, isolated_state_db):
 
 
 @pytest.fixture
-def no_run_marker(runtime_root, isolated_state_db):
+def no_run_marker(runtime_root, isolated_state_store):
     """Prove ``ghost-agent`` has NO run marker (the abstention case)."""
     assert _current_run("ghost-agent") is None, (
         "fixture failed to arm the no-evidence case — a stray marker would "
@@ -1317,7 +1431,7 @@ def no_run_marker(runtime_root, isolated_state_db):
     return runtime_root
 
 
-def _noop_restart(_name):
+def _noop_restart(_name, **_kw):
     """A restart that returns happily and changes nothing — the P0's shape."""
     return True
 
@@ -1363,7 +1477,7 @@ def test_restart_that_leaves_the_run_unchanged_reports_the_same_run_both_sides(
 def _cycling_restart_for(root):
     """Build a REAL restart that replaces the marker, as a launch would."""
 
-    def _restart(_name):
+    def _restart(_name, **_kw):
         _write_run_marker(root, "verify-me", "run-2")
         return True
 
@@ -1422,7 +1536,7 @@ def test_unverifiable_restart_is_not_printed_under_the_word_verified(armed_run_m
 
 def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
     # Arrange — the stop leg ran, the start leg never came back.
-    def _stop_only(_name):
+    def _stop_only(_name, **_kw):
         (armed_run_marker / "verify-me" / "instance_id").unlink()
         return True
 
@@ -1522,7 +1636,7 @@ def test_decision_log_records_a_local_restart(runtime_root):
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: True):
+    with _swap("agent_restart", lambda _name, **_kw: True):
         runner.invoke(restart, ["local-me", "-y"])
     entries = _decision_entries(runtime_root)
     # Assert
@@ -1555,7 +1669,7 @@ def test_decision_log_records_the_outcome_after_the_work(runtime_root):
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: True):
+    with _swap("agent_restart", lambda _name, **_kw: True):
         runner.invoke(restart, ["local-me", "-y"])
     entries = _decision_entries(runtime_root)
     # Assert — one line for the decision, one for what came of it.

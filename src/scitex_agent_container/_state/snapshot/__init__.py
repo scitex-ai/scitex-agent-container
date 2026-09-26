@@ -11,8 +11,8 @@ Kept deliberately stdlib-only: no psutil, no yaml, no new deps.
 
 from __future__ import annotations
 
-from ._diff import _flatten, compute_diff_fields
-from ._io import (
+from ._diff import _flatten, compute_diff_fields  # noqa: F401  (re-export shim)
+from ._io import (  # noqa: F401  (re-export shim)
     _atomic_write_json,
     _now_iso,
     _probe_claude_pid,
@@ -32,15 +32,15 @@ from ._io import (
     snapshot_tick,
     take_snapshot,
 )
-from ._lock import _snapshot_lock
-from ._paths import (
+from ._lock import _snapshot_lock  # noqa: F401  (re-export shim)
+from ._paths import (  # noqa: F401  (re-export shim)
     _diff_path,
     _latest_path,
     _lock_path,
     _prev_path,
     cache_dir,
 )
-from ._sidecars import (
+from ._sidecars import (  # noqa: F401  (re-export shim)
     _AGENT_META_KEYS,
     _SIDECARS,
     SidecarInfo,

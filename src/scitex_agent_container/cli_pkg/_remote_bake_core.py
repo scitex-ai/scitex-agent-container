@@ -30,10 +30,11 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from ._bake_space import check_space
 
 # ---------------------------------------------------------------------------
 # Wheel-shipped assets (same package-relative convention as image_group's
@@ -43,6 +44,7 @@ from pathlib import Path
 _CONTAINERS_ASSETS = Path(__file__).resolve().parent.parent / "containers"
 BAKE_SCRIPT = _CONTAINERS_ASSETS / "spartan-sif-bake.sh"
 SYMBOL_PROBE = _CONTAINERS_ASSETS / "sif_symbol_probe.py"
+_SYMBOL_PROBE_IN_CONTAINER = "/tmp/sac-sif-symbol-probe.py"
 
 LAYERS = ("base", "scitex")
 
@@ -76,6 +78,8 @@ class RemoteBakeOutcome:
     sif: str = ""
     sha256: str = ""
     head: str = ""
+    base_sif: str = ""
+    base_sha256: str = ""
     detail: str = ""
 
     def __post_init__(self) -> None:
@@ -238,12 +242,48 @@ def parse_bake_result(output: str, *, layer: str) -> RemoteBakeOutcome:
             detail=f"unparseable SAC_BAKE_RESULT line: {exc}",
         )
     verdict = BakeVerdict(payload.get("verdict", "NO_RESULT"))
+    reported_layer = payload.get("layer", layer)
+    if reported_layer != layer:
+        return RemoteBakeOutcome(
+            verdict=BakeVerdict.FAILED,
+            layer=layer,
+            detail=(
+                "remote result authority mismatch: requested "
+                f"layer={layer}, but SAC_BAKE_RESULT reported "
+                f"layer={reported_layer!r}; refusing to let one layer publish "
+                "another layer's live symlink"
+            ),
+        )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED):
+        if not payload.get("head"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote green result omitted source HEAD provenance; "
+                    "refusing an artifact whose expected in-image SAC commit "
+                    "cannot be stated"
+                ),
+            )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED) and layer == "scitex":
+        if not payload.get("base_sif") or not payload.get("base_sha256"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote scitex result omitted base_sif/base_sha256 dependency "
+                    "provenance; redeploy SAC on the caller so the wheel-shipped "
+                    "bake script reports the exact base it layered on"
+                ),
+            )
     return RemoteBakeOutcome(
         verdict=verdict,
-        layer=payload.get("layer", layer),
+        layer=layer,
         sif=payload.get("sif", ""),
         sha256=payload.get("sha256", ""),
         head=payload.get("head", ""),
+        base_sif=payload.get("base_sif", ""),
+        base_sha256=payload.get("base_sha256", ""),
         detail=payload.get("reason", "") or payload.get("step", ""),
     )
 
@@ -333,6 +373,35 @@ def prune_local(containers_dir: Path, layer: str, retain: int) -> list[str]:
     return pruned
 
 
+def _reference_size(layer_dir: Path, layer: str) -> int | None:
+    """Size of the newest SIF already present for ``layer``, or None.
+
+    An ESTIMATE, and deliberately a local one. The exact answer lives on
+    the remote, but fetching it would add an ssh round-trip to the hot
+    path of every pull — a new network dependency, and a new way for a
+    transfer to stall before it starts. Successive builds of one layer
+    are close in size (sac-scitex has sat near 7.1G across rebuilds), so
+    the previous artifact answers "roughly how much do we need?" well
+    enough to catch the case that actually bit us: 4.0G free, ~7.6G
+    wanted.
+
+    Returns None when no prior SIF exists (a first bake), which
+    :func:`check_space` treats as UNKNOWN and lets through rather than
+    blocking a legitimate first pull.
+
+    Being an estimate is the honest limit: an image that grows sharply
+    could pass this check and still exhaust the volume. It narrows the
+    failure, it does not eliminate it, and the margin is what covers
+    ordinary drift.
+    """
+    candidates = [
+        p for p in layer_dir.glob(f"sac-{layer}-*.sif") if SIF_RE.match(p.name)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime).stat().st_size
+
+
 def pull_and_publish(
     *,
     host: str,
@@ -357,6 +426,46 @@ def pull_and_publish(
             layer,
             f"remote reported non-canonical name {sif_name!r}",
         )
+    if layer == "scitex":
+        base_link = containers_dir / "sac-base.sif"
+        if not base_link.is_symlink() or not base_link.resolve().is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status FAILED: no local live sac-base.sif; "
+                "publish the matching base before refreshing layer=scitex",
+            )
+        local_base = base_link.resolve()
+        sidecar = Path(str(local_base) + ".sha256")
+        if not sidecar.is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: local live base "
+                f"{local_base.name} has no checksum sidecar {sidecar}; refusing "
+                "an unprovable layer=scitex activation",
+            )
+        fields = sidecar.read_text(encoding="utf-8").split()
+        local_sha256 = fields[0] if fields else ""
+        remote_base_name = Path(outcome.base_sif).name
+        if not outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: remote result omitted "
+                "base_sha256; refusing an unprovable layer=scitex activation",
+            )
+        if local_sha256 != outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status MISMATCH: remote scitex artifact was "
+                f"built on {remote_base_name or '(unnamed base)'} "
+                f"sha256={outcome.base_sha256}, but local live base is "
+                f"{local_base.name} sha256={local_sha256 or '(missing)'}; "
+                "leaving both live symlinks untouched. Bake/publish base and "
+                "scitex from one dependency chain, then retry.",
+            )
     layer_dir = containers_dir / f"sac-{layer}"
     layer_dir.mkdir(parents=True, exist_ok=True)
     final = layer_dir / sif_name
@@ -380,6 +489,25 @@ def pull_and_publish(
     if rsync is None:
         return PullOutcome(PullVerdict.FAILED, layer, "rsync not found on this host")
     incoming = layer_dir / f".incoming-{sif_name}"
+
+    # WILL THIS FIT? Measured 2026-09-06/07: a ~7.6G transfer started
+    # onto 4.0G free, could not finish, and the partial it left made the
+    # next attempt likelier to fail. Refusing is the correct answer.
+    #
+    # The requirement is the REMAINDER, not the artifact: rsync runs
+    # --partial, so an existing partial is resumed rather than refetched.
+    # The size is ESTIMATED from the layer's previous SIF — local, so no
+    # ssh round-trip joins the hot path. No prior SIF means UNKNOWN, which
+    # proceeds: blocking a legitimate first pull would be worse than the
+    # failure this prevents.
+    space = check_space(
+        remote_size=_reference_size(layer_dir, layer),
+        existing_partial=incoming.stat().st_size if incoming.is_file() else 0,
+        free=shutil.disk_usage(layer_dir).free,
+    )
+    if not space.proceed:
+        return PullOutcome(PullVerdict.FAILED, layer, space.reason)
+
     proc = _run(
         [
             rsync,
@@ -424,22 +552,62 @@ def pull_and_publish(
             layer,
             f"symbol probe missing from wheel: {SYMBOL_PROBE}",
         )
-    with tempfile.TemporaryDirectory(prefix="sac-sif-probe-") as td:
-        probe = Path(td) / "sif_symbol_probe.py"
-        shutil.copy2(SYMBOL_PROBE, probe)
-        proc = _run(
-            [
-                apptainer,
-                "exec",
-                "--bind",
-                td,
-                str(incoming),
-                "/opt/venv-sac/bin/python",
-                str(probe),
-            ],
-            capture_output=True,
-            text=True,
+    # The artifact must prove that its installed SAC came from the checkout
+    # HEAD the remote result names. A build can copy the current source bytes
+    # yet ship a gitless wheel whose generated stamp says only ``unknown`` (the
+    # 2026-09-13 base-045400 incident displayed ``had62ef96``, its code hash,
+    # while the bake result claimed HEAD 6b1da1a0). Neither build success nor
+    # the artifact checksum detects that provenance break.
+    provenance_proc = _run(
+        [
+            apptainer,
+            "exec",
+            "--cleanenv",
+            "--pwd",
+            "/",
+            str(incoming),
+            "/opt/venv-sac/bin/sac",
+            "provenance",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        provenance = json.loads(provenance_proc.stdout or "")
+    except (json.JSONDecodeError, TypeError):
+        provenance = {}
+    artifact_commit = provenance.get("commit")
+    if provenance_proc.returncode != 0 or artifact_commit != outcome.head:
+        evidence = (provenance_proc.stderr or provenance_proc.stdout or "").strip()
+        return PullOutcome(
+            PullVerdict.FAILED,
+            layer,
+            "SciTeX artifact provenance status MISMATCH: remote bake result "
+            f"expected SAC commit={outcome.head or '(missing)'}, but pulled "
+            f"{sif_name} reports commit={artifact_commit or '(unknown)'} "
+            f"(probe rc={provenance_proc.returncode}); leaving live symlinks "
+            "untouched. Ensure the gitless build context is stamped with "
+            "SAC_BUILD_COMMIT before rebuilding."
+            + (f" Probe output: {evidence}" if evidence else ""),
         )
+    proc = _run(
+        [
+            apptainer,
+            "exec",
+            "--cleanenv",
+            "--containall",
+            "--pwd",
+            "/",
+            "--bind",
+            f"{SYMBOL_PROBE}:{_SYMBOL_PROBE_IN_CONTAINER}:ro",
+            str(incoming),
+            "/opt/venv-sac/bin/python",
+            _SYMBOL_PROBE_IN_CONTAINER,
+        ],
+        capture_output=True,
+        text=True,
+    )
     if proc.returncode != 0:
         return PullOutcome(
             PullVerdict.FAILED,

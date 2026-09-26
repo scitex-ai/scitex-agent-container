@@ -17,11 +17,13 @@ import sys
 import time
 from pathlib import Path
 
+import scitex_logging as slogging
+
 from .._state.account_store import list_accounts, switch_account
 from .claude_usage import fetch_usage
 from .credentials import read_credentials_metadata
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 DEFAULT_THRESHOLD = 80.0  # rotate when usage exceeds this %
 DEFAULT_INTERVAL = 300  # check every 5 minutes
@@ -248,7 +250,7 @@ def check_and_rotate(
                 "message": "dry-run: would rotate",
             }
 
-        result = switch_account(
+        switch_account(
             next_acct["name"],
             store_dir=store_dir,
             home=home,

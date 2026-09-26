@@ -196,6 +196,73 @@ class TestMaterializeOverwriteSemantics:
         # Assert
         assert loaded["spec"]["role"] == "worker"
 
+    def test_overwrite_refuses_authority_managed_agent_link(self, home_root: Path):
+        # Arrange — link-specs installs the whole per-agent directory as a
+        # symlink into a clean git-backed authority tree.
+        authority = home_root / "authority" / "alpha"
+        authority.mkdir(parents=True)
+        spec_path = authority / "spec.yaml"
+        original = _valid_spec()
+        spec_path.write_text(yaml.safe_dump(original), encoding="utf-8")
+        agents = home_root / ".scitex" / "agent-container" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "alpha").symlink_to(authority, target_is_directory=True)
+        replacement = _valid_spec()
+        replacement["spec"] = {"role": "worker"}
+        # Act — even the legacy overwrite escape hatch must not write through
+        # the authority link.
+        result = materialize_inline_spec("alpha", replacement, overwrite=True)
+        # Assert
+        assert result.status_code == 409
+
+    def test_authority_refusal_uses_existing_collision_kind(self, home_root: Path):
+        # Arrange
+        authority = home_root / "authority" / "alpha"
+        authority.mkdir(parents=True)
+        (authority / "spec.yaml").write_text(
+            yaml.safe_dump(_valid_spec()), encoding="utf-8"
+        )
+        agents = home_root / ".scitex" / "agent-container" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "alpha").symlink_to(authority, target_is_directory=True)
+        # Act
+        result = materialize_inline_spec("alpha", _valid_spec(), overwrite=True)
+        # Assert — existing clients already branch on this stable 409 kind.
+        assert _body(result)["kind"] == "already_exists"
+
+    def test_authority_refusal_preserves_source_bytes(self, home_root: Path):
+        # Arrange
+        authority = home_root / "authority" / "alpha"
+        authority.mkdir(parents=True)
+        spec_path = authority / "spec.yaml"
+        original_bytes = (
+            b"apiVersion: scitex-agent-container/v3\nkind: Agent\nspec: {}\n"
+        )
+        spec_path.write_bytes(original_bytes)
+        agents = home_root / ".scitex" / "agent-container" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "alpha").symlink_to(authority, target_is_directory=True)
+        # Act
+        materialize_inline_spec("alpha", _valid_spec(), overwrite=True)
+        # Assert — the incident was mutation of a supposedly immutable git
+        # snapshot, so byte preservation is the primary regression contract.
+        assert spec_path.read_bytes() == original_bytes
+
+    def test_overwrite_refuses_direct_spec_symlink(self, home_root: Path):
+        # Arrange — protect the narrower layout too, even though link-specs
+        # currently links the whole agent directory.
+        authority = home_root / "authority"
+        authority.mkdir()
+        source = authority / "alpha.yaml"
+        source.write_text(yaml.safe_dump(_valid_spec()), encoding="utf-8")
+        primary = home_root / ".scitex" / "agent-container" / "agents" / "alpha"
+        primary.mkdir(parents=True)
+        (primary / "spec.yaml").symlink_to(source)
+        # Act
+        result = materialize_inline_spec("alpha", _valid_spec(), overwrite=True)
+        # Assert
+        assert result.status_code == 409
+
 
 class TestMaterializeStartupCommandsLintWireIn:
     """Integration of the startup_commands first-token lint into the

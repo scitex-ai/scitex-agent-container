@@ -158,13 +158,13 @@ def _plan_json(plan: RenamePlan, *, dry_run: bool, applied: bool) -> str:
             # coming from ``state.db`` on 2026-08-29 — that file holds no
             # table a rename can touch and ``_rename_db`` was deleted — so
             # ``store_rows`` is the honest name and the canonical key from
-            # here on. ``state_db_rows`` is a PUBLISHED output shape, though:
+            # here on. ``state_store_rows`` is a PUBLISHED output shape, though:
             # ``--json`` exists to be parsed, and dropping a key in the same
             # release that introduces its replacement breaks every reader at
             # once with no window to move. It is a deprecated ALIAS carrying
             # the identical dict, and it goes in the next minor.
             "store_rows": plan.db_counts,
-            "state_db_rows": plan.db_counts,
+            "state_store_rows": plan.db_counts,
             "cards": {
                 "enabled": plan.cards_enabled,
                 "ids": plan.card_ids,

@@ -20,12 +20,14 @@ without rescanning by name+host.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Callable
 
+from .._logging import get_logger
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+
+def _logger():
+    return get_logger(__name__)
 
 
 def _spawned_by() -> str:
@@ -67,7 +69,7 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     pid — an older/injected runtime without the seam, a docker/podman
     container, or a probe that failed. ``None`` is SAFE by construction:
     every consumer treats a NULL pid as "no verdict"
-    (:func:`_state.state_db_gc.gc_dead_instances` skips it,
+    (:func:`_state.state_store_gc.gc_dead_instances` skips it,
     :func:`_lifecycle._stale_lease.clear_stale_instance_lease` leaves the
     row alone, :func:`cli_pkg._send_diagnosis._pid_alive` returns
     ``None``), whereas a WRONG pid is strictly worse — pids get REUSED,
@@ -84,6 +86,16 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return None
     return pid
+
+
+def _runtime_ownership(pid: int | None) -> dict[str, int | str]:
+    """Capture the launch PID's non-reusable systemd scope identity."""
+    if pid is None:
+        return {}
+    from .._runners._scope_ownership import capture_scope_ownership
+
+    ownership = capture_scope_ownership(pid)
+    return {} if ownership is None else ownership.to_record_fields()
 
 
 def _runtime_session_name(config: AgentConfig, runtime: Any) -> str | None:
@@ -171,7 +183,7 @@ def record_local_instance(
     """
     from .._runners._session_state import write_instance_id
     from .._state.port_allocator import get_port
-    from .._state.state_db import (
+    from .._state.state_store import (
         _resolve_host,
         list_active_instances,
         record_instance_start,
@@ -214,11 +226,21 @@ def record_local_instance(
     # three remote call sites leave it NULL for the same reason they leave
     # ``pid`` NULL — a peer's tmux session is not in this host's namespace,
     # so a name recorded here could only ever be probed against the wrong
-    # server.
+    # server. For a systemd scope-backed local runtime, the five ownership
+    # fields bind that PID to its kernel birth time and exact transient scope
+    # invocation. They are what lets stop find and verify the process tree
+    # after tmux itself has forgotten the session.
+    runtime_pid = _runtime_pid(config, runtime)
+    ownership = _runtime_ownership(runtime_pid)
     instance_id = record_instance_start(
         name=config.name,
         host=host,
-        pid=_runtime_pid(config, runtime),
+        pid=runtime_pid,
+        process_start_time=ownership.get("process_start_time"),
+        process_uid=ownership.get("process_uid"),
+        control_group=ownership.get("control_group"),
+        scope_unit=ownership.get("scope_unit"),
+        scope_invocation_id=ownership.get("scope_invocation_id"),
         screen=_runtime_session_name(config, runtime),
         a2a_port=a2a_port,
         bound_port=a2a_port,
@@ -237,12 +259,12 @@ def record_local_instance(
     # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
-            from .._state.state_db_nodes import (
+            from .._state.state_store_nodes import (
                 CommsNodeConflictError,
                 register_comms_node,
             )
 
-            register_comms_node(
+            registration_result = register_comms_node(
                 name=config.name,
                 host=host,
                 a2a_port=int(a2a_port),
@@ -257,9 +279,24 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
+                # A successful spec-driven launch is the canonical live
+                # incarnation on this host.  It therefore owns the
+                # same-origin routing pointer and replaces stale listener /
+                # self-peer discovery ports.  The primitive still refuses
+                # every cross-origin claim before consulting ``replace``.
+                replace=True,
             )
-        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
-            logger.warning(
+            _logger().info(
+                "comms_nodes registration OWNED by live spec incarnation: "
+                "name=%r incarnation_id=%s endpoint=%s:%d result=%s",
+                config.name,
+                instance_id,
+                host,
+                int(a2a_port),
+                registration_result,
+            )
+        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: scitex-logging warning, which reaches journald for a listen-brokered start and the caller's stderr for a direct CLI start)
+            _logger().warning(
                 "comms_nodes registration REFUSED for %r: %s. The agent IS "
                 "running; peers cannot resolve it by name until the "
                 "collision is resolved (`sac registry register --name %s "
@@ -270,7 +307,7 @@ def record_local_instance(
                 host,
                 int(a2a_port),
             )
-        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: scitex-logging error, which reaches journald for a listen-brokered start and the caller's stderr for a direct CLI start)
             # NOT a bare pass. It was one until 2026-08-28, and it swallowed a
             # TypeError from a stale ``db_path=`` kwarg on EVERY spec-driven
             # start — invisibly, because the stop-side unregister still
@@ -278,7 +315,7 @@ def record_local_instance(
             # withdrawn in the directory with nothing logged anywhere. A
             # swallow that cannot be seen is indistinguishable from a call
             # that never ran.
-            logger.error(
+            _logger().error(
                 "comms_nodes registration FAILED for %r at %s:%d (%r). The "
                 "agent IS running but peers cannot resolve it by name; "
                 "`sac registry register` is the manual repair.",
@@ -298,7 +335,7 @@ def record_local_instance(
     # no-op, no timestamp bump), so repeat starts do not duplicate
     # the row.
     try:
-        from .._state.state_db_nodes import grant_send
+        from .._state.state_store_nodes import grant_send
 
         grant_send(
             sender=config.name,
@@ -323,7 +360,34 @@ def record_local_instance(
     # sibling side-writes above — see ``_birth_certificate``.
     from ._birth_certificate import write_birth_certificate
 
-    write_birth_certificate(config, instance_id)
+    identity_reader = getattr(runtime, "resolved_image_identity", None)
+    try:
+        image_identity = identity_reader() if callable(identity_reader) else None
+    except OSError as exc:
+        _logger().error(
+            "image identity NOT recorded for incarnation %s (agent %s): %s",
+            instance_id,
+            config.name,
+            exc,
+        )
+        image_identity = None
+    storage_reader = getattr(runtime, "resolved_storage_identity", None)
+    try:
+        storage_identity = storage_reader() if callable(storage_reader) else None
+    except OSError as exc:
+        _logger().error(
+            "storage identity NOT recorded for incarnation %s (agent %s): %s",
+            instance_id,
+            config.name,
+            exc,
+        )
+        storage_identity = None
+    write_birth_certificate(
+        config,
+        instance_id,
+        image_identity=image_identity,
+        storage_identity=storage_identity,
+    )
     return instance_id
 
 
@@ -343,7 +407,7 @@ def restart_and_record(
     That was survivable while ``pid`` was always NULL. It is NOT survivable
     now that the row carries a real pid: the restarted agent's old pid is
     GONE, so ``os.kill(old_pid, 0)`` fails and every consumer
-    (:func:`cli_pkg._send_diagnosis`, :func:`_state.state_db_gc`) would
+    (:func:`cli_pkg._send_diagnosis`, :func:`_state.state_store_gc`) would
     declare a perfectly LIVE agent dead — ``agent_send`` would refuse with
     "recorded pid is not alive". A stale pid is worse than no pid, so the
     restart path MUST re-record.
@@ -372,6 +436,12 @@ def restart_and_record(
     bug the pin defended against cannot be reached from here — and the pin
     itself had stopped selecting anything once ``instances`` moved.
     """
+    from ._runtime_select import _get_runtime
+
+    if runtime_factory is _get_runtime:
+        from ._worktree_policy import enforce_task_worktree_policy
+
+        enforce_task_worktree_policy(config, provision=True)
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:
@@ -406,7 +476,7 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     name+host. Returns True iff a row was updated.
     """
     from .._runners._session_state import clear_instance_id, read_instance_id
-    from .._state.state_db import (
+    from .._state.state_store import (
         _resolve_host,
         list_active_instances,
         record_instance_stop,
@@ -432,7 +502,7 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     # the registration did. Best-effort.
     if updated:
         try:
-            from .._state.state_db_nodes import unregister_comms_node
+            from .._state.state_store_nodes import unregister_comms_node
 
             unregister_comms_node(name=config.name)
         except (
@@ -443,3 +513,34 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     if state_dir is not None:
         clear_instance_id(state_dir)
     return updated
+
+
+def resolve_local_stop_instance(config: AgentConfig, runtime: Any) -> dict | None:
+    """Resolve the exact central incarnation that a local stop must settle.
+
+    The persisted id is preferred because it names one lifetime directly.
+    When an earlier faulty stop already cleared that marker, fall back to the
+    newest local central row, including an ended row: a tombstone is not proof
+    that its launch-owned process scope disappeared.
+    """
+    from .._runners._session_state import read_instance_id
+    from .._state.state_store_instances import (
+        last_local_instance_for_name,
+        read_instance,
+    )
+    from .._state.state_store_instances_store import InstancesOwnershipSchemaError
+
+    state_dir = _state_dir_for(config, runtime)
+    if state_dir is not None:
+        instance_id = read_instance_id(state_dir)
+        if instance_id:
+            try:
+                row = read_instance(instance_id)
+            except (KeyError, InstancesOwnershipSchemaError):
+                # The pre-ownership physical store cannot satisfy the new
+                # row codec.  The name+host legacy reader below resolves the
+                # same central incarnation without authorizing a signal.
+                row = None
+            if row is not None:
+                return row
+    return last_local_instance_for_name(config.name)

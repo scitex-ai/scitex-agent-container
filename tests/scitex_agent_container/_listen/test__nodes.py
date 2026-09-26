@@ -45,7 +45,7 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state.state_db_nodes import record_lineage
+from scitex_agent_container._state.state_store_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import (
     await_until_serving,
     serve_in_thread,

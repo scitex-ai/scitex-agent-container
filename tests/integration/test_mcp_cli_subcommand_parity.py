@@ -19,6 +19,7 @@ manager, exactly like ``test___init__.py``.
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -28,6 +29,41 @@ import pytest
 from scitex_agent_container._mcp._tools import _agent
 from scitex_agent_container._mcp._tools import _helpers as _h
 from scitex_agent_container.cli_pkg._main import main
+
+
+@pytest.fixture(autouse=True)
+def _host_listen_url():
+    """Make the container boundary explicit, so the DISPATCH path is exercised.
+
+    ``agent_list`` chooses between two behaviours at one branch::
+
+        if is_in_sif() or (os.environ.get("SAC_LISTEN_BASE_URL") or "").strip():
+            ...use the bare-host fleet inventory...
+        else:
+            ...dispatch the CLI...
+
+    These tests assert the DISPATCH, so they need the first condition false —
+    and CI runs INSIDE a SIF, so ``is_in_sif()`` is true there and the tool took
+    the inventory branch, where the absent host URL raised
+    HostListenTransportError. Unsetting the SIF markers and the URL puts the
+    process on the branch these tests are actually about.
+
+    Configuration rather than a mock: these are the environment markers the
+    production code consults (apptainer sets APPTAINER_CONTAINER; legacy
+    singularity sets SINGULARITY_CONTAINER), and PA-306 is untouched.
+    """
+    keys = ("SAC_LISTEN_BASE_URL", "APPTAINER_CONTAINER", "SINGULARITY_CONTAINER")
+    before = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ.pop(k, None)
+    try:
+        yield
+    finally:
+        for k, v in before.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 @contextmanager

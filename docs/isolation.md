@@ -163,7 +163,7 @@ or as a raw_arg, in EITHER spelling apptainer accepts:
 ```yaml
 spec:
   apptainer:
-    overlay: ~/.scitex/agent-container/containers/overlays/<agent>/
+    overlay: /scratch/sac/agents/<agent>/overlay
     # …or, under relaxed mode, via the escape hatch:
     raw_args:
       - --overlay=/abs/path/overlays/<agent>/   # =-joined, or

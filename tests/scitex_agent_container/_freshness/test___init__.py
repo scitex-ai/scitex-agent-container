@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ from scitex_agent_container._freshness import (
     DIST_NAME,
     LISTEN_UNIT,
     RELEASE_WORKFLOW,
+    _has_stale_cached,
     check_currency,
     is_stale,
     sac_versioning_config,
@@ -454,6 +456,97 @@ class TestUnknownIsNeverFresh:
         state = report.state
         # Assert
         assert state is versioning.Currency.UNKNOWN
+
+
+def _write_systemctl_start(executable: Path, started_at: float) -> None:
+    """Publish one real systemctl-shaped monotonic timestamp executable."""
+    with open("/proc/uptime", encoding="utf-8") as uptime_file:
+        uptime_s = float(uptime_file.read().split()[0])
+    boot_epoch = time.time() - uptime_s
+    monotonic_usec = int((started_at - boot_epoch) * 1_000_000.0)
+    executable.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{monotonic_usec}'\n", encoding="utf-8"
+    )
+    executable.chmod(0o755)
+
+
+@pytest.fixture
+def daemon_cache_evidence(tmp_path):
+    """Warm stale cache plus a real executable supplying systemctl evidence."""
+    installed_at = time.time() - 600.0
+    cache = tmp_path / "version-currency.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "state": "stale",
+                "generated_at": time.time(),
+                "findings": [
+                    {
+                        "check": "running-vs-installed",
+                        "state": "stale",
+                        "summary": "sac-listen.service is RUNNING PRE-UPGRADE CODE",
+                        "remedy": "systemctl --user restart sac-listen.service",
+                        "detail": "",
+                        "data": {
+                            "daemon_started_at": installed_at - 3600.0,
+                            "installed_at": installed_at,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    systemctl = tmp_path / "systemctl"
+    old_cache = os.environ.get("SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE")
+    old_path = os.environ.get("PATH")
+    os.environ["SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE"] = str(cache)
+    os.environ["PATH"] = str(tmp_path)
+    try:
+        yield installed_at, systemctl
+    finally:
+        if old_cache is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE"] = old_cache
+        if old_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = old_path
+
+
+class TestDaemonWarningCacheCoherency:
+    """A successful restart must retire the warning that requested it."""
+
+    def test_old_live_start_preserves_cached_warning(self, daemon_cache_evidence):
+        # Arrange
+        installed_at, systemctl = daemon_cache_evidence
+        _write_systemctl_start(systemctl, installed_at - 3600.0)
+        # Act
+        stale = _has_stale_cached()
+        # Assert
+        assert stale is True
+
+    def test_post_install_live_start_retires_cached_warning(
+        self, daemon_cache_evidence
+    ):
+        # Arrange
+        installed_at, systemctl = daemon_cache_evidence
+        _write_systemctl_start(systemctl, installed_at + 300.0)
+        # Act
+        stale = _has_stale_cached()
+        # Assert
+        assert stale is False
+
+    def test_failed_live_probe_preserves_cached_warning(self, daemon_cache_evidence):
+        # Arrange
+        _installed_at, systemctl = daemon_cache_evidence
+        systemctl.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        systemctl.chmod(0o755)
+        # Act
+        stale = _has_stale_cached()
+        # Assert
+        assert stale is True
 
 
 @requires_primitive

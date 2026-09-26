@@ -37,6 +37,7 @@ from __future__ import annotations
 import time as _time
 from datetime import datetime, timezone
 
+
 def hours_left(expires_ms: int | None, now: float | None = None) -> float | None:
     """Signed hours until ``expires_ms``; ``None`` when there is no expiry.
 

@@ -14,6 +14,19 @@ from pathlib import Path
 from ..._env import getenv as _sac_env
 
 
+def _ensure_cache_dir(path: Path) -> Path:
+    """Create the private cache directory, including on first status read.
+
+    ``mkdir(..., exist_ok=True)`` makes concurrent first-use calls safe.  The
+    explicit chmod is intentional: ``mode`` only applies when this call wins
+    creation, so it would otherwise leave a pre-existing or concurrently
+    created directory with permissions inherited from an unsafe umask.
+    """
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
+    return path
+
+
 def cache_dir() -> Path:
     """Per-agent snapshot cache (under `runtime/` per local-state §4b).
 
@@ -24,12 +37,10 @@ def cache_dir() -> Path:
     """
     override = _sac_env("CACHE_DIR")
     if override:
-        p = Path(override).expanduser()
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+        return _ensure_cache_dir(Path(override).expanduser())
     from scitex_config._ecosystem import local_state as _local_state
 
-    return _local_state.runtime_path("agent-container", "cache")
+    return _ensure_cache_dir(_local_state.runtime_path("agent-container", "cache"))
 
 
 def _latest_path(agent: str) -> Path:

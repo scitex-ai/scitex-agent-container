@@ -5,7 +5,7 @@ one place and the runtime file stays under sac's 512-line cap. Mirrors
 the ``_apptainer_iso_flags.compute_iso_prepend`` extraction pattern.
 
 The in-container ``sac mcp channel`` adapter (registered when
-``spec.claude.channels`` contains ``server:sac``) resolves the bus from
+``spec.comms.channels`` contains ``server:sac``) resolves the bus from
 two env vars at start:
 
 * ``SAC_LISTEN_BASE_URL`` — the host-stable ``sac listen`` URL the
@@ -31,16 +31,17 @@ URL and log a loud warning.
 
 from __future__ import annotations
 
-import logging
+import scitex_logging as slogging
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
-def listen_env_flags(config) -> list[str]:
+def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:
     """Return the ``--env`` flags ``apptainer exec`` needs for the bus.
 
-    Forwards the bus-listen URL + bearer (``SAC_LISTEN_*``) and ALWAYS
-    injects the agent-spec search path
+    When ``include_listener`` is true, forwards the bus-listen URL + bearer
+    (``SAC_LISTEN_*``); false is the explicit boundary for harnesses that do
+    not own the Claude channel adapter. ALWAYS injects the agent-spec search path
     (``SCITEX_AGENT_CONTAINER_YAML_DIRS``) so an in-container ``sac agents
     start <peer>`` resolves specs at the SAME path the operator uses on
     the host. The injected value is the union of any host-set
@@ -70,7 +71,9 @@ def listen_env_flags(config) -> list[str]:
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
     from ._mcp_reliability import mcp_timeout_env_flags
 
-    flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
+    flags: list[str] = []
+    if include_listener:
+        flags += ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
 
     # AGENT SELF-NAME — without ``SAC_NAME`` an in-container agent cannot
     # introspect its own registry row: ``agent_list``/``agent_logs`` return
@@ -192,29 +195,30 @@ def listen_env_flags(config) -> list[str]:
     channels = list(getattr(claude_spec, "channels", None) or [])
     wants_bus = any(str(c).strip() == "server:sac" for c in channels)
 
-    bearer = _read_listen_bearer()
-    if bearer:
-        flags += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
-    elif wants_bus:
-        raise RuntimeError(
-            "spec.claude.channels includes 'server:sac' but the bus bearer "
-            f"token file {_listen_token_path()} is absent or empty, so the "
-            "in-container channel adapter could never authenticate to "
-            "`sac listen` (401). Subscriptions would never land and every "
-            "pushed turn would report delivered_subscriber_count=0 — "
-            "refusing to launch an agent whose adapter can never subscribe. "
-            "Start `sac listen` to generate the token, then restart this "
-            "agent."
-        )
-    else:
-        logger.warning(
-            "SAC_LISTEN_BEARER not injected: bus token file %s is absent. "
-            "The in-container channel adapter cannot authenticate to "
-            "`sac listen` (401), so inbox subscription and pushed turns "
-            "will fail. Start `sac listen` to generate the token, then "
-            "restart this agent.",
-            _listen_token_path(),
-        )
+    if include_listener:
+        bearer = _read_listen_bearer()
+        if bearer:
+            flags += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
+        elif wants_bus:
+            raise RuntimeError(
+                "spec.comms.channels includes 'server:sac' but the bus bearer "
+                f"token file {_listen_token_path()} is absent or empty, so the "
+                "in-container channel adapter could never authenticate to "
+                "`sac listen` (401). Subscriptions would never land and every "
+                "pushed turn would report delivered_subscriber_count=0 — "
+                "refusing to launch an agent whose adapter can never subscribe. "
+                "Start `sac listen` to generate the token, then restart this "
+                "agent."
+            )
+        else:
+            logger.warning(
+                "SAC_LISTEN_BEARER not injected: bus token file %s is absent. "
+                "The in-container channel adapter cannot authenticate to "
+                "`sac listen` (401), so inbox subscription and pushed turns "
+                "will fail. Start `sac listen` to generate the token, then "
+                "restart this agent.",
+                _listen_token_path(),
+            )
     return flags
 
 

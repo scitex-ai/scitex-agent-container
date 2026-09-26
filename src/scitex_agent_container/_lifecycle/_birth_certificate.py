@@ -34,16 +34,18 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import logging
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 __all__ = [
     "SPEC_SHA_UNRESOLVABLE",
+    "compiled_launch_snapshot",
     "compiled_spec_snapshot",
     "spec_git_sha",
     "write_birth_certificate",
@@ -78,7 +80,9 @@ def _redact(obj: Any) -> Any:
         for key, value in obj.items():
             k = str(key)
             if _SECRET_KEY_RE.search(k) and not _SOURCE_REF_KEY_RE.search(k):
-                out[key] = f"<redacted:{k}>" if value not in (None, "", [], {}) else value
+                out[key] = (
+                    f"<redacted:{k}>" if value not in (None, "", [], {}) else value
+                )
             else:
                 out[key] = _redact(value)
         return out
@@ -99,6 +103,29 @@ def compiled_spec_snapshot(config: Any) -> dict:
     """
     raw = dataclasses.asdict(config)
     return _redact(raw)
+
+
+def compiled_launch_snapshot(
+    config: Any,
+    *,
+    image_identity: dict[str, str] | None = None,
+    storage_identity: dict[str, str] | None = None,
+) -> dict:
+    """Compiled declaration plus immutable artifacts selected at launch."""
+    snapshot = compiled_spec_snapshot(config)
+    artifacts: dict[str, dict[str, str]] = {}
+    if image_identity is not None:
+        artifacts["apptainer_image"] = dict(image_identity)
+    if storage_identity is not None:
+        artifacts["storage"] = dict(storage_identity)
+    from ._worktree_policy import worktree_policy_artifact
+
+    policy_identity = worktree_policy_artifact(config)
+    if policy_identity is not None:
+        artifacts["worktree_policy"] = policy_identity
+    if artifacts:
+        snapshot["launch_artifacts"] = artifacts
+    return snapshot
 
 
 def spec_git_sha(config_path: str | None, *, timeout_s: float = 5.0) -> str:
@@ -132,6 +159,9 @@ def spec_git_sha(config_path: str | None, *, timeout_s: float = 5.0) -> str:
 def write_birth_certificate(
     config: Any,
     incarnation_id: str,
+    *,
+    image_identity: dict[str, str] | None = None,
+    storage_identity: dict[str, str] | None = None,
 ) -> bool:
     """Record the birth certificate for ``incarnation_id``. Best-effort.
 
@@ -149,14 +179,21 @@ def write_birth_certificate(
     "the certificate lands in that file" long after it stopped being true.
     """
     try:
+        from ._worktree_policy import worktree_policy_artifact
+
         spec_id = (
             getattr(config, "config_path", None)
             or getattr(config, "spec_path", None)
             or None
         )
-        snapshot = compiled_spec_snapshot(config)
+        snapshot = compiled_launch_snapshot(
+            config,
+            image_identity=image_identity,
+            storage_identity=storage_identity,
+        )
+        policy_identity = worktree_policy_artifact(config)
         payload = json.dumps(snapshot, ensure_ascii=False, default=str)
-        from .._state.state_db_incarnations import record_incarnation_birth
+        from .._state.state_store_incarnations import record_incarnation_birth
 
         record_incarnation_birth(
             incarnation_id,
@@ -165,6 +202,8 @@ def write_birth_certificate(
             spec_git_sha=spec_git_sha(spec_id),
             host=None,
             compiled_spec_json=payload,
+            policy_sha256=(policy_identity or {}).get("policy_sha256"),
+            projection_sha256=(policy_identity or {}).get("projection_sha256"),
         )
         return True
     except Exception as exc:  # stx-allow: fallback (reason: the certificate documents a launch that already succeeded; failing the launch over bookkeeping would destroy the run it documents. SINK, measured 2026-08-20: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'birth certificate NOT recorded'` is the check)

@@ -84,11 +84,11 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SAC_COMPACT_ENABLED` | Enable auto-compaction of context window. | `true` | bool |
-| `SAC_COMPACT_THRESHOLD_PCT` | Trigger compaction at this context % used. | `80` | int |
-| `SAC_COMPACT_MIN_DROP_PCT` | Minimum % that must drop per pass. | `20` | int |
-| `SAC_COMPACT_MIN_INTERVAL_S` | Minimum seconds between compactions. | `300` | int |
-| `SAC_COMPACT_TIMEOUT_S` | Timeout per compaction attempt. | `60` | int |
+| `SAC_AUTO_COMPACT_TOKENS` | Absolute pre-turn trigger for the Claude SDK conversation runner only. Unset or `0` disables this compatibility shim. Hermes TUI agents instead use `available_harnesses.hermes.compression` and native `session.compress`. | `0` | int |
+
+The formerly documented `SAC_COMPACT_*` variables never had runtime consumers
+and have been removed from this reference. They do not control Hermes or the
+Claude SDK runner.
 
 ## Action / probe / heartbeat timing
 
@@ -140,7 +140,7 @@ start`` against the bare host's apptainer.
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
 | `SAC_LISTEN_BASE_URL` | Host-stable ``sac listen`` base URL the in-SIF CLI POSTs spawn requests against (also used by the in-container channel adapter to subscribe to the bus). Auto-injected by the apptainer runtime from ``listen.host`` / ``listen.port`` in ``~/.scitex/agent-container/config.yaml``. | `http://127.0.0.1:7878` | URL |
-| `SAC_LISTEN_BEARER` | Bearer token presented as ``Authorization: Bearer ...`` to the host listen server. Auto-injected from the host's bearer-token file; required when ``server:sac`` is in ``spec.claude.channels`` (the runtime fails loud at launch otherwise). | `—` | string |
+| `SAC_LISTEN_BEARER` | Bearer token presented as ``Authorization: Bearer ...`` to the host listen server. Auto-injected from the host's bearer-token file; required when ``server:sac`` is in ``spec.comms.channels`` (the runtime fails loud at launch otherwise). | `—` | string |
 | `SAC_INBOX_KEEPALIVE_S` | Server: seconds between `: keepalive` frames on an IDLE inbox SSE stream. A silent stream is indistinguishable from a dead one, which parks the subscriber forever (silent deafness) — so a bad value falls back to the default rather than disabling the beat. | `15` | float |
 | `SAC_MCP_SSE_READ_TIMEOUT_S` | Client (`sac mcp channel`): seconds of silence before the inbox read is declared dead and the adapter re-dials. Keep well above `SAC_INBOX_KEEPALIVE_S`. Never unbounded — "wait forever" is the bug, not a setting. | `60` | float |
 
@@ -155,8 +155,8 @@ broker" / "try local apptainer anyway".
 
 ## Feature flags
 
-- **opt-out:** `SAC_COMPACT_ENABLED=false` disables context compaction.
-- No opt-in flags in this package.
+- No package-wide context-compaction feature flag exists. Use the harness-native
+  settings described above.
 
 ## Audit
 

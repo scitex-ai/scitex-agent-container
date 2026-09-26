@@ -77,13 +77,14 @@ to monitor.
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 
 # Env-var escape hatch for fleet-wide pause without a redeploy.
 _DISABLE_ENV = "SAC_PERIODIC_DRIVE_DISABLED"
@@ -155,7 +156,7 @@ def build_envelope(
         f"## Current mission\n"
         f"{state.mission}\n"
         f"\n"
-        f"## Current work (state.db + git)\n"
+        f"## Current work (shared store + git)\n"
         f"- workdir: {state.workdir}\n"
         f"- branch: {state.branch}\n"
         f"- active worktree: {state.worktree_name}\n"

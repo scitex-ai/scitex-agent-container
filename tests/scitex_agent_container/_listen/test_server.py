@@ -35,9 +35,9 @@ from scitex_agent_container._listen.peer_tokens import write_peer_token
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
-from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
-from scitex_agent_container._state.state_db_nodes import record_lineage
+from scitex_agent_container._state import state_store
+from scitex_agent_container._state import state_store_nodes as state_store_nodes_grant
+from scitex_agent_container._state.state_store_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
 
@@ -52,10 +52,10 @@ def _bind_instance_port(name: str, port: int) -> None:
     """
     from scitex_dev.store import ANY_REVISION
 
-    from scitex_agent_container._state.state_db_instances import (
+    from scitex_agent_container._state.state_store_instances import (
         live_instance_for_name,
     )
-    from scitex_agent_container._state.state_db_instances_store import (
+    from scitex_agent_container._state.state_store_instances_store import (
         ACTOR,
         run_with_reconnect,
     )
@@ -871,9 +871,9 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     pinned to host A arrives on host A's broker.
     """
     # Arrange
-    db = cross_host_env["db"]
+    cross_host_env["db"]
     # Register the target as a live instance on host-a.
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     # Permitted-peer is registered as a child of root, so is alice;
     # they share a group and ACL allows the send.
     record_lineage(child="permitted-peer", parent="root")
@@ -950,8 +950,8 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
     host's identity.
     """
     # Arrange
-    db = cross_host_env["db"]
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    cross_host_env["db"]
+    state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     host_a_port = _free_port()
@@ -1030,7 +1030,7 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
-    state_db.record_instance_start(
+    state_store.record_instance_start(
         name="alice", host="host-z", a2a_port=9999
     )
     app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1184,11 +1184,11 @@ def _drive_ssh_cross_host_send(
     uvicorn). Mirrors :func:`test_cross_host_send_forwards_to_target_host`
     one section above — the only difference is the transport.
     """
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
 
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
@@ -1249,7 +1249,7 @@ def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
     ssh-shim leg.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     # Act
@@ -1268,7 +1268,7 @@ def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
     forwarding host's identity.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     # Act
@@ -1293,13 +1293,13 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     # grant because they share one in-process SCITEX_STORE_DSN, NOT because
     # the fixture's tmp HOME pins them to a file: comms_grants is PostgreSQL
     # now. record_lineage below still takes db_path — lineage had not moved yet.
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     record_lineage(child="alice", parent="root-a")
     record_lineage(child="outsider", parent="root-b")
     # db_path is gone from the grants primitives — that store is on
     # PostgreSQL and isolates via SCITEX_STORE_DSN (the pg_schema fixture).
     # record_lineage above KEEPS its db_path: that module had not moved yet.
-    state_db_nodes_grant.grant_send(
+    state_store_nodes_grant.grant_send(
         sender="outsider",
         target="alice",
         note="ADR-0015 stage2 e2e test grant",
@@ -1322,15 +1322,15 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     deny`` on the receiver (``alice``); ``outsider`` is a sibling.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
     record_lineage(child="alice", parent="root")
     record_lineage(child="outsider", parent="root")
-    state_db_nodes_grant.record_comms_policy(
+    state_store_nodes_grant.record_comms_policy(
         name="alice", inbound_siblings="deny"
     )
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1359,7 +1359,7 @@ def test_cross_host_send_via_ssh_shim_uses_peer_token_bearer_header(
     rotated to the *destination's* token, not its own listen token.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
+    cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     _drive_ssh_cross_host_send(
@@ -1403,7 +1403,7 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
     ``bob`` and target ``alice`` are siblings under ``root`` so the
     intra-group ACL allows the send.
     """
-    db = cross_host_env["db"]
+    cross_host_env["db"]
     record_lineage(child="bob", parent="root")
     record_lineage(child="alice", parent="root")
     port = _free_port()

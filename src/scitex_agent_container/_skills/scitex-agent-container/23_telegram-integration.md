@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Per-agent Telegram bot wake contract — how an idle SDK agent picks up an inbound Telegram message.
-  [DETAILS] Each agent runs its OWN claude-code-telegrammer stdio MCP (declared in to_home/.mcp.json under the key `claude-code-telegrammer`). sac's runner injects `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<a2a_port>/v1/turn` into that MCP's env when `spec.claude.channels` contains `server:claude-code-telegrammer` AND `spec.a2a.port` is set. The standalone telegrammer poller POSTs each inbound to that URL so an IDLE agent wakes (push ≡ in-session channel). The bot TOKEN is auto-resolved at deploy from the fleet pool (`CCT_BOT_TOKEN_<SLOT>` via `SAC_SECRETS_ENVRC`; `runtimes/_cct_token_pool.py`) into `$HOME/.env` — no per-project `.envrc` required, missing slot = loud ERROR. The legacy in-sac `_telegram/` bridge was dropped (`refactor(telegram): drop telegram subsystem from sac`) — this skill documents the current per-agent path + the loud diagnostics that fire when any gate fails.
+  [DETAILS] Each agent runs its OWN claude-code-telegrammer stdio MCP (declared in to_home/.mcp.json under the key `claude-code-telegrammer`). sac's runner injects `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<a2a_port>/v1/turn` into that MCP's env when `spec.comms.channels` contains `server:claude-code-telegrammer` AND `spec.a2a.port` is set. The standalone telegrammer poller POSTs each inbound to that URL so an IDLE agent wakes (push ≡ in-session channel). The bot TOKEN is auto-resolved at deploy from the fleet pool (`CCT_BOT_TOKEN_<SLOT>` via `SAC_SECRETS_ENVRC`; `runtimes/_cct_token_pool.py`) into `$HOME/.env` — no per-project `.envrc` required, missing slot = loud ERROR. The legacy in-sac `_telegram/` bridge was dropped (`refactor(telegram): drop telegram subsystem from sac`) — this skill documents the current per-agent path + the loud diagnostics that fire when any gate fails.
 tags: [scitex-agent-container-telegram-integration]
 ---
 
@@ -14,7 +14,7 @@ MCP declared in the spec's `to_home/.mcp.json`. The in-sac `_telegram/`
 bridge from earlier phases was retired (`refactor(telegram): drop telegram
 subsystem from sac`). The current path:
 
-1. Operator's `spec.claude.channels` lists `server:claude-code-telegrammer`.
+1. Operator's `spec.comms.channels` lists `server:claude-code-telegrammer`.
 2. Operator's `to_home/.mcp.json` declares a stdio MCP under the key
    `claude-code-telegrammer` (the bun/ts standalone telegrammer process).
 3. sac's runner (`runtimes/_sdk_channels.apply_channels`) injects
@@ -31,7 +31,7 @@ subsystem from sac`). The current path:
 
 `<channel>` rendering in the AGENT's session requires the dev-channels
 flag, which `apply_channels` sets to the comma-joined channel set whenever
-ANY `spec.claude.channels` entry is present — the foreign-channel
+ANY `spec.comms.channels` entry is present — the foreign-channel
 generalisation guarded by `test__sdk_channels.py`.
 
 ## Required spec shape
@@ -41,7 +41,7 @@ spec:
   a2a:
     port: auto          # MUST NOT be null/missing; the /v1/turn endpoint
                         # is the wake URL the telegrammer POSTs to.
-  claude:
+  comms:
     channels:
       - server:claude-code-telegrammer  # exact string (whitespace tolerated)
   # to_home/.mcp.json (sibling file) must contain:
@@ -105,7 +105,7 @@ HARD-FAILS the start when the wiring provably won't succeed.
 
 | Failure | Where it surfaces | Operator fix |
 |---|---|---|
-| `server:claude-code-telegrammer` absent from channels | Silent no-op (intentional — channel not requested) | Add the channel to spec.claude.channels |
+| `server:claude-code-telegrammer` absent from channels | Silent no-op (intentional — channel not requested) | Add the channel to spec.comms.channels |
 | `spec.a2a.port` is null | `validate_telegrammer_wake_wiring` raises `TelegrammerWakeWiringError` at `sac agents start` time | Set spec.a2a.port to 'auto' or an explicit free int |
 | `to_home/.mcp.json` missing the `claude-code-telegrammer` MCP entry | Runner-side ERROR log: "no MCP entry keyed 'claude-code-telegrammer' found" | Add the MCP entry under the canonical key |
 | `to_home/.mcp.json` entry malformed (`env` not a dict) | Runner-side WARN log | Fix the entry's `env` to be an object |
@@ -118,7 +118,7 @@ HARD-FAILS the start when the wiring provably won't succeed.
 
 ```bash
 # 1. Confirm the channel + port are configured.
-sac agents inspect <name> --json | jq '.spec.claude.channels, .spec.a2a.port'
+sac agents inspect <name> --json | jq '.spec.comms.channels, .spec.a2a.port'
 
 # 2. Confirm the MCP entry key.
 jq '.mcpServers["claude-code-telegrammer"]' \

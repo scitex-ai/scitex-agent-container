@@ -145,7 +145,7 @@ def read_started_at(state_dir: Path) -> float | None:
 # state.db instance id (F-CS11 phase 3)
 #
 # The instance id is a uuid7 generated at start time by
-# ``_state.state_db.record_instance_start``. The runtime persists it
+# ``_state.state_store.record_instance_start``. The runtime persists it
 # in ``<state_dir>/instance_id`` so the stop path can resolve the
 # row in ``state.db.instances`` without rescanning by name+host.
 # v4 step 5: this uuid IS the INCARNATION ID — the runner process

@@ -33,6 +33,13 @@ while addressing a different host. :mod:`.moving_alias` holds the registry and
       host: mba                     # Peer key for transport + peer-tokens.
       a2a_port: 8642                # Lead's sac listen port (host-bound).
 
+    scratch_root: /scratch          # ADR-0024 — where every agent's /uvwork is
+                                    #   bound from (<root>/sac/agents/<agent>/
+                                    #   uvwork). Absent: /scratch if it exists,
+                                    #   else REFUSE to start. The literal
+                                    #   `none` keeps /uvwork in the overlay and
+                                    #   requires `scratch_root_reason:`.
+
 Resolution chain for the local canonical hostname (used by every
 state.db write so cross-host queries scope correctly):
 
@@ -67,8 +74,10 @@ from .._env import getenv as _sac_env
 from ._host_config_blocks import (  # noqa: F401
     LeadConfig,
     ResolveSpec,
+    ScratchBlock,
     _parse_lead,
     _parse_resolve,
+    _parse_scratch,
 )
 from .moving_alias import MovingAliasError, moving_alias_hint
 
@@ -107,6 +116,15 @@ class PeerSpec:
     static fallback — Phase 2 will decide the precedence rule. See
     :class:`ResolveSpec` for the field shape.
 
+    ``login_shell`` (default False) says the peer's login profile may be
+    sourced by an agent start/restart dispatched to it. On this fleet the
+    profile is the ONLY carrier of ~/.bash.d/secrets (measured 2026-09-05
+    on scitex-compute-01: zero CCT_* / no gateway key under a bare or
+    ``bash -c`` command, all of them under ``bash -lc``), so a peer that
+    also needs an ``env_preamble`` for PATH must opt in here or every
+    engine with an ``auth_token_env`` is refused there as "unset". HPC
+    peers stay False: sourcing their profile kills the login.
+
     ``reverse_ssh`` names the PEER's ssh route back to the master; the
     push-config renderer falls back to the master's name when empty.
     """
@@ -116,6 +134,10 @@ class PeerSpec:
     via: tuple[str, ...] = ()  # ssh ProxyJump chain by peer name
     env_preamble: tuple[str, ...] = ()  # remote shell snippets joined by &&
     resolve: ResolveSpec | None = None  # dispatch-time target resolution
+    # A preamble peer whose LOGIN profile is safe to source and carries the
+    # fleet secrets (the compute hosts). False keeps the preamble branch on a
+    # plain `bash -c` -- the HPC compute-node bashrc kill (see _host_ssh).
+    login_shell: bool = False
     reverse_ssh: str = ""  # peer→master ssh target (sac host push-config)
 
     @classmethod
@@ -142,6 +164,7 @@ class PeerSpec:
             env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
             resolve=_parse_resolve(name, spec.get("resolve")),
             reverse_ssh=str(spec.get("reverse_ssh") or ""),
+            login_shell=bool(spec.get("login_shell", False)),
         )
 
     def jump_chain(self, peers: dict[str, "PeerSpec"]) -> list[str]:
@@ -176,6 +199,7 @@ class Config:
     host: HostBlock = field(default_factory=HostBlock)
     peers: dict[str, PeerSpec] = field(default_factory=dict)
     lead: LeadConfig | None = None
+    scratch: ScratchBlock | None = None  # scratch_root: / scratch_root_reason:
     source_path: Path | None = None
 
     def canonical_host(self) -> str:
@@ -358,8 +382,11 @@ def load(path: Path | None = None) -> Config:
         peers[str(name)] = PeerSpec.from_dict(spec, name=str(name))
 
     lead = _parse_lead(raw.get("lead"), source_path=p)
+    scratch = _parse_scratch(
+        raw.get("scratch_root"), raw.get("scratch_root_reason"), source_path=p
+    )
 
-    cfg = Config(host=host, peers=peers, lead=lead, source_path=p)
+    cfg = Config(host=host, peers=peers, lead=lead, scratch=scratch, source_path=p)
     if _key is not None:
         # Bounded: one entry per (path, mtime, size) actually parsed. In
         # practice one live entry plus a short tail of superseded ones after an

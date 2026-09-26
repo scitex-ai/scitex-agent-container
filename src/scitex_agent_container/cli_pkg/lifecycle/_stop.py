@@ -35,14 +35,15 @@ from pathlib import Path
 import click
 
 from ..._lifecycle.lifecycle import agent_stop
+from ..._logging import render_rich
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
-from ..._state.state_db import now_iso, record_instance_stop
-from ..._state.state_db_comms_nodes import unregister_comms_node
+from ..._state.state_store import now_iso, record_instance_stop
+from ..._state.state_store_comms_nodes import unregister_comms_node
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
-from .._helpers import agent_name_complete, console
+from .._helpers import agent_name_complete
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
@@ -117,7 +118,27 @@ def _force_release_binding(name: str, row: dict, peer: str) -> dict:
     }
 
 
-def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
+def remote_stop_argv(
+    name: str, *, force: bool = False, drain_timeout_s: float = 0.0
+) -> list[str]:
+    """Build the peer argv without dropping teardown safety policy."""
+    argv = ["sac", "agents", "stop", name, "--json"]
+    if drain_timeout_s > 0:
+        argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
+    if force:
+        argv.append("--force")
+    return argv
+
+
+def _dispatch_remote_stop(
+    peer: str,
+    row: dict,
+    peers: dict,
+    name: str,
+    *,
+    force: bool = False,
+    drain_timeout_s: float = 0.0,
+) -> dict:
     """SSH into ``peer`` and run ``sac agents stop <name> --json``.
 
     Updates the lead-side ``instances`` row via :func:`record_instance_stop`
@@ -134,7 +155,7 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
     """
     ssh_argv = build_ssh_argv(
         peer,
-        ["sac", "agents", "stop", name, "--json"],
+        remote_stop_argv(name, force=force, drain_timeout_s=drain_timeout_s),
         peers,
     )
     result = subprocess.run(
@@ -188,7 +209,22 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
     "force",
     is_flag=True,
     default=False,
-    help="Tolerate stale registry, missing configs, and hook failures.",
+    help=(
+        "Tolerate stale state and kill even during an active Hermes turn. "
+        "This may lose the response and SGLang prefix cache."
+    ),
+)
+@click.option(
+    "--drain-timeout",
+    "drain_timeout_s",
+    type=click.FloatRange(min=0.0),
+    default=0.0,
+    show_default=True,
+    metavar="SECONDS",
+    help=(
+        "Wait up to SECONDS for Hermes' native session state to become idle; "
+        "zero observes once and refuses an active stop."
+    ),
 )
 @click.option(
     "--dry-run",
@@ -221,6 +257,7 @@ def stop(
     all_registry: bool,
     all_alias: bool,
     force: bool,
+    drain_timeout_s: float,
     dry_run: bool,
     yes: bool,
     as_json: bool,
@@ -275,7 +312,7 @@ def stop(
         # parses a single object from a peer's stdout), so zero targets
         # correctly yields zero objects.
         if not as_json:
-            console.print("[dim]No agents found to stop.[/dim]")
+            render_rich("[dim]No agents found to stop.[/dim]", __name__)
         return
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
@@ -325,6 +362,13 @@ def stop(
         )
         raise SystemExit(2)
 
+    if force:
+        click.echo(
+            "WARNING: --force bypasses Hermes live-turn draining; an active "
+            "response and its SGLang prefix cache may be lost.",
+            err=True,
+        )
+
     # Resolve all targets to (name, raw) pairs for a unified loop.
     pairs: list[tuple[str, str]] = []
     any_error = False
@@ -337,7 +381,7 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": yaml_path, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({yaml_path}): {exc}[/red]")
+                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__)
     for raw_target in single_targets:
         try:
             name: str = raw_target
@@ -351,7 +395,7 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": raw_target, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
 
     # Dispatch loop — try remote first, fall back to local agent_stop.
     peers = _load_host_config().peers
@@ -370,7 +414,16 @@ def stop(
                 _force=force,
             ):
                 try:
-                    _holder.update(_dispatch_remote_stop(peer, row, ps, _name))
+                    _holder.update(
+                        _dispatch_remote_stop(
+                            peer,
+                            row,
+                            ps,
+                            _name,
+                            force=_force,
+                            drain_timeout_s=drain_timeout_s,
+                        )
+                    )
                     _holder["_peer"] = peer
                 except _PeerUnreachableError as exc:
                     if not _force:
@@ -404,12 +457,10 @@ def stop(
                     if as_json:
                         click.echo(_json.dumps(release_holder))
                     else:
-                        console.print(
-                            f"[yellow]Agent '{name}' force-released on "
+                        render_rich(f"[yellow]Agent '{name}' force-released on "
                             f"'{release_holder.get('host')}' "
                             f"(peer unreachable; "
-                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]"
-                        )
+                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]", __name__)
                     continue
                 if as_json:
                     click.echo(
@@ -427,16 +478,21 @@ def stop(
                         )
                     )
                 else:
-                    console.print(
-                        f"[green]Agent '{name}' stopped on "
-                        f"'{envelope_holder.get('_peer')}'[/green]"
-                    )
+                    render_rich(f"[green]Agent '{name}' stopped on "
+                        f"'{envelope_holder.get('_peer')}'[/green]", __name__)
                 continue
             # Terminal operator stop: opt into the inode-hygiene prune.
             # The gate inside agent_stop restricts it to opted-in
             # ephemeral agents (restart.policy: never + prune_on_stop:
             # true), so persistent agents are untouched.
-            agent_stop(name, force=force, prune_runtime=True)
+            stop_kwargs = {"prune_runtime": True}
+            if drain_timeout_s > 0:
+                stop_kwargs["drain_timeout_s"] = drain_timeout_s
+            # agent_stop's compatibility contract derives destructive consent
+            # from ``force`` when allow_active_turn_kill is omitted.  Keeping
+            # the default call shape also avoids needlessly breaking wrappers
+            # that implement the long-standing stop seam.
+            agent_stop(name, force=force, **stop_kwargs)
             if as_json:
                 click.echo(
                     _json.dumps(
@@ -450,16 +506,16 @@ def stop(
                     )
                 )
             else:
-                console.print(f"[green]Agent '{name}' stopped[/green]")
+                render_rich(f"[green]Agent '{name}' stopped[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining targets; surfaces via the per-target JSON envelope or red console line)
             any_error = True
             if as_json:
                 click.echo(_json.dumps({"name": name, "error": str(exc)}))
             else:
-                console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
 
     if any_error:
         sys.exit(1)
 
 
-__all__ = ["stop"]
+__all__ = ["remote_stop_argv", "stop"]

@@ -81,17 +81,20 @@ jobs:
           version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
+      - name: Prepare job-scoped import scratch
+        run: bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV
+
       - name: Install from source (no extras)
         # Mirrors the in-SIF install: install the package source root itself.
         # No git+https fallback — if this step fails the .def's
         # ``pip install /opt/scitex-agent-container-src`` will also fail.
         run: |
           set -euo pipefail
-          uv venv --python 3.12 .venv
-          uv pip install --python .venv/bin/python -e .
+          uv venv --python 3.12 "$IMPORT_VENV"
+          uv pip install --python "$IMPORT_VENV/bin/python" -e .
 
       - name: Import smoke
-        run: .venv/bin/python -c "import scitex_agent_container; print(scitex_agent_container.__version__)"
+        run: $IMPORT_VENV/bin/python -c "import scitex_agent_container; print(scitex_agent_container.__version__)"
 
       - name: CLI entry-point smoke (sac --version)
         # The console script defined in pyproject.toml's [project.scripts]
@@ -100,4 +103,8 @@ jobs:
         # in-SIF entry point. A venv install DOES materialise entry-point
         # scripts in .venv/bin (unlike `pip install --target`, which does
         # not — that is why run-in-sif.sh has to hand-write shims).
-        run: .venv/bin/sac --version
+        run: $IMPORT_VENV/bin/sac --version
+
+      - name: Remove this job's import scratch
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh import-smoke 3.12

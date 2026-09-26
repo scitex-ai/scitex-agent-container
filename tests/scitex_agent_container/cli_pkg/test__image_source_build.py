@@ -30,6 +30,7 @@ swap module-level references the same way ``test_image_group`` does.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -41,8 +42,17 @@ import pytest
 import tomllib
 
 import scitex_agent_container
+from scitex_agent_container._provenance._git import head_sha
+from scitex_agent_container._provenance._hash import code_hash
+from scitex_agent_container._provenance._stamp import (
+    compute_stamp,
+    read_existing_stamp,
+    stamp_path,
+)
 from scitex_agent_container.cli_pkg import _image_source_build as isb
 from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
+
+_LOADED_PACKAGE_ROOT = Path(scitex_agent_container.__file__).resolve().parent
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -73,7 +83,9 @@ def fake_pkg_root(tmp_path: Path) -> Path:
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
-        '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "src/hatch_build.py"\n'
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
+        '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "scripts/hatch_build.py"\n'
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
     # The wheel force-includes the custom build hook too — pyproject
@@ -91,6 +103,20 @@ def fake_def(tmp_path: Path) -> Path:
         "Bootstrap: docker\nFrom: ubuntu:24.04\n%files\n    scitex-agent-container-src /opt/scitex-agent-container-src\n"
     )
     return p
+
+
+@pytest.fixture(autouse=True)
+def isolated_hermes_source_stager():
+    """Keep unrelated image-build tests offline and deterministic."""
+    saved = isb._stage_hermes_source
+    saved_cards = isb._stage_cards_source
+    isb._stage_hermes_source = lambda build_context: build_context
+    isb._stage_cards_source = lambda build_context: build_context
+    try:
+        yield
+    finally:
+        isb._stage_hermes_source = saved
+        isb._stage_cards_source = saved_cards
 
 
 @contextmanager
@@ -119,6 +145,87 @@ def _use_container_build(build_fn) -> Iterator[list[tuple]]:
 # ---------------------------------------------------------------------------
 # stage_build_context
 # ---------------------------------------------------------------------------
+
+
+def test_source_provenance_accepts_loaded_package_root():
+    # Arrange
+    package_root = _LOADED_PACKAGE_ROOT
+    # Act
+    result = isb.assert_source_provenance(package_root)
+    # Assert
+    assert result is None
+
+
+def test_environment_package_root_reads_editable_origin_from_selected_purelib(tmp_path):
+    # Arrange
+    repo = tmp_path / "selected-worktree"
+    package = repo / "src" / "scitex_agent_container"
+    package.mkdir(parents=True)
+    purelib = tmp_path / "venv" / "site-packages"
+    dist_info = purelib / "scitex_agent_container-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+    )
+    (dist_info / "direct_url.json").write_text(
+        '{"url":"' + repo.as_uri() + '","dir_info":{"editable":true}}'
+    )
+    # Act
+    result = isb._environment_package_root(purelib)
+    # Assert
+    assert result == package
+
+
+def test_source_provenance_accepts_symlink_to_loaded_package_root(tmp_path):
+    # Arrange
+    linked_root = tmp_path / "scitex_agent_container"
+    linked_root.symlink_to(_LOADED_PACKAGE_ROOT, target_is_directory=True)
+    # Act
+    result = isb.assert_source_provenance(linked_root)
+    # Assert
+    assert result is None
+
+
+def _capture_source_provenance_error(
+    staged_root: Path, *, environment_root: Path | None = None
+) -> str:
+    try:
+        isb.assert_source_provenance(staged_root, environment_root=environment_root)
+    except isb.SourceProvenanceMismatch as exc:
+        return str(exc)
+    raise AssertionError("SourceProvenanceMismatch was not raised")
+
+
+def test_source_provenance_refuses_mixed_root_and_names_both_paths(tmp_path):
+    # Arrange
+    staged_root = tmp_path / "other" / "scitex_agent_container"
+    staged_root.mkdir(parents=True)
+    # Act
+    message = _capture_source_provenance_error(staged_root)
+    # Assert
+    assert (
+        str(_LOADED_PACKAGE_ROOT) in message
+        and str(staged_root.resolve()) in message
+        and "PYTHONPATH=" in message
+    )
+
+
+def test_source_provenance_refuses_wrong_pythonpath_checkout_for_active_environment(
+    tmp_path,
+):
+    # Arrange
+    environment_root = tmp_path / "selected-worktree" / "src" / "scitex_agent_container"
+    environment_root.mkdir(parents=True)
+    # Act
+    message = _capture_source_provenance_error(
+        _LOADED_PACKAGE_ROOT, environment_root=environment_root
+    )
+    # Assert
+    assert (
+        f"loaded package root: {_LOADED_PACKAGE_ROOT}" in message
+        and f"staged source root: {_LOADED_PACKAGE_ROOT}" in message
+        and f"active-environment package root: {environment_root}" in message
+    )
 
 
 def test_stage_build_context_creates_dest_dir(tmp_path, fake_pkg_root, fake_def):
@@ -170,6 +277,91 @@ def test_stage_build_context_excludes_pycache_from_staged_source(
     assert not (pkg / "__pycache__").exists()
 
 
+def test_stage_build_context_replaces_stale_generated_provenance_from_checkout(
+    tmp_path, fake_def
+):
+    # Arrange — reproduce the real defect: clean current source bytes next to
+    # a generated stamp left by an older build.  Apptainer removes .git, so
+    # copying this stamp would make the inner wheel inherit the old commit.
+    repo = tmp_path / "repo"
+    package = repo / "src" / "scitex_agent_container"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("VALUE = 'current'\n")
+    bundled = package / "_bundled"
+    bundled.mkdir()
+    (bundled / "pyproject.toml").write_text(
+        "[project]\nname = 'scitex-agent-container'\nversion = '9.8.7'\n"
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
+    )
+    (bundled / "README.md").write_text("# test\n")
+    (bundled / "hatch_build.py").write_text("# hook\n")
+    old_stamp = stamp_path(package)
+    old_stamp.parent.mkdir(parents=True)
+    old_stamp.write_text(
+        "STAMP = {'version': '0.0.1', 'commit': 'old-commit', "
+        "'commit_source': 'git', 'code_hash': 'old-hash'}\n"
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
+    subprocess.run(
+        ["git", "-C", repo, "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", repo, "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", repo, "commit", "-q", "-m", "current"], check=True)
+    expected_commit = head_sha(repo)
+
+    # Act
+    dest = tmp_path / "staging"
+    isb.stage_build_context(package, fake_def, dest)
+    staged_package = (
+        dest / "scitex-agent-container-src" / "src" / "scitex_agent_container"
+    )
+    staged = read_existing_stamp(staged_package)
+
+    # Assert — source commit and staged bytes, never the copied old stamp.
+    assert {
+        "stamp_exists": staged is not None,
+        "version": staged["version"],
+        "commit": staged["commit"],
+        "stale_commit_removed": staged["commit"] != "old-commit",
+        "code_hash": staged["code_hash"],
+        "stale_hash_removed": staged["code_hash"] != "old-hash",
+    } == {
+        "stamp_exists": True,
+        "version": "9.8.7",
+        "commit": expected_commit,
+        "stale_commit_removed": True,
+        "code_hash": code_hash(staged_package),
+        "stale_hash_removed": True,
+    }
+
+
+def test_inner_wheel_build_inherits_fresh_staged_commit_and_hash(tmp_path, fake_def):
+    # Arrange — the loaded package is a real clean checkout.  Staging must
+    # leave enough provenance for the no-.git inner Apptainer wheel build.
+    dest = tmp_path / "staging"
+    isb.stage_build_context(_LOADED_PACKAGE_ROOT, fake_def, dest)
+    staged_root = dest / "scitex-agent-container-src"
+    staged_package = staged_root / "src" / "scitex_agent_container"
+    staged = read_existing_stamp(staged_package)
+
+    # Act — this is the same compute path hatch_build.py executes in %post.
+    inherited = compute_stamp(
+        staged_root,
+        staged_package,
+        version=staged["version"],
+    )
+
+    # Assert
+    expected_commit = head_sha(_REPO_ROOT)
+    assert (
+        inherited["commit"],
+        inherited["commit_source"],
+        inherited["code_hash"],
+    ) == (expected_commit, "inherited", code_hash(staged_package))
+
+
 def test_stage_build_context_uses_bundled_pyproject_for_wheel_install(
     tmp_path, fake_pkg_root, fake_def
 ):
@@ -214,14 +406,15 @@ def test_locate_bundled_readme_falls_back_to_editable_repo_root(tmp_path):
 
 
 def test_locate_bundled_hatch_build_falls_back_to_editable_src_dir(tmp_path):
-    # Arrange — editable layout. hatch_build.py lives at <repo>/src/,
+    # Arrange — editable layout. hatch_build.py lives at <repo>/scripts/,
     # NOT the repo root: it is the one bundled sibling whose repo path
     # differs from its slot in the wheel's flat _bundled/ dir.
     repo = tmp_path / "repo"
     pkg = repo / "src" / "scitex_agent_container"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("\n")
-    hook = repo / "src" / "hatch_build.py"
+    (repo / "scripts").mkdir(parents=True)
+    hook = repo / "scripts" / "hatch_build.py"
     hook.write_text("# editable repo build hook\n")
     # Act
     found = isb.locate_bundled_hatch_build(pkg)
@@ -230,7 +423,7 @@ def test_locate_bundled_hatch_build_falls_back_to_editable_src_dir(tmp_path):
 
 
 def test_locate_bundled_hatch_build_raises_when_neither_location_exists(tmp_path):
-    # Arrange — no _bundled/hatch_build.py and no <repo>/src/hatch_build.py
+    # Arrange — no _bundled/hatch_build.py and no <repo>/scripts/hatch_build.py
     pkg = tmp_path / "orphan-pkg" / "scitex_agent_container"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("\n")
@@ -247,14 +440,14 @@ def test_locate_bundled_hatch_build_raises_when_neither_location_exists(tmp_path
 def test_stage_build_context_stages_hatch_build_hook_under_src(
     tmp_path, fake_pkg_root, fake_def
 ):
-    # Arrange — pyproject declares hooks.custom path = "src/hatch_build.py",
+    # Arrange — pyproject declares hooks.custom path = "scripts/hatch_build.py",
     # a path hatchling resolves against the STAGED root.
     dest = tmp_path / "staging"
     # Act
     isb.stage_build_context(fake_pkg_root, fake_def, dest)
     # Assert — the hook is staged at exactly the path pyproject names,
     # beside (not inside) the package dir.
-    staged_hook = dest / "scitex-agent-container-src" / "src" / "hatch_build.py"
+    staged_hook = dest / "scitex-agent-container-src" / "scripts" / "hatch_build.py"
     bundled = fake_pkg_root / "_bundled" / "hatch_build.py"
     assert staged_hook.is_file() and staged_hook.read_text() == bundled.read_text()
 
@@ -726,6 +919,82 @@ def test_build_layer_from_source_stages_source_at_known_relative_name(
     )
 
 
+def test_base_build_stages_hermes_source_in_same_build_context(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_hermes_source
+    isb._stage_hermes_source = lambda path: staged.append(path)
+    out_dir = tmp_path / "out"
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            isb.build_layer_from_source(
+                layer="base",
+                def_path=fake_def,
+                pkg_root=fake_pkg_root,
+                output_dir=out_dir,
+            )
+    finally:
+        isb._stage_hermes_source = saved
+
+    # Assert
+    assert staged == [out_dir / "sac-base" / "build-context"]
+
+
+def test_cards_runtime_layers_stage_cards_source_in_same_build_context(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_cards_source
+    isb._stage_cards_source = lambda path: staged.append(path)
+    out_dir = tmp_path / "out"
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            for layer in ("base", "scitex"):
+                isb.build_layer_from_source(
+                    layer=layer,
+                    def_path=fake_def,
+                    pkg_root=fake_pkg_root,
+                    output_dir=out_dir,
+                )
+    finally:
+        isb._stage_cards_source = saved
+
+    # Assert
+    assert staged == [
+        out_dir / "sac-base" / "build-context",
+        out_dir / "sac-scitex" / "build-context",
+    ]
+
+
+def test_non_base_build_does_not_stage_hermes_source(tmp_path, fake_pkg_root, fake_def):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_hermes_source
+    isb._stage_hermes_source = lambda path: staged.append(path)
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            isb.build_layer_from_source(
+                layer="proxy",
+                def_path=fake_def,
+                pkg_root=fake_pkg_root,
+                output_dir=tmp_path / "out",
+            )
+    finally:
+        isb._stage_hermes_source = saved
+
+    # Assert
+    assert staged == []
+
+
 def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(
     tmp_path, fake_pkg_root, fake_def
 ):
@@ -818,6 +1087,22 @@ def test_resolve_bootstrap_sif_scitex_raises_when_base_missing(tmp_path):
 _ALL_DEF_NAMES = sorted(set(_LAYERS.values()) | {"apptainer-proxy.def"})
 
 
+def _uv_pip_install_commands(recipe: str) -> list[list[str]]:
+    """Tokenize real backslash-continued ``uv pip install`` commands."""
+    commands: list[list[str]] = []
+    lines = iter(recipe.splitlines())
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("uv pip install"):
+            continue
+        parts = [stripped]
+        while parts[-1].endswith("\\"):
+            parts.append(next(lines).strip())
+        command = " ".join(part.removesuffix("\\") for part in parts)
+        commands.append(shlex.split(command))
+    return commands
+
+
 @pytest.fixture
 def def_text(request) -> str:
     """Read one .def file's text by its bare filename."""
@@ -874,6 +1159,16 @@ def test_def_does_not_install_sac_via_git_ref(def_text: str):
     )
 
 
+def test_base_def_tests_installed_sac_console_before_publish():
+    # Arrange
+    recipe = (_RECIPES_DIR / "apptainer-base.def").read_text()
+    test_section = recipe.partition("%test")[2].partition("%labels")[0]
+    # Act
+    command_present = "/opt/venv-sac/bin/sac --version" in test_section
+    # Assert
+    assert command_present is True
+
+
 def test_recipes_dir_holds_all_three_shipped_defs():
     # Arrange — declared expected set
     expected = set(_ALL_DEF_NAMES)
@@ -901,6 +1196,28 @@ def test_def_files_use_consistent_staged_source_name():
         f"{missing} do not reference /opt/scitex-agent-container-src; "
         f"layered .defs must agree on the in-image source path."
     )
+
+
+def test_real_uv_install_commands_do_not_repeat_singleton_flags():
+    # Arrange — uv's clap parser rejects repeated set-once flags before it
+    # resolves anything. Parse the shipped recipes' complete continuation
+    # blocks: checking isolated lines or substring presence missed this exact
+    # failure when --no-deps appeared on both lines of one command.
+    singleton_flags = {"--no-cache", "--no-deps", "--python", "-U", "--upgrade"}
+    offenders: list[str] = []
+
+    # Act
+    for name in _ALL_DEF_NAMES:
+        recipe = (_RECIPES_DIR / name).read_text()
+        for argv in _uv_pip_install_commands(recipe):
+            duplicates = sorted(
+                flag for flag in singleton_flags if argv.count(flag) > 1
+            )
+            if duplicates:
+                offenders.append(f"{name}: {duplicates}: {shlex.join(argv)}")
+
+    # Assert
+    assert offenders == [], "duplicate singleton uv flags:\n" + "\n".join(offenders)
 
 
 def test_staged_src_name_matches_def_files_files_entry():
@@ -963,7 +1280,7 @@ _skip_no_pip = pytest.mark.skipif(
 # it, the whole suite stayed green while EVERY `sac image build` died in
 # %post — 8 minutes in, on a machine nobody was watching:
 #
-#     OSError: Build script does not exist: src/hatch_build.py
+#     OSError: Build script does not exist: scripts/hatch_build.py
 #
 # A fixture that declares nothing cannot disagree with a stager that
 # copies nothing. So this test stages the REAL package root and asserts
@@ -990,6 +1307,12 @@ def _declared_hook_paths(pyproject_path: Path) -> list[str]:
             if path:
                 paths.append(path)
     return paths
+
+
+def _declared_wheel_packages(pyproject_path: Path) -> list[str]:
+    """Return every source package the staged wheel configuration names."""
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    return data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
 
 
 @pytest.fixture(scope="module")
@@ -1043,7 +1366,21 @@ def test_staged_tree_contains_every_path_the_real_pyproject_declares(
     )
 
 
-def _build_wheel(out_dir: Path) -> Path:
+@_skip_no_repo
+def test_staged_tree_contains_every_declared_wheel_package(real_staged_src: Path):
+    # Arrange
+    declared = _declared_wheel_packages(real_staged_src / "pyproject.toml")
+    # Act
+    missing = [path for path in declared if not (real_staged_src / path).is_dir()]
+    # Assert
+    assert missing == [], (
+        f"the staged source tree is missing declared wheel packages {missing}; "
+        "the SIF's source install would create console entry points whose target "
+        "modules do not exist"
+    )
+
+
+def _build_wheel(out_dir: Path, source: Path = _REPO_ROOT) -> Path:
     """Build the wheel + return the .whl path. ``pip wheel --no-deps``.
 
     ``pip wheel --no-deps`` drives the PEP 517 backend (hatchling) to
@@ -1059,7 +1396,7 @@ def _build_wheel(out_dir: Path) -> Path:
             "--no-deps",
             "--wheel-dir",
             str(out_dir),
-            str(_REPO_ROOT),
+            str(source),
         ],
         capture_output=True,
         text=True,
@@ -1080,10 +1417,37 @@ def built_wheel(tmp_path_factory) -> Path:
     return _build_wheel(out_dir)
 
 
+@pytest.fixture(scope="module")
+def staged_wheel(tmp_path_factory, real_staged_src: Path) -> Path:
+    """Build the same source tree copied into the SIF's ``/opt`` path."""
+    out_dir = tmp_path_factory.mktemp("staged-wheel-out")
+    return _build_wheel(out_dir, real_staged_src)
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_sif_staged_wheel_contains_importable_console_bootstrap(staged_wheel: Path):
+    # Arrange
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, {str(staged_wheel)!r}); "
+        "import _scitex_agent_container_bootstrap as bootstrap; "
+        "assert bootstrap.__file__"
+    )
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+    )
+    # Assert
+    assert result.returncode == 0, result.stderr
+
+
 @_skip_no_repo
 @_skip_no_pip
 def test_wheel_ships_bundled_hatch_build_py(built_wheel: Path):
-    # Arrange — the bundled pyproject NAMES src/hatch_build.py as a build
+    # Arrange — the bundled pyproject NAMES scripts/hatch_build.py as a build
     # hook, so the wheel must carry the hook too or a wheel-installed sac
     # stages a pyproject whose hook it does not have. That is the FLEET
     # case: agents run sac from a wheel, not a checkout.
@@ -1096,7 +1460,7 @@ def test_wheel_ships_bundled_hatch_build_py(built_wheel: Path):
         f"wheel must ship hatch_build.py under {expected} (force-include in "
         "pyproject.toml). Ship the bundled pyproject without the hook it "
         "declares and every `sac image build` from a wheel-installed sac "
-        "dies in %post: 'Build script does not exist: src/hatch_build.py'."
+        "dies in %post: 'Build script does not exist: scripts/hatch_build.py'."
     )
 
 

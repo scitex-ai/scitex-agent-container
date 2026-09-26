@@ -17,7 +17,7 @@ raw psycopg, plain SQL. Asking the store whether its own write landed cannot
 distinguish "wrote to PostgreSQL" from "wrote somewhere else", which is
 exactly how a store can look healthy while sharing nothing.
 
-Conventions (mirroring test_state_db_turns_errors_heartbeats.py):
+Conventions (mirroring test_state_store_turns_errors_heartbeats.py):
 
   * One assertion per test (STX-TQ007); related invariants collapse into
     ``pytest.parametrize``.

@@ -35,7 +35,8 @@ from ..._lifecycle._launch_verify import (
     LaunchVerdict,
     verify_launch,
 )
-from .._helpers import console, system_msg
+from ..._logging import render_rich
+from .._helpers import system_msg
 
 #: verdict status -> the ``--json`` ``status`` field. ``skipped`` maps to
 #: the historical ``started`` (nothing contradicts it and scripts keyed
@@ -85,7 +86,7 @@ def _emit_report_json(
     """The structured ``--json`` report — same fields as before, plus
     ``verify`` when a launch verdict exists."""
     from ..._state.port_allocator import get_port as _get_port
-    from ..._state.state_db import now_iso as _now_iso
+    from ..._state.state_store import now_iso as _now_iso
 
     _raw_port = getattr(getattr(config, "a2a", None), "port", None)
     _resolved_port: int | None = (
@@ -120,9 +121,7 @@ def _warn_manual_accept(config: Any, host: str, *, dry_run: bool) -> None:
             )
         )
     ):
-        console.print(
-            f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
-        )
+        render_rich(f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]", __name__)
 
 
 def _skip_reason(*, foreground: bool, one_shot: bool) -> str | None:

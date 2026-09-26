@@ -19,12 +19,17 @@ subcommands were removed in that restructure (``validate``,
 ``inspect``, ``check-priority``, ``take-snapshot``, ``attach``,
 ``logs``) are gone here too — except ``logs``, whose replacement
 ``tail`` is wired under the kept public name ``agent_logs``.
+
+``agent_twin`` lives in :mod:`._agent_twin` (it builds a spec and brokers a
+spawn rather than shelling a ``sac agents`` verb) and is re-exported here, so
+this module stays the single registration + ``__all__`` surface.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from ._agent_twin import agent_twin
 from ._helpers import invoke_cli_json, invoke_cli_text
 
 
@@ -32,9 +37,36 @@ def agent_list(
     capability: str | None = None,
     machine: str | None = None,
 ) -> dict[str, Any]:
-    """List every registered agent + liveness flags. Mirrors
-    ``sac agents list --json``. Filter by ``capability`` (label
-    substring match) or ``machine`` (label exact match)."""
+    """Return the fleet inventory, including defined and observed agents.
+
+    This is the authoritative discovery tool for answering which agents are
+    defined or running. It is broader than ``a2a_peers``, which lists only
+    communication peers registered on one listener and MUST NOT be presented
+    as the complete fleet. Filter by ``capability`` (label substring match)
+    or ``machine`` (label exact match).
+
+    Inside a container this MUST come from the bare-host ``sac listen``
+    authority.  Container-local specs are necessarily partial and are never a
+    fallback.
+    """
+    import os
+
+    from ..._lifecycle._in_sif_broker import is_in_sif
+
+    # SAC_LISTEN_BASE_URL is also an explicit declaration that a host authority
+    # exists.  Honour it even if a custom container launcher stripped the
+    # APPTAINER_CONTAINER marker; otherwise that launcher would silently fall
+    # back to precisely the partial local inventory this boundary forbids.
+    if is_in_sif() or (os.environ.get("SAC_LISTEN_BASE_URL") or "").strip():
+        from .._fleet_inventory_client import request_fleet_inventory
+
+        payload = request_fleet_inventory(
+            capability=capability, machine=machine
+        ).wire_dict()
+        # Preserve the long-standing CLI-wrapper envelope while making its
+        # ``data`` authoritative and versioned.  Existing MCP consumers keep
+        # reading ``data.agents``; new ones can require data.authority.
+        return {"exit_code": 0, "data": payload, "stdout": "", "stderr": ""}
     argv = ["agents", "list", "--json"]
     if capability:
         argv += ["--capability", capability]
@@ -44,8 +76,12 @@ def agent_list(
 
 
 def agent_status(name: str) -> dict[str, Any]:
-    """Detailed status for one agent (heartbeat, session id, quota,
-    snapshot, context-management %). Mirrors
+    """Detailed, evidence-bearing status for one agent.
+
+    The ``observation`` object keeps definition validity, process liveness,
+    turn activity, communication reachability, and progress as separate typed
+    dimensions. A live process is not necessarily busy or making progress.
+    Mirrors
     ``sac agents list <name> --json`` — the ``list`` leaf renders a
     single-agent status view when given a NAME (the old ``status``
     subcommand was folded into ``list`` in the group rename)."""
@@ -214,58 +250,6 @@ def agent_spawn(
             "body": exc.body,
         }
     return {"status": "ok", "result": result}
-
-
-def agent_twin(
-    parent: str,
-    name: str | None = None,
-    task: str | None = None,
-    persist: bool = False,
-    role: str | None = None,
-    caller: str | None = None,
-) -> dict[str, Any]:
-    """Spawn a context-inheriting TWIN of a running agent (e.g. your own).
-
-    A TWIN forks PARENT's live session — inherits its transcript at birth
-    then diverges; PARENT is never touched. Same host-broker path as
-    ``agent_spawn``; repo/workdir/image/binds/model inherited verbatim; own
-    name + fresh a2a port + ``session: continue``; host seeds the twin's
-    session from the parent's transcript at first boot. (Use one to inherit context
-    without sharing future context, split parallel work, or run heavy work
-    off your main loop; a plain Task subagent is cheaper otherwise.)
-
-    IDENTITY CONTRACT (safety-critical; the twin's boot-kick repeats it):
-    AUTHOR = twin (``SCITEX_TODO_AGENT_ID`` = twin — its scitex-todo writes
-    attribute to it). OWNER = parent, but scitex-todo cannot default the card
-    owner from env, so the twin MUST pass ``assignee=<parent>`` (==
-    ``$SAC_TWIN_PARENT``) on every card write — a hard rule, not an env
-    guarantee; an ephemeral twin that owns cards then exits orphans them.
-
-    ``name`` defaults to ``<parent>-twin`` (bumped if taken); ``persist``
-    makes it long-lived (default ephemeral); ``task``/``role``/``caller``
-    optional. Returns ``{"status":"ok","twin":..,"result":{..}}`` else
-    ``{"status":"error","reason":..}``.
-    """
-    from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
-    from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
-
-    try:
-        twin_name, doc = prepare_twin_spawn(
-            parent, twin_name=name, task=task, persist=persist, role=role
-        )
-    except TwinSeedError as exc:
-        return {"status": "error", "reason": str(exc)}
-
-    try:
-        result = request_spawn(twin_name, spec=doc, caller=caller, assume_yes=True)
-    except SpawnRequestError as exc:
-        return {
-            "status": "error",
-            "reason": str(exc),
-            "http_status": exc.status,
-            "body": exc.body,
-        }
-    return {"status": "ok", "twin": twin_name, "parent": parent, "result": result}
 
 
 def agent_stop(name: str) -> dict[str, Any]:

@@ -5,6 +5,12 @@ when this CLI is itself inside a SIF, the peer's ``/v1/turn`` when the
 agent's active row lives on another host, else the agent's loopback
 ``/v1/turn``. There is no fourth path.
 
+An asynchronous adapter returns the SciTeX status protocol's responder-issued
+``http/202`` receipt and exchange id. Interactive send validates and returns
+that non-final receipt immediately; final delivery is observable through
+``GET /v1/exchanges/<id>``. Hermes' receiver implements the endpoint with its
+native ``prompt.submit`` RPC; the CLI never pastes prompts or Enter into tmux.
+
 In particular there is no host-side ``claude --resume`` shellout. That
 fallback existed for a "non-A2A, host-side runtime" which no longer
 exists — apptainer is the only container engine
@@ -24,7 +30,6 @@ to stdout.
 
 from __future__ import annotations
 
-import os
 from typing import NoReturn
 
 import click
@@ -46,6 +51,15 @@ class _RemoteA2APortMissingError(click.ClickException):
     """
 
 
+def _emit_pending_exchange(name: str, pending: object) -> None:
+    """Print one accepted, pollable exchange without claiming final delivery."""
+    import json
+
+    from ._send import _pending_exchange_payload
+
+    click.echo(json.dumps(_pending_exchange_payload(name, pending), sort_keys=True))
+
+
 def _send_via_host_listen(
     *,
     name: str,
@@ -57,16 +71,16 @@ def _send_via_host_listen(
 
     PR-3 Checkpoint 3 — the path the ``sac agents send <name>
     <prompt>`` CLI takes when running inside an apptainer SIF. The
-    ``--key`` (SIGINT) path is excluded by the call site because
-    it needs local pid access; prompts route through the host
-    listen so the running agent's in-process SDK session handles
-    the turn end-to-end.
+    host-listen endpoint carries prompts so the running agent's in-process
+    session handles the turn end-to-end.
 
     The host's lineage-scoped ACL gate denies cross-lineage sends
     with ``kind=acl_deny`` + exit 5; other failures map per the
     standard outcome table.
     """
     import sys as _sys
+
+    from scitex_dev.status import StatusCode, is_exchange_id
 
     from .._lifecycle._in_sif_http_client import (
         HostListenTransportError,
@@ -85,6 +99,31 @@ def _send_via_host_listen(
         body["max_turns"] = max_turns
     try:
         status, resp = host_listen_call("POST", f"/agents/{name}/send", body=body)
+        if status == 202:
+            try:
+                receipt = StatusCode.from_dict(resp.get("status_code", {}))
+                exchange_id = resp.get("exchange_id")
+            except Exception as exc:
+                raise HostListenTransportError(
+                    "host send returned an invalid canonical 202 receipt: "
+                    f"{exc}; inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                ) from exc
+            if receipt.kind != "http" or receipt.code != 202 or receipt.final:
+                raise HostListenTransportError(
+                    "host send returned HTTP 202 without a non-final http/202 "
+                    "status_code; inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                )
+            if not is_exchange_id(exchange_id):
+                raise HostListenTransportError(
+                    "host send returned HTTP 202 without a canonical xch_ exchange_id; "
+                    "inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                )
+            # Submission owns the responder-issued receipt, not the target's
+            # wall-clock turn. Return this validated 202 immediately; callers
+            # that need finality can poll the named exchange explicitly.
         outcome = build_outcome(http_status=status, body=resp)
     except HostListenTransportError as exc:
         outcome = transport_outcome(str(exc), url=exc.url)
@@ -125,7 +164,7 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     a2a_port = row.get("a2a_port")
     if not isinstance(a2a_port, int) or a2a_port <= 0:
         raise _RemoteA2APortMissingError(
-            f"agent {name!r} is active on peer {peer!r} but state.db "
+            f"agent {name!r} is active on peer {peer!r} but the shared store "
             f"records no a2a_port for it (a2a_port={a2a_port!r}). The "
             f"remote agent did not register an A2A port; cannot send. "
             f"Restart the agent on the peer with spec.a2a.port set, or "
@@ -135,8 +174,13 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     url = f"ssh://{peer}:{a2a_port}/v1/turn"
     click.echo(f"# send {name}: POST {url}", err=True)
     try:
-        reply = post_turn_to_url(url, prompt)
+        reply = post_turn_to_url(url, prompt, wait_for_final=False)
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            _emit_pending_exchange(name, exc)
+            return True
         raise click.ClickException(f"remote send failed: {exc}") from exc
     click.echo(reply)
     return True
@@ -170,7 +214,7 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
             get from ``sac peer post-turn``.
     """
     from .._network.peer import PeerError, post_turn_to_url
-    from .._state.state_db import _resolve_host, list_active_instances
+    from .._state.state_store import _resolve_host, list_active_instances
 
     current_host = _resolve_host(None)
     rows = list_active_instances()
@@ -189,8 +233,13 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
     url = f"http://127.0.0.1:{a2a_port}/v1/turn"
     click.echo(f"# send {name}: POST {url}", err=True)
     try:
-        reply = post_turn_to_url(url, prompt)
+        reply = post_turn_to_url(url, prompt, wait_for_final=False)
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            _emit_pending_exchange(name, exc)
+            return True
         raise click.ClickException(f"local send failed: {exc}") from exc
     click.echo(reply)
     return True
@@ -285,7 +334,7 @@ def _is_known_agent(name: str) -> bool:
     # (latest row for the name, active OR ended, ``None`` when never seen),
     # so nothing new had to be written — the accessor was there and this call
     # site was simply going around it.
-    from .._state.state_db_instances import last_known_instance
+    from .._state.state_store_instances import last_known_instance
 
     return last_known_instance(name) is not None
 
@@ -346,14 +395,6 @@ def _refuse_unknown_agent(name: str) -> NoReturn:
     default=None,
     help="Cap autonomous turns within this send. Default: claude's own default.",
 )
-@click.option(
-    "--key",
-    default=None,
-    help=(
-        "Send a control key instead of a prompt (tmux-style, e.g. ``ESC``, "
-        "``C-c``). Mutually exclusive with PROMPT."
-    ),
-)
 # ``--no-stream`` and the trailing ``-- <forward>`` escape hatch were
 # REMOVED with the host-side shellout: both existed only to shape a
 # ``claude`` argv this command no longer builds. Keeping flags that
@@ -364,35 +405,32 @@ def send(
     prompt: str | None,
     model: str | None,
     max_turns: int | None,
-    key: str | None,
 ) -> None:
-    """Send a follow-up PROMPT (or control key) to an agent's live session.
+    """Send a follow-up PROMPT to an agent's live session.
 
     \b
     Examples:
       sac agent send coverage-runner "now bump the threshold to 95%"
-      sac agent send coverage-runner --key ESC
       sac agent send coverage-runner --model opus --max-turns 3 "..."
 
-    Delivery is always HTTP to the running (containerized) agent. If no
-    A2A port is recorded the command refuses — it will not run the turn
-    on the bare host.
+    Delivery is always HTTP to the running (containerized) agent. Async
+    adapters return a SciTeX http/202 exchange receipt which this command
+    reports immediately. Poll its named exchange when final delivery evidence
+    is required. If no A2A port is recorded the command refuses — it will not
+    inject a prompt into tmux or run the turn on the bare host.
     """
-    if key and prompt:
-        raise click.UsageError("--key is mutually exclusive with PROMPT.")
-    if not key and not prompt:
-        raise click.UsageError("Either PROMPT or --key is required.")
+    if not prompt:
+        raise click.UsageError("PROMPT is required.")
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
-    # sending a PROMPT (the ``--key`` SIGINT path needs local pid
-    # access and is excluded), auto-proxy to ``POST /agents/<name>/send``
+    # sending a PROMPT, auto-proxy to ``POST /agents/<name>/send``
     # on the host listen. The host's existing lineage-scoped ACL gate
     # (already wired into node_message_send + the per-agent send
     # surface) enforces caller permission. Outcome JSON + exit code
     # follow the same Checkpoint 2 contract as the other in-SIF verbs.
     from .._lifecycle._in_sif_broker import is_in_sif
 
-    if is_in_sif() and prompt and not key:
+    if is_in_sif():
         _send_via_host_listen(
             name=name,
             prompt=prompt,
@@ -400,30 +438,6 @@ def send(
             max_turns=max_turns,
         )
         return  # noreturn — _send_via_host_listen sys.exits
-    if key:
-        # ESC / C-c → SIGINT to the runner pid. Other keys are reserved
-        # for a future tty-bridge implementation.
-        if key not in ("ESC", "C-c", "SIGINT"):
-            raise click.UsageError(
-                f"--key {key!r} not supported. Only ESC / C-c / SIGINT are "
-                "wired (cancel current turn). Use a prompt otherwise."
-            )
-        import signal as _signal
-
-        state_dir = state_dir_for(name)
-        pid_file = state_dir / "pid"
-        if not pid_file.is_file():
-            raise click.ClickException(
-                f"No pid file at {pid_file} — agent {name!r} not running."
-            )
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, _signal.SIGINT)
-        except (OSError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        click.echo(f"# interrupt {name}: SIGINT → pid={pid}", err=True)
-        return
-
     # Cross-host: when the agent's active state.db.instances row lives
     # on a peer, POST one turn to the peer's /v1/turn endpoint over the
     # ssh control plane and short-circuit before the local resume path.

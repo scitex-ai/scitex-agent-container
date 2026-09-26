@@ -287,13 +287,13 @@ def test_provider_string_form_mimo_resolves_to_xiaomi_auth_env():
     assert result.provider.auth_token_env == "XIAOMI_API_KEY"
 
 
-def test_provider_string_form_deepseek_resolves_to_deepseek_base_url():
+def test_provider_string_form_deepseek_resolves_to_egress_gateway():
     # Arrange
     spec = {"claude": {"provider": "deepseek"}}
     # Act
     result = parse_claude(spec)
     # Assert
-    assert result.provider.base_url == "https://api.deepseek.com/anthropic"
+    assert result.provider.base_url == "http://scitex-compute-04:18775"
 
 
 def test_provider_string_form_anthropic_sentinel_yields_no_override():

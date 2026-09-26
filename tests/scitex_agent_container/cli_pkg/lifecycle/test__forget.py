@@ -31,11 +31,11 @@ from typing import Iterator
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._state.state_db_instances import (
+from scitex_agent_container._state.state_store_instances import (
     list_active_instances,
     record_instance_start,
 )
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_nodes import (
     register_comms_node,
 )
 
@@ -116,7 +116,7 @@ def test_forget_clears_comms_nodes_pin(
     # dead host even after the instance row is gone.
     _seed_active_instance("ghost-agent", db_path=isolated_state)
     _seed_comms_node("ghost-agent")
-    from scitex_agent_container._state.state_db_nodes import (
+    from scitex_agent_container._state.state_store_nodes import (
         resolve_node_host,
     )
 
@@ -131,7 +131,7 @@ def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
     # tells "operator forgot this" apart from a graceful stop /
     # liveness sweep / peer-unreachable force-release.
     _seed_active_instance("ghost-agent", db_path=isolated_state)
-    from scitex_agent_container._state.state_db_instances import last_known_instance
+    from scitex_agent_container._state.state_store_instances import last_known_instance
 
     # Act
     _run_forget("ghost-agent", "--force")

@@ -73,10 +73,10 @@ both halves are recorded below:
      restarts.
 
 THE CORRECT MAPPING, so nobody has to rediscover it: ``unhide``.
-``_state/state_db_grants.py`` already does exactly this for the same reason
+``_state/state_store_grants.py`` already does exactly this for the same reason
 and says so at its ``grant_send`` — read hidden-inclusive, ``unhide`` if a
 tombstone occupies the identity, ``put(NEW_RECORD)`` only when genuinely
-absent. ``state_db_pending_approval.py`` and ``state_db_blocks.py`` use the
+absent. ``state_store_pending_approval.py`` and ``state_store_blocks.py`` use the
 three-valued ``is_hidden`` for the same distinction.
 
 WHY THERE WAS NO RED TEST HERE, STATED PLAINLY
@@ -106,7 +106,7 @@ VANTAGE: A REAL POSTGRESQL, NEVER THE STORE'S FILE-BACKED DIALECT
 ``pg_schema`` (the shared opt-in fixture in ``tests/_store_isolation.py``)
 points ``SCITEX_STORE_DSN`` at a throwaway schema. The store's file-backed
 dialect would have run on every machine and was deliberately NOT used:
-``test_state_db_verdict_dedup.py`` records why — "a suite that exercised the
+``test_state_store_verdict_dedup.py`` records why — "a suite that exercised the
 store's file-backed dialect instead would be testing a code path production can
 never take", and scitex-dev 0.49.0 shipped a PostgreSQL backend that could
 be written to and never read from precisely because nobody read back through
@@ -194,7 +194,7 @@ def _probe_schema() -> Any:
 def ports_store(pg_schema: str) -> Iterator[Any]:
     """An open store in the throwaway schema, closed on teardown.
 
-    MULTI_WRITER for the same reason ``state_db_grants`` gives: a claim is
+    MULTI_WRITER for the same reason ``state_store_grants`` gives: a claim is
     written by the starting host and released by whoever stops the agent, so
     SINGLE_WRITER would make an ordinary cross-host stop an illegal write.
     """

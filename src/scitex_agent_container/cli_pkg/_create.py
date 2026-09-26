@@ -361,7 +361,24 @@ def create(
     # creating machine's RESOLVED hostname — created specs carry concrete
     # placement (``host: local`` is banned; operator directive 2026-07-10).
     # Surplus kwargs for tokens a template lacks are harmless.
+    from .._state.host_scratch import resolve_scratch_root, scratch_agent_dir
     from ..config._host import resolve_hostname
+
+    scratch = resolve_scratch_root()
+    if scratch.root is None:
+        # ``scratch_root: none`` is an explicit, reasoned host decision.  New
+        # specs remain usable there, but make the root-backed placement
+        # visible; the launch-space gate will protect a constrained root LV.
+        overlay = (
+            Path.home()
+            / ".scitex"
+            / "agent-container"
+            / "containers"
+            / "overlays"
+            / name
+        )
+    else:
+        overlay = scratch_agent_dir(scratch.root, name) / "overlay"
 
     creds_block, creds_found = _discover_credentials_pool_block()
     if not creds_found:
@@ -387,6 +404,7 @@ def create(
         name=name,
         home=str(Path.home()),
         host=resolve_hostname(),
+        overlay=str(overlay),
         credentials_files=creds_block,
     )
 

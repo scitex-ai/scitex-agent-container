@@ -55,40 +55,56 @@
 # `if: always()` step buys the same coverage for free and cannot race a SIGTERM.
 #
 # ---------------------------------------------------------------------------
-# WHY /tmp AND NOT /scratch, even with 3.0 TB of it at 1% used on that host
+# WHY SCRATCH IS SELECTED ON THE HOST
 # ---------------------------------------------------------------------------
-# Three facts, checked on scitex-04-cpu-01 rather than assumed:
-#   * /scratch is `drwxr-xr-x root root`; the runner is User=ywatanabe. A
-#     `mkdir -p /scratch/…` under `set -euo pipefail` would abort EVERY CI job
-#     before a single test ran — the exact failure exec-in-sif.sh already
-#     documents for the Spartan GPFS path.
-#   * /scratch is NOT VISIBLE INSIDE THE SIF. apptainer.conf binds only
-#     /etc/localtime and /etc/hosts (plus `mount tmp = yes`, which is the whole
-#     reason /tmp works), and exec-in-sif.sh passes no --bind for it. A
-#     `[ -d /scratch ]` test evaluated by an INNER script is FALSE even on the
-#     host where /scratch really exists.
-#   * Hosted runners have no /scratch at all.
+# The earlier /tmp choice was invalidated by observation on
+# scitex-compute-04 (2026-09-12): /tmp's ext4 volume had only 1.4G free when a
+# test correctly required 2G of headroom, while the dedicated node-local ext4
+# /scratch had 2.7T free. The runner's /scratch/ywatanabe is now an existing,
+# writable 0700 directory. exec-in-sif.sh resolves this root on the HOST and
+# binds it into the SIF; inner scripts never guess what the host exposes.
 #
-# And the decisive one: RELOCATING A LEAK DOES NOT FIX IT. 3 TB buys roughly
-# 430 runs instead of 40 — the same outage, months later, with nobody watching.
-# The lifecycle is the bug. A move would also put ~480 `tmp_path` test files and
-# the state-DB tests on a volume that is probably network-backed, where
-# file locking is unreliable and a `--target` install's tens of thousands of
-# small files are the worst possible workload; this suite has already been
-# burned by that genre of flake. If disk pressure later needs structural relief,
-# gate it on FILESYSTEM TYPE (node-local only, not mere existence), decide it
-# host-side in exec-in-sif.sh with a conditional --bind, and land it separately
-# with before/after wall-time measured. Not in a lifecycle fix.
+# HPC runner supervisors provision a node-local TMPDIR below /tmp. Prefer that
+# explicit runner allocation over GPFS: pytest tmp_path is semantically local,
+# jailed-path tests reject shared filesystems, and GPFS inherits setgid modes.
+# This is not a raw /tmp fallback; only an existing writable child exported by
+# the runner is accepted. GPFS remains the last provisioned fallback for hosts
+# without node-local runner temp. A runner with none fails before tests.
 
-# --- knobs (TEST-ONLY; unset in CI, where the defaults are the contract) -----
-# SAC_CI_TMPDIR_ROOT     scratch root                  (default /tmp)
+# --- knobs ---------------------------------------------------------------
+# SAC_CI_TMPDIR_ROOT       explicit provisioned scratch root
 # SAC_CI_TMPDIR_MAX_AGE_H  prune age floor, hours      (default 24)
 
 _ci_tmpdir_root() {
-    printf '%s' "${SAC_CI_TMPDIR_ROOT:-/tmp}"
+    if [ -n "${SAC_CI_TMPDIR_ROOT:-}" ]; then
+        printf '%s' "$SAC_CI_TMPDIR_ROOT"
+        return 0
+    fi
+
+    local runner_tmp="${TMPDIR:-}" user_name="${USER:-}"
+    case "$runner_tmp" in
+    /tmp/?* | /var/tmp/?*)
+        if [ -d "$runner_tmp" ] && [ -w "$runner_tmp" ]; then
+            printf '%s' "$runner_tmp"
+            return 0
+        fi
+        ;;
+    esac
+
+    [ -n "$user_name" ] || user_name="$(id -un 2>/dev/null)" || return 1
+    if [ -d "/scratch/$user_name" ] && [ -w "/scratch/$user_name" ]; then
+        printf '%s' "/scratch/$user_name/sac-ci/github-actions"
+        return 0
+    fi
+    if [ -d "/data/gpfs/projects/punim0264" ] && [ -w "/data/gpfs/projects/punim0264" ]; then
+        printf '%s' "/data/gpfs/projects/punim0264/$user_name/ci/job-scratch"
+        return 0
+    fi
+    return 1
 }
 
-# The inner scripts that create a per-run scratch, and the prefix each uses.
+# The inner scripts and bare-runner workflow scopes that create per-run scratch,
+# and the prefix each uses.
 #
 # THIS TABLE IS TESTED AGAINST THE SCRIPTS THEMSELVES
 # (tests/integration/test_ci_tmpdir_lifecycle.py): a new *-in-sif.sh that
@@ -99,6 +115,10 @@ ci_tmpdir_prefix_for_inner() {
     run-in-sif.sh) printf 'ci' ;;
     build-in-sif.sh) printf 'build' ;;
     publish-in-sif.sh) printf 'publish' ;;
+    docs) printf 'docs' ;;
+    import-smoke) printf 'import' ;;
+    lint) printf 'lint' ;;
+    runner-guard) printf 'guard' ;;
     *) printf '' ;; # creates no per-run scratch
     esac
 }
@@ -132,7 +152,7 @@ _ci_tmpdir_is_managed() {
     '' | */* | *..*) return 1 ;;
     esac
     case "$base" in
-    ci-scitex_agent_container-?* | build-scitex_agent_container-?* | publish-scitex_agent_container-?*)
+    ci-scitex_agent_container-?* | build-scitex_agent_container-?* | publish-scitex_agent_container-?* | docs-scitex_agent_container-?* | import-scitex_agent_container-?* | lint-scitex_agent_container-?* | guard-scitex_agent_container-?*)
         return 0
         ;;
     esac
@@ -230,7 +250,11 @@ ci_tmpdir_prune() {
         find "$root" -mindepth 1 -maxdepth 1 -type d \
             \( -name 'ci-scitex_agent_container-*' \
             -o -name 'build-scitex_agent_container-*' \
-            -o -name 'publish-scitex_agent_container-*' \) \
+            -o -name 'publish-scitex_agent_container-*' \
+            -o -name 'docs-scitex_agent_container-*' \
+            -o -name 'import-scitex_agent_container-*' \
+            -o -name 'lint-scitex_agent_container-*' \
+            -o -name 'guard-scitex_agent_container-*' \) \
             ! -name "*-${run_id}-${attempt}-*" \
             -mmin "+${age_min}" \
             -print 2>/dev/null || true

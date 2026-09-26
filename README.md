@@ -83,7 +83,7 @@ spec:
   runtime: apptainer
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
 
   claude:
     model: haiku
@@ -197,6 +197,16 @@ generic provider shape. **[Full harness + model + provider reference →](docs/s
 
 **SAC-from-SAC (in-SIF spawn).** An agent running INSIDE an apptainer SIF can spawn a child agent on the **bare host** by calling `sac agents start <child>` as normal — the CLI auto-detects the in-SIF condition (`APPTAINER_CONTAINER`) and POSTs the spawn RPC to the host's `sac listen` instead of trying nested apptainer (which the supported HPC shape forbids). The host re-runs ACL gating, records the parent → child lineage, and shells the real start against the bare host's apptainer. Wiring is automatic: `SAC_LISTEN_BASE_URL` + `SAC_LISTEN_BEARER` are injected at container launch.
 
+**Worktree policy.** Before a new write-capable Claude, Codex, or Hermes task
+starts, the host resolves or provisions a deterministic agent-owned linked
+worktree, then invokes the neutral `scitex-worktree-policy` CLI and fails closed
+unless its context and generated projections are current and allowed. Existing
+agent work is resumed; dirty authority or conflicting ownership is preserved
+and refused. Dry-run/explain show the planned resolution without creating it.
+SAC records the returned policy/projection hashes on the incarnation and does
+not copy policy rules into hooks, skills, prompts, or docs. See
+[`docs/worktree-policy-gate.md`](docs/worktree-policy-gate.md).
+
 **[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.
 
 **[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.harness, spec.runtime, spec.apptainer.*, spec.claude.*, a2a, health, restart, provider).
@@ -248,11 +258,10 @@ sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKIL
                                            # --force tolerates an unreachable bound host
 sac agents restart <name>
 sac agents delete <name>                  # stop + remove spec dir + runtime dir + registry
-sac agents forget <name> [--force]        # local-only state.db cleanup for the
+sac agents forget <name> [--force]        # shared-store bookkeeping cleanup for the
                                            # "agent is gone, only stale rows persist" case
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
-sac agents send   <name> --key ESC        # interrupt current turn
 sac agents status [<name>] [--snapshot] [--priority]   # FLEET-WIDE view if no name;
                                                        # per-agent JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)
@@ -286,14 +295,14 @@ sac a2a serve <yamls...>                  # inbound HTTP for non-SDK runtimes
 sac a2a doctor <agent>                    # probe AgentCard endpoint
 sac a2a grant / revoke / block / unblock / grants
 
-# Image lifecycle (delegates to scitex-container)
-sac image build [base|scitex] [--sandbox]
+# Image lifecycle
+sac image build [base|scitex|proxy] [--sandbox]
 sac image sandbox SOURCE                  # SIF → writable sandbox
 sac image update  SANDBOX [-p PKG]        # pip install --upgrade
 sac image freeze  SANDBOX OUT.sif         # sandbox → SIF
 sac image list                            # installed versions
-sac image switch  VERSION                 # atomic flip
-sac image rollback                        # restore previous
+sac image switch VERSION [--layer base]   # atomic dual-link flip
+sac image rollback [--layer base]         # restore previous layer image
 sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
@@ -318,6 +327,7 @@ sac fleet sync                            # cross-host spec audit (fails loud on
 
 # Diagnostics / introspection
 sac doctor [--fleet]                      # diagnose agent-spec source drift
+sac agents start <name>                   # fail-closed source authority (docs/spec-authority.md)
 sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
@@ -328,7 +338,7 @@ sac dev systemd list / install / uninstall    # kind=timer|service -> ~/.config/
 sac dev cron    list / install / uninstall    # kind=cron -> crontab entries
 
 # State db / registry / events
-sac db clean / migrate / tick             # sweep + import the instance registry
+sac store clean / migrate / tick             # sweep + import the instance registry
 sac registry register / reconcile         # comms_nodes repair / singleton placement
                                           #   (the directory lives in the shared
                                           #   PostgreSQL store — `sync` removed 2026-08-28)
@@ -341,6 +351,10 @@ sac --help-recursive                      # full subcommand tree
 ```
 
 </details>
+
+Lifecycle starts enforce [fail-closed spec authority](docs/spec-authority.md)
+in core code: a clean/current `develop` main checkout or an exactly identified
+immutable detached snapshot, with no stale-source bypass.
 
 <details>
 <summary><strong>Python ⭐⭐</strong></summary>

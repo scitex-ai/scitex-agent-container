@@ -31,7 +31,8 @@ from .._agentstate import (
     observe_fleet,
 )
 from .._agentstate._observe import DEFAULT_INTERVAL
-from ._helpers import _json_flag, console
+from .._logging import render_rich
+from ._helpers import _json_flag
 
 #: How a verdict renders. UNKNOWN is MAGENTA — grouped with nothing green, since
 #: the entire failure being fixed is an unread agent that looked like a fine one.
@@ -143,7 +144,7 @@ def agents_state(
             if use_json:
                 click.echo(json.dumps({"agents": [], "exit_code": 2, "note": message}))
             else:
-                console.print(f"[magenta]{message}[/magenta]")
+                render_rich(f"[magenta]{message}[/magenta]", __name__)
             raise SystemExit(2)
 
     states = observe_fleet(targets, interval=interval)
@@ -174,38 +175,29 @@ def agents_state(
 
     for state, verdict in zip(states, assessments):
         colour, label = _STYLE[verdict.verdict]
-        console.print(f"[{colour}]{label:<8}[/{colour}] {state.agent}", soft_wrap=True)
+        render_rich(f"[{colour}]{label:<8}[/{colour}] {state.agent}", __name__)
         for name, value in state.signals().items():
             shown = "None" if value is None else str(value)
             tone = "magenta" if value is None else "dim"
             reason = state.reason_for(name)
-            console.print(
-                f"    [{tone}]{name:<22} {shown:<5}[/{tone}] [dim]{reason}[/dim]",
-                soft_wrap=True,
-            )
-        console.print(f"    [{colour}]=> {verdict.reason}[/{colour}]\n", soft_wrap=True)
+            render_rich(f"    [{tone}]{name:<22} {shown:<5}[/{tone}] [dim]{reason}[/dim]", __name__)
+        render_rich(f"    [{colour}]=> {verdict.reason}[/{colour}]\n", __name__)
 
     failed_writes = [w for w in writes if not w.ok]
     if failed_writes:
-        console.print(
-            f"[red]{len(failed_writes)} reading(s) were NOT archived:[/red] "
-            f"{failed_writes[0].detail}"
-        )
+        render_rich(f"[red]{len(failed_writes)} reading(s) were NOT archived:[/red] "
+            f"{failed_writes[0].detail}", __name__)
     elif writes:
         cut = sum(len(w.truncated) for w in writes)
         note = f" ({cut} capture(s) truncated, each MARKED)" if cut else ""
-        console.print(
-            f"[dim]archived {len(writes)} reading(s) to {journal_path()}{note}[/dim]"
-        )
+        render_rich(f"[dim]archived {len(writes)} reading(s) to {journal_path()}{note}[/dim]", __name__)
 
     unknown = [a for a in assessments if a.verdict is None]
     if unknown:
-        console.print(
-            f"\n[magenta]{len(unknown)} agent(s) could NOT be determined:[/magenta] "
+        render_rich(f"\n[magenta]{len(unknown)} agent(s) could NOT be determined:[/magenta] "
             f"{', '.join(a.agent for a in unknown)}\n"
             "  Nothing was learned about these — they are neither healthy nor "
-            "broken, and this run therefore CANNOT report a clean fleet."
-        )
+            "broken, and this run therefore CANNOT report a clean fleet.", __name__)
     raise SystemExit(code)
 
 

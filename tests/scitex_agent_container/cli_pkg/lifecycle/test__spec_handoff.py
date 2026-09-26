@@ -172,6 +172,27 @@ def test_an_excluded_directory_is_pruned_at_any_depth(tmp_path):
     assert sorted(manifest) == ["spec.yaml"]
 
 
+def test_a_differing_archive_snapshot_is_not_drift(tmp_path):
+    # Arrange -- the same tracked spec on both hosts; only an archived copy
+    # under .old/ differs (the measured 2026-09-05 refusal).
+    lead = tmp_path / "lead" / "business"
+    peer = tmp_path / "peer" / "business"
+    for root, snapshot in ((lead, "lead's snapshot"), (peer, "peer's snapshot")):
+        (root / ".old" / "20260905T0500Z").mkdir(parents=True)
+        (root / "spec.yaml").write_text("kind: Agent\n")
+        (root / ".old" / "20260905T0500Z" / "spec.yaml.bak").write_text(snapshot)
+    proc = subprocess.run(
+        ["sh", "-c", manifest_script(str(peer))],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Act
+    plan = plan_handoff(local_manifest(lead), parse_manifest(proc.stdout))
+    # Assert
+    assert plan.drift is False
+
+
 def test_a_symlink_is_absent_from_the_manifest(spec_src):
     """``find -type f`` on the peer skips symlinks, so this side must too, or
     every spec dir holding one would verify as mis-delivered."""

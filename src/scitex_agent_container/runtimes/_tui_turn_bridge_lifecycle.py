@@ -13,7 +13,6 @@ server), so there is no import cycle.
 
 from __future__ import annotations
 
-import logging
 import os
 import signal
 import subprocess
@@ -22,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._tui_turn_bridge_port import (
     _PORT_FREE_TIMEOUT_S,
@@ -34,7 +34,10 @@ from ._tui_turn_bridge_port import (
     port_is_free,
 )
 
-log = logging.getLogger(__name__)
+
+def _logger():
+    return get_logger(__name__)
+
 
 PID_FILENAME = "tui-turn-bridge.pid"
 LOG_FILENAME = "tui-turn-bridge.log"
@@ -166,7 +169,7 @@ def start_turn_bridge(
     )
     config_path = str(getattr(config, "config_path", "") or "")
     if not config_path:
-        log.warning(
+        _logger().warning(
             "tui-turn-bridge: agent %r has no config_path; cannot start bridge",
             getattr(config, "name", "?"),
         )
@@ -185,6 +188,27 @@ def start_turn_bridge(
         host,
     ]
     try:
+        # The host-side bridge writes the same canonical exchange ledger as
+        # Cards. Its child must receive the config-resolved store identity,
+        # not an unrelated SCITEX_STORE_DSN inherited from the operator shell.
+        from ._channel_inbox_dispatcher_lifecycle import effective_cards_store
+
+        cards_env, _cards_store = effective_cards_store(config)
+        env = os.environ.copy()
+        env.pop("SCITEX_CARDS_DB", None)
+        for key in (
+            "SCITEX_CARDS_AGENT_ID",
+            "SCITEX_CARDS_NOTIFY_DSN",
+            "SCITEX_STORE_DSN",
+            "PGHOST",
+            "PGPORT",
+            "PGDATABASE",
+            "PGUSER",
+            "PGPASSFILE",
+        ):
+            value = cards_env.get(key)
+            if value is not None:
+                env[key] = str(value)
         log_fh = open(state_dir / LOG_FILENAME, "ab")
         proc = spawn(
             argv,
@@ -192,14 +216,17 @@ def start_turn_bridge(
             stderr=log_fh,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
-    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged for the operator)
-        log.warning("tui-turn-bridge: failed to spawn for %r: %s", config.name, exc)
+    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log)
+        _logger().warning(
+            "tui-turn-bridge: failed to spawn for %r: %s", config.name, exc
+        )
         return None
     pid = getattr(proc, "pid", None)
     if isinstance(pid, int):
         _pid_path(config).write_text(str(pid), encoding="utf-8")
-    log.info(
+    _logger().info(
         "tui-turn-bridge: started for %s on %s:%d (pid=%s)",
         config.name,
         host,
@@ -273,7 +300,7 @@ def stop_turn_bridge(
         except ProcessLookupError:
             stopped = False
         except OSError as exc:  # stx-allow: fallback (reason: a permission/ESRCH error still means "not our live process"; log + treat as stopped so cleanup proceeds)
-            log.warning("tui-turn-bridge: SIGTERM pid %d failed: %s", pid, exc)
+            _logger().warning("tui-turn-bridge: SIGTERM pid %d failed: %s", pid, exc)
         if stopped:
             # Block until the port is released (SIGKILL if SIGTERM ignored),
             # so a fast restart never rebinds into a still-held port.

@@ -76,9 +76,9 @@ def empty_store(tmp_path: Path):
     # still referenced by the route.
     import scitex_agent_container._listen._agents_list as agents_list_mod
     import scitex_agent_container._state.registry as registry_mod
-    import scitex_agent_container._state.state_db as state_db_mod
+    import scitex_agent_container._state.state_store as state_store_mod
 
-    importlib.reload(state_db_mod)
+    importlib.reload(state_store_mod)
     importlib.reload(registry_mod)
     importlib.reload(agents_list_mod)
     try:
@@ -90,7 +90,7 @@ def empty_store(tmp_path: Path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(state_db_mod)
+        importlib.reload(state_store_mod)
         importlib.reload(registry_mod)
         importlib.reload(agents_list_mod)
 
@@ -117,7 +117,7 @@ def test_empty_result_names_the_store_it_consulted(client):
     # match under the per-worker DSN this suite pins.
     from scitex_dev.store import host_store
 
-    from scitex_agent_container._state.state_db_instances_store import (
+    from scitex_agent_container._state.state_store_instances_store import (
         INSTANCES_STORE,
     )
 
@@ -134,7 +134,7 @@ def test_the_named_store_is_not_the_file_path_nothing_here_opens(
     client, empty_store
 ):
     # Arrange: until 2026-08-29 this field carried
-    # ``state_db.DEFAULT_DB_PATH`` — the file the fixture pins above — while
+    # ``state_store.DEFAULT_DB_PATH`` — the file the fixture pins above — while
     # all three sources read PostgreSQL. Naming a database the route does not
     # consult is the SAME false provenance the field exists to remove, so the
     # regression gets its own assertion rather than being implied by the

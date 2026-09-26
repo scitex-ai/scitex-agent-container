@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..._logging import render_rich
+
 # Agent-name charset (mirrors cli_pkg._create validation): lowercase letters,
 # digits, hyphen, underscore; must start with a letter.
 _VALID_LABEL = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -464,12 +466,10 @@ def render_cold_start_plans(plans, *, as_json: bool, emit_json, console) -> None
                 }
             )
         else:
-            console.print(
-                f"[bold]cold-start[/bold] [cyan]{plan.label}[/cyan] "
+            render_rich(f"[bold]cold-start[/bold] [cyan]{plan.label}[/cyan] "
                 f"[dim]({plan.action})[/dim]  host=[cyan]{plan.host}[/cyan]  "
                 f"workdir=[cyan]{plan.workdir}[/cyan]\n"
-                f"  spec: [dim]{plan.spec_path}[/dim]"
-            )
+                f"  spec: [dim]{plan.spec_path}[/dim]", __name__)
 
 
 __all__ = [

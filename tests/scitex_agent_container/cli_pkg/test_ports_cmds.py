@@ -18,7 +18,7 @@ PA-306 no-mocks: every collaborator is real.
   ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at an isolated ``tmp_path``, so the
   CLI smoke tests never read or write the live fleet registry (no
   monkeypatch; these are the codebase's own seams). It also redirected the
-  import-time ``state_db.DEFAULT_DB_PATH`` constant until 2026-08-30, when
+  import-time ``state_store.DEFAULT_DB_PATH`` constant until 2026-08-30, when
   that constant was deleted with the storage engine.
 """
 
@@ -89,10 +89,10 @@ def isolated_state(tmp_path, pg_schema):
     ``pg_schema`` pins ``PGPASSFILE`` explicitly during ITS setup, so
     requesting it here makes that pinning happen first. Written as a
     dependency rather than left to autouse ordering, for the same reason
-    ``_isolate_state_db`` requests ``_assert_state_floor_intact`` by name.
+    ``_isolate_state_store`` requests ``_assert_state_floor_intact`` by name.
 
     ``sac ports`` takes no ``--db``. It used to resolve state.db from
-    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed at
+    :data:`state_store.DEFAULT_DB_PATH`, a **module-level constant computed at
     import time**, so overriding ``$HOME`` alone did NOT redirect it — by the
     time a fixture ran, the constant already pointed at the developer's real
     ``~/.scitex/agent-container/runtime/state.db``, and a CLI test would

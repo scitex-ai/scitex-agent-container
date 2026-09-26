@@ -83,7 +83,7 @@ def resolve_annotation_host(app_state: Any) -> str | None:
     ``_is_locally_observable`` correctly reads as "we don't know who WE are"
     and degrades to ``unknown`` — never to a fabricated ``unreachable``.
     """
-    from .._state.state_db import _resolve_host
+    from .._state.state_store import _resolve_host
 
     return getattr(app_state, "local_host", None) or _resolve_host(None)
 
@@ -92,7 +92,7 @@ def _is_locally_observable(row: Mapping[str, Any], local_host: str | None) -> bo
     """Can THIS listen's broker answer for ``row``'s inbox?
 
     Mirrors the locality rule the publish path already uses
-    (:func:`_state.state_db_nodes.is_local_node`): a node whose host we
+    (:func:`_state.state_store_nodes.is_local_node`): a node whose host we
     cannot distinguish from our own is served by the LOCAL broker, so the
     local subscriber count is authoritative for it.
 

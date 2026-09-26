@@ -10,7 +10,7 @@ basename class:
   - :func:`_deploy_mcp_merge` — deep-merge ``.mcp.json`` (baseline ∪ per-agent).
   - :func:`_deploy_tight_perm_file` — overwrite + chmod 0600 (``.env``).
   - :func:`_deploy_verbatim_secret` — byte copy, NO interpolation, 0600 (``.envrc``).
-  - :func:`_deploy_marker_protected` — marker-protected merge (CLAUDE.md / state.md).
+  - :func:`_deploy_marker_protected` — marker-protected instruction/state merge.
 
 :mod:`._to_home` re-exports these so legacy import paths
 (``from ...runtimes._to_home import _deploy_plain_file``) keep resolving.
@@ -19,13 +19,14 @@ basename class:
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import shutil
 import stat
 from datetime import datetime
 from pathlib import Path
+
+import scitex_logging as slogging
 
 from ..config import AgentConfig
 from ._mcp_merge import merge_mcp_json
@@ -39,7 +40,7 @@ from ._to_home_text import (
     split_around_generated_section,
 )
 
-logger = logging.getLogger(__name__)
+logger = slogging.getLogger(__name__)
 
 
 def _clear_readonly_dst(dst: Path) -> None:
@@ -240,7 +241,7 @@ def _deploy_marker_protected(
     rel: Path,
     composed_dsts: set[Path] | None = None,
 ) -> None:
-    """Marker-protected merge for CLAUDE.md / state.md.
+    """Marker-protected merge for instruction files and state.md.
 
     ``composed_dsts`` is the RUN-SCOPED set of destinations a marker-protected
     deploy has already written during THIS deploy. It is what makes the

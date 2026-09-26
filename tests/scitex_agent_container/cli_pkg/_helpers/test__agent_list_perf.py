@@ -14,17 +14,16 @@ seams are save/restore swaps of real module attributes with real callables):
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-import scitex_agent_container.cli_pkg._helpers._agent_list as _al
-from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
-from scitex_agent_container.cli_pkg._helpers._agent_list import get_agent_list_data
-
 import pytest
+
+import scitex_agent_container.cli_pkg._helpers._agent_list as _al
+from scitex_agent_container.cli_pkg._helpers._agent_list import get_agent_list_data
+from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +149,7 @@ def test_ports_come_from_a_single_list_claims_call(tmp_path):
         port_allocator, "get_port", _fake_get_port
     ), _swap_probe(_running(True)):
         with _swap_attr(_al, "_discover_defined_agents", _no_discover):
-            out = get_agent_list_data(registry)
+            get_agent_list_data(registry)
     # Assert — exactly one bulk query for two agents; no per-agent get_port.
     assert calls == {"list_claims": 1, "get_port": 0}
 

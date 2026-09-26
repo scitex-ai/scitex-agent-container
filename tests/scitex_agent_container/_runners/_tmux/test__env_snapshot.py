@@ -36,14 +36,20 @@ from scitex_agent_container._runners._tmux._env_snapshot import (
 )
 
 
-def test_snapshot_is_not_written_under_world_writable_tmp() -> None:
-    """The plantable-name half: the path must leave ``/tmp`` entirely."""
+def test_snapshot_is_written_under_a_private_directory() -> None:
+    """The plantable-name half: the direct directory must be owner-only.
+
+    A runner may deliberately keep its whole private workspace under
+    node-local ``/tmp``.  The security invariant is the ``0700`` directory
+    SAC creates around the predictable filename, not the spelling of an
+    arbitrary ancestor path.
+    """
     # Arrange
     session = "sac-test-session"
     # Act
-    path = str(tui_env_snapshot_path(session))
+    path = tui_env_snapshot_path(session)
     # Assert
-    assert not path.startswith("/tmp/")
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
 def test_snapshot_directory_is_owner_only() -> None:
@@ -88,6 +94,37 @@ def test_snapshot_line_scopes_the_umask_to_a_subshell() -> None:
     line = env_snapshot_shell_line(session)
     # Assert
     assert line.startswith("(umask 077;")
+
+
+def test_snapshot_redacts_cct_token_value(tmp_path) -> None:
+    """A private diagnostic file still must not persist reusable secrets."""
+    # Arrange
+    import subprocess
+
+    env_key = "SCITEX_AGENT_CONTAINER_RUNTIME_DIR"
+    saved_root = os.environ.get(env_key)
+    os.environ[env_key] = str(tmp_path)
+    session = "sac-secret-redaction"
+    secret = "123456789:telegram-token-must-not-survive"
+    try:
+        line = env_snapshot_shell_line(session)
+        child_env = {**os.environ, "CCT_BOT_TOKEN": secret, "SAFE_NAME": "visible"}
+
+        # Act
+        subprocess.run(["/bin/bash", "-c", line], check=True, env=child_env)
+        body = tui_env_snapshot_path(session).read_text(encoding="utf-8")
+    finally:
+        if saved_root is None:
+            os.environ.pop(env_key, None)
+        else:
+            os.environ[env_key] = saved_root
+
+    # Assert
+    assert (
+        secret not in body,
+        "CCT_BOT_TOKEN=<redacted>" in body,
+        "SAFE_NAME=visible" in body,
+    ) == (True, True, True)
 
 
 def test_snapshot_line_names_the_private_path() -> None:

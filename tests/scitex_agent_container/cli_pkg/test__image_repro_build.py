@@ -24,6 +24,7 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.cli_pkg import _image_repro_build as irb
+from scitex_agent_container.cli_pkg import _image_source_build as isb
 
 
 @pytest.fixture
@@ -41,6 +42,8 @@ def fake_pkg_root(tmp_path: Path) -> Path:
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
     (bundled / "hatch_build.py").write_text("# fake build hook\n")
@@ -77,6 +80,22 @@ def _use_roundtrip(*, result=None, raises=None) -> Iterator[list[dict]]:
         irb._container_build_reproducible = saved  # type: ignore[assignment]
 
 
+@contextmanager
+def _use_plain_build(result: Path) -> Iterator[list[dict]]:
+    calls: list[dict] = []
+
+    def _recording(**kw):
+        calls.append(kw)
+        return result
+
+    saved = isb._container_build
+    isb._container_build = _recording
+    try:
+        yield calls
+    finally:
+        isb._container_build = saved
+
+
 @dataclass
 class _FakeDiff:
     text: str = "1 changed (pip:numpy: 2.1.0 -> 2.2.0)"
@@ -98,6 +117,8 @@ class _FakeResult:
 
 
 def _build(tmp_path, pkg_root, recipe, **kw):
+    kw.setdefault("stage_cards", lambda path: path)
+    kw.setdefault("stage_hermes", lambda path: path)
     return irb.build_layer_reproducible(
         layer=kw.pop("layer", "proxy"),
         def_path=recipe,
@@ -137,6 +158,166 @@ class TestBuildContextReachesTheRoundTrip:
             _build(tmp_path, fake_pkg_root, recipe)
         # Assert — the staged copy, not the source recipe
         assert calls[0]["def_path"] == calls[0]["cwd"] / recipe.name
+
+    def test_base_stages_hermes_source(self, tmp_path, fake_pkg_root, recipe):
+        # Arrange
+        staged = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="base",
+                stage_hermes=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == [tmp_path / "containers" / "sac-base" / "build-context"]
+
+    @pytest.mark.parametrize("layer", ["base", "scitex"])
+    def test_cards_runtime_layers_stage_cards_source_before_roundtrip(
+        self, tmp_path, fake_pkg_root, recipe, layer
+    ):
+        # Arrange
+        staged: list[Path] = []
+
+        def _stage_cards(path: Path) -> Path:
+            staged.append(path)
+            destination = path / "scitex-cards-src"
+            destination.mkdir()
+            (destination / "SAC_UPSTREAM_COMMIT").write_text("exact-commit\n")
+            return destination
+
+        with _use_roundtrip(result=_FakeResult()) as calls:
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer=layer,
+                stage_cards=_stage_cards,
+            )
+        # Assert — the backend can resolve the recipe's relative %files input.
+        expected = tmp_path / "containers" / f"sac-{layer}" / "build-context"
+        assert (
+            staged,
+            calls[0]["cwd"],
+            (
+                calls[0]["cwd"] / "scitex-cards-src" / "SAC_UPSTREAM_COMMIT"
+            ).read_text(),
+        ) == (
+            [expected],
+            expected,
+            "exact-commit\n",
+        )
+
+    def test_proxy_does_not_stage_cards_source(
+        self, tmp_path, fake_pkg_root, recipe
+    ):
+        # Arrange
+        staged: list[Path] = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="proxy",
+                stage_cards=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == []
+
+    def test_non_base_does_not_stage_hermes_source(
+        self, tmp_path, fake_pkg_root, recipe
+    ):
+        # Arrange
+        staged = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="proxy",
+                stage_hermes=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == []
+
+
+class TestOrdinaryAndReproducibleStagingParity:
+    """Both build modes must present the same relative recipe inputs."""
+
+    @pytest.mark.parametrize(
+        ("layer", "expected_auxiliary"),
+        [
+            ("base", {"scitex-cards-src", "hermes-agent-src"}),
+            ("scitex", {"scitex-cards-src"}),
+        ],
+    )
+    def test_auxiliary_source_manifest_matches_the_ordinary_build(
+        self,
+        tmp_path,
+        fake_pkg_root,
+        recipe,
+        layer,
+        expected_auxiliary,
+    ):
+        # Arrange: real directories stand in for the pinned Cards/Hermes
+        # exports. The backend only records; no Apptainer process is needed.
+        def _stage_named(name: str):
+            def _stage(context: Path) -> Path:
+                destination = context / name
+                destination.mkdir()
+                (destination / "SAC_UPSTREAM_COMMIT").write_text("pinned\n")
+                return destination
+
+            return _stage
+
+        cards = _stage_named("scitex-cards-src")
+        hermes = _stage_named("hermes-agent-src")
+        saved_cards = isb._stage_cards_source
+        saved_hermes = isb._stage_hermes_source
+        isb._stage_cards_source = cards
+        isb._stage_hermes_source = hermes
+        try:
+            with _use_plain_build(tmp_path / "plain-result.sif") as plain_calls:
+                isb.build_layer_from_source(
+                    layer=layer,
+                    def_path=recipe,
+                    pkg_root=fake_pkg_root,
+                    output_dir=tmp_path / "plain",
+                )
+            with _use_roundtrip(result=_FakeResult()) as repro_calls:
+                _build(
+                    tmp_path / "repro-root",
+                    fake_pkg_root,
+                    recipe,
+                    layer=layer,
+                    stage_cards=cards,
+                    stage_hermes=hermes,
+                )
+        finally:
+            isb._stage_cards_source = saved_cards
+            isb._stage_hermes_source = saved_hermes
+
+        # Act
+        plain_context = plain_calls[0]["cwd"]
+        repro_context = repro_calls[0]["cwd"]
+        ordinary_aux = {
+            name
+            for name in ("scitex-cards-src", "hermes-agent-src")
+            if (plain_context / name).is_dir()
+        }
+        reproducible_aux = {
+            name
+            for name in ("scitex-cards-src", "hermes-agent-src")
+            if (repro_context / name).is_dir()
+        }
+
+        # Assert
+        assert ordinary_aux == reproducible_aux == expected_auxiliary
 
 
 class TestRoundTripArguments:

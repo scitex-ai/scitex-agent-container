@@ -29,7 +29,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .._lifecycle._off_loop import run_blocking
-from .._state.state_db_channel import (
+from .._state.state_store_channel import (
     list_since_id,
     list_undelivered,
     mark_delivered,
@@ -85,6 +85,7 @@ async def node_inbox_stream(request: Request) -> Response:
     broker: Broker = request.app.state.inbox
     nodes.register(name, base_url)
 
+    explicit_ack = request.query_params.get("ack") == "explicit"
     last_event_id_raw = request.headers.get("last-event-id")
     last_event_id: int | None = None
     if last_event_id_raw is not None:
@@ -151,7 +152,8 @@ async def node_inbox_stream(request: Request) -> Response:
                 yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                     "utf-8"
                 )
-                await run_blocking(mark_delivered, [row_id], target=name)
+                if not explicit_ack:
+                    await run_blocking(mark_delivered, [row_id], target=name)
 
             beat_s = keepalive_interval_s()
             while True:
@@ -198,9 +200,10 @@ async def node_inbox_stream(request: Request) -> Response:
                     yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                         "utf-8"
                     )
-                    await run_blocking(
-                        mark_delivered, [int(row_id)], target=name
-                    )
+                    if not explicit_ack:
+                        await run_blocking(
+                            mark_delivered, [int(row_id)], target=name
+                        )
                 else:
                     # No row id means the event was injected by a
                     # path that did NOT persist (future lifecycle

@@ -1,6 +1,6 @@
 """Record this agent's claim on its bot token, as it starts. Never fatal.
 
-The start-time half of :mod:`.._state.state_db_token_owner`: resolve which bot
+The start-time half of :mod:`.._state.state_store_token_owner`: resolve which bot
 this agent takes — with :func:`._cct_token_resolution.resolve_cct_token`, the
 same derivation the writer uses, never a second one — and write
 ``fingerprint -> (agent, host, pid, started_at)`` into the per-host ledger.
@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .._logging import write_stream
+
 #: What :func:`record_token_claim_at_start` did, for tests and for a caller
 #: that wants to say so.
 CLAIM_RECORDED = "recorded"
@@ -42,7 +44,7 @@ def _resolve_host() -> str:
     """This host's canonical label, matching the rest of sac's records."""
     # stx-allow: fallback (reason: the host is a LABEL on a ledger row; a resolver import/lookup failure must degrade to the plain hostname, never take down the start this is attached to)
     try:
-        from .._state.state_db_hostname import resolve_host
+        from .._state.state_store_hostname import resolve_host
 
         return resolve_host(None)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
@@ -76,7 +78,7 @@ def record_token_claim_at_start(
     stream = err_stream if err_stream is not None else sys.stderr
     # stx-allow: fallback (reason: this is a bookkeeping write attached to every start in the fleet; a bug in the resolution, an unreachable PostgreSQL, or a schema surprise must degrade to a printed line, never take down the start it was added to observe)
     try:
-        from .._state.state_db_token_owner import record_token_owner
+        from .._state.state_store_token_owner import record_token_owner
         from ._cct_rail_verdict import materialised_home
         from ._cct_token_resolution import resolve_cct_token
 
@@ -95,13 +97,13 @@ def record_token_claim_at_start(
         )
         return CLAIM_RECORDED
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
+        write_stream(
             f"[cct-ledger] {getattr(config, 'name', '?')!r}: could not record "
             f"this agent's bot-token claim — {exc}. THE AGENT STARTS NORMALLY; "
             "only the ownership ledger is missing this claim, so "
             "'who holds this bot?' will have to be answered by scanning /proc "
             "(`sac doctor --pollers`) until the next successful start.",
-            file=stream,
+            stream,
         )
         return CLAIM_FAILED
 

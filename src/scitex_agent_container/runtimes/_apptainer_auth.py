@@ -47,12 +47,33 @@ from ._apptainer_auth_bind import (  # noqa: F401 (re-export — see module docs
     credentials_file_bind,
     ensure_credentials_bind_target,
 )
+from ._apptainer_codex_env import (
+    codex_env_flags,
+    codex_harness_active,
+    codex_provider_key_flags,
+)
 from ._apptainer_provider import (
+    engine_env_flags,
     openai_env_flags,
     openai_harness_active,
     provider_active,
     provider_env_flags,
+    resolve_provider_api_key,
 )
+from ._apptainer_provider_cfg import provider_config_dir_flags
+from ._to_home_overlay import resolve_container_home
+
+
+def _transcript_home(config: AgentConfig) -> Path | None:
+    """The host dir backing the container home, most specific first, or None.
+
+    Reuses the TUI argv gate's candidate list so the place a provider agent's
+    conversation store is linked to is the same place ``-c`` looks for one.
+    """
+    from ._apptainer_inner_argv_tui import _candidate_transcript_homes
+
+    homes = _candidate_transcript_homes(config)
+    return Path(homes[0]) if homes else None
 
 
 def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
@@ -65,22 +86,62 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     launch composed with an Anthropic-compat ``spec.claude.provider``
     override.
     """
+    # PER-ENGINE PARAMETERS first, on EVERY branch. The selected engine
+    # (spec.engines) can carry reasoning_effort / max_context_tokens
+    # whether or not it declares a provider override, so emitting these
+    # inside one of the branches below would silently drop them for the
+    # plain-Anthropic engine — the exact shape of bug this file's
+    # branch order already documents. Empty for every legacy
+    # single-backend spec, so their argv is unchanged.
+    engine_flags = engine_env_flags(config)
+
+    if codex_harness_active(config):
+        # codex harness (2026-09-05): CODEX_HOME bind + the binary's own
+        # key names, plus the engine's resolved provider key under the
+        # env name the rendered config.toml points at (env_key). No
+        # Anthropic OAuth env, no ANTHROPIC_BASE_URL — Codex reads its
+        # provider from config only (OPENAI_BASE_URL is ignored).
+        return (
+            engine_flags
+            + codex_env_flags(config, state_dir)
+            + codex_provider_key_flags(config)
+        )
+
     if openai_harness_active(config):
         # openai agent-SDK family (openai-compat-3): OPENAI_* columns
         # only. No Anthropic OAuth env and no credentials bind — the
         # helper owns SAC_OPENAI_API_KEY/OPENAI_API_KEY dual injection,
         # the SAC_PROVIDER marker, and the optional routing
         # pass-throughs (base URL / org / project / model).
-        return openai_env_flags(config)
+        return engine_flags + openai_env_flags(config)
 
     if provider_active(config):
         # Provider backend: API key, no OAuth. The provider helper owns
-        # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a clean
-        # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker). The OAuth
-        # creds bind is intentionally NOT emitted.
-        return provider_env_flags(config)
+        # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a per-agent
+        # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker); the cfg helper
+        # seeds that dir on the host (onboarding gate + approved key) and
+        # binds it there, so the TUI boots to the prompt instead of the
+        # first-run sign-in screen. The OAuth creds bind is intentionally
+        # NOT emitted.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
+        return (
+            engine_flags
+            + provider_env_flags(config)
+            + provider_config_dir_flags(
+                state_dir=state_dir,
+                name=config.name,
+                workdir=str(workdir),
+                api_key=resolve_provider_api_key(config),
+                container_home=resolve_container_home(config),
+                transcript_home=_transcript_home(config),
+            )
+        )
 
-    argv: list[str] = []
+    argv: list[str] = list(engine_flags)
 
     # Designated credentials file (spec.claude.credentials_file): the
     # operator names ONE host ``.credentials.json`` to mount writable at

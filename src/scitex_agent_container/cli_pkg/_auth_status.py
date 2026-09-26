@@ -37,9 +37,10 @@ import time
 import click
 from rich.table import Table
 
+from .._logging import render_rich
 from .._runners._tmux._target import exact_target
 from .._runners._tmux.auth_status import evaluate, probe_to_state
-from ._helpers import _json_flag, console
+from ._helpers import _json_flag
 
 # The TUI runtime names its sessions ``tui-<agent>`` on the DEFAULT tmux server
 # (``runtimes/tui_session.session_name_for``) — NOT the ``-L sac`` server that
@@ -282,7 +283,7 @@ def _render_table(rows: list[dict]) -> None:
             r["banner"] or "-",
             r["note"] or "",
         )
-    console.print(table)
+    render_rich(table, __name__)
 
 
 @click.command(name="auth-status")
@@ -327,7 +328,7 @@ def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
         if use_json:
             click.echo(json_mod.dumps({"agents": [], "auth_failed": 0}))
         else:
-            console.print("[dim](no running tui-* agents on this host)[/dim]")
+            render_rich("[dim](no running tui-* agents on this host)[/dim]", __name__)
         return
     run1 = {_agent_of(s): _capture(s) for s in sessions}
     time.sleep(max(0.0, interval))
@@ -354,16 +355,12 @@ def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
         # count is what stops "no red on screen" from being read as "fleet fine"
         # — we did not check these agents, and silence would imply we had.
         if unread:
-            console.print(
-                f"[yellow]{len(unread)} agent(s) could NOT be read "
+            render_rich(f"[yellow]{len(unread)} agent(s) could NOT be read "
                 f"({', '.join(r['agent'] for r in unread)}) — UNKNOWN, not OK: "
-                f"nothing was observed about their auth[/yellow]"
-            )
+                f"nothing was observed about their auth[/yellow]", __name__)
         if stuck:
-            console.print(
-                f"[red]{len(stuck)} agent(s) cannot authenticate: "
-                f"{', '.join(r['agent'] for r in stuck)}[/red]"
-            )
+            render_rich(f"[red]{len(stuck)} agent(s) cannot authenticate: "
+                f"{', '.join(r['agent'] for r in stuck)}[/red]", __name__)
     if stuck:
         sys.exit(1)
 
