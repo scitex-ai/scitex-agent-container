@@ -98,6 +98,7 @@ class _Listener(BaseHTTPRequestHandler):
     """Serves the SAC control-plane contract with bearer auth (real HTTP)."""
 
     request_paths: list[str] = []
+    request_bodies: list[dict[str, Any]] = []
 
     def log_message(self, *args: Any) -> None:
         return  # silence request logging in tests
@@ -140,6 +141,50 @@ class _Listener(BaseHTTPRequestHandler):
         else:
             self._send(404, b'{"error": "not found"}')
 
+    def _read_json_body(self) -> Any:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        try:
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            return {}
+
+    def do_POST(self) -> None:  # noqa: N802 (http.server API)
+        path = self.path.split("?", 1)[0]
+        type(self).request_paths.append(f"POST {path}")
+        if not self._bearer_ok():
+            self._send(401, b'{"error": "missing bearer token"}')
+            return
+        body = self._read_json_body()
+        type(self).request_bodies.append({"path": path, "body": body})
+        stripped = path.rstrip("/")
+        if stripped == "/agents":
+            # Shape-1 start of a pre-registered spec; unknown names are a
+            # typed 404, exactly like the real listener.
+            name = body.get("name") if isinstance(body, dict) else None
+            known = {row["name"] for row in AGENTS} | {"epsilon"}
+            if name in known:
+                self._send(200, json.dumps({"status": "started", "name": name}).encode())
+            else:
+                self._send(404, b'{"error": "unknown agent", "kind": "unknown_agent"}')
+        elif stripped.endswith("/restart"):
+            self._send(200, json.dumps({"status": "restarted"}).encode())
+        elif stripped.endswith("/send"):
+            self._send(200, json.dumps({"delivered": True}).encode())
+        else:
+            self._send(404, b'{"error": "not found"}')
+
+    def do_DELETE(self) -> None:  # noqa: N802 (http.server API)
+        path = self.path.split("?", 1)[0]
+        type(self).request_paths.append(f"DELETE {path}")
+        if not self._bearer_ok():
+            self._send(401, b'{"error": "missing bearer token"}')
+            return
+        if path.rstrip("/").startswith("/agents/"):
+            self._send(200, json.dumps({"status": "stopped"}).encode())
+        else:
+            self._send(404, b'{"error": "not found"}')
+
 
 @pytest.fixture
 def loopback(env_save_restore):
@@ -151,6 +196,7 @@ def loopback(env_save_restore):
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Listener)
     _Listener.request_paths.clear()
+    _Listener.request_bodies.clear()
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -169,6 +215,13 @@ def listener_requests(loopback):
     """Paths observed by the real loopback listener for fan-out assertions."""
     _Listener.request_paths.clear()
     return _Listener.request_paths
+
+
+@pytest.fixture
+def listener_posts(loopback):
+    """POST/DELETE bodies observed by the loopback listener, in order."""
+    _Listener.request_bodies.clear()
+    return _Listener.request_bodies
 
 
 @pytest.fixture

@@ -284,3 +284,17 @@
 }
 .message-form textarea:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
 .lifecycle-btns button[value="Escape"], .lifecycle-btns button[value="C-c"] { color: var(--agents-warn); }
+
+/* ── launch (CREATE: start a pre-registered spec by name) ────────────────────
+   Same deliberate shape as the message box: a full-width field, an explicit
+   verb, and no silent submit. */
+.launch-form { margin-top: 10px; }
+.launch-label { display: block; margin: 0 0 6px; font-size: 13px; color: var(--agents-text); }
+.message-form input[type="text"] {
+  width: 100%; box-sizing: border-box;
+  font: inherit; font-size: 13px; line-height: 1.5;
+  padding: 8px 10px; border-radius: 8px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
+.message-form input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }

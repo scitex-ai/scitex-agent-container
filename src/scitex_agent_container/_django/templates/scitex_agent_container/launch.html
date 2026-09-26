@@ -1,0 +1,8 @@
+{% extends "scitex_ui/standalone_shell.html" %}
+{% load static %}
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'scitex_agent_container/agents.css' %}">
+{% endblock %}
+{% block app_content %}
+{% include "scitex_agent_container/_launch_content.html" %}
+{% endblock %}

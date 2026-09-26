@@ -624,3 +624,131 @@ def test_typed_detail_does_not_publish_the_prior_internal_or_local_hostname_shap
         detail == "More than one registry claims this agent's name."
         and "compute-fixture" not in detail
     )
+
+
+# ── launch (CREATE: start a pre-registered spec by name) ─────────────────────
+# The one genuinely missing GUI operation: lifecycle_action only acts on
+# visible rows, so a registered-but-unlisted spec cannot be started from the
+# console. Launch fills that gap with a name-only POST to the listener's
+# pre-registered-spec start (no inline spec ever crosses this boundary).
+def test_launch_denied_for_non_operator(client, loopback, env_save_restore, audit_log):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    resp = client.post("/launch/", {"name": "epsilon"})
+    # Assert
+    assert resp.status_code == 403
+
+
+def test_launch_denied_for_crosshost_only_operator(client, loopback, env_save_restore, audit_log):
+    # Arrange — a launch always lands on THIS node's listener, so the
+    # cross-host allowlist alone must not grant it.
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(CROSS_ENV, "op1")
+    # Act
+    resp = client.post("/launch/", {"name": "epsilon"})
+    # Assert
+    assert resp.status_code == 403
+
+
+def test_launch_rejects_unsafe_name(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    resp = client.post("/launch/", {"name": "../escape"})
+    # Assert
+    assert resp.status_code == 400
+
+
+def test_launch_allowed_redirects_and_audits(client, loopback, env_save_restore, audit_log):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    resp = client.post("/launch/", {"name": "epsilon"})
+    rec = json.loads(audit_log.read_text().strip().splitlines()[-1])
+    # Assert
+    assert resp.status_code in (302, 303) and rec["event"] == "launch_action" and rec["agent"] == "epsilon"
+
+
+def test_launch_delegates_name_with_consent(client, loopback, env_save_restore, listener_posts, audit_log):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    client.post("/launch/", {"name": "epsilon"})
+    # Assert: the GUI sends the name-only shape-1 start, consent included.
+    assert listener_posts[-1] == {"path": "/agents", "body": {"name": "epsilon", "assume_yes": True}}
+
+
+def test_launch_unknown_spec_reports_failed_not_500(client, loopback, env_save_restore, audit_log):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    resp = client.post("/launch/", {"name": "no-such-spec"})
+    rec = json.loads(audit_log.read_text().strip().splitlines()[-1])
+    # Assert: the typed 404 becomes a failed launch + redirect, never a 500.
+    assert resp.status_code in (302, 303) and rec["state"] == "failed"
+
+
+def test_launch_form_shown_to_operator(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    html = client.get("/launch/").content.decode()
+    # Assert
+    assert 'name="name"' in html and "Launch agent" in html
+
+
+def test_launch_form_readonly_for_non_operator(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/launch/").content.decode()
+    # Assert
+    assert "Read-only" in html and 'name="name"' not in html
+
+
+def _seeded_fleet_html(client, identity) -> str:
+    from scitex_agent_container._django._inventory_cache import CACHE
+
+    CACHE.put(identity, [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
+                         "runtime": "apptainer", "harness": "anthropic", "role": "worker",
+                         "engine": "anthropic", "model": "sonnet", "project": "p",
+                         "host": "this node", "scope": "own", "cross_host": False,
+                         "a2a_port": 19000, "pid": 1, "activity": {}}])
+    try:
+        return client.get("/").content.decode()
+    finally:
+        CACHE.clear()
+
+
+def test_fleet_offers_launch_to_operator(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    html = _seeded_fleet_html(client, "op1")
+    # Assert
+    assert "/launch/" in html
+
+
+def test_fleet_hides_launch_from_non_operator(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = _seeded_fleet_html(client, "alice")
+    # Assert
+    assert "/launch/" not in html
+
+
+def test_mounted_launch_uses_hub_shell(hub_client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = hub_client.get("/apps/agents/launch/").content.decode()
+    # Assert
+    assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
