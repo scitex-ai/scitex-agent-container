@@ -20,6 +20,7 @@ both modes.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -30,7 +31,7 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from ._authorization import can_control, fleet_visibility, resolve_identity, scope_rows
 from ._constants import API_URL_ENV
@@ -180,6 +181,7 @@ def index(request: HttpRequest):
         summary=_summary(agents),
         identity=identity,
         crosshost_authorized=identity in _crosshost_allowlist(),
+        can_launch=can_control(identity, cross_host=False, request=request),
         comm_error=comm_error,
         observed_age=observed_age,
         cache_ttl=CACHE.ttl,
@@ -533,6 +535,104 @@ def message_action(request: HttpRequest, name: str):
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 
+#: What a launch target may be. Deliberately strict and name-only: the GUI
+#: forwards the name to the listener's pre-registered-spec start
+#: (``POST /agents {"name", "assume_yes"}``) and never carries an inline
+#: spec, so a hostile value must not reach a path, an option shape, or a
+#: control character. Mirrors the MCP template tool's slug rule.
+_LAUNCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _is_launch_name(name: Any) -> bool:
+    """True iff ``name`` is safe to forward as a launch target."""
+    return isinstance(name, str) and bool(_LAUNCH_NAME_RE.match(name))
+
+
+@require_http_methods(["GET", "POST"])
+def launch(request: HttpRequest):
+    """Launch a pre-registered agent spec by name — the CREATE half of CRUD.
+
+    Agents are scheduler-run processes, not user records: there is no agent
+    DEFINITION store with create/update/delete HTTP in the listener. The one
+    genuinely missing GUI operation is CREATE in the lifecycle sense —
+    starting a registered spec that is not in the current fleet list, which
+    :func:`lifecycle_action` cannot address (it only acts on visible rows).
+    This view fills exactly that gap by delegating to the listener's
+    register-and-start shape-1 (name only, ``assume_yes`` consented here).
+
+    What is deliberately NOT here, and why:
+
+    * no inline/ad-hoc spec (``POST /agents`` shape-2) — a spec written from
+      a web form is arbitrary code execution behind one POST;
+    * no reconfigure/update — the listener has no spec-update endpoint, and
+      writing spec files from the web process would be the same hole;
+      recycle-with-same-spec is :func:`lifecycle_action` ``restart``;
+    * no unregister/remove — listener ``DELETE`` stops the process (SIGTERM)
+      and the registry row outlives it; that stop IS :func:`lifecycle_action`
+      ``stop``. Deleting spec files from the web is out of scope by design.
+
+    Authorization mirrors :func:`lifecycle_action` at its strictest: the
+    caller must be in the lifecycle-operator allowlist. A launch always lands
+    on THIS node's listener, so it is own-scope by construction — the
+    cross-host allowlist alone does not grant it. Grants and denials are
+    recorded in the audit trail.
+    """
+    from ._authorization import record_audit
+
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    allowed = can_control(identity, cross_host=False, request=request)
+    if request.method == "GET":
+        context, is_standalone = _app_context(
+            request,
+            "Agents · Launch",
+            view_path="launch/",
+            identity=identity,
+            can_launch=allowed,
+            page="launch",
+        )
+        template = "scitex_agent_container/launch.html" if is_standalone else "scitex_agent_container/launch_hub.html"
+        return render(request, template, context)
+
+    value = request.POST.get("name", "")
+    name = value if isinstance(value, str) else ""
+    base = _mount_base(request, "launch/")
+    if not _is_launch_name(name):
+        return JsonResponse({"error": "provide a valid registered agent name"}, status=400)
+    if not allowed:
+        record_audit(
+            {
+                "event": "launch_denied",
+                "identity": identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+    try:
+        result = fleet.lifecycle(name, "start")
+        message = result.get("message") or result.get("status") or "start"
+        state = "completed"
+    except Exception as exc:  # stx-allow: fallback (reason: the failed delegate is reported to the operator in the gui-audit.log audit trail, not raised)
+        raw_message = str(exc)  # kept for the server-side audit only
+        message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
+        state = "failed"
+    record_audit(
+        {
+            "event": "launch_action",
+            "identity": identity,
+            "agent": name,
+            "cross_host": False,
+            "state": state,
+            "message": str(message)[:240],
+            "raw_message": locals().get("raw_message", "")[:240],
+            "path": request.path,
+        }
+    )
+    query = urlencode({"operation": "launch", "state": state, "message": str(message)[:240]})
+    return HttpResponseRedirect(f"{base}/{name}/?{query}")
+
+
 def _summary(agents: list[dict]) -> dict:
     total = len(agents)
     alive = sum(1 for a in agents if a["state_tone"] == "good")
@@ -549,4 +649,4 @@ def _crosshost_allowlist() -> frozenset[str]:
     return frozenset(p.strip() for p in os.environ.get(CROSSHOST_OPERATORS_ENV, "").split(",") if p.strip())
 
 
-__all__ = ["detail", "fleet_api", "index", "lifecycle_action"]
+__all__ = ["detail", "fleet_api", "index", "launch", "lifecycle_action"]

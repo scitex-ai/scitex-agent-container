@@ -64,6 +64,9 @@ mounted) so the per-row links are correct in both modes.
     {% else %}
     <span class="pill own"><i class="fas fa-lock"></i> own-scope only</span>
     {% endif %}
+    {% if can_launch %}
+    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
+    {% endif %}
   </div>
 
   {% if agents %}
