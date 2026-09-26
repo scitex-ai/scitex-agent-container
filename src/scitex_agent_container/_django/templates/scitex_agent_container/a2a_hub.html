@@ -1,0 +1,8 @@
+{% extends "global_base.html" %}
+{% load static %}
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'scitex_agent_container/agents.css' %}">
+{% endblock %}
+{% block content %}
+{% include "scitex_agent_container/_a2a_content.html" %}
+{% endblock %}
