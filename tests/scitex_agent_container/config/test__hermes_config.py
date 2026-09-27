@@ -341,3 +341,55 @@ def test_compiler_forwards_cct_token_into_tool_env():
     passthrough = result["terminal"].get("env_passthrough", [])
     assert "CCT_BOT_TOKEN" in passthrough
     assert "CCT_AGENT_ID" in passthrough
+
+
+def _native_plan() -> LaunchPlan:
+    from scitex_agent_container.config._launch_plan import Endpoint, ResolvedEngine
+
+    return LaunchPlan(
+        harness="hermes",
+        launch_mode="headless",
+        container_backend="apptainer",
+        engine=ResolvedEngine(
+            key="scitex-paid",
+            model_id="muse-spark-1.3-contributor",
+            endpoints=(),
+            context_window_tokens=1048576,
+            reasoning_effort=None,
+        ),
+        endpoint=Endpoint(
+            protocol="hermes-native:opencode-go",
+            url="",
+            auth_kind="bearer",
+            auth_env="OPENCODE_GO_API_KEY",
+        ),
+        agent_name="scitex-infrastructure-lead",
+        session_id="ses_test",
+    )
+
+
+def test_native_provider_names_hermes_provider_without_custom_block():
+    # Arrange
+    plan = _native_plan()
+    # Act
+    result = compile_hermes_config(plan, workdir="/work")
+    # Assert
+    assert result["model"] == {
+        "default": "muse-spark-1.3-contributor",
+        "provider": "opencode-go",
+    }
+    assert result["providers"] == {}
+
+
+def test_native_provider_with_empty_name_refuses():
+    # Arrange
+    import dataclasses
+
+    plan = _native_plan()
+    plan = dataclasses.replace(
+        plan,
+        endpoint=dataclasses.replace(plan.endpoint, protocol="hermes-native:"),
+    )
+    # Act / Assert
+    with pytest.raises(ValueError, match="names no provider"):
+        compile_hermes_config(plan, workdir="/work")
