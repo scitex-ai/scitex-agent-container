@@ -1,0 +1,66 @@
+{% comment %}
+Shared Agents create content. Included by create.html (standalone shell) and
+create_hub.html (Hub global_base). `url_base` is the app mount prefix so the
+back link and the form action are correct in both modes.
+
+CREATE in the authoring sense: scaffold a fresh v3 spec.yaml + to_home/
+skeleton through the SAME backend as `sac agents create`. The template
+select is live-scanned from the agents root on every GET (inline
+`minimal`/`full` plus any `_template_*` dir-templates), so the list cannot
+go stale. The GUI never overwrites: an existing spec fails loud (409) and
+the operator re-runs with `sac agents create --force` on the leaf.
+{% endcomment %}
+<div class="agents-app" data-page="create">
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
+      <h1><i class="fas fa-plus"></i> Create agent</h1>
+      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+    </div>
+  </header>
+
+  {% if can_create %}
+  <div class="detail-card">
+    <h2>Scaffold a new agent spec</h2>
+    <p class="dim">Writes <strong>&lt;agents-root&gt;/&lt;name&gt;/spec.yaml</strong> plus the
+    <strong>to_home/</strong> sibling on <strong>this node</strong> — the same
+    scaffold as <code>sac agents create &lt;name&gt; --template &lt;kind&gt;</code>.
+    Edit the spec afterwards, then Launch or Start it. Existing specs are never
+    overwritten from here.</p>
+    {% if templates_error %}
+    <div class="agents-bannor err" role="alert">
+      <i class="fas fa-triangle-exclamation"></i>
+      <span>{{ templates_error }}</span>
+      <small>Built-in templates below still work.</small>
+    </div>
+    {% endif %}
+    <form method="post" action="{{ url_base }}/create/" class="message-form launch-form">
+      {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+      <label class="launch-label" for="create-name">New agent name</label>
+      <input id="create-name" name="name" type="text" required maxlength="64"
+             pattern="[a-z0-9][a-z0-9_-]*" placeholder="my-agent" autocomplete="off">
+      <p class="dim">Lowercase letters, digits, '-' and '_' only (dir-as-SSoT convention).</p>
+      <label class="launch-label" for="create-template">Template</label>
+      <select id="create-template" name="template">
+        {% for t in inline_templates %}
+        <option value="{{ t }}"{% if t == "minimal" %} selected{% endif %}>{{ t }} (built-in)</option>
+        {% endfor %}
+        {% for t in dir_templates %}
+        <option value="{{ t }}">{{ t }} (dir-template)</option>
+        {% endfor %}
+      </select>
+      <p class="dim"><code>minimal</code> is the bare spec; <code>full</code> is the proven
+      developer shape. Scanned live from this node's agents root.</p>
+      <div class="lifecycle-btns">
+        <button type="submit" class="btn good"><i class="fas fa-plus"></i> Create spec</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-lock"></i>
+    <span>Read-only. Creating an agent spec requires an identity listed in the
+    lifecycle-operator allowlist.</span>
+  </div>
+  {% endif %}
+</div>

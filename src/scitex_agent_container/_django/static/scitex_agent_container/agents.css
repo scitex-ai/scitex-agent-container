@@ -311,6 +311,18 @@
   border: 1px solid var(--agents-border);
 }
 .qa-msg input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+/* Registry verbs (Forget/Delete): warn tone for the tombstone, inline force
+   toggle riding in the same compact form as the lifecycle quick actions. */
+.btn.warn { color: var(--agents-warn); border-color: color-mix(in srgb, var(--agents-warn) 45%, var(--agents-border)); }
+.qa-force { font-size: 11px; color: var(--agents-text); display: inline-flex; gap: 3px; align-items: center; }
+.qa-force input[type="checkbox"] { accent-color: var(--agents-warn); }
+/* The create form reuses the launch form layout; the template select matches
+   the launch text inputs. */
+.launch-form select {
+  width: 100%; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
 .agents-bannor.ok { border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
 .agents-bannor.ok i { color: var(--agents-good); }
 .pill.good { color: var(--agents-good); }
