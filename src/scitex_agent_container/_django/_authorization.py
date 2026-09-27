@@ -123,6 +123,34 @@ def record_audit(event: dict[str, Any]) -> Path:
     return path
 
 
+def _verified_user(request: Any) -> bool:
+    """True iff the request carries a live, authenticated Django user.
+
+    Beta golden path (2026-09-28): any verified user may launch and drive
+    their OWN-scope (node-local) agents; the operator allowlists keep
+    guarding cross-host control. Anonymous, inactive and unauthenticated
+    callers are never granted by this — they still need the allowlist.
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return False
+    is_authenticated = getattr(user, "is_authenticated", False)
+    if callable(is_authenticated):
+        try:
+            is_authenticated = bool(is_authenticated())
+        except Exception:
+            return False
+    if not is_authenticated:
+        return False
+    is_active = getattr(user, "is_active", True)
+    if callable(is_active):
+        try:
+            is_active = bool(is_active())
+        except Exception:
+            return False
+    return bool(is_active)
+
+
 def can_control(
     identity: str,
     *,
@@ -135,6 +163,10 @@ def can_control(
     ``cross_host`` selects the list. A granted cross-host control is recorded
     the moment it is DECIDED true (not just at execution) so the trail is a
     faithful log of authorizations, not of successes.
+
+    Own-scope (``cross_host=False``) additionally admits any verified Django
+    user from the request: the beta golden path needs every newcomer able to
+    launch and drive node-local agents, while cross-host stays allowlisted.
     """
     if not identity:
         return False
@@ -151,7 +183,9 @@ def can_control(
             )
             return True
         return False
-    return identity in _parse_allowlist(OPERATORS_ENV)
+    if identity in _parse_allowlist(OPERATORS_ENV):
+        return True
+    return request is not None and _verified_user(request)
 
 
 def fleet_visibility(identity: str) -> str:
