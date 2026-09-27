@@ -209,3 +209,37 @@ def test_allowed_tools_with_non_string_entry_returns_loud_error():
     errors = validate_provider(block)
     # Assert
     assert any("[1]" in e for e in errors)
+
+
+def test_native_hermes_provider_shape_is_valid():
+    # Arrange
+    block = {
+        "hermes_provider": "opencode-go",
+        "auth_token_env": "OPENCODE_GO_API_KEY",
+    }
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert errors == []
+
+
+def test_native_shape_with_base_url_is_rejected():
+    # Arrange
+    block = {
+        "hermes_provider": "opencode-go",
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "auth_token_env": "OPENCODE_GO_API_KEY",
+    }
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert any("base_url" in e for e in errors)
+
+
+def test_native_shape_without_key_name_is_rejected():
+    # Arrange
+    block = {"hermes_provider": "opencode-go"}
+    # Act
+    errors = validate_provider(block)
+    # Assert
+    assert any("auth_token_env" in e for e in errors)

@@ -51,6 +51,23 @@ def validate_provider(provider_block: object) -> list[str]:
     if not isinstance(provider_block, dict):
         return []
     errors: list[str] = []
+    native = provider_block.get("hermes_provider", "")
+    if isinstance(native, str) and native.strip():
+        # Native Hermes provider shape: {hermes_provider, auth_token_env}.
+        # base_url must be absent/empty (Hermes owns the endpoint), the key
+        # name is still required (Hermes resolves it from the agent env).
+        if provider_block.get("base_url"):
+            errors.append(
+                "spec.claude.provider.base_url must be empty when "
+                "hermes_provider is set (Hermes owns the endpoint)."
+            )
+        val = provider_block.get("auth_token_env")
+        if not isinstance(val, str) or not val:
+            errors.append(
+                "spec.claude.provider.auth_token_env is required and must "
+                "be non-empty when hermes_provider is set."
+            )
+        return errors
     for field_name in ("base_url", "auth_token_env"):
         val = provider_block.get(field_name)
         if val is None or val == "":

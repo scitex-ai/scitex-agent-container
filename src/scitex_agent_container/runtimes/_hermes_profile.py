@@ -174,9 +174,30 @@ def validate_hermes_tui_profile(
 
 def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> LaunchPlan:
     provider = config.claude.provider
+    if provider is None:
+        raise RuntimeError("Hermes requires the selected engine provider")
+    native = str(getattr(provider, "hermes_provider", "") or "").strip()
     base_url = str(provider.base_url or "").rstrip("/")
-    if not base_url:
-        raise RuntimeError("Hermes requires the selected engine provider.base_url")
+    if native:
+        # Native Hermes provider (e.g. opencode-go): Hermes owns the
+        # endpoint, protocol and session handling. SAC only names the
+        # provider + model and delivers the key via the agent env.
+        if base_url:
+            raise RuntimeError(
+                "Hermes native provider must not declare base_url"
+            )
+        endpoint = Endpoint(
+            protocol="hermes-native:" + native,
+            url="",
+            auth_kind="bearer",
+            auth_env=str(provider.auth_token_env or ""),
+            extra_headers=tuple(
+                (getattr(provider, "extra_headers", {}) or {}).items()
+            ),
+        )
+    else:
+        if not base_url:
+            raise RuntimeError("Hermes requires the selected engine provider.base_url")
     model = str(config.model or "").strip()
     engine_key = str(config.engine_key or "").strip()
     if not model or not engine_key:

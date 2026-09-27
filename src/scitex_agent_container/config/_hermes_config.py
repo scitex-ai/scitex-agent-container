@@ -45,7 +45,12 @@ def compile_hermes_config(
         raise ValueError("Hermes compiler requires a session-bound launch plan")
     if plan.launch_mode not in {"headless", "tui"}:
         raise ValueError("Hermes requires launch_mode 'headless' or 'tui'")
-    if plan.endpoint.protocol not in {
+    native_provider = ""
+    if plan.endpoint.protocol.startswith("hermes-native:"):
+        native_provider = plan.endpoint.protocol.split(":", 1)[1].strip()
+        if not native_provider:
+            raise ValueError("hermes-native endpoint names no provider")
+    elif plan.endpoint.protocol not in {
         "openai-chat-completions",
         "openai-responses",
     }:
@@ -87,23 +92,43 @@ def compile_hermes_config(
     api_mode = {
         "openai-chat-completions": "chat_completions",
         "openai-responses": "responses",
-    }[plan.endpoint.protocol]
+    }.get(plan.endpoint.protocol)
     model_config: dict[str, Any] = {}
     if plan.engine.context_window_tokens is not None:
         model_config["context_length"] = plan.engine.context_window_tokens
     if plan.engine.client_abandonment_seconds is not None:
         model_config["timeout_seconds"] = plan.engine.client_abandonment_seconds
         model_config["stale_timeout_seconds"] = plan.engine.client_abandonment_seconds
-    provider: dict[str, Any] = {
-        "name": f"SAC {plan.engine.key}",
-        "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),
-        "key_env": key_env,
-        "transport": api_mode,
-        "model": model,
-        "default_model": model,
-        "models": {model: model_config},
-        "extra_headers": extra_headers,
-    }
+    if native_provider:
+        # Native Hermes provider: Hermes owns endpoint/protocol/session
+        # handling (e.g. opencode-go's x-opencode-session). SAC only names
+        # the provider + model; the key resolves from the agent env.
+        model_block: dict[str, Any] = {
+            "default": model,
+            "provider": native_provider,
+        }
+        providers_block: dict[str, Any] = {}
+    else:
+        assert api_mode is not None
+        provider: dict[str, Any] = {
+            "name": f"SAC {plan.engine.key}",
+            "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),
+            "key_env": key_env,
+            "transport": api_mode,
+            "model": model,
+            "default_model": model,
+            "models": {model: model_config},
+            "extra_headers": extra_headers,
+        }
+        model_block = {
+            "default": model,
+            # Hermes' provider resolver reserves bare names for its bundled
+            # registry.  SAC-generated entries live in ``providers:`` and
+            # therefore must be selected through the named-custom identity.
+            "provider": f"custom:{provider_key}",
+            "api_mode": api_mode,
+        }
+        providers_block = {provider_key: provider}
     agent: dict[str, Any] = {
         # SAC's autonomous loop has its own independent safety cap.  Hermes'
         # TUI defaults an omitted value to 500, so emit its unlimited sentinel.
@@ -122,15 +147,8 @@ def compile_hermes_config(
             raise ValueError("Hermes system_prompt must contain non-whitespace text")
         agent["system_prompt"] = system_prompt
     return {
-        "model": {
-            "default": model,
-            # Hermes' provider resolver reserves bare names for its bundled
-            # registry.  SAC-generated entries live in ``providers:`` and
-            # therefore must be selected through the named-custom identity.
-            "provider": f"custom:{provider_key}",
-            "api_mode": api_mode,
-        },
-        "providers": {provider_key: provider},
+        "model": model_block,
+        "providers": providers_block,
         "fallback_providers": [],
         "toolsets": ["hermes-cli"],
         "agent": agent,
