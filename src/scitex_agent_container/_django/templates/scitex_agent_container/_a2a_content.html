@@ -56,7 +56,7 @@ Two halves, both projections of state the console already reads:
       </thead>
       <tbody>
         {% for p in peers %}
-        <tr class="row {{ p.state_tone }}{% if p.cross_host %} cross{% endif %}">
+        <tr class="agent-row {{ p.state_tone }}{% if p.cross_host %} cross{% endif %}">
           <td class="c-name"><a href="{{ url_base }}/{{ p.name }}/" title="{{ p.name }}">{{ p.name }}</a>
             {% if p.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
           <td title="{{ p.state_label }}"><span class="dot {{ p.state_tone }}"></span>{{ p.state_label }}</td>
