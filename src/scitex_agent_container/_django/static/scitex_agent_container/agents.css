@@ -298,3 +298,23 @@
   border: 1px solid var(--agents-border);
 }
 .message-form input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+
+/* ── per-row quick actions + a2a panel ───────────────────────────────────────
+   The fleet Actions cell carries the same lifecycle POSTs as the detail
+   page in compact form; the a2a panel reuses the table + banner language. */
+.quick-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 8px; vertical-align: middle; }
+.qa-form { display: inline-flex; gap: 4px; align-items: center; }
+.btn.qa { font-size: 11px; padding: 2px 8px; }
+.qa-msg input[type="text"] {
+  width: 130px; font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
+.qa-msg input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+.agents-bannor.ok { border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
+.agents-bannor.ok i { color: var(--agents-good); }
+.pill.good { color: var(--agents-good); }
+.pill.bad { color: var(--agents-bad); }
+.acl-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.acl-form input[type="text"] { flex: 1 1 140px; }
+.acl-form .lifecycle-btns { flex-basis: 100%; }

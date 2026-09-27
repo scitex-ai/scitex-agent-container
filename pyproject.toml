@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.28.2"
+version = "0.29.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -507,6 +507,14 @@ all = [
 scitex-agent-container = "_scitex_agent_container_bootstrap:cli_entry_point"
 sac = "_scitex_agent_container_bootstrap:cli_entry_point"
 sac-statusline = "scitex_agent_container.statusline:main"
+
+[project.entry-points."scitex.apps"]
+# Generic hub mount (thin-hub rule): ``pip install`` is the whole install.
+# The host mounts ``scitex_agent_container._django.urls`` at the manifest
+# route (apps/agents/) and lists the tile from ``_django/manifest.json``.
+# The launch/ operator surface ships IN that urlconf (views.launch,
+# operator-gated) - hosts must not re-declare it (scitex-hub#987 closed).
+agents = "scitex_agent_container._django.apps:AgentContainerDashboardConfig"
 
 [project.entry-points."scitex_dev.docs"]
 scitex-agent-container = "scitex_agent_container"

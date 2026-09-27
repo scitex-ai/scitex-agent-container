@@ -182,6 +182,10 @@ def index(request: HttpRequest):
         identity=identity,
         crosshost_authorized=identity in _crosshost_allowlist(),
         can_launch=can_control(identity, cross_host=False, request=request),
+        # One decided cross-host grant for the whole fleet render (audited, like
+        # the detail gate): the per-row quick actions reuse it instead of
+        # re-deciding per row, which would file one audit line per agent.
+        can_control_crosshost=can_control(identity, cross_host=True, request=request),
         comm_error=comm_error,
         observed_age=observed_age,
         cache_ttl=CACHE.ttl,
@@ -378,6 +382,7 @@ def detail(request: HttpRequest, name: str):
         can_operate=can_control(identity, cross_host=cross_host, request=request, agent=name),
         control_keys=CONTROL_KEYS,
         dispatch_id=new_dispatch_id(),
+        notice=_delivery_notice(request),
         list_error=list_error,
         page="detail",
     )
@@ -633,12 +638,249 @@ def launch(request: HttpRequest):
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 
+def _a2a_peers(rows: list[dict], statuses: dict) -> list[dict]:
+    """Project scoped rows into the peer-reachability table.
+
+    Ports and turn URLs come from the SAME batched fleet read the dashboard
+    already makes (``sac a2a list`` reads the same ``GET /agents`` source);
+    liveness of the inbox channel (``inbox_reachable``) rides on the status
+    rows the timeline already projects. Nothing new is probed from the web
+    process — this is a projection, not a scanner.
+    """
+    from ._projection import project_row
+
+    peers = []
+    for row in rows:
+        name = row.get("name")
+        status = statuses.get(name) if isinstance(name, str) else None
+        if isinstance(status, Exception) or not isinstance(status, dict):
+            status = {}
+        projected = project_row(row, status)
+        inbox = status.get("inbox_reachable", row.get("inbox_reachable", "unknown"))
+        inbox = str(inbox).strip().lower() if inbox not in (None, "") else "unknown"
+        if inbox not in ("true", "false"):
+            inbox = "unknown"
+        peers.append(
+            {
+                "name": projected["name"],
+                "a2a_port": projected["a2a_port"],
+                "turn_url": projected["turn_url"],
+                "host": projected["host"],
+                "cross_host": projected["cross_host"],
+                "state_label": projected["state_label"],
+                "state_tone": projected["state_tone"],
+                "inbox_reachable": inbox,
+            }
+        )
+    return peers
+
+
+def _read_grants() -> tuple[list[dict] | None, str]:
+    """Read the peer allowlist with the CLI's own primitive.
+
+    ``sac a2a grants`` lists ``_state.state_store_nodes.list_comms_grants``;
+    this is the same call, so the web table and the CLI cannot disagree about
+    what is granted. The store may live somewhere this web process cannot see
+    (or need a PostgreSQL cluster it has no route to) — that is an explicit
+    unavailable state, never an empty table masquerading as "no grants".
+    """
+    try:
+        from .._state.state_store_nodes import list_comms_grants
+
+        return list_comms_grants(), ""
+    except Exception as exc:  # stx-allow: fallback (reason: an unreadable grant store is a STATE to show)
+        return None, safe_error_message(exc)
+
+
+@require_GET
+def a2a_panel(request: HttpRequest):
+    """The A2A panel: peer reachability + the peer allowlist.
+
+    Read-only by default. The reachability half is projected from the existing
+    fleet read; the allowlist half is the CLI's ``a2a grants`` listing. The
+    mutation forms (grant/unblock/block/revoke) render only for lifecycle
+    operators and POST to :func:`a2a_action`, which gates and audits them.
+    """
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+        comm_error = ""
+    except Exception as exc:  # stx-allow: fallback (reason: listener unreachable is a state)
+        rows, comm_error = [], safe_error_message(exc)
+    names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    try:
+        statuses = fleet.read_statuses(names)
+    except Exception:  # stx-allow: fallback (reason: per-agent reachability degrades to unknown)
+        statuses = {}
+    grants, grants_error = _read_grants()
+    context, is_standalone = _app_context(
+        request,
+        "Agents · A2A",
+        view_path="a2a/",
+        peers=_a2a_peers(rows, statuses if isinstance(statuses, dict) else {}),
+        grants=grants,
+        grants_error=grants_error,
+        identity=identity,
+        crosshost_authorized=identity in _crosshost_allowlist(),
+        can_operate=can_control(identity, cross_host=False, request=request),
+        notice=_delivery_notice(request),
+        comm_error=comm_error,
+        page="a2a",
+    )
+    template = "scitex_agent_container/a2a.html" if is_standalone else "scitex_agent_container/a2a_hub.html"
+    return render(request, template, context)
+
+
+#: The peer-allowlist mutations the panel offers. The same four verbs the CLI
+#: offers (``sac a2a {grant,unblock,block,revoke}``); ``grant`` is the CLI's
+#: legacy alias of ``unblock`` and behaves the same here.
+_A2A_DECISIONS = frozenset({"grant", "unblock", "block", "revoke"})
+
+
+@require_POST
+def a2a_action(request: HttpRequest):
+    """Decide one peer-allowlist mutation, gated and audited.
+
+    Authorization mirrors :func:`lifecycle_action` at its strictest: the
+    caller must be in the lifecycle-operator allowlist. The write itself goes
+    through the CLI's own path — ``dispatch_acl_decision`` for
+    grant/unblock/block (which routes in-SIF to the host listener, bare-host
+    to the local store) and ``revoke_send`` for revoke — so the web console
+    cannot grant something the CLI would refuse. Grants and denials are
+    recorded in the audit trail; a backend failure redirects with
+    ``state=failed`` rather than 500ing.
+    """
+    from ._authorization import record_audit
+
+    identity = resolve_identity(request)
+    base = _mount_base(request, "a2a/action")
+
+    def field(key: str) -> str:
+        value = request.POST.get(key, "")
+        return value.strip() if isinstance(value, str) else ""
+
+    decision, sender, target, note = (
+        field("decision"),
+        field("sender"),
+        field("target"),
+        field("note"),
+    )
+    if decision not in _A2A_DECISIONS:
+        return JsonResponse({"error": "unknown allowlist decision"}, status=400)
+    if not (_is_launch_name(sender) and _is_launch_name(target)):
+        query = urlencode(
+            {
+                "operation": f"a2a-{decision}",
+                "state": "refused",
+                "message": "Provide valid sender and target agent names.",
+            }
+        )
+        return HttpResponseRedirect(f"{base}/a2a/?{query}")
+    if not can_control(identity, cross_host=False, request=request):
+        record_audit(
+            {
+                "event": "a2a_acl_denied",
+                "identity": identity,
+                "decision": decision,
+                "sender": sender,
+                "target": target,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+    try:
+        if decision == "revoke":
+            from .._state.state_store_nodes import revoke_send
+
+            removed = revoke_send(sender=sender, target=target)
+            message = f"revoked {sender} -> {target}" if removed else f"no grant {sender} -> {target}"
+        else:
+            from ..cli_pkg._a2a_acl_dispatch import dispatch_acl_decision
+
+            dispatch_acl_decision(
+                "unblock" if decision == "grant" else decision,
+                sender=sender,
+                target=target,
+                note=note or None,
+            )
+            message = f"{decision} {sender} -> {target}"
+        state = "completed"
+    except Exception as exc:  # stx-allow: fallback (reason: the failed delegate is reported in the gui-audit.log audit trail, not raised)
+        raw_message = str(exc)  # kept for the server-side audit only
+        message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
+        state = "failed"
+    record_audit(
+        {
+            "event": "a2a_acl_action",
+            "identity": identity,
+            "decision": decision,
+            "sender": sender,
+            "target": target,
+            "state": state,
+            "message": str(message)[:240],
+            "raw_message": locals().get("raw_message", "")[:240],
+            "path": request.path,
+        }
+    )
+    query = urlencode(
+        {"operation": f"a2a-{decision}", "state": state, "message": str(message)[:240]}
+    )
+    return HttpResponseRedirect(f"{base}/a2a/?{query}")
+
+
 def _summary(agents: list[dict]) -> dict:
     total = len(agents)
     alive = sum(1 for a in agents if a["state_tone"] == "good")
     attention = sum(1 for a in agents if a["state_tone"] in {"warn", "bad"})
     cross = sum(1 for a in agents if a["cross_host"])
     return {"total": total, "alive": alive, "attention": attention, "cross_host": cross}
+
+
+#: Operations the detail/a2a notice banner will render. Lifecycle and message
+#: POSTs redirect back with ``?operation=&state=&message=``; only these
+#: server-minted operation names get a banner, so an arbitrary query string
+#: cannot inject banner copy. ``a2a-*`` covers the peer-allowlist mutations.
+_NOTICE_OPERATIONS = frozenset(
+    {"start", "stop", "restart", "launch", "message", "control"}
+)
+
+#: Delivery states the bridge and the lifecycle delegate report.
+_NOTICE_STATES = frozenset(
+    {"completed", "failed", "refused", "delivered", "replay"}
+)
+
+
+def _delivery_notice(request: HttpRequest) -> dict | None:
+    """The last delivery outcome, from the POST-redirect query string.
+
+    ``lifecycle_action`` / ``message_action`` / ``launch`` / ``a2a_action``
+    never render directly: they redirect to a GET carrying
+    ``operation``/``state``/``message`` (and ``dispatch_id`` for message
+    deliveries). This reads that triple back so the next paint can show the
+    delivery status next to the form that caused it. Returns None when there
+    is no (valid) outcome to report — the normal first visit.
+    """
+    operation = request.GET.get("operation") or ""
+    if not isinstance(operation, str):
+        return None
+    operation = operation.strip()
+    if not (operation in _NOTICE_OPERATIONS or operation.startswith("a2a-")):
+        return None
+    state = request.GET.get("state") or ""
+    state = state.strip() if isinstance(state, str) else ""
+    if state not in _NOTICE_STATES:
+        return None
+    message = request.GET.get("message") or ""
+    message = message.strip()[:240] if isinstance(message, str) else ""
+    dispatch_id = request.GET.get("dispatch_id") or ""
+    dispatch_id = dispatch_id.strip()[:64] if isinstance(dispatch_id, str) else ""
+    return {
+        "operation": operation,
+        "state": state,
+        "message": message,
+        "dispatch_id": dispatch_id,
+    }
 
 
 def _crosshost_allowlist() -> frozenset[str]:
@@ -649,4 +891,4 @@ def _crosshost_allowlist() -> frozenset[str]:
     return frozenset(p.strip() for p in os.environ.get(CROSSHOST_OPERATORS_ENV, "").split(",") if p.strip())
 
 
-__all__ = ["detail", "fleet_api", "index", "launch", "lifecycle_action"]
+__all__ = ["a2a_action", "a2a_panel", "detail", "fleet_api", "index", "launch", "lifecycle_action"]

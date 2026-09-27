@@ -27,6 +27,21 @@ back link and the lifecycle form action are correct in both modes.
     {% if list_error %}<br><small>Listener: {{ list_error }}</small>{% endif %}
   </div>
   {% else %}
+  {% comment %}
+  Last delivery outcome: lifecycle/message POSTs redirect back here with
+  ?operation=&state=&message=, and this banner is where that delivery status
+  lands — next to the forms that caused it. Only server-minted operation
+  names render (see _delivery_notice), so the query string cannot inject
+  banner copy.
+  {% endcomment %}
+  {% if notice %}
+  <div class="agents-bannor {% if notice.state == 'completed' or notice.state == 'delivered' %}ok{% elif notice.state == 'replay' %}{% else %}err{% endif %}" role="status">
+    <i class="fas fa-circle-info"></i>
+    <span>{{ notice.operation }}: {{ notice.state }}</span>
+    {% if notice.message %}<small class="mono">{{ notice.message }}</small>{% endif %}
+    {% if notice.dispatch_id %}<small class="dim mono">dispatch {{ notice.dispatch_id }}</small>{% endif %}
+  </div>
+  {% endif %}
   <div class="detail-grid">
     <div class="detail-card">
       <div class="detail-state">
@@ -99,7 +114,7 @@ back link and the lifecycle form action are correct in both modes.
       constructs a host/port and never drives tmux. Each submit carries a
       dispatch id so a double-click cannot inject the text twice.
       {% endcomment %}
-      <h3 class="control-sub">Send a message</h3>
+      <h3 class="control-sub" id="message">Send a message</h3>
       <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form">
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
@@ -127,6 +142,35 @@ back link and the lifecycle form action are correct in both modes.
       <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
       cross-host agents, the cross-host operator allowlist{% endif %}.</p>
+      {% endif %}
+    </div>
+
+    <div class="detail-card" id="message-thread">
+      <h2>Message thread</h2>
+      {% comment %}
+      The thread the daemon actually stores: the agent's session log tail
+      (GET /agents/<name>/tail, summarized + redacted server-side). The
+      console deliberately keeps no operator-message transcript — a delivery
+      is either reported delivered or reported failed (see the banner above
+      and the send form), never parked in the dashboard. So "history" here
+      is the session records, newest last, capped to the recent few; the
+      full tail stays in the session-log card below.
+      {% endcomment %}
+      {% if notice and notice.operation == "message" or notice and notice.operation == "control" %}
+      <p class="dim">Last send: <span class="mono">{{ notice.operation }} · {{ notice.state }}</span>{% if notice.message %} — <span class="mono">{{ notice.message }}</span>{% endif %}</p>
+      {% endif %}
+      {% if agent.session_error %}
+      <p class="dim">History unavailable: <span class="mono">{{ agent.session_error }}</span></p>
+      {% elif agent.session_lines %}
+      <ul class="session-log mono">
+        {% for line in agent.session_lines|slice:"-5:" %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+      <p class="dim session-note">Most recent session records. <a href="#message">Send a message</a> to steer this agent.</p>
+      {% else %}
+      <p class="dim">No session records yet — and the console holds no earlier
+      operator messages to show. <a href="#message">Send the first one</a>.</p>
       {% endif %}
     </div>
 
