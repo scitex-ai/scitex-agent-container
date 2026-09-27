@@ -85,7 +85,7 @@ mounted) so the per-row links are correct in both modes.
     </thead>
     <tbody>
       {% for a in agents %}
-      <tr class="row {{ a.state_tone }}{% if a.cross_host %} cross{% endif %}">
+      <tr class="agent-row {{ a.state_tone }}{% if a.cross_host %} cross{% endif %}">
         <td class="c-name"><a href="{{ url_base }}/{{ a.name }}/" title="{{ a.name }}">{{ a.name }}</a>
           {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
         <td title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
