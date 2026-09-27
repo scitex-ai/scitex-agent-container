@@ -271,3 +271,26 @@ def test_inactive_user_not_granted_by_request():
         del os.environ[OPS_ENV]
     # Assert
     assert allowed is False
+
+
+DECLARED_ENV = "SCITEX_AGENT_CONTAINER_HOSTNAME"
+
+
+def test_declared_serving_host_is_own_scope(env_save_restore):
+    # Arrange
+    os.environ[DECLARED_ENV] = "scitex-compute-03"
+    row = {"name": "helper", "host": "scitex-compute-03"}
+    # Act
+    own = is_own_scope(row)
+    # Assert
+    assert own is True
+
+
+def test_declared_serving_host_short_form_is_own_scope(env_save_restore):
+    # Arrange
+    os.environ[DECLARED_ENV] = "scitex-compute-03.example.net"
+    row = {"name": "helper", "host": "scitex-compute-03"}
+    # Act
+    own = is_own_scope(row)
+    # Assert
+    assert own is True
