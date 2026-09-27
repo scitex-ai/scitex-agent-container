@@ -59,6 +59,13 @@ def _own_scope_hosts() -> frozenset[str]:
     name = local_hostname()
     if name:
         hosts.add(name)
+        hosts.add(name.split(".", 1)[0])
+    # Mounted deployments (hub container) declare the serving host; the
+    # container's own hostname is a meaningless container ID there.
+    declared = os.environ.get("SCITEX_AGENT_CONTAINER_HOSTNAME", "").strip()
+    if declared:
+        hosts.add(declared)
+        hosts.add(declared.split(".", 1)[0])
     return frozenset(hosts)
 
 
