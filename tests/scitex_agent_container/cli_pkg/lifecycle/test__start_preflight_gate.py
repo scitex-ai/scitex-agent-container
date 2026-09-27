@@ -65,9 +65,10 @@ class _Claude:
 
 
 class _Cfg:
-    def __init__(self, name="agent", provider=None):
+    def __init__(self, name="agent", provider=None, harness=""):
         self.name = name
         self.claude = _Claude(provider)
+        self.harness = harness
 
 
 def _runner(target: str):
@@ -219,6 +220,43 @@ def test_an_unloadable_spec_still_counts_as_needing_oauth():
 def test_a_provider_backed_spec_does_not_need_oauth():
     # Arrange
     cfg = _Cfg(name="handyman-01", provider="qwen38")
+    # Act
+    with _spec_that_loads(cfg):
+        result = any_target_needs_anthropic_oauth([cfg.name], [])
+    # Assert
+    assert result is False
+
+
+def test_a_hermes_harness_spec_skips_the_credential_check():
+    # Arrange: hermes is the primary harness — vendor-neutral, no Claude dep.
+    cfg = _Cfg(name="scitex-infrastructure-lead", harness="hermes")
+    # Act
+    seen = _spec_checked_with(cfg)
+    # Assert
+    assert seen == []
+
+
+def test_an_anthropic_harness_spec_still_reaches_the_check():
+    # Arrange: Claude Code support is kept — anthropic harness stays gated.
+    cfg = _Cfg(name="legacy-claude", harness="anthropic")
+    # Act
+    seen = _spec_checked_with(cfg)
+    # Assert
+    assert seen == [cfg]
+
+
+def test_a_claude_code_alias_harness_spec_still_reaches_the_check():
+    # Arrange: claude-code is the anthropic family alias, still gated.
+    cfg = _Cfg(name="legacy-cc", harness="claude-code")
+    # Act
+    seen = _spec_checked_with(cfg)
+    # Assert
+    assert seen == [cfg]
+
+
+def test_a_hermes_harness_spec_does_not_need_oauth():
+    # Arrange
+    cfg = _Cfg(name="scitex-infrastructure-lead", harness="hermes")
     # Act
     with _spec_that_loads(cfg):
         result = any_target_needs_anthropic_oauth([cfg.name], [])
