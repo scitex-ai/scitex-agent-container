@@ -589,7 +589,7 @@ def _seed_local_active_row(name: str, *, port: int = 19991) -> None:
         record_instance_start,
     )
 
-    record_instance_start(name=name, host=_resolve_host(), a2a_port=port)
+    record_instance_start(name=name, host=_resolve_host(None), a2a_port=port)
 
 
 def _active_rows_for(name: str) -> list:
