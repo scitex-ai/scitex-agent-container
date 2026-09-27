@@ -309,6 +309,39 @@ def create(
     if reserved_msg is not None:
         raise click.UsageError(reserved_msg)
 
+    scaffold_agent(
+        name,
+        template_name=template_name,
+        project=project,
+        agent_id=agent_id,
+        set_pairs=set_pairs,
+        base_dir=base_dir,
+        force=force,
+    )
+
+def scaffold_agent(
+    name: str,
+    *,
+    template_name: str = "minimal",
+    project: str | None = None,
+    agent_id: str | None = None,
+    set_pairs: tuple[str, ...] = (),
+    base_dir: Path | None = None,
+    force: bool = False,
+) -> Path:
+    """Scaffold a fresh v3 ``spec.yaml`` + ``to_home/`` for ``name``.
+
+    PUBLIC ON PURPOSE — the shared backend behind BOTH ``sac agents
+    create`` and the Agents GUI create flow. The GUI must never carry
+    its own copy of this logic: one template set, one validation
+    chain, one failure shape. Raises :class:`click.UsageError` for an
+    unknown template and :class:`click.ClickException` for an
+    existing spec without ``--force`` (callers map these to their own
+    loud failure surface). Returns the written ``spec.yaml`` path.
+
+    Name-shape validation (dir-as-SSoT chars + reserved slots) stays
+    with the CALLERS — both must refuse before anything is written.
+    """
     base = base_dir if base_dir is not None else _default_base_dir()
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
@@ -345,7 +378,7 @@ def create(
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
         system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
-        return
+        return agent_dir / "spec.yaml"
 
     if spec_path.exists() and not force:
         raise click.ClickException(
@@ -418,6 +451,7 @@ def create(
     to_home.mkdir(parents=True, exist_ok=True)
 
     system_msg(f"Wrote {spec_path} (template={kind}).")
+    return spec_path
 
 
-__all__ = ["create"]
+__all__ = ["create", "scaffold_agent"]

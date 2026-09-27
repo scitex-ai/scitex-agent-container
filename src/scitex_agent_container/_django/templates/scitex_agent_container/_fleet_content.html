@@ -66,6 +66,7 @@ mounted) so the per-row links are correct in both modes.
     {% endif %}
     {% if can_launch %}
     <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
+    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
     {% endif %}
     <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
     <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
@@ -116,6 +117,25 @@ mounted) so the per-row links are correct in both modes.
               <button type="submit" name="action" value="start" class="btn qa good" title="Start {{ a.name }}">Start</button>
               <button type="submit" name="action" value="restart" class="btn qa" title="Restart {{ a.name }}">Restart</button>
               <button type="submit" name="action" value="stop" class="btn qa bad" title="Stop {{ a.name }}">Stop</button>
+            </form>
+            {% comment %}
+            Registry verbs: Forget tombstones stale/unreachable rows (the
+            `sac agents forget` backend — no ssh, no signal); Delete fully
+            removes the agent (the `sac agents delete` backend — stop +
+            deregister + remove dirs). Same operator gate as the lifecycle
+            quick actions above; both confirm before POSTing and both fail
+            loud (409/404/502 with the reason) rather than vanishing.
+            {% endcomment %}
+            <form method="post" action="{{ url_base }}/{{ a.name }}/forget" class="qa-form"
+                  onsubmit="return confirm('Forget {{ a.name }}? This tombstones its registry rows (no ssh, no signal). Tick force for rows the store still shows as live.')">
+              {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+              <button type="submit" class="btn qa warn" title="Forget {{ a.name }}: drop stale registry rows">Forget</button>
+              <label class="qa-force" title="Also forget rows the store still shows as live (like `sac agents forget --force`)"><input type="checkbox" name="force" value="on"> force</label>
+            </form>
+            <form method="post" action="{{ url_base }}/{{ a.name }}/delete" class="qa-form"
+                  onsubmit="return confirm('Delete {{ a.name }}? This stops it, deregisters it and removes its spec and runtime dirs. This cannot be undone.')">
+              {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+              <button type="submit" class="btn qa bad" title="Delete {{ a.name }}: stop + deregister + remove dirs">Delete</button>
             </form>
             <form method="post" action="{{ url_base }}/{{ a.name }}/message" class="qa-form qa-msg">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}

@@ -64,6 +64,146 @@ def _delete_via_host_listen(names: tuple[str, ...]) -> None:
     sys.exit(worst_exit)
 
 
+def _delete_probe(name: str) -> dict:
+    """Scan every place ``name`` can exist, without mutating anything.
+
+    PUBLIC-ISH ON PURPOSE (module-internal shared core): the existence
+    scan behind BOTH ``sac agents delete`` and the Agents GUI delete
+    flow, so the two cannot disagree about "not found" vs "remote" vs
+    "dangling link". Pure reads — safe to call from the web process.
+    """
+    root = Path.home() / ".scitex" / "agent-container"
+    agents_root = root / "agents"
+    runtime_root = root / "runtime"
+    registry = Registry()
+    spec_dir = agents_root / name
+    rt_dir = runtime_root / name
+    # An agent that lives only on a peer (rsync skipped during
+    # start, or the lead spec was already deleted) still has a row
+    # in state.db; we must count that as "exists" so the delete
+    # doesn't no-op when it should ssh.
+    remote_row = lookup_remote_peer(name)
+    # A DANGLING spec link is the case this verb most needs to handle: the
+    # authority half of a deletion landed, so the link's target is gone and
+    # ``spec_dir.exists()`` is False. Measured 2026-09-19 on compute-03 —
+    # two links left by exactly that sequence reported "not found" and the
+    # only cleaner for them was a plain rm. ``is_symlink()`` is True even
+    # when the target is missing, so it is the correct existence test.
+    spec_is_link = spec_dir.is_symlink()
+    spec_is_dangling = spec_is_link and not spec_dir.exists()
+    existed_anywhere = (
+        spec_dir.exists()
+        or spec_is_link
+        or rt_dir.exists()
+        or registry.exists(name)
+        or remote_row is not None
+    )
+    return {
+        "spec_dir": spec_dir,
+        "rt_dir": rt_dir,
+        "spec_is_link": spec_is_link,
+        "spec_is_dangling": spec_is_dangling,
+        "spec_exists": spec_dir.exists(),
+        "runtime_exists": rt_dir.exists(),
+        "registry_exists": registry.exists(name),
+        "remote_row": remote_row,
+        "existed_anywhere": existed_anywhere,
+    }
+
+
+def _delete_one(name: str, *, keep_runtime: bool = False) -> dict:
+    """Delete one agent — stop, deregister, remove dirs. THE shared core.
+
+    PUBLIC ON PURPOSE: the same backend behind ``sac agents delete``
+    and the Agents GUI delete flow. Cross-host remote dispatch failures
+    raise :class:`RuntimeError` (fail loud — a half-deleted remote is
+    worse than no delete); a name that exists nowhere raises
+    :class:`LookupError`. Per-file ``OSError`` races are collected into
+    the ``warnings`` list, never swallowed. Returns the outcome
+    envelope (``deleted=True`` when the removal ran).
+    """
+    import shutil as _shutil
+
+    probe = _delete_probe(name)
+    if not probe["existed_anywhere"]:
+        raise LookupError(
+            f"'{name}': not found (no spec, runtime, or registry)"
+        )
+    spec_dir = probe["spec_dir"]
+    rt_dir = probe["rt_dir"]
+    warnings: list[str] = []
+
+    # 0. Cross-host: if the agent is on a peer, stop + rm there,
+    # then close the lead-side row. Failures surface (no silent
+    # fallback) — a half-deleted remote is worse than no delete.
+    remote = False
+    if probe["remote_row"] is not None:
+        _dispatch_remote_delete(name)
+        remote = True
+
+    # 1. Best-effort local stop. We don't care if it wasn't running.
+    # stx-allow: fallback (stop-on-delete is best-effort; a missing
+    # config or already-stopped agent must not block the delete)
+    try:
+        from ..._lifecycle.lifecycle import agent_stop
+
+        cfg_yaml = spec_dir / "spec.yaml"
+        if cfg_yaml.is_file():
+            agent_stop(str(cfg_yaml), force=True)
+    except Exception:
+        pass
+
+    # 2. Spec dir. A DANGLING link is removed as a LINK — rmtree cannot
+    # resolve it, and the link itself is the debris that half-done
+    # deletions leave behind.
+    spec_removed = False
+    if probe["spec_is_dangling"]:
+        # stx-allow: fallback (unlink may race with a concurrent relink;
+        # we report and continue rather than abort the batch)
+        try:
+            spec_dir.unlink()
+            spec_removed = True
+        except OSError as exc:
+            warnings.append(
+                f"could not remove dangling link {spec_dir}: {exc}"
+            )
+    elif spec_dir.exists():
+        # stx-allow: fallback (rmtree may race with a concurrent
+        # writer; we report and continue rather than abort the batch)
+        try:
+            _shutil.rmtree(spec_dir)
+            spec_removed = True
+        except OSError as exc:
+            warnings.append(f"could not remove {spec_dir}: {exc}")
+
+    # 3. Runtime dir.
+    runtime_removed = False
+    if not keep_runtime and rt_dir.exists():
+        # stx-allow: fallback (see spec-dir rmtree above)
+        try:
+            _shutil.rmtree(rt_dir)
+            runtime_removed = True
+        except OSError as exc:
+            warnings.append(f"could not remove {rt_dir}: {exc}")
+
+    # 4. Registry.
+    # stx-allow: fallback (registry.remove may raise on already-gone
+    # entry depending on backend; the agent is already off disk)
+    try:
+        Registry().remove(name)
+    except Exception:
+        pass
+
+    return {
+        "name": name,
+        "deleted": True,
+        "remote": remote,
+        "spec_removed": spec_removed,
+        "runtime_removed": runtime_removed,
+        "warnings": warnings,
+    }
+
+
 def _dispatch_remote_delete(name: str) -> bool:
     """SSH into the peer that owns ``name`` to stop + rm + close row.
 
@@ -178,7 +318,6 @@ def delete(
       $ sac agent delete hello-agent --dry-run
       $ sac agent delete hello-agent --keep-runtime
     """
-    import shutil as _shutil
 
     # PR-3 — in-SIF auto-fallback. When the CLI is running inside an
     # apptainer SIF (= the SAC-from-SAC architecture: a child agent's
@@ -215,27 +354,10 @@ def delete(
     for name in names:
         spec_dir = agents_root / name
         rt_dir = runtime_root / name
-        # An agent that lives only on a peer (rsync skipped during
-        # start, or the lead spec was already deleted) still has a row
-        # in state.db; we must count that as "exists" so the delete
-        # doesn't no-op when it should ssh.
-        remote_row = lookup_remote_peer(name)
-        # A DANGLING spec link is the case this verb most needs to handle: the
-        # authority half of a deletion landed, so the link's target is gone and
-        # ``spec_dir.exists()`` is False. Measured 2026-09-19 on compute-03 —
-        # two links left by exactly that sequence reported "not found" and the
-        # only cleaner for them was a plain rm. ``is_symlink()`` is True even
-        # when the target is missing, so it is the correct existence test.
-        spec_is_link = spec_dir.is_symlink()
-        spec_is_dangling = spec_is_link and not spec_dir.exists()
-        existed_anywhere = (
-            spec_dir.exists()
-            or spec_is_link
-            or rt_dir.exists()
-            or registry.exists(name)
-            or remote_row is not None
-        )
-        if not existed_anywhere:
+        probe = _delete_probe(name)
+        remote_row = probe["remote_row"]
+        spec_is_dangling = probe["spec_is_dangling"]
+        if not probe["existed_anywhere"]:
             click.echo(f"[skip] '{name}': not found (no spec, runtime, or registry)")
             any_err = True
             continue
@@ -250,67 +372,15 @@ def delete(
             )
             continue
 
-        # 0. Cross-host: if the agent is on a peer, stop + rm there,
-        # then close the lead-side row. Failures surface (no silent
-        # fallback) — a half-deleted remote is worse than no delete.
-        if remote_row is not None:
-            try:
-                _dispatch_remote_delete(name)
-            except RuntimeError as exc:
-                any_err = True
-                click.echo(f"[error] '{name}': {exc}", err=True)
-                continue
-
-        # 1. Best-effort local stop. We don't care if it wasn't running.
-        # stx-allow: fallback (stop-on-delete is best-effort; a missing
-        # config or already-stopped agent must not block the delete)
         try:
-            from ..._lifecycle.lifecycle import agent_stop
-
-            cfg_yaml = spec_dir / "spec.yaml"
-            if cfg_yaml.is_file():
-                agent_stop(str(cfg_yaml), force=True)
-        except Exception:
-            pass
-
-        # 2. Spec dir. A DANGLING link is removed as a LINK — rmtree cannot
-        # resolve it, and the link itself is the debris that half-done
-        # deletions leave behind.
-        if spec_is_dangling:
-            # stx-allow: fallback (unlink may race with a concurrent relink;
-            # we report and continue rather than abort the batch)
-            try:
-                spec_dir.unlink()
-            except OSError as exc:
-                click.echo(
-                    f"[warn] '{name}': could not remove dangling link {spec_dir}: {exc}"
-                )
-                any_err = True
-        elif spec_dir.exists():
-            # stx-allow: fallback (rmtree may race with a concurrent
-            # writer; we report and continue rather than abort the batch)
-            try:
-                _shutil.rmtree(spec_dir)
-            except OSError as exc:
-                click.echo(f"[warn] '{name}': could not remove {spec_dir}: {exc}")
-                any_err = True
-
-        # 3. Runtime dir.
-        if not keep_runtime and rt_dir.exists():
-            # stx-allow: fallback (see spec-dir rmtree above)
-            try:
-                _shutil.rmtree(rt_dir)
-            except OSError as exc:
-                click.echo(f"[warn] '{name}': could not remove {rt_dir}: {exc}")
-                any_err = True
-
-        # 4. Registry.
-        # stx-allow: fallback (registry.remove may raise on already-gone
-        # entry depending on backend; the agent is already off disk)
-        try:
-            registry.remove(name)
-        except Exception:
-            pass
+            envelope = _delete_one(name, keep_runtime=keep_runtime)
+        except RuntimeError as exc:
+            any_err = True
+            click.echo(f"[error] '{name}': {exc}", err=True)
+            continue
+        for warning in envelope["warnings"]:
+            click.echo(f"[warn] '{name}': {warning}")
+            any_err = True
 
         render_rich(f"[green]deleted[/green] {name}", __name__)
 
@@ -318,4 +388,4 @@ def delete(
         sys.exit(1)
 
 
-__all__ = ["delete"]
+__all__ = ["_delete_one", "_delete_probe", "delete"]
