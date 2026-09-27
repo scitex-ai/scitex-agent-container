@@ -573,3 +573,64 @@ def test_cross_host_delete_dry_run_does_not_invoke_ssh(cross_host_delete_env):
         runner.invoke(delete, ["zeta", "--dry-run"])
     # Assert
     assert _ssh_invocations_delete(cross_host_delete_env["log"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Instances-only orphans (fleet lists a row; spec/runtime/registry are gone)
+# ---------------------------------------------------------------------------
+
+
+def _seed_local_active_row(name: str, *, port: int = 19991) -> None:
+    # Arrange-helper — an active instances row on THIS host (so
+    # lookup_remote_peer treats it as local, not remote). Host is read
+    # from the same resolver the dispatch path uses, never hardcoded.
+    from scitex_agent_container._state.state_store import (
+        _resolve_host,
+        record_instance_start,
+    )
+
+    record_instance_start(name=name, host=_resolve_host(), a2a_port=port)
+
+
+def _active_rows_for(name: str) -> list:
+    from scitex_agent_container._state.state_store import list_active_instances
+
+    return [r for r in list_active_instances() if r.get("name") == name]
+
+
+def test_instances_only_orphan_deletes_with_zero_status_code(tmp_path):
+    # Arrange — active row, but no spec dir, no runtime dir, no registry pin.
+    _seed_local_active_row("orphan")
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        result = runner.invoke(delete, ["orphan"])
+    # Assert — not "not found": the row counts as existing.
+    assert result.exit_code == 0, result.output
+
+
+def test_instances_only_orphan_delete_closes_row(tmp_path):
+    # Arrange — same orphan shape as above.
+    _seed_local_active_row("orphan")
+    runner = CliRunner()
+    # Act
+    with _swap_registry(_FakeRegistry(exists=False)):
+        runner.invoke(delete, ["orphan"])
+    # Assert — the fleet stops listing it.
+    assert _active_rows_for("orphan") == []
+
+
+def test_local_delete_closes_active_row(tmp_path):
+    # Arrange — full agent on disk plus an active local row.
+    _seed_agent(tmp_path, "alpha")
+    _seed_local_active_row("alpha")
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_registry(_FakeRegistry(exists=True)),
+        _swap_agent_stop(lambda yaml, force: None),
+    ):
+        result = runner.invoke(delete, ["alpha"])
+    # Assert — dirs gone (existing behaviour) and the row closed (new).
+    assert result.exit_code == 0, result.output
+    assert _active_rows_for("alpha") == []

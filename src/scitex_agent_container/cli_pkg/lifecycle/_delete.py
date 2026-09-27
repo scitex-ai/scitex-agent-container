@@ -83,6 +83,17 @@ def _delete_probe(name: str) -> dict:
     # in state.db; we must count that as "exists" so the delete
     # doesn't no-op when it should ssh.
     remote_row = lookup_remote_peer(name)
+    # An instances-only ORPHAN (active row in the shared store, but the
+    # spec dir, runtime dir and registry pin are all gone — e.g. a start
+    # that died in container_creation, or a local delete that predates
+    # row-closing) still shows up in the fleet, so it must count as
+    # "exists" here; _delete_one closes the row. Without this the fleet
+    # shows a row the delete verb calls "not found" (seen 2026-09-28 on
+    # compute-03: agent 'fb' listed, delete 404'd).
+    from ..._state.state_store import list_active_instances
+
+    local_rows = [r for r in list_active_instances() if r.get("name") == name]
+    local_row = local_rows[0] if local_rows else None
     # A DANGLING spec link is the case this verb most needs to handle: the
     # authority half of a deletion landed, so the link's target is gone and
     # ``spec_dir.exists()`` is False. Measured 2026-09-19 on compute-03 —
@@ -97,6 +108,7 @@ def _delete_probe(name: str) -> dict:
         or rt_dir.exists()
         or registry.exists(name)
         or remote_row is not None
+        or local_row is not None
     )
     return {
         "spec_dir": spec_dir,
@@ -107,6 +119,7 @@ def _delete_probe(name: str) -> dict:
         "runtime_exists": rt_dir.exists(),
         "registry_exists": registry.exists(name),
         "remote_row": remote_row,
+        "local_row": local_row,
         "existed_anywhere": existed_anywhere,
     }
 
@@ -127,7 +140,7 @@ def _delete_one(name: str, *, keep_runtime: bool = False) -> dict:
     probe = _delete_probe(name)
     if not probe["existed_anywhere"]:
         raise LookupError(
-            f"'{name}': not found (no spec, runtime, or registry)"
+            f"'{name}': not found (no spec, runtime, registry, or instances)"
         )
     spec_dir = probe["spec_dir"]
     rt_dir = probe["rt_dir"]
@@ -191,6 +204,30 @@ def _delete_one(name: str, *, keep_runtime: bool = False) -> dict:
     # entry depending on backend; the agent is already off disk)
     try:
         Registry().remove(name)
+    except Exception:
+        pass
+
+    # 5. Close any active local instances rows. The remote path above
+    # already closes the lead-side row; the local path never did, so a
+    # spec/runtime/registry removal left the shared-store row active and
+    # the fleet kept listing a ghost the next delete called "not found".
+    # Closing here makes local delete converge the same way and lets an
+    # instances-only orphan delete cleanly (row closed, dirs already gone).
+    # stx-allow: fallback (a row that vanishes between probe and close is
+    # already gone — the desired end state, not an error)
+    try:
+        from ..._state.state_store import list_active_instances
+
+        for row in list_active_instances():
+            if row.get("name") != name:
+                continue
+            instance_id = row.get("id")
+            if not instance_id:
+                continue
+            try:
+                record_instance_stop(instance_id, exit_reason="deleted")
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -358,7 +395,7 @@ def delete(
         remote_row = probe["remote_row"]
         spec_is_dangling = probe["spec_is_dangling"]
         if not probe["existed_anywhere"]:
-            click.echo(f"[skip] '{name}': not found (no spec, runtime, or registry)")
+            click.echo(f"[skip] '{name}': not found (no spec, runtime, registry, or instances)")
             any_err = True
             continue
 
