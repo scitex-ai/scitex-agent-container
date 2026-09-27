@@ -997,3 +997,28 @@ def test_cct_profile_env_empty_without_token(tmp_path: Path):
     (home / ".env").write_text("SOME_OTHER_VAR=x\n", encoding="utf-8")
     assert profile._cct_profile_env(home) == {}
     assert profile._cct_profile_env(tmp_path / "missing") == {}
+
+
+def test_launch_plan_native_provider_survives_endpoint_build():
+    # Regression: the shared OpenAI tail once overwrote the native
+    # endpoint, materializing custom:sac-* with base_url /v1 and every
+    # turn 400ing on the Go relay.
+    # Arrange
+    config = AgentConfig(name="lead", harness="hermes", runtime="headless")
+    config.engine_key = "scitex-free"
+    config.model = "muse-spark-1.3-contributor"
+    config.max_context_tokens = 1_048_576
+    config.reasoning_effort = ""
+    config.upstream_deadline_seconds = None
+    config.client_abandonment_seconds = None
+    config.claude.provider = ProviderSpec(
+        base_url="",
+        auth_token_env="OPENCODE_GO_API_KEY",
+        hermes_provider="opencode-go",
+    )
+    # Act
+    plan = profile._launch_plan(config)
+    # Assert
+    assert plan.endpoint.protocol == "hermes-native:opencode-go"
+    assert plan.endpoint.url == ""
+    assert plan.endpoint.auth_env == "OPENCODE_GO_API_KEY"
