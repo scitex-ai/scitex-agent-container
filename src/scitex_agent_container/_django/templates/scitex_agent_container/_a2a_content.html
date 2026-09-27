@@ -1,0 +1,138 @@
+{% comment %}
+Shared Agents A2A content. Included by:
+  * a2a.html        (standalone: inside scitex_ui/standalone_shell.html)
+  * a2a_hub.html    (Hub: inside global_base.html — no second header)
+`url_base` is the app's mount prefix ("" at root, "/apps/agents" when
+mounted) so links and form actions are correct in both modes.
+
+Two halves, both projections of state the console already reads:
+
+1. Peer reachability — one row per in-scope agent: the a2a port + turn URL
+   from the batched fleet read (`sac a2a list` reads the same GET /agents
+   source) and the inbox-channel liveness (`inbox_reachable`) the timeline
+   already projects. The console probes nothing itself.
+2. Peer allowlist — the CLI's `sac a2a grants` listing
+   (`state_store_nodes.list_comms_grants`, same call). Read-only unless the
+   acting identity is a lifecycle operator; mutations POST to `a2a/action`
+   with the operator gate + audit trail.
+{% endcomment %}
+<div class="agents-app" data-page="a2a">
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
+      <h1><i class="fas fa-share-nodes"></i> A2A peers</h1>
+      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+    </div>
+  </header>
+
+  {% if notice %}
+  <div class="agents-bannor {% if notice.state == 'completed' %}ok{% elif notice.state == 'replay' %}{% else %}err{% endif %}" role="status">
+    <i class="fas fa-circle-info"></i>
+    <span>{{ notice.operation }}: {{ notice.state }}</span>
+    {% if notice.message %}<small class="mono">{{ notice.message }}</small>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if comm_error %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-triangle-exclamation"></i>
+    <span>The fleet is not available right now.</span>
+    <small>{{ comm_error }}</small>
+  </div>
+  {% endif %}
+
+  <div class="detail-card">
+    <h2>Peer reachability</h2>
+    <p class="dim">Ports and turn URLs from the fleet read; inbox liveness from
+    the agents' published status. Projected, not probed — for a measured
+    cross-host probe use <span class="mono">sac a2a reachability</span> on the host.</p>
+    {% if peers %}
+    <div class="agents-table-wrap">
+    <table class="agents-table">
+      <thead>
+        <tr>
+          <th>Agent</th><th>State</th><th>a2a port</th><th>Turn host</th><th>Inbox</th><th>Scope</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in peers %}
+        <tr class="row {{ p.state_tone }}{% if p.cross_host %} cross{% endif %}">
+          <td class="c-name"><a href="{{ url_base }}/{{ p.name }}/" title="{{ p.name }}">{{ p.name }}</a>
+            {% if p.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
+          <td title="{{ p.state_label }}"><span class="dot {{ p.state_tone }}"></span>{{ p.state_label }}</td>
+          <td class="c-port mono">{% if p.a2a_port %}{{ p.a2a_port }}{% else %}<span class="dim">—</span>{% endif %}</td>
+          <td class="c-host mono" title="{{ p.turn_url|default:'' }}">{{ p.host }}</td>
+          <td>{% if p.inbox_reachable == "true" %}<span class="pill good">reachable</span>{% elif p.inbox_reachable == "false" %}<span class="pill bad">unreachable</span>{% else %}<span class="pill">unknown</span>{% endif %}</td>
+          <td>{% if p.cross_host %}<span class="pill cross-mini">cross-host</span>{% else %}<span class="dim">own</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="dim">No peers visible to <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</p>
+    {% endif %}
+  </div>
+
+  <div class="detail-card">
+    <h2>Peer allowlist</h2>
+    <p class="dim">Who may send to whom across groups — the same
+    <span class="mono">comms_grants</span> table <span class="mono">sac a2a grants</span>
+    lists. A block (right column of the CLI) always wins over a grant.</p>
+    {% if grants is None %}
+    <div class="agents-bannor" role="status">
+      <i class="fas fa-database"></i>
+      <span>The allowlist is not available from this host.</span>
+      <small>{{ grants_error|default:"the grant store could not be read here" }} — use
+      <span class="mono">sac a2a grants</span> on the listener host.</small>
+    </div>
+    {% elif grants %}
+    <div class="agents-table-wrap">
+    <table class="agents-table">
+      <thead>
+        <tr><th>Sender</th><th>Target</th><th>Granted</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for g in grants %}
+        <tr>
+          <td class="mono">{{ g.sender }}</td>
+          <td class="mono">{{ g.target }}</td>
+          <td class="mono dim">{{ g.created_at }}</td>
+          <td>{{ g.note|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="dim">(no grants) — no cross-group send is allowlisted.</p>
+    {% endif %}
+
+    {% if can_operate %}
+    <h3 class="control-sub">Decide a grant</h3>
+    <p class="dim">Same verbs as <span class="mono">sac a2a grant / unblock / block / revoke</span> —
+    directional <span class="mono">sender → target</span>, recorded in the operator audit trail.</p>
+    <form method="post" action="{{ url_base }}/a2a/action" class="message-form acl-form">
+      {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+      <label class="visually-hidden" for="acl-sender">Sender</label>
+      <input id="acl-sender" name="sender" type="text" required maxlength="64"
+             pattern="[A-Za-z0-9][A-Za-z0-9._-]*" placeholder="sender" autocomplete="off">
+      <label class="visually-hidden" for="acl-target">Target</label>
+      <input id="acl-target" name="target" type="text" required maxlength="64"
+             pattern="[A-Za-z0-9][A-Za-z0-9._-]*" placeholder="target" autocomplete="off">
+      <label class="visually-hidden" for="acl-note">Note</label>
+      <input id="acl-note" name="note" type="text" maxlength="240"
+             placeholder="audit note (ticket, prompt id…)" autocomplete="off">
+      <div class="lifecycle-btns">
+        <button type="submit" name="decision" value="grant" class="btn good">Grant</button>
+        <button type="submit" name="decision" value="unblock" class="btn">Unblock</button>
+        <button type="submit" name="decision" value="block" class="btn bad">Block</button>
+        <button type="submit" name="decision" value="revoke" class="btn">Revoke</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="dim"><i class="fas fa-lock"></i> Read-only. Allowlist decisions require an
+    identity listed in the lifecycle-operator allowlist.</p>
+    {% endif %}
+  </div>
+</div>
