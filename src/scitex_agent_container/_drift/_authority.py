@@ -41,6 +41,8 @@ class SpecAuthority:
 
 def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
     """Run one bounded git query or raise a named authority failure."""
+    import os
+
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -48,6 +50,12 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
             text=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
+            # Fleet homes are capacity-split across mounts (the
+            # agent-container subtree lives on a scratch LV while the
+            # repo root sits on the container rootfs). Discovery must
+            # cross that boundary; _repo_for already path-contains the
+            # spec under the reported repo, so no trust is added.
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
         )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         raise SpecAuthorityError(
@@ -138,6 +146,7 @@ def _origin_present(repo: Path) -> bool:
             text=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
         )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         raise SpecAuthorityError(
