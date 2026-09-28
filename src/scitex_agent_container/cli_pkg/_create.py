@@ -377,6 +377,7 @@ def scaffold_agent(
             )
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
+        _adopt_agent_dir(agent_dir, name)
         system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return agent_dir / "spec.yaml"
 
@@ -450,8 +451,57 @@ def scaffold_agent(
     to_home = agent_dir / "to_home"
     to_home.mkdir(parents=True, exist_ok=True)
 
+    _adopt_agent_dir(agent_dir, name)
+
     system_msg(f"Wrote {spec_path} (template={kind}).")
     return spec_path
+
+
+def _adopt_agent_dir(agent_dir: Path, name: str) -> None:
+    """Adopt the new spec into git management, or say why not — loudly.
+
+    Inside the operator's ``~/.scitex`` tree the home is adopted (tracked
+    spec files committed) so the launch gate can prove the spec. Outside
+    it — custom ``--base-dir``, test fixtures — nothing is touched: the
+    operator owns that repo and commits it by hand, and the gate proves
+    THAT repo at launch. Both branches report; neither is silent.
+
+    Create-side is warn-not-fail by deliberate asymmetry with the launch
+    gate: the spec files are the deliverable and must land even where
+    ``scitex-dev`` is older than the ``scitex_dev.home`` floor, while the
+    launch path (``_start_preflight``) stays fail-closed and refuses with
+    the same message. So an unmanaged home can never launch silently —
+    but creating one never destroys work either.
+    """
+    from .._drift._managed_home import ensure_home_managed
+
+    try:
+        inside = agent_dir.resolve().is_relative_to(
+            Path.home() / ".scitex"
+        )
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        system_msg(
+            f"Spec is outside ~/.scitex ({agent_dir}): leaving its repo "
+            f"untouched — commit it by hand; the launch gate will prove "
+            f"that repo instead.",
+            style="info",
+        )
+        return
+    try:
+        ensure_home_managed(commit_message=f"sac: create agent {name}")
+    except RuntimeError as exc:
+        click.echo(
+            click.style(
+                f"WARNING: ~/.scitex is NOT git-managed ({exc}). The spec "
+                f"above was written but WILL NOT LAUNCH until the home is "
+                f"adopted — upgrade scitex-dev past the scitex_dev.home "
+                f"floor and re-run create, or adopt the home by hand.",
+                fg="red",
+            ),
+            err=True,
+        )
 
 
 __all__ = ["create", "scaffold_agent"]
