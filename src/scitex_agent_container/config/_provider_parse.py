@@ -45,6 +45,11 @@ def parse_provider_value(block: object) -> ProviderSpec | None:
       from "unknown name" read the RAW value, not this return.
     * **dict** ``{base_url, auth_token_env, allowed_tools, extra_headers}`` — forwarded
       verbatim; the validator enforces the two required fields.
+    * **dict with ``hermes_provider``** — a native Hermes provider name
+      (e.g. ``{hermes_provider: opencode-go, auth_token_env: KEY}``):
+      ``base_url`` must be EMPTY, ``auth_token_env`` still required. The
+      hermes harness references Hermes' own provider instead of building
+      a custom OpenAI endpoint.
     * anything else (absent, null, list, ...) → ``None``.
     """
     if isinstance(block, str):
@@ -73,11 +78,14 @@ def parse_provider_value(block: object) -> ProviderSpec | None:
             and isinstance(value, str)
             and value
         }
+    raw_native = block.get("hermes_provider", "")
+    hermes_provider = str(raw_native or "").strip()
     return ProviderSpec(
         base_url=str(block.get("base_url", "") or ""),
         auth_token_env=str(block.get("auth_token_env", "") or ""),
         allowed_tools=list(allowed_tools),
         extra_headers=extra_headers,
+        hermes_provider=hermes_provider,
     )
 
 

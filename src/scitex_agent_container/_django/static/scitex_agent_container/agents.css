@@ -86,6 +86,13 @@
   border-radius: 12px; background: var(--agents-panel);
 }
 .agents-table { width: 100%; border-collapse: collapse; min-width: 720px; }
+/* Host shells (Bootstrap `.row`, responsive resets) must never reflow the
+   table: pin the table display roles explicitly. */
+.agents-table thead { display: table-header-group; }
+.agents-table tbody { display: table-row-group; }
+.agents-table tr { display: table-row; }
+.agents-table th { display: table-cell; }
+.agents-table td { display: table-cell; }
 .agents-table thead th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--agents-dim); padding: 11px 14px; border-bottom: 1px solid var(--agents-border);
@@ -311,6 +318,18 @@
   border: 1px solid var(--agents-border);
 }
 .qa-msg input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+/* Registry verbs (Forget/Delete): warn tone for the tombstone, inline force
+   toggle riding in the same compact form as the lifecycle quick actions. */
+.btn.warn { color: var(--agents-warn); border-color: color-mix(in srgb, var(--agents-warn) 45%, var(--agents-border)); }
+.qa-force { font-size: 11px; color: var(--agents-text); display: inline-flex; gap: 3px; align-items: center; }
+.qa-force input[type="checkbox"] { accent-color: var(--agents-warn); }
+/* The create form reuses the launch form layout; the template select matches
+   the launch text inputs. */
+.launch-form select {
+  width: 100%; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
 .agents-bannor.ok { border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
 .agents-bannor.ok i { color: var(--agents-good); }
 .pill.good { color: var(--agents-good); }

@@ -8,9 +8,11 @@ per-file 512-line cap; ``_start.py`` imports
 keeps working unchanged.
 
 The gate loads each target's spec ONCE and asks two questions of it:
-does this target use Anthropic OAuth at all (a provider-backed spec does
-not), and if so, is any credential IT declares usable? The second
-question is answered by
+does this target use Anthropic OAuth at all, and if so, is any
+credential IT declares usable? The first question is answered by the
+target's HARNESS (hermes is the primary harness — vendor-neutral, no
+Claude dependency) plus the provider-backed escape hatch (a
+provider-backed spec does not); the second by
 :func:`_state._preflight_creds.check_spec_oauth_credentials` — the
 lead's ``~/.claude/.credentials.json`` is only one possible answer, and
 for the pool-backed fleet it is not the answer at all.
@@ -21,6 +23,32 @@ from __future__ import annotations
 from typing import Callable, Iterator
 
 import click
+
+
+def _target_needs_anthropic_oauth(cfg: object) -> bool:
+    """True iff this target's harness reads Anthropic OAuth credentials.
+
+    Vendor-neutral gate: hermes is the primary harness and never reads
+    Claude credentials; openai/codex harnesses do not either. Only the
+    Anthropic-family harness (``anthropic`` / ``claude-code`` alias)
+    needs the OAuth pool. Unknown or unstated harness keeps the gate
+    (defensive default: better to ask for creds than to skip silently
+    on a spec the operator has not noticed). The provider-backed
+    escape hatch (``spec.claude.provider``) is orthogonal and kept.
+    """
+    if getattr(getattr(cfg, "claude", None), "provider", None) is not None:
+        return False
+    try:
+        from ...config._harness_lookup import canonical_harness
+    except Exception:
+        return True
+    stated = str(getattr(cfg, "harness", "") or "").strip()
+    if not stated:
+        return True
+    family = canonical_harness(stated)
+    if family is None:
+        return True
+    return family == "anthropic"
 
 
 def make_preflight_runner(
@@ -36,7 +64,9 @@ def make_preflight_runner(
     check only on the FIRST call (subsequent calls are no-ops), skips on
     ``--no-redispatch`` (peer-side invocation) and on ``--broker-self``
     (orchestrator-only — never talks to Anthropic), and skips any target
-    whose spec is provider-backed (the SDK session routes through a
+    whose harness is not Anthropic-family (hermes is the primary
+    harness; openai/codex harnesses never read Anthropic creds either)
+    or whose spec is provider-backed (the SDK session routes through a
     non-Anthropic backend; the Anthropic creds are never read). On a real
     failure it exits 1 with the helper's message on stderr, no traceback.
     Shared by the single, bulk, and parallel dispatch paths so the gating
@@ -84,7 +114,7 @@ def make_preflight_runner(
                         "parses. This is NOT a credential fault — sac does not "
                         "read ~/.claude/.credentials.json for agent starts."
                     )
-                if getattr(getattr(cfg, "claude", None), "provider", None) is not None:
+                if not _target_needs_anthropic_oauth(cfg):
                     continue
                 check_spec_oauth_credentials(cfg)
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
@@ -143,7 +173,7 @@ def any_target_needs_anthropic_oauth(
     for _raw, cfg, _err in _iter_target_configs(single_targets, bulk_yamls):
         if cfg is None:
             return True
-        if getattr(getattr(cfg, "claude", None), "provider", None) is None:
+        if _target_needs_anthropic_oauth(cfg):
             return True
     return False
 

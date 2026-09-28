@@ -123,3 +123,13 @@ class ProviderSpec:
     ``${sac:agent_id}`` and ``${sac:session_id}``. Credentials do not belong
     here; :attr:`auth_token_env` remains the only provider-secret source.
     """
+
+    hermes_provider: str = ""
+    """Native Hermes provider name (e.g. ``opencode-go``), used ONLY by the
+    hermes harness. When set, the hermes profile references Hermes' own
+    provider (its protocol, session handling and credential resolution)
+    instead of a SAC-built custom OpenAI endpoint — required for relays
+    that speak a non-OpenAI protocol or demand provider-managed session
+    headers (opencode Go relay: ``x-opencode-session``). ``base_url`` must
+    be empty in this shape; :attr:`auth_token_env` still names the host
+    env var holding the key, which Hermes resolves from the agent env."""

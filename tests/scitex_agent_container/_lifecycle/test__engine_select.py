@@ -547,3 +547,56 @@ def test_the_override_record_names_the_engine_the_spec_declared(
 
     # Assert
     assert "'claude'" in caplog.text
+
+
+def test_a_native_hermes_provider_without_base_url_is_honourable():
+    # The opencode Go relay owns its endpoint/protocol/session headers;
+    # the spec only names the Hermes provider + key env. Requiring
+    # base_url here grounded the leads on EngineNotHonourableError.
+    # Arrange
+    engine = parse_engines(
+        {
+            "engines": {
+                "e": {
+                    "model": "muse-spark-1.3-contributor",
+                    "provider": {
+                        "hermes_provider": "opencode-go",
+                        "auth_token_env": "SAC_TEST_NATIVE_GO_KEY",
+                    },
+                }
+            }
+        }
+    )["e"]
+    # Act
+    import contextlib
+
+    with contextlib.contextmanager(_env_set)(
+        "SAC_TEST_NATIVE_GO_KEY", "sk-tes...-key"
+    ):
+        verdict = static_verdict(engine, harness="hermes")
+    # Assert
+    assert verdict.verdict == VERDICT_HONOURABLE
+
+
+def test_a_native_hermes_provider_with_unset_key_refuses():
+    # Arrange
+    engine = parse_engines(
+        {
+            "engines": {
+                "e": {
+                    "model": "muse-spark-1.3-contributor",
+                    "provider": {
+                        "hermes_provider": "opencode-go",
+                        "auth_token_env": "SAC_TEST_NATIVE_GO_KEY",
+                    },
+                }
+            }
+        }
+    )["e"]
+    # Act
+    import contextlib
+
+    with contextlib.contextmanager(_env_set)("SAC_TEST_NATIVE_GO_KEY", None):
+        verdict = static_verdict(engine, harness="hermes")
+    # Assert
+    assert verdict.verdict == VERDICT_NOT_HONOURABLE

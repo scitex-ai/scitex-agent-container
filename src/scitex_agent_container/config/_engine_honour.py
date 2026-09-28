@@ -189,20 +189,29 @@ def static_verdict(
                 "PROVIDERS in config/_provider_registry.py",
             )
     elif isinstance(declared, dict):
+        native = str(declared.get("hermes_provider") or "").strip()
+        required = ("auth_token_env",) if native else ("base_url", "auth_token_env")
         missing = [
             field
-            for field in ("base_url", "auth_token_env")
+            for field in required
             if not str(declared.get(field) or "").strip()
         ]
         if missing:
+            hint = (
+                f"give spec.{ENGINES_KEY}.{engine.key}.provider "
+                "`auth_token_env` (the NAME of the host env var holding "
+                "the key, never the key itself)"
+                if native
+                else f"give spec.{ENGINES_KEY}.{engine.key}.provider both "
+                "`base_url` (the Anthropic-compatible endpoint) and "
+                "`auth_token_env` (the NAME of the host env var holding "
+                "the key, never the key itself)"
+            )
             return _no(
                 engine,
                 "the inline provider dict is incomplete — missing "
                 + ", ".join(missing),
-                f"give spec.{ENGINES_KEY}.{engine.key}.provider both "
-                "`base_url` (the Anthropic-compatible endpoint) and "
-                "`auth_token_env` (the NAME of the host env var holding "
-                "the key, never the key itself)",
+                hint,
             )
 
     provider = engine.provider

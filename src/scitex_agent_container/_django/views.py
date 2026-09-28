@@ -638,6 +638,332 @@ def launch(request: HttpRequest):
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 
+def _forget_delete_gate(
+    request: HttpRequest, identity: str, name: str
+) -> tuple[bool, bool]:
+    """Operator gate shared by the forget/delete POSTs.
+
+    Returns ``(allowed, cross_host)``. A row the listener still lists
+    is gated exactly like :func:`lifecycle_action` (own-scope rows need
+    the lifecycle-operator list, cross-host rows the cross-host list).
+    A name the listener no longer lists — the stale/gone case forget
+    exists for — cannot be scope-resolved, so it takes the strictest
+    gate: the lifecycle-operator list alone.
+    """
+    fleet = RemoteFleet.from_environment()
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+    except Exception:  # stx-allow: fallback (reason: an unreachable listener must not bypass the gate — it falls through to the strictest list)
+        rows = []
+    row = next((r for r in rows if r.get("name") == name), None)
+    cross_host = bool(row) and row.get("scope") == "cross-host"
+    if row is not None:
+        allowed = can_control(identity, cross_host=cross_host, request=request, agent=name)
+    else:
+        allowed = can_control(identity, cross_host=False, request=request, agent=name)
+    return allowed, cross_host
+
+
+@require_POST
+def forget_action(request: HttpRequest, name: str):
+    """Tombstone one agent's stale registry rows — the GUI half of CRUD's D.
+
+    Delegates to the SAME backend as ``sac agents forget``
+    (:func:`cli_pkg.lifecycle._forget._forget_one`): tombstones the
+    local ``instances`` row with ``exit_reason='operator-forget'`` and
+    unregisters the ``comms_nodes`` pin. No ssh, no signal — purely
+    local state mutations, so this is also the verb for entries the
+    listener no longer lists (the gate then requires the
+    lifecycle-operator list). A refusal (live rows, no ``force``) and
+    any backend failure FAIL LOUD as 409/502 with the reason in the
+    body — never a silent redirect. Grants, denials and outcomes are
+    audited.
+    """
+    from ._authorization import record_audit
+
+    fleet_identity = resolve_identity(request)
+    base = _mount_base(request, f"{name}/forget")
+    allowed, cross_host = _forget_delete_gate(request, fleet_identity, name)
+    if not allowed:
+        record_audit(
+            {
+                "event": "forget_denied",
+                "identity": fleet_identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+    force_raw = request.POST.get("force", "")
+    force = (
+        force_raw.strip().lower() in {"on", "true", "1", "yes"}
+        if isinstance(force_raw, str)
+        else False
+    )
+    try:
+        from click import ClickException
+
+        from ..cli_pkg.lifecycle._forget import _forget_one
+
+        envelope = _forget_one(name, force=force, dry_run=False)
+        message = (
+            f"forgot {name!r}: tombstoned "
+            f"{len(envelope['forgotten_instance_ids'])} instance row(s)"
+            if envelope["had_live_rows"]
+            else f"forgot {name!r}: nothing to do"
+        )
+        state = "completed"
+    except Exception as exc:  # stx-allow: fallback (reason: a refusal or store failure is an operator-visible outcome, not a 500 page)
+        from click import ClickException
+
+        raw_message = str(exc)  # kept for the server-side audit only
+        if isinstance(exc, ClickException):
+            # The live-row refusal: names the remedy (``--force`` / stop
+            # first), so it is a 409 with the reason, not a redirect the
+            # fleet page would swallow.
+            record_audit(
+                {
+                    "event": "forget_action",
+                    "identity": fleet_identity,
+                    "agent": name,
+                    "cross_host": cross_host,
+                    "state": "refused",
+                    "message": exc.format_message()[:240],
+                    "path": request.path,
+                }
+            )
+            return JsonResponse({"error": exc.format_message()}, status=409)
+        message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
+        state = "failed"
+    record_audit(
+        {
+            "event": "forget_action",
+            "identity": fleet_identity,
+            "agent": name,
+            "cross_host": cross_host,
+            "state": state,
+            "message": str(message)[:240],
+            "raw_message": locals().get("raw_message", "")[:240],
+            "path": request.path,
+        }
+    )
+    if state == "failed":
+        return JsonResponse({"error": str(message)}, status=502)
+    query = urlencode({"operation": "forget", "state": state, "message": str(message)[:240]})
+    return HttpResponseRedirect(f"{base}/?{query}")
+
+
+@require_POST
+def delete_action(request: HttpRequest, name: str):
+    """Delete one agent fully — the GUI half of ``sac agents delete``.
+
+    Delegates to the SAME backend (:func:`cli_pkg.lifecycle._delete._delete_one`):
+    best-effort stop, spec-dir + runtime-dir removal, registry drop,
+    cross-host ssh dispatch when the row lives on a peer. Unknown
+    names fail loud as 404, remote-dispatch failures as 502 — never a
+    silent redirect. Gated and audited exactly like :func:`forget_action`.
+    """
+    from ._authorization import record_audit
+
+    fleet_identity = resolve_identity(request)
+    base = _mount_base(request, f"{name}/delete")
+    allowed, cross_host = _forget_delete_gate(request, fleet_identity, name)
+    if not allowed:
+        record_audit(
+            {
+                "event": "delete_denied",
+                "identity": fleet_identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+    try:
+        from ..cli_pkg.lifecycle._delete import _delete_one
+
+        envelope = _delete_one(name)
+        warnings = envelope.get("warnings") or []
+        message = f"deleted {name}"
+        if warnings:
+            message += f" ({len(warnings)} warning(s): " + "; ".join(warnings)[:180] + ")"
+        state = "completed"
+    except LookupError as exc:
+        record_audit(
+            {
+                "event": "delete_action",
+                "identity": fleet_identity,
+                "agent": name,
+                "cross_host": cross_host,
+                "state": "refused",
+                "message": str(exc)[:240],
+                "path": request.path,
+            }
+        )
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:  # stx-allow: fallback (reason: a half-deleted remote is an operator-visible outcome, not a 500 page)
+        raw_message = str(exc)  # kept for the server-side audit only
+        message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
+        state = "failed"
+    record_audit(
+        {
+            "event": "delete_action",
+            "identity": fleet_identity,
+            "agent": name,
+            "cross_host": cross_host,
+            "state": state,
+            "message": str(message)[:240],
+            "raw_message": locals().get("raw_message", "")[:240],
+            "path": request.path,
+        }
+    )
+    if state == "failed":
+        return JsonResponse({"error": str(message)}, status=502)
+    query = urlencode({"operation": "delete", "state": state, "message": str(message)[:240]})
+    return HttpResponseRedirect(f"{base}/?{query}")
+
+
+def _create_template_choices() -> tuple[list[str], list[str], str]:
+    """Live template names for the create form — the CLI's own sources.
+
+    Returns ``(inline, dir_templates, error)``. ``inline`` is the
+    built-in ``minimal``/``full`` set; ``dir_templates`` is scanned
+    from the live agents root exactly as ``sac agents create --help``
+    does, so the GUI can never offer a stale list. ``error`` is ""
+    unless the scan itself failed (the form still renders inline-only).
+    """
+    from ..cli_pkg._create import _default_base_dir
+    from ..cli_pkg._create_templates import _TEMPLATES
+    from ..cli_pkg._new_dir_template import discover_dir_templates
+
+    inline = sorted(_TEMPLATES)
+    try:
+        base = _default_base_dir()
+        dir_templates = sorted(discover_dir_templates(base))
+        return inline, dir_templates, ""
+    except Exception as exc:  # stx-allow: fallback (reason: an unscannable agents root must not take the whole form down — inline templates still scaffold)
+        return inline, [], f"could not scan the agents root for dir-templates: {exc}"
+
+
+@require_http_methods(["GET", "POST"])
+def create_agent(request: HttpRequest):
+    """Scaffold a fresh agent spec by name + template — the CREATE half of CRUD.
+
+    The GUI half of ``sac agents create``: renders a name + template
+    form (GET) and scaffolds ``<agents-root>/<name>/spec.yaml`` plus
+    the ``to_home/`` sibling (POST) through the SAME backend
+    (:func:`cli_pkg._create.scaffold_agent`). The template list is
+    live-scanned from the agents root on every GET, so it cannot go
+    stale. Unknown templates, invalid names and existing specs fail
+    loud as 400/409 with the CLI's own reason — never a silent
+    redirect, never an overwrite (the GUI offers no ``--force``; use
+    the CLI to replace a spec).
+
+    Authorization mirrors :func:`launch` at its strictest: the caller
+    must be in the lifecycle-operator allowlist. Grants, denials and
+    outcomes are recorded in the audit trail.
+    """
+    from ._authorization import record_audit
+
+    fleet_identity = resolve_identity(request)
+    allowed = can_control(fleet_identity, cross_host=False, request=request)
+    if request.method == "GET":
+        inline, dir_templates, templates_error = _create_template_choices()
+        context, is_standalone = _app_context(
+            request,
+            "Agents · Create",
+            view_path="create/",
+            identity=fleet_identity,
+            can_create=allowed,
+            inline_templates=inline,
+            dir_templates=dir_templates,
+            templates_error=templates_error,
+            page="create",
+        )
+        template = "scitex_agent_container/create.html" if is_standalone else "scitex_agent_container/create_hub.html"
+        return render(request, template, context)
+
+    # POST — scaffold through the CLI's own backend.
+    base = _mount_base(request, "create/")
+    if not allowed:
+        record_audit(
+            {
+                "event": "create_denied",
+                "identity": fleet_identity,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+
+    def field(key: str) -> str:
+        value = request.POST.get(key, "")
+        return value.strip() if isinstance(value, str) else ""
+
+    name, template_name = field("name"), field("template") or "minimal"
+    from ..cli_pkg._create import _is_valid_agent_name
+    from ..config._reserved_names import reserved_agent_name_error
+
+    if not _is_valid_agent_name(name):
+        return JsonResponse(
+            {
+                "error": (
+                    f"Invalid agent name {name!r}. Use lowercase letters, "
+                    "digits, '-', and '_' only (dir-as-SSoT convention)."
+                )
+            },
+            status=400,
+        )
+    reserved_msg = reserved_agent_name_error(name)
+    if reserved_msg is not None:
+        return JsonResponse({"error": reserved_msg}, status=400)
+    try:
+        from click import ClickException, UsageError
+
+        from ..cli_pkg._create import scaffold_agent
+
+        spec_path = scaffold_agent(name, template_name=template_name)
+        message = f"created {name} ({spec_path})"
+        state = "completed"
+    except Exception as exc:  # stx-allow: fallback (reason: an unknown template or existing spec is an operator-visible outcome, not a 500 page)
+        from click import ClickException, UsageError
+
+        raw_message = str(exc)  # kept for the server-side audit only
+        if isinstance(exc, UsageError):
+            status, state = 400, "refused"
+            message = exc.format_message()
+        elif isinstance(exc, ClickException):
+            status, state = 409, "refused"
+            message = exc.format_message()
+        else:
+            status, state = 502, "failed"
+            message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
+        record_audit(
+            {
+                "event": "create_action",
+                "identity": fleet_identity,
+                "agent": name,
+                "cross_host": False,
+                "state": state,
+                "message": str(message)[:240],
+                "raw_message": locals().get("raw_message", "")[:240],
+                "path": request.path,
+            }
+        )
+        return JsonResponse({"error": str(message)}, status=status)
+    record_audit(
+        {
+            "event": "create_action",
+            "identity": fleet_identity,
+            "agent": name,
+            "cross_host": False,
+            "state": state,
+            "message": str(message)[:240],
+            "path": request.path,
+        }
+    )
+    query = urlencode({"operation": "create", "state": state, "message": str(message)[:240]})
+    return HttpResponseRedirect(f"{base}/{name}/?{query}")
+
+
 def _a2a_peers(rows: list[dict], statuses: dict) -> list[dict]:
     """Project scoped rows into the peer-reachability table.
 
@@ -842,7 +1168,7 @@ def _summary(agents: list[dict]) -> dict:
 #: server-minted operation names get a banner, so an arbitrary query string
 #: cannot inject banner copy. ``a2a-*`` covers the peer-allowlist mutations.
 _NOTICE_OPERATIONS = frozenset(
-    {"start", "stop", "restart", "launch", "message", "control"}
+    {"start", "stop", "restart", "launch", "message", "control", "create", "forget", "delete"}
 )
 
 #: Delivery states the bridge and the lifecycle delegate report.
@@ -854,7 +1180,8 @@ _NOTICE_STATES = frozenset(
 def _delivery_notice(request: HttpRequest) -> dict | None:
     """The last delivery outcome, from the POST-redirect query string.
 
-    ``lifecycle_action`` / ``message_action`` / ``launch`` / ``a2a_action``
+    ``lifecycle_action`` / ``message_action`` / ``launch`` / ``a2a_action`` /
+    ``forget_action`` / ``delete_action`` / ``create_agent``
     never render directly: they redirect to a GET carrying
     ``operation``/``state``/``message`` (and ``dispatch_id`` for message
     deliveries). This reads that triple back so the next paint can show the
@@ -891,4 +1218,4 @@ def _crosshost_allowlist() -> frozenset[str]:
     return frozenset(p.strip() for p in os.environ.get(CROSSHOST_OPERATORS_ENV, "").split(",") if p.strip())
 
 
-__all__ = ["a2a_action", "a2a_panel", "detail", "fleet_api", "index", "launch", "lifecycle_action"]
+__all__ = ["a2a_action", "a2a_panel", "create_agent", "delete_action", "detail", "fleet_api", "forget_action", "index", "launch", "lifecycle_action"]

@@ -174,9 +174,44 @@ def validate_hermes_tui_profile(
 
 def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> LaunchPlan:
     provider = config.claude.provider
+    if provider is None:
+        raise RuntimeError("Hermes requires the selected engine provider")
+    native = str(getattr(provider, "hermes_provider", "") or "").strip()
     base_url = str(provider.base_url or "").rstrip("/")
-    if not base_url:
-        raise RuntimeError("Hermes requires the selected engine provider.base_url")
+    if native:
+        # Native Hermes provider (e.g. opencode-go): Hermes owns the
+        # endpoint, protocol and session handling. SAC only names the
+        # provider + model and delivers the key via the agent env.
+        if base_url:
+            raise RuntimeError(
+                "Hermes native provider must not declare base_url"
+            )
+        endpoint = Endpoint(
+            protocol="hermes-native:" + native,
+            url="",
+            auth_kind="bearer",
+            auth_env=str(provider.auth_token_env or ""),
+            extra_headers=tuple(
+                (getattr(provider, "extra_headers", {}) or {}).items()
+            ),
+        )
+    else:
+        if not base_url:
+            raise RuntimeError("Hermes requires the selected engine provider.base_url")
+        if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
+            protocol = "openai-responses"
+            endpoint_url = base_url
+        else:
+            protocol = "openai-chat-completions"
+            api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+            endpoint_url = f"{api_root}/chat/completions"
+        endpoint = Endpoint(
+            protocol=protocol,
+            url=endpoint_url,
+            auth_kind="bearer",
+            auth_env=str(provider.auth_token_env or ""),
+            extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
+        )
     model = str(config.model or "").strip()
     engine_key = str(config.engine_key or "").strip()
     if not model or not engine_key:
@@ -184,20 +219,6 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
             "Hermes requires a resolved engine model and key; refusing to "
             "materialize a profile with implicit provider/session identity"
         )
-    if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
-        protocol = "openai-responses"
-        endpoint_url = base_url
-    else:
-        protocol = "openai-chat-completions"
-        api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
-        endpoint_url = f"{api_root}/chat/completions"
-    endpoint = Endpoint(
-        protocol=protocol,
-        url=endpoint_url,
-        auth_kind="bearer",
-        auth_env=str(provider.auth_token_env or ""),
-        extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
-    )
     engine = ResolvedEngine(
         key=engine_key,
         model_id=model,

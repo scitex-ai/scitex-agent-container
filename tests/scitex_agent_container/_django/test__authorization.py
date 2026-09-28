@@ -220,3 +220,77 @@ def test_resolve_identity_falls_back_to_declared():
         del os.environ[IDENT_ENV]
     # Assert
     assert identity == "declared"
+
+
+def _authed_request(active=True):
+    # Arrange helper: minimal stand-in for a Django request with a live user.
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        user=SimpleNamespace(is_authenticated=True, is_active=active),
+        path="/apps/agents/create/",
+        method="GET",
+    )
+
+
+def test_verified_user_controls_own_agent_without_allowlist():
+    # Arrange
+    os.environ[OPS_ENV] = "op1"
+    try:
+        # Act
+        allowed = can_control("newcomer", cross_host=False, request=_authed_request())
+    finally:
+        del os.environ[OPS_ENV]
+    # Assert
+    assert allowed is True
+
+
+def test_verified_user_still_denied_cross_host():
+    # Arrange
+    os.environ[CROSS_ENV] = "op1"
+    try:
+        # Act
+        allowed = can_control(
+            "newcomer", cross_host=True, agent="gamma", request=_authed_request()
+        )
+    finally:
+        del os.environ[CROSS_ENV]
+    # Assert
+    assert allowed is False
+
+
+def test_inactive_user_not_granted_by_request():
+    # Arrange
+    os.environ[OPS_ENV] = "op1"
+    try:
+        # Act
+        allowed = can_control(
+            "newcomer", cross_host=False, request=_authed_request(active=False)
+        )
+    finally:
+        del os.environ[OPS_ENV]
+    # Assert
+    assert allowed is False
+
+
+DECLARED_ENV = "SCITEX_AGENT_CONTAINER_HOSTNAME"
+
+
+def test_declared_serving_host_is_own_scope(env_save_restore):
+    # Arrange
+    os.environ[DECLARED_ENV] = "scitex-compute-03"
+    row = {"name": "helper", "host": "scitex-compute-03"}
+    # Act
+    own = is_own_scope(row)
+    # Assert
+    assert own is True
+
+
+def test_declared_serving_host_short_form_is_own_scope(env_save_restore):
+    # Arrange
+    os.environ[DECLARED_ENV] = "scitex-compute-03.example.net"
+    row = {"name": "helper", "host": "scitex-compute-03"}
+    # Act
+    own = is_own_scope(row)
+    # Assert
+    assert own is True

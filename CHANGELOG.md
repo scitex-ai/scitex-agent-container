@@ -4,6 +4,20 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.29.2]
+
+### Fixed
+- **Web/CLI delete now closes local shared-store instances rows.**
+  Previously only the cross-host path closed the row, so a local delete
+  left the fleet listing a ghost that the next delete reported as
+  "not found". The existence probe counts an instances-only row, and
+  local delete closes active rows with `exit_reason="deleted"`.
+- **Fleet table no longer collapses under Bootstrap `td` rules.**
+  Agent table styles are scoped so rows render one-per-agent.
+- **Verified users can drive agents on the declared container hostname.**
+  Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
+  actions work from inside the Hub django container.
+
 ## [Unreleased]
 
 ### Fixed
