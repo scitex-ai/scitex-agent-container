@@ -4,6 +4,14 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.29.3]
+
+### Fixed
+- **Cross-host fleet rows render as `remote`, not blank.**
+  Registry rows declaring a different host (no local config, no local
+  runtime observation possible) now carry `status="remote"` with the
+  owning host in the liveness evidence, instead of no status at all.
+
 ## [0.29.2]
 
 ### Fixed
