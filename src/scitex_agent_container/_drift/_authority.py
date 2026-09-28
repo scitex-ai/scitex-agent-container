@@ -12,6 +12,7 @@ whose tracked spec blob matches HEAD — the ``managed-home`` kind adopted by
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -41,8 +42,6 @@ class SpecAuthority:
 
 def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
     """Run one bounded git query or raise a named authority failure."""
-    import os
-
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), *args],
