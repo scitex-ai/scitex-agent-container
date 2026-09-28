@@ -437,14 +437,36 @@ def _check_spec_source_drift_at_launch(
 
     This is intentionally fail-closed. Unknown sources, probe failures, dirty
     repositories, non-develop main checkouts, linked feature worktrees and all
-    live-branch drift refuse the launch. The only non-current form accepted is
+    live-branch drift refuse the launch. The non-current forms accepted are
     an immutable detached ``sac-authority`` snapshot validated by exact source,
-    commit and spec-blob identity.
+    commit and spec-blob identity, and a git-managed ``~/.scitex`` home
+    (``managed-home`` kind: no origin, clean, spec blob matches HEAD) which
+    this function ensures just before proving.
     """
     from .._drift._authority import SpecAuthorityError, validate_spec_authority
+    from .._drift._managed_home import ensure_home_managed
 
     _resolve_strict_drift(strict_drift)  # compatibility input; never a bypass
     try:
+        # Ensure-then-validate, but ONLY for specs inside the operator's
+        # ~/.scitex tree: adopting the home is the managed-home path's
+        # half of the contract. A spec in a custom repo must never
+        # git-init the operator's home as a launch side effect — that
+        # repo is the operator's to commit, and the proof below validates
+        # it as-is (live/snapshot rules when it names an origin).
+        from pathlib import Path as _Path
+
+        try:
+            inside_home = _Path(config_path).resolve().is_relative_to(
+                _Path.home() / ".scitex"
+            )
+        except (OSError, ValueError):
+            inside_home = False
+        if inside_home:
+            try:
+                ensure_home_managed(commit_message=f"sac: launch agent {agent_name}")
+            except RuntimeError as exc:
+                raise SpecAuthorityError(str(exc)) from exc
         validate_spec_authority(config_path)
     except SpecAuthorityError as exc:
         import scitex_logging
