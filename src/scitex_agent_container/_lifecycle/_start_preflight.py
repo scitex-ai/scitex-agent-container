@@ -448,23 +448,22 @@ def _check_spec_source_drift_at_launch(
 
     _resolve_strict_drift(strict_drift)  # compatibility input; never a bypass
     try:
-        # Ensure-then-validate, but ONLY for specs inside the operator's
-        # ~/.scitex tree: adopting the home is the managed-home path's
-        # half of the contract. A spec in a custom repo must never
-        # git-init the operator's home as a launch side effect — that
-        # repo is the operator's to commit, and the proof below validates
-        # it as-is (live/snapshot rules when it names an origin).
-        from pathlib import Path as _Path
+        # Ensure-then-validate for specs inside a .scitex tree: the home
+        # CONTAINING the spec is adopted (never the process home — root
+        # in containers must not adopt root's tree while the operative
+        # specs live under /home/user). A spec in a custom repo must
+        # never trigger adoption as a launch side effect — that repo is
+        # the operator's to commit, and the proof below validates it
+        # as-is (live/snapshot rules when it names an origin).
+        from .._drift._managed_home import ensure_home_managed, home_for_spec
 
-        try:
-            inside_home = _Path(config_path).resolve().is_relative_to(
-                _Path.home() / ".scitex"
-            )
-        except (OSError, ValueError):
-            inside_home = False
-        if inside_home:
+        spec_home = home_for_spec(config_path)
+        if spec_home is not None:
             try:
-                ensure_home_managed(commit_message=f"sac: launch agent {agent_name}")
+                ensure_home_managed(
+                    home=spec_home,
+                    commit_message=f"sac: launch agent {agent_name}",
+                )
             except RuntimeError as exc:
                 raise SpecAuthorityError(str(exc)) from exc
         validate_spec_authority(config_path)

@@ -460,11 +460,14 @@ def scaffold_agent(
 def _adopt_agent_dir(agent_dir: Path, name: str) -> None:
     """Adopt the new spec into git management, or say why not — loudly.
 
-    Inside the operator's ``~/.scitex`` tree the home is adopted (tracked
-    spec files committed) so the launch gate can prove the spec. Outside
-    it — custom ``--base-dir``, test fixtures — nothing is touched: the
-    operator owns that repo and commits it by hand, and the gate proves
-    THAT repo at launch. Both branches report; neither is silent.
+    Inside a ``.scitex`` tree the containing home is adopted (tracked
+    spec files committed) so the launch gate can prove the spec — the
+    home is derived FROM THE SPEC PATH, never from the process user, so
+    a root process with data under /home/user adopts the right tree.
+    Outside any ``.scitex`` tree — custom ``--base-dir``, test fixtures —
+    nothing is touched: the operator owns that repo and commits it by
+    hand, and the gate proves THAT repo at launch. Both branches report;
+    neither is silent.
 
     Create-side is warn-not-fail by deliberate asymmetry with the launch
     gate: the spec files are the deliverable and must land even where
@@ -473,24 +476,19 @@ def _adopt_agent_dir(agent_dir: Path, name: str) -> None:
     the same message. So an unmanaged home can never launch silently —
     but creating one never destroys work either.
     """
-    from .._drift._managed_home import ensure_home_managed
+    from .._drift._managed_home import ensure_home_managed, home_for_spec
 
-    try:
-        inside = agent_dir.resolve().is_relative_to(
-            Path.home() / ".scitex"
-        )
-    except (OSError, ValueError):
-        inside = False
-    if not inside:
+    spec_home = home_for_spec(agent_dir)
+    if spec_home is None:
         system_msg(
-            f"Spec is outside ~/.scitex ({agent_dir}): leaving its repo "
-            f"untouched — commit it by hand; the launch gate will prove "
-            f"that repo instead.",
+            f"Spec is outside any .scitex tree ({agent_dir}): leaving its "
+            f"repo untouched — commit it by hand; the launch gate will "
+            f"prove that repo instead.",
             style="info",
         )
         return
     try:
-        ensure_home_managed(commit_message=f"sac: create agent {name}")
+        ensure_home_managed(home=spec_home, commit_message=f"sac: create agent {name}")
     except RuntimeError as exc:
         click.echo(
             click.style(

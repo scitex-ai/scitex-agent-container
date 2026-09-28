@@ -140,3 +140,41 @@ def test_runtime_sibling_does_not_dirty_the_home(managed_home):
     auth = validate_spec_authority(spec)
     # Assert
     assert auth.kind == "managed-home"
+
+
+def test_home_for_spec_finds_containing_home(tmp_path):
+    # Arrange — a spec nested inside a .scitex tree.
+    from scitex_agent_container._drift._managed_home import home_for_spec
+
+    spec = tmp_path / "datahome" / ".scitex" / "agent-container" / "agents" / "x" / "spec.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("v: 1\n", encoding="utf-8")
+    # Act
+    found = home_for_spec(spec)
+    # Assert — the DATA home, regardless of the process home.
+    assert found == tmp_path / "datahome"
+
+
+def test_home_for_spec_returns_none_outside_any_tree(tmp_path):
+    # Arrange — a spec with no .scitex ancestor at all.
+    from scitex_agent_container._drift._managed_home import home_for_spec
+
+    spec = tmp_path / "custom" / "my-agent" / "spec.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("v: 1\n", encoding="utf-8")
+    # Act / Assert
+    assert home_for_spec(spec) is None
+
+
+def test_home_for_spec_ignores_bare_dotscitex_name_on_file(tmp_path):
+    # Arrange — a FILE named .scitex is not a tree (is_dir guard).
+    from scitex_agent_container._drift._managed_home import home_for_spec
+
+    fake = tmp_path / "datahome" / ".scitex"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("not a dir\n", encoding="utf-8")
+    spec = tmp_path / "datahome" / "agents" / "x" / "spec.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("v: 1\n", encoding="utf-8")
+    # Act / Assert
+    assert home_for_spec(spec) is None
