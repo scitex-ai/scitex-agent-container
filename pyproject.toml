@@ -386,7 +386,11 @@ dev = [
     # agent login. The turn exchange bridge maps that refusal to the authorized
     # provision_store_acl migration path; admitting 0.60.0 would bypass the
     # launch gate and recreate the ownership race this floor is meant to close.
-    "scitex-dev>=0.60.1",
+    # RAISED TO 0.61.0 on 2026-09-28. First release carrying
+    # scitex_dev.home (ensure_dotscitex_managed_by_git), which the
+    # managed-home authority path calls at creation and launch; admitting
+    # older would keep every created spec unprovable at the gate.
+    "scitex-dev>=0.61.0",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
