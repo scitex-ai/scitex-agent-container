@@ -12,6 +12,7 @@ whose tracked spec blob matches HEAD — the ``managed-home`` kind adopted by
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
