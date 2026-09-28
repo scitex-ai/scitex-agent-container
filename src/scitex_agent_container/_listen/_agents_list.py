@@ -130,6 +130,27 @@ def annotate_runtime_rows(
                     }
                 ],
             }
+        else:
+            # No config, no local observation possible. A row that declares a
+            # DIFFERENT host is not \"unknown\" — it lives elsewhere and its
+            # liveness is owned by that host's daemon. Say so explicitly so a
+            # blank status is never read as \"the fleet is gone\".
+            declared = row.get("host")
+            if isinstance(declared, str) and declared and declared != host:
+                out["status"] = "remote"
+                out["liveness"] = {
+                    "verdict": "remote",
+                    "evidence": [
+                        {
+                            "source": "runtime",
+                            "verdict": "remote",
+                            "detail": (
+                                f"declared on {declared}; liveness is owned "
+                                "by that host"
+                            ),
+                        }
+                    ],
+                }
         enriched.append(out)
     return enriched
 
