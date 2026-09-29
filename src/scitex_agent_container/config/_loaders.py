@@ -12,9 +12,6 @@ from ._hermes_background_review import parse_selected_hermes_background_review
 from ._hermes_compression import parse_selected_hermes_compression
 from ._hermes_run_budget import parse_selected_hermes_run_budget
 from ._hermes_yolo import parse_selected_hermes_yolo
-from ._opencode_approval import parse_selected_opencode_approval_policy
-from ._opencode_run_budget import parse_selected_opencode_run_budget
-from ._opencode_serve import parse_selected_opencode_serve_port
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -30,6 +27,9 @@ from ._loader_startup_defaults import (
     DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
     _with_default_direnv_allow,
 )
+from ._opencode_approval import parse_selected_opencode_approval_policy
+from ._opencode_run_budget import parse_selected_opencode_run_budget
+from ._opencode_serve import parse_selected_opencode_serve_port
 from ._parsers import (
     MODEL_ENV_KEY,
     interpolate_mcp_servers,
