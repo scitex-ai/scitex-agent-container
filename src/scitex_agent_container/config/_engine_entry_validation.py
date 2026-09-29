@@ -12,7 +12,11 @@ from ._provider_validation import validate_provider
 __all__ = ["validate_engine_entry"]
 
 _ENGINE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_REASONING_EFFORTS = ("none", "low", "medium", "high")
+#: Reasoning-effort levels the fleet actually runs. xhigh is live in 13
+#: authority specs (measured 2026-09-29); omitting it refused those
+#: agents at validation (A2A send, explain, start). Ultra is
+#: deliberately absent: nothing in-service uses it.
+_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 
 
 def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]:
