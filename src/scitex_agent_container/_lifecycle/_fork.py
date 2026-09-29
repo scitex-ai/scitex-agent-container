@@ -114,11 +114,15 @@ def derive_fork_spec(
     Pure — deep-copies ``parent_doc`` and overrides only what a fork must
     change, inheriting repo / workdir / image / binds / model verbatim:
 
-      * ``spec.env`` — ``SCITEX_CARDS_AGENT_ID = <fork>`` (author = fork),
-        ``SAC_FORK_PARENT = <parent>`` (owner-convention value); any
-        inherited ``SAC_NAME`` is dropped (``listen_env_flags`` injects it
-        from the fork's own name), as is any inherited
-        ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the PARENT's name).
+      * ``spec.apptainer.env`` — ``SCITEX_CARDS_AGENT_ID = <fork>``
+        (author = fork), ``SAC_FORK_PARENT = <parent>``
+        (owner-convention value); any inherited ``SAC_NAME`` is dropped
+        (``listen_env_flags`` injects it from the fork's own name), as is
+        any inherited ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the
+        PARENT's name). Top-level ``spec.env`` is rejected by the v3
+        validator, so identity env goes here.
+      * legacy top-level ``spec.claude`` dropped when
+        ``spec.available_harnesses`` is present (single-surface rule).
       * ``spec.restart.policy`` — ``always`` when ``persist`` else
         ``never`` (ephemeral default: a stopped fork does not come back —
         the triplet rule removes all three when the task is done).
@@ -152,24 +156,33 @@ def derive_fork_spec(
             "cannot derive a fork."
         )
 
-    claude = spec.setdefault("claude", {})
-    if isinstance(claude, dict):
-        claude["session"] = "continue"
-        claude["resume_id"] = ""
-        channels = claude.get("channels")
-        if isinstance(channels, list):
-            claude["channels"] = [
-                c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
-            ]
-    comms = spec.get("comms")
-    if isinstance(comms, dict):
-        channels = comms.get("channels")
-        if isinstance(channels, list):
-            comms["channels"] = [
-                c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
+    # Single-surface rule (v3 realignment): harness config lives in
+    # spec.available_harnesses; a legacy top-level spec.claude block
+    # disagrees with the selected entry and fails validation — drop it.
+    # Same for the legacy top-level spec.model: engine-keyed specs carry
+    # the model in their engine entries.
+    if "available_harnesses" in spec:
+        spec.pop("claude", None)
+    if "available_engines" in spec:
+        spec.pop("model", None)
+
+    for block in (spec.setdefault("comms", {}),):
+        if isinstance(block, dict) and "channels" in block:
+            block["channels"] = [
+                c
+                for c in block["channels"]
+                if str(c).strip() != _TELEGRAMMER_CHANNEL
             ]
 
-    env = spec.setdefault("env", {})
+    # v3 realignment §3: top-level spec.env is rejected — identity env
+    # belongs in spec.apptainer.env.
+    apptainer = spec.setdefault("apptainer", {})
+    if not isinstance(apptainer, dict):
+        raise ForkSeedError(
+            f"parent spec of {parent_name!r} has a non-mapping "
+            "'spec.apptainer' block; cannot derive a fork."
+        )
+    env = apptainer.setdefault("env", {})
     if isinstance(env, dict):
         env[CARDS_AGENT_ENV] = fork_name
         env[TWIN_PARENT_ENV] = parent_name
