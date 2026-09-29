@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from tests.scitex_agent_container.cli_pkg.test__agents_migrate_engines import (
@@ -45,6 +46,22 @@ from tests.scitex_agent_container.cli_pkg.test__agents_migrate_engines import (
 )
 
 __all__ = ["fleet"]
+
+
+@pytest.fixture(autouse=True)
+def _wide_terminal_for_contiguous_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin COLUMNS so multi-line evidence stays contiguous.
+
+    Readable output routes through render_rich, which builds a fresh
+    Rich Console per call — it honours the caller's width of nothing
+    and wraps at the ambient 80 columns. The logging layer then prefixes
+    every wrapped line (``INFO| ``), splitting evidence strings like
+    _SPARTAN_EVIDENCE mid-phrase so contiguity assertions fail on
+    wrapping, not on content. A wide COLUMNS restores the condition the
+    evidence slices were chosen under (unbroken); tests must own their
+    width rather than inherit the machine's.
+    """
+    monkeypatch.setenv("COLUMNS", "1000")
 
 PREDATES = "spartan"
 UNMEASURED = "scitex-compute-02"
