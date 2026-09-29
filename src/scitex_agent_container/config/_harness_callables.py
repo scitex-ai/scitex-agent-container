@@ -203,6 +203,8 @@ def _hermes_tui_inner_argv(
         str(config.workdir),
         "--pass-session-id",
     ]
+    if getattr(config, "hermes_yolo", False):
+        argv += ["--yolo"]
     model = str(config.model or "").strip()
     engine_key = str(config.engine_key or "").strip()
     if not model or not engine_key:
