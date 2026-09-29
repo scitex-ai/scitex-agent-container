@@ -9,8 +9,6 @@ scope, so the real ``state_dir_for_config`` resolves into ``tmp_path``
 
 from __future__ import annotations
 
-import pytest
-
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes._gateway_harness import GatewayHarnessError
 from scitex_agent_container.runtimes.opencode_tui import OpencodeTuiSessionRuntime
