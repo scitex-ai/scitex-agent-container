@@ -40,7 +40,6 @@ contract downstream consumers parse.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -363,15 +362,17 @@ def render_stored_table_to_str(
     """Render the Stored-accounts table to a plain string.
 
     Used by the CLI tests to assert column alignment without coupling
-    to terminal width. ``Console(record=True)`` captures the rendered
-    output verbatim.
+    to terminal width. Renders through Rich's own renderer to text —
+    the same path :func:`_logging.render_rich` uses — because
+    ``render_rich`` emits through the logging stream, so a
+    ``Console(record=True)`` beside it captures nothing. No
+    ``Console.print`` (PS-220).
     """
-    console = Console(record=True, width=width, file=open(os.devnull, "w"))
-    try:
-        render_rich(render_stored_table(rows, now=now), __name__)
-        return console.export_text()
-    finally:
-        console.file.close()
+    console = Console(width=width)
+    lines = console.render_lines(
+        render_stored_table(rows, now=now), console.options, pad=False
+    )
+    return "\n".join("".join(segment.text for segment in line) for line in lines)
 
 # ---------------------------------------------------------------------------
 # Re-exports — data acquisition now lives in ``_account_list_build``
