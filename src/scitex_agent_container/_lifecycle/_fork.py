@@ -71,32 +71,43 @@ def resolve_fork_name(
     return f"{base}-{n}"
 
 
-def build_fork_boot_kick(fork_name: str, parent_name: str, task: str) -> str:
+def build_fork_boot_kick(
+    fork_name: str, parent_name: str, task: str, handover: str | None = None
+) -> str:
     """First user message fed to the fork at boot.
 
-    Carries the two things a freshly-spawned fork must know: its bounded
-    assignment, and the IDENTITY-SPLIT rule (author = fork, owner =
-    parent). The ownership rule is stated HERE — not only in the skill —
-    because scitex-cards cannot enforce owner=parent from env, so the
-    boot-kick is the deterministic delivery of the hard rule.
+    Carries the three things a freshly-spawned fork must know: its
+    bounded assignment, an optional HANDOVER note (伝言 — a parent's
+    direct message, newest context first), and the IDENTITY-SPLIT rule
+    (author = fork, owner = parent). The ownership rule is stated HERE —
+    not only in the skill — because scitex-cards cannot enforce
+    owner=parent from env, so the boot-kick is the deterministic
+    delivery of the hard rule.
     """
-    return "\n".join(
-        [
-            f"You are {fork_name}, a task-scoped FORK of {parent_name}.",
-            f"Your assignment: {task.strip()}",
+    lines = [
+        f"You are {fork_name}, a task-scoped FORK of {parent_name}.",
+        f"Your assignment: {task.strip()}",
+        "",
+    ]
+    if handover and handover.strip():
+        lines += [
+            f" HANDOVER from {parent_name} (read first — newest context):",
+            handover.strip(),
             "",
-            "IDENTITY CONTRACT (hard rule — do not deviate):",
-            f"  - Your scitex-cards writes are attributed to YOU ({fork_name}); "
-            "that is intended.",
-            f"  - But card OWNERSHIP must stay with {parent_name}. On EVERY "
-            f"add_task / reassign, pass assignee={parent_name} (also available "
-            f"as $SAC_FORK_PARENT). NEVER leave a card owned by {fork_name}: "
-            "if you exit, a card you own lands in an inbox nobody drains.",
-            f"  - Report evidence, results and blockers back to {parent_name} "
-            "via a2a or a shared card owned by the parent.",
-            "  - Do not use Telegram and do not create further agents.",
         ]
-    )
+    lines += [
+        "IDENTITY CONTRACT (hard rule — do not deviate):",
+        f"  - Your scitex-cards writes are attributed to YOU ({fork_name}); "
+        "that is intended.",
+        f"  - But card OWNERSHIP must stay with {parent_name}. On EVERY "
+        f"add_task / reassign, pass assignee={parent_name} (also available "
+        f"as $SAC_FORK_PARENT). NEVER leave a card owned by {fork_name}: "
+        "if you exit, a card you own lands in an inbox nobody drains.",
+        f"  - Report evidence, results and blockers back to {parent_name} "
+        "via a2a or a shared card owned by the parent.",
+        "  - Do not use Telegram and do not create further agents.",
+    ]
+    return "\n".join(lines)
 
 
 def derive_fork_spec(
@@ -108,17 +119,23 @@ def derive_fork_spec(
     role: str | None = None,
     task: str = "",
     to_home: str | None = None,
+    fresh: bool = False,
+    handover: str | None = None,
 ) -> dict[str, Any]:
     """Return the fork's inline spec document derived from the parent's.
 
     Pure — deep-copies ``parent_doc`` and overrides only what a fork must
     change, inheriting repo / workdir / image / binds / model verbatim:
 
-      * ``spec.env`` — ``SCITEX_CARDS_AGENT_ID = <fork>`` (author = fork),
-        ``SAC_FORK_PARENT = <parent>`` (owner-convention value); any
-        inherited ``SAC_NAME`` is dropped (``listen_env_flags`` injects it
-        from the fork's own name), as is any inherited
-        ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the PARENT's name).
+      * ``spec.apptainer.env`` — ``SCITEX_CARDS_AGENT_ID = <fork>``
+        (author = fork), ``SAC_FORK_PARENT = <parent>``
+        (owner-convention value); any inherited ``SAC_NAME`` is dropped
+        (``listen_env_flags`` injects it from the fork's own name), as is
+        any inherited ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the
+        PARENT's name). Top-level ``spec.env`` is rejected by the v3
+        validator, so identity env goes here.
+      * legacy top-level ``spec.claude`` dropped when
+        ``spec.available_harnesses`` is present (single-surface rule).
       * ``spec.restart.policy`` — ``always`` when ``persist`` else
         ``never`` (ephemeral default: a stopped fork does not come back —
         the triplet rule removes all three when the task is done).
@@ -152,24 +169,33 @@ def derive_fork_spec(
             "cannot derive a fork."
         )
 
-    claude = spec.setdefault("claude", {})
-    if isinstance(claude, dict):
-        claude["session"] = "continue"
-        claude["resume_id"] = ""
-        channels = claude.get("channels")
-        if isinstance(channels, list):
-            claude["channels"] = [
-                c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
-            ]
-    comms = spec.get("comms")
-    if isinstance(comms, dict):
-        channels = comms.get("channels")
-        if isinstance(channels, list):
-            comms["channels"] = [
-                c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
+    # Single-surface rule (v3 realignment): harness config lives in
+    # spec.available_harnesses; a legacy top-level spec.claude block
+    # disagrees with the selected entry and fails validation — drop it.
+    # Same for the legacy top-level spec.model: engine-keyed specs carry
+    # the model in their engine entries.
+    if "available_harnesses" in spec:
+        spec.pop("claude", None)
+    if "available_engines" in spec:
+        spec.pop("model", None)
+
+    for block in (spec.setdefault("comms", {}),):
+        if isinstance(block, dict) and "channels" in block:
+            block["channels"] = [
+                c
+                for c in block["channels"]
+                if str(c).strip() != _TELEGRAMMER_CHANNEL
             ]
 
-    env = spec.setdefault("env", {})
+    # v3 realignment §3: top-level spec.env is rejected — identity env
+    # belongs in spec.apptainer.env.
+    apptainer = spec.setdefault("apptainer", {})
+    if not isinstance(apptainer, dict):
+        raise ForkSeedError(
+            f"parent spec of {parent_name!r} has a non-mapping "
+            "'spec.apptainer' block; cannot derive a fork."
+        )
+    env = apptainer.setdefault("env", {})
     if isinstance(env, dict):
         env[CARDS_AGENT_ENV] = fork_name
         env[TWIN_PARENT_ENV] = parent_name
@@ -200,9 +226,29 @@ def derive_fork_spec(
 
     extensions = spec.setdefault("extensions", {})
     if isinstance(extensions, dict):
-        extensions["fork"] = {"parent": parent_name, "task": task.strip()}
+        extensions["fork"] = {
+            "parent": parent_name,
+            "task": task.strip(),
+            "fresh": fresh,
+            "handover": bool(handover and handover.strip()),
+        }
 
-    spec["startup_prompts"] = [build_fork_boot_kick(fork_name, parent_name, task)]
+    # Session inheritance: a fresh fork starts a clean session (0
+    # exchanges) — set fresh on every harness entry. Otherwise inherit
+    # the parent's session modes untouched (continue via the host
+    # seeding path, same as twins).
+    if fresh:
+        harnesses = spec.get("available_harnesses")
+        if isinstance(harnesses, dict):
+            for entry in harnesses.values():
+                if isinstance(entry, dict):
+                    session = entry.setdefault("session", {})
+                    if isinstance(session, dict):
+                        session["mode"] = "fresh"
+
+    spec["startup_prompts"] = [
+        build_fork_boot_kick(fork_name, parent_name, task, handover)
+    ]
     return doc
 
 
@@ -213,6 +259,8 @@ def prepare_fork_spawn(
     task: str | None = None,
     persist: bool = False,
     role: str | None = None,
+    fresh: bool = False,
+    handover: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Resolve the parent spec + fork name and derive the fork's inline doc.
 
@@ -264,5 +312,7 @@ def prepare_fork_spawn(
         role=role,
         task=task,
         to_home=to_home,
+        fresh=fresh,
+        handover=handover,
     )
     return resolved_name, doc

@@ -24,14 +24,22 @@ _PARENT_DOC = {
         "harness": "hermes",
         "model": "muse-spark-1.3-contributor",
         "workdir": "/work",
-        "env": {
-            "SCITEX_CARDS_AGENT_ID": "parent-agent",
-            "SAC_NAME": "parent-agent",
-            "SCITEX_TODO_AGENT_ID": "parent-agent",
+        "available_harnesses": {"hermes": {}},
+        "available_engines": {
+            "scitex-free": {
+                "model": "muse-spark-1.3-contributor",
+                "reasoning_effort": "xhigh",
+            }
+        },
+        "apptainer": {
+            "env": {
+                "SCITEX_CARDS_AGENT_ID": "parent-agent",
+                "SAC_NAME": "parent-agent",
+                "SCITEX_TODO_AGENT_ID": "parent-agent",
+            }
         },
         "restart": {"policy": "always"},
         "a2a": {"port": 19001},
-        "claude": {"channels": ["server:claude-code-telegrammer", "server:sac"]},
         "comms": {"channels": ["server:claude-code-telegrammer"]},
         "startup_prompts": ["parent prompt"],
     },
@@ -54,15 +62,21 @@ def test_derive_fork_spec_splits_identity():
         task="green the audit",
     )
     spec = doc["spec"]
-    assert spec["env"]["SCITEX_CARDS_AGENT_ID"] == "p-fork"
-    assert spec["env"]["SAC_FORK_PARENT"] == "p"
-    assert "SAC_NAME" not in spec["env"]
-    assert "SCITEX_TODO_AGENT_ID" not in spec["env"]
+    assert "env" not in spec
+    assert "claude" not in spec
+    assert spec["apptainer"]["env"]["SCITEX_CARDS_AGENT_ID"] == "p-fork"
+    assert spec["apptainer"]["env"]["SAC_FORK_PARENT"] == "p"
+    assert "SAC_NAME" not in spec["apptainer"]["env"]
+    assert "SCITEX_TODO_AGENT_ID" not in spec["apptainer"]["env"]
     assert spec["restart"]["policy"] == "never"
     assert spec["a2a"]["port"] == "auto"
-    assert "server:claude-code-telegrammer" not in spec["claude"]["channels"]
     assert "server:claude-code-telegrammer" not in spec["comms"]["channels"]
-    assert spec["extensions"]["fork"] == {"parent": "p", "task": "green the audit"}
+    assert doc["spec"]["extensions"]["fork"] == {
+        "parent": "p",
+        "task": "green the audit",
+        "fresh": False,
+        "handover": False,
+    }
     assert doc["metadata"]["labels"]["role"] == "domain-subagent"
     assert doc["metadata"]["labels"]["parent"] == "p"
     kick = spec["startup_prompts"][0]
@@ -155,5 +169,66 @@ def test_prepare_fork_spawn_derives_inline_doc(tmp_path, monkeypatch):
     )
     name, doc = prepare_fork_spawn("p", task="green the audit")
     assert name == "p-fork"
-    assert doc["spec"]["env"]["SCITEX_CARDS_AGENT_ID"] == "p-fork"
+    assert doc["spec"]["apptainer"]["env"]["SCITEX_CARDS_AGENT_ID"] == "p-fork"
     assert doc["spec"]["a2a"]["port"] == "auto"
+
+
+def test_derived_doc_passes_validator_fork_surfaces():
+    """End-to-end guard for the live-spawn failure: the derived doc must
+    not trip the v3 validator on fork-touched surfaces (top-level env,
+    legacy claude surface). Runs the REAL validator, not a shape
+    assertion, so future validator drift fails here first."""
+    from scitex_agent_container.config._validation import validate_raw
+
+    doc = derive_fork_spec(
+        _PARENT_DOC,
+        fork_name="p-fork",
+        parent_name="p",
+        persist=False,
+        task="green the audit",
+    )
+    errors = validate_raw(doc, "fork-verify/spec.yaml")
+    fork_surface_errors = [
+        e
+        for e in errors
+        if "no longer accepted at the top level" in e
+        or "declare one surface" in e
+    ]
+    assert fork_surface_errors == []
+
+
+def test_boot_kick_carries_handover():
+    kick = build_fork_boot_kick("p-fork", "p", "do it", handover="db is down, use cache")
+    assert "HANDOVER from p" in kick
+    assert "db is down, use cache" in kick
+
+
+def test_fresh_sets_session_fresh_and_marks_extension():
+    doc = derive_fork_spec(
+        _PARENT_DOC,
+        fork_name="p-fork",
+        parent_name="p",
+        persist=False,
+        task="t",
+        fresh=True,
+        handover="note",
+    )
+    assert doc["spec"]["extensions"]["fork"]["fresh"] is True
+    assert doc["spec"]["extensions"]["fork"]["handover"] is True
+    modes = {
+        entry.get("session", {}).get("mode")
+        for entry in doc["spec"]["available_harnesses"].values()
+    }
+    assert modes == {"fresh"}
+    assert "note" in doc["spec"]["startup_prompts"][0]
+
+
+def test_nonfresh_inherits_session_modes():
+    doc = derive_fork_spec(
+        _PARENT_DOC,
+        fork_name="p-fork",
+        parent_name="p",
+        persist=False,
+        task="t",
+    )
+    assert doc["spec"]["extensions"]["fork"]["fresh"] is False
