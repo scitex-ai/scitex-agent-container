@@ -31,7 +31,13 @@ def test_known_levels_still_accepted() -> None:
         assert validate_engine_entry("e", _entry(reasoning_effort=level), namespace="spec.engines") == []
 
 
-def test_ultra_and_garbage_still_rejected() -> None:
-    for level in ("ultra", "extreme", "banana"):
+def test_ultra_accepted_as_harness_level() -> None:
+    # The harness itself accepts through ultra (hermes chat --help),
+    # so validation must not refuse it even with no spec using it yet.
+    assert validate_engine_entry("e", _entry(reasoning_effort="ultra"), namespace="spec.engines") == []
+
+
+def test_garbage_still_rejected() -> None:
+    for level in ("extreme", "banana"):
         errors = validate_engine_entry("e", _entry(reasoning_effort=level), namespace="spec.engines")
         assert any("reasoning_effort" in e for e in errors), level
