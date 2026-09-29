@@ -12,6 +12,7 @@ import json
 import os
 import socket
 import stat
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -54,6 +55,16 @@ def _serve(port):
                 length = int(self.headers.get("Content-Length", 0))
                 self.rfile.read(length)
                 self._send(200, {"id": "ses_stub1"})
+            elif self.path.endswith("/message"):
+                import json as _json
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = _json.loads(self.rfile.read(length) or b"{}")
+                log_path = os.path.join(os.environ["OC_TEST_STATE"], "posts.jsonl")
+                with open(log_path, "a", encoding="utf-8") as handle:
+                    handle.write(_json.dumps(body))
+                    handle.write(chr(10))
+                self._send(200, {"info": {"id": "msg_stub1"}, "parts": []})
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -103,8 +114,14 @@ def _fake_opencode(env_save_restore, tmp_path):
     return tmp_path
 
 
-def _run_owner(state_dir, port):
+def _run_owner(state_dir, port, mode="fresh", max_age="", startup=None):
+    import json as _json
+
     url = f"http://127.0.0.1:{port}"
+    if startup is not None:
+        (state_dir / "opencode-startup.json").write_text(
+            _json.dumps(startup), encoding="utf-8"
+        )
     return owner.main(
         [
             "--state-dir",
@@ -113,12 +130,23 @@ def _run_owner(state_dir, port):
             "worker",
             "--port",
             str(port),
+            "--session-mode",
+            mode,
+            "--session-max-age-minutes",
+            max_age,
             "--",
             "opencode",
             "attach",
             url,
         ]
     )
+
+
+def _attach_session(state_dir):
+    import json as _json
+
+    argv = _json.loads((state_dir / "attach-argv.json").read_text())
+    return argv[argv.index("--session") + 1]
 
 
 def test_owner_publishes_the_serve_url_for_the_tui(_fake_opencode):
@@ -174,9 +202,24 @@ def test_owner_persists_the_session_map_for_the_driver(_fake_opencode):
     # Act
     _run_owner(state_dir, port)
     # Assert
-    assert json.loads((state_dir / "opencode-sessions.json").read_text()) == {
-        "sac:worker": "ses_stub1"
-    }
+    entry = json.loads((state_dir / "opencode-sessions.json").read_text())[
+        "sac:worker"
+    ]
+    assert entry["id"] == "ses_stub1"
+
+
+def test_session_map_records_the_creation_epoch(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+    # Act
+    before = time.time()
+    _run_owner(state_dir, port)
+    # Assert
+    entry = json.loads((state_dir / "opencode-sessions.json").read_text())[
+        "sac:worker"
+    ]
+    assert entry["created_at"] >= before
 
 
 def test_owner_reuses_the_mapped_session_when_the_server_holds_it(_fake_opencode):
@@ -187,9 +230,54 @@ def test_owner_reuses_the_mapped_session_when_the_server_holds_it(_fake_opencode
     )
     port = _free_port()
     # Act
-    _run_owner(state_dir, port)
+    _run_owner(state_dir, port, mode="continue")
     # Assert
-    assert json.loads((state_dir / "attach-argv.json").read_text())[-1] == "ses_kept"
+    assert _attach_session(state_dir) == "ses_kept"
+
+
+def test_fresh_mode_recreates_despite_a_valid_map(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    (state_dir / "opencode-sessions.json").write_text(
+        json.dumps({"sac:worker": "ses_kept"})
+    )
+    port = _free_port()
+    # Act
+    _run_owner(state_dir, port, mode="fresh")
+    # Assert
+    assert _attach_session(state_dir) == "ses_stub1"
+
+
+def test_stale_continue_session_is_recreated(_fake_opencode):
+    # Arrange
+    import time as _time
+
+    state_dir = _fake_opencode
+    (state_dir / "opencode-sessions.json").write_text(
+        json.dumps(
+            {"sac:worker": {"id": "ses_old", "created_at": _time.time() - 7200}}
+        )
+    )
+    port = _free_port()
+    # Act
+    _run_owner(state_dir, port, mode="continue", max_age="60")
+    # Assert
+    assert _attach_session(state_dir) == "ses_stub1"
+
+
+def test_fresh_continue_session_is_reused(_fake_opencode):
+    # Arrange
+    import time as _time
+
+    state_dir = _fake_opencode
+    (state_dir / "opencode-sessions.json").write_text(
+        json.dumps({"sac:worker": {"id": "ses_new", "created_at": _time.time()}})
+    )
+    port = _free_port()
+    # Act
+    _run_owner(state_dir, port, mode="continue", max_age="60")
+    # Assert
+    assert _attach_session(state_dir) == "ses_new"
 
 
 def test_pin_respects_a_caller_supplied_session():
@@ -199,6 +287,120 @@ def test_pin_respects_a_caller_supplied_session():
     pinned = owner._pin_attach_session(command, "ses_other")
     # Assert
     assert pinned == command
+
+
+def _run_owner_resume(state_dir, port, resume_id):
+    url = f"http://127.0.0.1:{port}"
+    return owner.main(
+        [
+            "--state-dir",
+            str(state_dir),
+            "--agent-name",
+            "worker",
+            "--port",
+            str(port),
+            "--session-mode",
+            "resume",
+            "--resume-session",
+            resume_id,
+            "--",
+            "opencode",
+            "attach",
+            url,
+        ]
+    )
+
+
+def test_resume_adopts_the_pinned_session(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+    # Act
+    _run_owner_resume(state_dir, port, "ses_pinned")
+    # Assert
+    assert _attach_session(state_dir) == "ses_pinned"
+
+
+def test_resume_without_an_id_fails_loud(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+
+    def action():
+        return _run_owner_resume(state_dir, port, "")
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(RuntimeError, match="no --resume-session"):
+        run()
+
+
+def test_startup_prompts_submit_as_first_turns(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+    startup = {
+        "provider_id": "sac-e",
+        "model_id": "m",
+        "texts": ["mission one", "  ", "mission two"],
+    }
+    # Act
+    _run_owner(state_dir, port, startup=startup)
+    # Assert
+    import json as _json
+
+    posts = [
+        _json.loads(line)
+        for line in (state_dir / "posts.jsonl").read_text().splitlines()
+    ]
+    assert [(p["model"], p["messageID"][:8]) for p in posts] == [
+        ({"providerID": "sac-e", "modelID": "m"}, "msg_sac_"),
+        ({"providerID": "sac-e", "modelID": "m"}, "msg_sac_"),
+    ]
+
+
+def test_startup_texts_reach_the_session(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+    startup = {"provider_id": "sac-e", "model_id": "m", "texts": ["hello"]}
+    # Act
+    _run_owner(state_dir, port, startup=startup)
+    # Assert
+    import json as _json
+
+    posts = [
+        _json.loads(line)
+        for line in (state_dir / "posts.jsonl").read_text().splitlines()
+    ]
+    assert posts[0]["parts"] == [{"type": "text", "text": "hello"}]
+
+
+def test_absent_startup_file_submits_nothing(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    port = _free_port()
+    # Act
+    _run_owner(state_dir, port)
+    # Assert
+    assert not (state_dir / "posts.jsonl").exists()
+
+
+def test_malformed_startup_file_fails_loud(_fake_opencode):
+    # Arrange
+    state_dir = _fake_opencode
+    (state_dir / "opencode-startup.json").write_text("not json")
+    port = _free_port()
+
+    def action():
+        return _run_owner(state_dir, port)
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(RuntimeError, match="unreadable"):
+        run()
 
 
 def test_owner_refuses_a_missing_command(tmp_path):

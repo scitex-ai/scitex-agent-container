@@ -35,7 +35,10 @@ __all__ = [
     "OPENCODE_GATEWAY",
     "SERVE_FILE",
     "SESSION_MAP_FILE",
+    "STARTUP_FILE",
     "effective_serve_port",
+    "post_session_message",
+    "session_directive",
 ]
 
 #: Incarnation state file carrying the loopback serve URL (written by
@@ -45,6 +48,18 @@ SERVE_FILE = "opencode-serve.json"
 #: Incarnation state file mapping the stable SAC session key to the
 #: opencode ``ses_*`` id (written on first submit).
 SESSION_MAP_FILE = "opencode-sessions.json"
+
+#: Incarnation state file carrying engine-bound first turns compiled
+#: from ``spec.startup_prompts`` (written by materialize when prompts
+#: are non-empty; consumed by the owner before the TUI attaches).
+#: ``{provider_id, model_id, texts[]}`` — secrets stay ``{env:}``
+#: templates in the profile; this file carries no credentials.
+STARTUP_FILE = "opencode-startup.json"
+
+#: Startup turns may run a full reasoning model; the bridge default
+#: would abandon slow useful work (the Qwen lesson: client deadline
+#: later than upstream).
+STARTUP_TURN_TIMEOUT_S = 600.0
 
 
 def _serve_url(state_dir: Path) -> str:
@@ -91,18 +106,20 @@ def _resolve_session(
     """Return the stable session id, creating it on first submit."""
     state_dir = Path(state_dir)
     key = f"sac:{agent_name}"
+    mapped = _mapped_session_id(state_dir, agent_name)
+    if mapped is not None:
+        return mapped
+    _status, created = _request(
+        "POST", f"{base_url}/session", {"title": key}, timeout_s
+    )
+    session_id = str(created["id"])
     map_path = state_dir / SESSION_MAP_FILE
     try:
         known = json.loads(map_path.read_text())
     except (OSError, ValueError):
         known = {}
-    if isinstance(known, dict) and key in known:
-        return str(known[key])
-    _status, created = _request(
-        "POST", f"{base_url}/session", {"title": key}, timeout_s
-    )
-    session_id = str(created["id"])
-    known = known if isinstance(known, dict) else {}
+    if not isinstance(known, dict):
+        known = {}
     map_path.write_text(json.dumps({**known, key: session_id}))
     return session_id
 
@@ -128,7 +145,68 @@ def effective_serve_port(config: Any) -> int:
     return int(port)
 
 
-def _message_key(agent_name: str, message_id: str | None) -> str:
+def session_directive(config: Any) -> tuple[str, str]:
+    """Return the ``(mode, resume_id)`` session directive for ``config``.
+
+    Reads ``config.claude.session`` exactly like the Hermes TUI does:
+    the selected harness entry's ``session.mode`` reaches that field
+    through the loader's compat fold, and the top-level
+    ``spec.session`` shortcut overrides it through the same cascade —
+    so no opencode-specific session surface is needed. ``resume``
+    requires ``config.claude.resume_id`` and fails loud without it
+    (the Hermes resume contract).
+    """
+    claude = getattr(config, "claude", None)
+    mode = str(getattr(claude, "session", "") or "").strip().lower() or "fresh"
+    if mode == "resume":
+        resume_id = str(getattr(claude, "resume_id", "") or "").strip()
+        if not resume_id:
+            raise GatewayHarnessError(
+                "Opencode session mode 'resume' requires spec.claude.resume_id "
+                "or the CLI --resume <session-id>; refusing to degrade to a "
+                "fresh session"
+            )
+        return "resume", resume_id
+    if mode not in {"fresh", "continue"}:
+        raise GatewayHarnessError(
+            f"Opencode session mode must be fresh, continue, or resume, "
+            f"got {mode!r}"
+        )
+    return mode, ""
+
+
+def post_session_message(
+    base_url: str,
+    session_id: str,
+    *,
+    provider_id: str,
+    model_id: str,
+    text: str,
+    message_id: str,
+    timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    """POST one synchronous message; return the completed-turn receipt.
+
+    Shared by the driver (bridge turns) and the owner (startup turns):
+    one round-trip shape, one receipt shape. ``message_id`` must already
+    be serve-acceptable (see :func:`message_key`).
+    """
+    body = {
+        "messageID": message_id,
+        "model": {"providerID": provider_id, "modelID": model_id},
+        "parts": [{"type": "text", "text": text}],
+    }
+    _status_code, _completed = _request(
+        "POST", f"{base_url}/session/{session_id}/message", body, timeout_s
+    )
+    return {
+        "status": "completed",
+        "session_id": session_id,
+        "message_id": message_id,
+    }
+
+
+def message_key(agent_name: str, message_id: str | None) -> str:
     """Return a serve-acceptable idempotency key for one turn.
 
     The serve API rejects client-set ``messageID`` values that do not
@@ -145,6 +223,24 @@ def _message_key(agent_name: str, message_id: str | None) -> str:
         safe_agent = re.sub(r"[^A-Za-z0-9_-]", "_", agent_name)
         key = f"msg_sac_{safe_agent}_{uuid.uuid4().hex[:12]}"
     return re.sub(r"[^A-Za-z0-9_-]", "_", key)
+
+
+def _mapped_session_id(state_dir: Path, agent_name: str) -> str | None:
+    """Return the mapped ``ses_*`` id for ``sac:<agent>``, if any.
+
+    Tolerates both map shapes: legacy plain-string values and the
+    ``{"id", "created_at"}`` objects the session-aware owner writes.
+    """
+    try:
+        known = json.loads((Path(state_dir) / SESSION_MAP_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(known, dict):
+        return None
+    raw = known.get(f"sac:{agent_name}")
+    if isinstance(raw, dict):
+        raw = raw.get("id")
+    return str(raw) if raw else None
 
 
 def _strip_api_suffix(url: str, protocol: str) -> str:
@@ -177,7 +273,11 @@ class _OpencodeGatewayHarness:
         port = effective_serve_port(config)
         url = f"http://127.0.0.1:{port}"
         workdir = str(getattr(config, "workdir", "") or "/home/agent/work")
-        return [
+        mode, resume_id = session_directive(config)
+        max_age = getattr(
+            getattr(config, "claude", None), "continue_max_age_minutes", None
+        )
+        argv = [
             "/usr/bin/tini",
             "-s",
             "--",
@@ -190,6 +290,14 @@ class _OpencodeGatewayHarness:
             config.name,
             "--port",
             str(port),
+            "--session-mode",
+            mode,
+            "--session-max-age-minutes",
+            "" if max_age is None else str(max_age),
+        ]
+        if mode == "resume":
+            argv += ["--resume-session", resume_id]
+        return argv + [
             "--",
             "opencode",
             "attach",
@@ -226,12 +334,7 @@ class _OpencodeGatewayHarness:
         never submitted or the server is unreachable.
         """
         base_url = _serve_url(state_dir)
-        map_path = Path(state_dir) / SESSION_MAP_FILE
-        try:
-            known = json.loads(map_path.read_text())
-        except (OSError, ValueError):
-            known = {}
-        session_id = known.get(f"sac:{agent_name}") if isinstance(known, dict) else None
+        session_id = _mapped_session_id(state_dir, agent_name)
         if not session_id:
             raise GatewayHarnessError(
                 f"Opencode agent {agent_name!r} has no session yet "
@@ -271,34 +374,34 @@ class _OpencodeGatewayHarness:
                 "Opencode submit needs options['engine'] {key, model}; "
                 "pass parse_agent_options(config) through."
             )
-        message_key = _message_key(agent_name, message_id)
-        body = {
-            "messageID": message_key,
-            "model": {"providerID": provider_id, "modelID": model_id},
-            "parts": [{"type": "text", "text": text}],
-        }
+        key = message_key(agent_name, message_id)
         states = self.session_states(state_dir, timeout_s=timeout_s)
         busy = states.get(session_id) == "busy"
         if delivery_mode == "queue" or (delivery_mode == "steer" and busy):
             _status_code, _ignored = _request(
                 "POST",
                 f"{base_url}/session/{session_id}/prompt_async",
-                body,
+                {
+                    "messageID": key,
+                    "model": {"providerID": provider_id, "modelID": model_id},
+                    "parts": [{"type": "text", "text": text}],
+                },
                 timeout_s,
             )
             return {
                 "status": "accepted",
                 "session_id": session_id,
-                "message_id": message_key,
+                "message_id": key,
             }
-        _status_code, _completed = _request(
-            "POST", f"{base_url}/session/{session_id}/message", body, timeout_s
+        return post_session_message(
+            base_url,
+            session_id,
+            provider_id=provider_id,
+            model_id=model_id,
+            text=text,
+            message_id=key,
+            timeout_s=timeout_s,
         )
-        return {
-            "status": "completed",
-            "session_id": session_id,
-            "message_id": message_key,
-        }
 
     def abort_turn(
         self, state_dir: Path, agent_name: str, *, timeout_s: float = 10.0
@@ -307,12 +410,7 @@ class _OpencodeGatewayHarness:
             base_url = _serve_url(state_dir)
         except GatewayHarnessError:
             return False
-        map_path = Path(state_dir) / SESSION_MAP_FILE
-        try:
-            known = json.loads(map_path.read_text())
-        except (OSError, ValueError):
-            known = {}
-        session_id = known.get(f"sac:{agent_name}") if isinstance(known, dict) else None
+        session_id = _mapped_session_id(state_dir, agent_name)
         if not session_id:
             return False  # Never submitted: nothing in flight to cancel.
         _status_code, payload = _request(
@@ -361,6 +459,14 @@ class _OpencodeGatewayHarness:
             raise ValueError("Opencode profile needs a keyed engine endpoint")
         provider_id = f"sac-{plan.engine.key}"
         model_id = plan.engine.model_id
+        model_entry: dict[str, Any] = {"name": model_id}
+        # Reasoning effort rides the engine declaration into the
+        # provider-local model options (opencode variant knob). Empty
+        # means the provider default; the Go relay accepts
+        # none/minimal/low/medium/high/xhigh/max.
+        effort = str(getattr(plan.engine, "reasoning_effort", "") or "").strip()
+        if effort:
+            model_entry["options"] = {"reasoningEffort": effort}
         provider: dict[str, Any] = {
             "npm": npm_package,
             "name": f"SAC {plan.engine.key}",
@@ -368,11 +474,21 @@ class _OpencodeGatewayHarness:
                 "baseURL": _strip_api_suffix(plan.endpoint.url, protocol),
                 "apiKey": "{env:" + auth_env + "}",
             },
-            "models": {model_id: {"name": model_id}},
+            "models": {model_id: model_entry},
         }
         approval = options.get("approval_policy", "never")
+        base_permission = "allow" if approval == "never" else "ask"
+        # spec.lineage.may_spawn is the neutral spawn envelope. Opencode
+        # has no delegation width/depth knobs (documented limitation —
+        # opencode schedules subagents itself), but the task tool that
+        # launches subagents IS permission-gated, so may_spawn: false
+        # removes it instead of merely discouraging it in prose.
+        if getattr(plan, "may_spawn", True):
+            permission: Any = base_permission
+        else:
+            permission = {"*": base_permission, "task": "deny"}
         return {
-            "permission": "allow" if approval == "never" else "ask",
+            "permission": permission,
             "provider": {provider_id: provider},
             "model": f"{provider_id}/{model_id}",
         }

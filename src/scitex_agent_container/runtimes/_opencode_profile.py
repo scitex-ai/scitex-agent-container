@@ -8,11 +8,17 @@ derived JSON — the profile references the key as ``{env:NAME}`` and
 apptainer loads NAME from the ``0600`` env file before serve starts
 (the Hermes ``--env-file`` doctrine).
 
-Pilot scope, stated: no MCP translation yet (opencode ``POST /mcp``
-dynamic add lands with the pilot), no CCT rail, no session-age GC.
-The profile is path-free — serve inherits the container ``--pwd`` —
-so no port allocation happens here; the owner argv owns the single
-allocation point (explicit ``serve.port`` or a free-loopback pick).
+MCP: ``spec.mcp_servers`` (merged into ``home/.mcp.json`` by
+``setup_mcp_config``) translates entry-for-entry into opencode's
+``mcp`` section. ``${env:}`` templates in MCP env values pass through
+verbatim — opencode documents ``{env:}`` expansion for provider keys
+and MCP headers, not for local-server environment blocks.
+
+Pilot scope, stated: no CCT rail, no session-age GC beyond the entry
+``max_age_minutes`` the owner enforces. The profile is path-free —
+serve inherits the container ``--pwd`` — so no port allocation happens
+here; the owner argv owns the single allocation point (explicit
+``serve.port`` or a free-loopback pick).
 """
 
 from __future__ import annotations
@@ -52,6 +58,54 @@ def _launch_plan(config: AgentConfig):
     return replace(plan, harness="opencode")
 
 
+def _opencode_mcp_servers(home: Path) -> dict[str, dict[str, Any]]:
+    """Translate merged ``home/.mcp.json`` into opencode's ``mcp`` section.
+
+    Every ``mcpServers`` entry maps entry-for-entry (opencode has no
+    channel-selection concept — declaration is selection). Stdio
+    entries become ``type: local`` with the command line joined;
+    URL-bearing entries become ``type: remote``. Env values pass
+    through verbatim (see the module docstring for the template
+    caveat). Missing/unreadable file means no MCP, never an error.
+    """
+    try:
+        raw = json.loads((home / ".mcp.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    servers = raw.get("mcpServers") if isinstance(raw, dict) else None
+    if not isinstance(servers, dict):
+        return {}
+    translated: dict[str, dict[str, Any]] = {}
+    for name, entry in servers.items():
+        if not isinstance(name, str) or not isinstance(entry, dict):
+            continue
+        url = entry.get("url")
+        if isinstance(url, str) and url.strip():
+            translated[name] = {
+                "type": "remote",
+                "url": url.strip(),
+                "enabled": True,
+            }
+            continue
+        command = str(entry.get("command", "") or "").strip()
+        if not command:
+            continue
+        args = entry.get("args")
+        argv = (
+            [command, *[str(arg) for arg in args]]
+            if isinstance(args, list)
+            else [command]
+        )
+        env = entry.get("env")
+        translated[name] = {
+            "type": "local",
+            "command": argv,
+            "environment": dict(env) if isinstance(env, dict) else {},
+            "enabled": True,
+        }
+    return translated
+
+
 def materialize_opencode_profile(
     config: AgentConfig, *, state_dir: Path
 ) -> list[Path]:
@@ -79,6 +133,9 @@ def materialize_opencode_profile(
     rendered = OPENCODE_GATEWAY.compile_profile(
         plan, workdir=str(config.workdir), options=options
     )
+    servers = _opencode_mcp_servers(home)
+    if servers:
+        rendered["mcp"] = servers
     provider_key = resolve_provider_api_key(config)
     env_name = plan.endpoint.auth_env
     profile_env = {env_name: provider_key} if env_name else {}
@@ -89,7 +146,38 @@ def materialize_opencode_profile(
             json.dumps(rendered, indent=2), encoding="utf-8"
         )
         _write_env_file(profile_dir / PROFILE_ENV_FILENAME, profile_env)
+    _write_startup_file(state_dir, plan, config)
     return targets
+
+
+def _write_startup_file(state_dir: Path, plan: Any, config: AgentConfig) -> None:
+    """Compile ``spec.startup_prompts`` into the owner's first-turn file.
+
+    Written only when prompts are non-empty; the owner submits each as
+    a synchronous turn before the TUI attaches, so a failed first turn
+    fails the start loudly. Carries engine-bound provider/model ids —
+    never credentials (the serve resolves ``{env:}`` at call time).
+    """
+    from ._gateway_opencode import STARTUP_FILE
+
+    prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
+    if not prompts:
+        (state_dir / STARTUP_FILE).unlink(missing_ok=True)
+        return
+    if getattr(plan, "harness", "") != "opencode":
+        raise ValueError("Opencode startup needs an opencode launch plan")
+    payload = {
+        "provider_id": f"sac-{plan.engine.key}",
+        "model_id": plan.engine.model_id,
+        "texts": prompts,
+    }
+    path = state_dir / STARTUP_FILE
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(payload, indent=2).encode())
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o600)
 
 
 def profile_env_argv(state_dir: Path) -> list[str]:

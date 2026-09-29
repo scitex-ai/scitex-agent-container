@@ -67,6 +67,10 @@ spec:
         extra_headers:
           User-Agent: scitex-agent-container/opencode
           x-opencode-session: ${sac:session_id}
+      # xhigh is Go's top practical tier for this model (none/minimal/
+      # low/medium/high/xhigh/max); lands in the derived profile as the
+      # model reasoningEffort option.
+      reasoning_effort: xhigh
 
   available_harnesses:
     opencode:

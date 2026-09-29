@@ -77,6 +77,9 @@ class OpencodeTuiSessionRuntime(TuiSessionRuntime):
     def start(self, config: AgentConfig, **kwargs) -> bool:
         """Start the owner+TUI session, then the inbox dispatcher."""
         kwargs["drain_pickers_at_boot"] = True
+        # Not dropped: startup prompts are compiled into the incarnation
+        # startup file at materialize time and submitted by the owner as
+        # the session's first turns before the TUI attaches.
         kwargs["inject_startup_prompts"] = False
         started = super().start(config, **kwargs)
         if started and not kwargs.get("dry_run", False):

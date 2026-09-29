@@ -184,3 +184,112 @@ def test_effective_port_picks_a_live_loopback_port_for_auto():
     port = effective_serve_port(config)
     # Assert
     assert 0 < port < 65536
+
+
+def test_materialize_writes_the_startup_file_with_engine_binding(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    _materialize(tmp_path, env_save_restore, startup_prompts=["do the thing"])
+    # Act
+    startup = json.loads((tmp_path / "opencode-startup.json").read_text())
+    # Assert
+    assert startup["texts"] == ["do the thing"]
+
+
+def test_materialize_startup_file_names_the_resolved_engine(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    _materialize(tmp_path, env_save_restore, startup_prompts=["do the thing"])
+    # Act
+    startup = json.loads((tmp_path / "opencode-startup.json").read_text())
+    # Assert
+    assert (startup["provider_id"], startup["model_id"]) == (
+        "sac-free",
+        "muse-spark-1.3-contributor-free",
+    )
+
+
+def test_materialize_startup_file_is_owner_only(tmp_path, env_save_restore):
+    # Arrange
+    _materialize(tmp_path, env_save_restore, startup_prompts=["do the thing"])
+    # Act
+    mode = (tmp_path / "opencode-startup.json").stat().st_mode & 0o777
+    # Assert
+    assert mode == 0o600
+
+
+def test_materialize_without_prompts_writes_no_startup_file(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    _materialize(tmp_path, env_save_restore)
+    # Act
+    missing = tmp_path / "opencode-startup.json"
+    # Assert
+    assert not missing.exists()
+
+
+def test_materialize_translates_stdio_mcp_servers(tmp_path, env_save_restore):
+    # Arrange
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "demo": {
+                        "command": "demo-bin",
+                        "args": ["--serve"],
+                        "env": {"DEMO_KEY": "v"},
+                    }
+                }
+            }
+        )
+    )
+    _materialize(tmp_path, env_save_restore)
+    # Act
+    document = json.loads(
+        (home / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    # Assert
+    assert document["mcp"]["demo"] == {
+        "type": "local",
+        "command": ["demo-bin", "--serve"],
+        "environment": {"DEMO_KEY": "v"},
+        "enabled": True,
+    }
+
+
+def test_materialize_translates_remote_mcp_servers(tmp_path, env_save_restore):
+    # Arrange
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"far": {"url": "https://mcp.example/mcp"}}})
+    )
+    _materialize(tmp_path, env_save_restore)
+    # Act
+    document = json.loads(
+        (home / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    # Assert
+    assert document["mcp"]["far"] == {
+        "type": "remote",
+        "url": "https://mcp.example/mcp",
+        "enabled": True,
+    }
+
+
+def test_materialize_without_mcp_servers_omits_the_mcp_section(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    _materialize(tmp_path, env_save_restore)
+    # Act
+    document = json.loads(
+        (tmp_path / "home" / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    # Assert
+    assert "mcp" not in document

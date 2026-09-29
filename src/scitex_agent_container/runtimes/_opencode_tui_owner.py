@@ -29,7 +29,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ._gateway_opencode import SERVE_FILE, SESSION_MAP_FILE
+from ._gateway_opencode import (
+    SERVE_FILE,
+    SESSION_MAP_FILE,
+    STARTUP_FILE,
+    STARTUP_TURN_TIMEOUT_S,
+    message_key,
+    post_session_message,
+)
 
 _HEALTH_TIMEOUT_S = 30.0
 
@@ -120,21 +127,129 @@ def _create_session(url: str, key: str, timeout_s: float = 10.0) -> str:
     return str(session_id)
 
 
-def _resolve_stable_session(url: str, state_dir: Path, agent_name: str) -> str:
-    """Return the ``ses_*`` id for ``sac:<agent>``, creating it once.
+def _map_session_id(value: object) -> str | None:
+    """Extract the ``ses_*`` id from a session-map value, old or new."""
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        session_id = value.get("id")
+        return str(session_id) if session_id else None
+    return None
 
-    The id is persisted in ``SESSION_MAP_FILE`` so the driver
-    (``_gateway_opencode._resolve_session``) reuses the exact session
-    the TUI is viewing instead of opening a second one.
+
+def _map_created_at(value: object) -> float | None:
+    """Extract the creation epoch from a session-map value, if recorded."""
+    if isinstance(value, dict):
+        created = value.get("created_at")
+        if isinstance(created, (int, float)):
+            return float(created)
+    return None
+
+
+def _resolve_stable_session(
+    url: str,
+    state_dir: Path,
+    agent_name: str,
+    *,
+    mode: str,
+    resume_id: str = "",
+    max_age_minutes: int | None = None,
+) -> str:
+    """Return the ``ses_*`` id the TUI attaches to, per the session mode.
+
+    ``fresh`` always creates; ``continue`` reuses the mapped session
+    when the server still holds it and it is younger than
+    ``max_age_minutes`` (unset cap or unknown age recreates);
+    ``resume`` adopts ``resume_id`` verbatim and fails loud when the
+    server does not hold it. The map records ``created_at`` so age is
+    measurable across owner restarts; legacy plain-string values read
+    as ageless. The driver (``_gateway_opencode._resolve_session``)
+    tolerates both shapes and reuses the same session.
     """
     key = f"sac:{agent_name}"
     known = _read_session_map(state_dir)
-    session_id = known.get(key)
-    if session_id and _session_exists(url, str(session_id)):
-        return str(session_id)
+    if mode == "resume":
+        if not resume_id:
+            raise RuntimeError(
+                "Opencode session mode 'resume' names no --resume-session; "
+                "refusing to degrade to a fresh session"
+            )
+        if not _session_exists(url, resume_id):
+            raise RuntimeError(
+                f"Opencode resume session {resume_id!r} is absent on the "
+                "fresh serve gateway; refusing to invent one"
+            )
+        _atomic_json(
+            state_dir / SESSION_MAP_FILE,
+            {**known, key: {"id": resume_id, "created_at": time.time()}},
+        )
+        return resume_id
+    if mode == "continue":
+        session_id = _map_session_id(known.get(key))
+        if session_id and _session_exists(url, session_id):
+            if max_age_minutes is None:
+                return session_id
+            created_at = _map_created_at(known.get(key))
+            if (
+                created_at is not None
+                and time.time() - created_at <= max_age_minutes * 60
+            ):
+                return session_id
     session_id = _create_session(url, key)
-    _atomic_json(state_dir / SESSION_MAP_FILE, {**known, key: session_id})
+    _atomic_json(
+        state_dir / SESSION_MAP_FILE,
+        {**known, key: {"id": session_id, "created_at": time.time()}},
+    )
     return session_id
+
+
+def _submit_startup_turns(
+    url: str, state_dir: Path, agent_name: str, session_id: str
+) -> int:
+    """Deliver materialized ``startup_prompts`` as the session's first turns.
+
+    Reads ``STARTUP_FILE`` (written by materialize only when prompts are
+    non-empty; absent file means no-op). Each text goes as one
+    synchronous message so a failed first turn fails the start loudly
+    instead of booting an agent that never heard its mission. Returns
+    the delivered count.
+    """
+    path = state_dir / STARTUP_FILE
+    if not path.is_file():
+        return 0
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"Opencode startup file {path} is unreadable: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Opencode startup file {path} must hold an object")
+    provider_id = payload.get("provider_id")
+    model_id = payload.get("model_id")
+    texts = payload.get("texts")
+    if not provider_id or not model_id:
+        raise RuntimeError(
+            f"Opencode startup file {path} names no provider/model; "
+            "refusing to submit engine-less first turns"
+        )
+    if not isinstance(texts, list):
+        raise RuntimeError(f"Opencode startup file {path} holds no texts list")
+    delivered = 0
+    for text in texts:
+        if not str(text).strip():
+            continue
+        post_session_message(
+            url,
+            session_id,
+            provider_id=str(provider_id),
+            model_id=str(model_id),
+            text=str(text),
+            message_id=message_key(agent_name, None),
+            timeout_s=STARTUP_TURN_TIMEOUT_S,
+        )
+        delivered += 1
+    return delivered
 
 
 def _pin_attach_session(command: list[str], session_id: str) -> list[str]:
@@ -168,6 +283,25 @@ def main(argv: list[str] | None = None) -> int:
         "/state/<name> container mount); pass explicitly for host runs "
         "whose state dir is not named after the agent.",
     )
+    parser.add_argument(
+        "--session-mode",
+        choices=("fresh", "continue", "resume"),
+        default="fresh",
+        help="Which session the TUI attaches to: always a new one, the "
+        "mapped one when the server still holds it, or a pinned resume id.",
+    )
+    parser.add_argument(
+        "--resume-session",
+        default="",
+        help="Session id adopted in --session-mode resume; refused when the "
+        "server does not hold it.",
+    )
+    parser.add_argument(
+        "--session-max-age-minutes",
+        default="",
+        help="Mapped sessions older than this are recreated under "
+        "--session-mode continue; empty means no cap.",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = list(args.command)
@@ -187,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
     # on a host-run canary it is a real path. Prefer the explicit
     # identity; fall back to the basename convention.
     agent_name = args.agent_name.strip() or state_dir.name
+    max_age_raw = str(args.session_max_age_minutes or "").strip()
+    max_age_minutes = int(max_age_raw) if max_age_raw else None
+    if max_age_minutes is not None and max_age_minutes <= 0:
+        parser.error("--session-max-age-minutes must be a positive integer")
 
     serve = subprocess.Popen(
         ["opencode", "serve", "--port", str(port), "--hostname", "127.0.0.1"],
@@ -202,7 +340,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _wait_for_health(url, serve, _HEALTH_TIMEOUT_S)
         _atomic_json(serve_path, {"url": url})
-        session_id = _resolve_stable_session(url, state_dir, agent_name)
+        session_id = _resolve_stable_session(
+            url,
+            state_dir,
+            agent_name,
+            mode=args.session_mode,
+            resume_id=args.resume_session.strip(),
+            max_age_minutes=max_age_minutes,
+        )
+        _submit_startup_turns(url, state_dir, agent_name, session_id)
         tui = subprocess.Popen(_pin_attach_session(command, session_id))
         return int(tui.wait())
     finally:

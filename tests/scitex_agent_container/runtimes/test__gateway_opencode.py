@@ -35,6 +35,7 @@ from scitex_agent_container.runtimes._gateway_opencode import (
     OPENCODE_GATEWAY,
     SERVE_FILE,
     SESSION_MAP_FILE,
+    session_directive,
 )
 
 
@@ -103,6 +104,10 @@ def test_owner_argv_pins_an_explicit_port():
         "worker",
         "--port",
         "4199",
+        "--session-mode",
+        "fresh",
+        "--session-max-age-minutes",
+        "",
         "--",
         "opencode",
         "attach",
@@ -119,6 +124,122 @@ def test_owner_argv_allocates_a_loopback_port_for_auto():
     argv = OPENCODE_GATEWAY.owner_argv(config, "/tmp/state")
     # Assert
     assert argv[argv.index("--port") + 1] != "0"
+
+
+def test_session_directive_defaults_to_fresh():
+    # Arrange
+    config = _opencode_config()
+    config.claude.session = ""
+    # Act
+    directive = session_directive(config)
+    # Assert
+    assert directive == ("fresh", "")
+
+
+def test_session_directive_reads_the_folded_entry_mode():
+    # Arrange — post-load shape: the selected entry's session.mode
+    # reaches config.claude.session through the loader's compat fold.
+    config = _opencode_config()
+    config.claude.session = "continue"
+    # Act
+    directive = session_directive(config)
+    # Assert
+    assert directive == ("continue", "")
+
+
+def _example_spec_with_session(tmp_path, mode, max_age):
+    """Copy the branch example with one session block swapped in."""
+    from pathlib import Path
+
+    example = (
+        Path(__file__).parents[3]
+        / "examples"
+        / "providers"
+        / "opencode-tui-spark.yaml"
+    )
+    text = example.read_text()
+    text = text.replace(
+        "      session:\n        mode: fresh\n        max_age_minutes: null",
+        f"      session:\n        mode: {mode}\n        max_age_minutes: {max_age}",
+    )
+    agent_dir = tmp_path / "probe"
+    agent_dir.mkdir()
+    (agent_dir / "spec.yaml").write_text(text)
+    return agent_dir / "spec.yaml"
+
+
+def test_entry_continue_mode_folds_into_claude_session(tmp_path):
+    # Arrange — the full load cascade on the branch example, not a
+    # hand-built config: the selected entry's session.mode reaches
+    # config.claude.session through the compat fold.
+    from scitex_agent_container.config import load_config
+
+    # Act
+    config = load_config(str(_example_spec_with_session(tmp_path, "continue", 60)))
+    # Assert
+    assert session_directive(config) == ("continue", "")
+
+
+def test_entry_max_age_folds_into_continue_window(tmp_path):
+    # Arrange
+    from scitex_agent_container.config import load_config
+
+    # Act
+    config = load_config(str(_example_spec_with_session(tmp_path, "fresh", 90)))
+    # Assert
+    assert config.claude.continue_max_age_minutes == 90
+
+
+def test_session_directive_resume_requires_a_resume_id():
+    # Arrange
+    config = _opencode_config()
+    config.claude.session = "resume"
+
+    def action():
+        return session_directive(config)
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(GatewayHarnessError, match="resume_id"):
+        run()
+
+
+def test_session_directive_resume_carries_the_resume_id():
+    # Arrange
+    config = _opencode_config()
+    config.claude.session = "resume"
+    config.claude.resume_id = "ses_pinned"
+    # Act
+    directive = session_directive(config)
+    # Assert
+    assert directive == ("resume", "ses_pinned")
+
+
+def test_session_directive_refuses_an_unknown_mode():
+    # Arrange
+    config = _opencode_config()
+    config.claude.session = "bogus"
+
+    def action():
+        return session_directive(config)
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(GatewayHarnessError, match="fresh, continue, or resume"):
+        run()
+
+
+def test_owner_argv_carries_the_resume_session():
+    # Arrange
+    config = _opencode_config()
+    config.claude.session = "resume"
+    config.claude.resume_id = "ses_pinned"
+    # Act
+    argv = OPENCODE_GATEWAY.owner_argv(config, "/tmp/state")
+    # Assert
+    assert argv[argv.index("--resume-session") + 1] == "ses_pinned"
 
 
 # ---------------------------------------------------------------------------
@@ -707,3 +828,66 @@ def test_compile_profile_refuses_native_protocols():
     # Assert
     with pytest.raises(ValueError, match="openai-chat-completions or openai-responses"):
         run()
+
+
+def test_compile_profile_disables_task_when_spawning_is_forbidden(env_save_restore):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    plan = _plan(may_spawn=False)
+    # Act
+    profile = OPENCODE_GATEWAY.compile_profile(
+        plan, workdir="/work", options={"approval_policy": "never"}
+    )
+    # Assert
+    assert profile["permission"] == {"*": "allow", "task": "deny"}
+
+
+def test_compile_profile_keeps_flat_permission_when_spawning_is_allowed(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    plan = _plan(may_spawn=True)
+    # Act
+    profile = OPENCODE_GATEWAY.compile_profile(
+        plan, workdir="/work", options={"approval_policy": "never"}
+    )
+    # Assert
+    assert profile["permission"] == "allow"
+
+
+def test_compile_profile_carries_the_engine_reasoning_effort(env_save_restore):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    engine = SimpleNamespace(key="free", model_id="m", reasoning_effort="xhigh")
+    plan = _plan(engine=engine)
+    # Act
+    profile = OPENCODE_GATEWAY.compile_profile(
+        plan, workdir="/work", options={"approval_policy": "never"}
+    )
+    # Assert
+    assert profile["provider"]["sac-free"]["models"]["m"]["options"] == {
+        "reasoningEffort": "xhigh"
+    }
+
+
+def test_compile_profile_omits_effort_options_when_unset(env_save_restore):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    plan = _plan()
+    # Act
+    profile = OPENCODE_GATEWAY.compile_profile(
+        plan, workdir="/work", options={"approval_policy": "never"}
+    )
+    # Assert
+    assert "options" not in profile["provider"]["sac-free"]["models"][
+        "muse-spark-1.3-contributor-free"
+    ]

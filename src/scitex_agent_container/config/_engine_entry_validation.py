@@ -12,11 +12,11 @@ from ._provider_validation import validate_provider
 __all__ = ["validate_engine_entry"]
 
 _ENGINE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-#: Reasoning-effort levels the fleet actually runs. xhigh is live in 13
-#: authority specs (measured 2026-09-29); omitting it refused those
-#: agents at validation (A2A send, explain, start). Ultra is accepted by
-#: the harness itself (``hermes chat --help`` lists through ultra), so it
-#: is legitimate even with no spec using it yet.
+# Go documents none/minimal/low/medium/high/xhigh/max; Hermes' ladder
+# carries the same set plus Hermes-internal ultra. sac admits xhigh
+# (fleet muse-spark runs at xhigh on Go since 2026-09-29); ultra is
+# accepted because the harness itself lists it (operator order
+# 2026-09-29); minimal/max stay out until a fleet engine needs them.
 _REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "ultra")
 
 
