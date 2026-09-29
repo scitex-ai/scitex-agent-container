@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._agent_fork import agent_fork
 from ._agent_twin import agent_twin
 from ._helpers import invoke_cli_json, invoke_cli_text
 
@@ -469,6 +470,7 @@ def register_agent_tools(mcp) -> None:
         agent_start,
         agent_spawn,
         agent_twin,
+        agent_fork,
         agent_stop,
         agent_restart,
         agent_send,
@@ -489,6 +491,7 @@ __all__ = [
     "agent_start",
     "agent_spawn",
     "agent_twin",
+    "agent_fork",
     "agent_stop",
     "agent_restart",
     "agent_send",

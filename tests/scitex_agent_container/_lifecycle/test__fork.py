@@ -71,7 +71,12 @@ def test_derive_fork_spec_splits_identity():
     assert spec["restart"]["policy"] == "never"
     assert spec["a2a"]["port"] == "auto"
     assert "server:claude-code-telegrammer" not in spec["comms"]["channels"]
-    assert spec["extensions"]["fork"] == {"parent": "p", "task": "green the audit"}
+    assert doc["spec"]["extensions"]["fork"] == {
+        "parent": "p",
+        "task": "green the audit",
+        "fresh": False,
+        "handover": False,
+    }
     assert doc["metadata"]["labels"]["role"] == "domain-subagent"
     assert doc["metadata"]["labels"]["parent"] == "p"
     kick = spec["startup_prompts"][0]
@@ -190,3 +195,40 @@ def test_derived_doc_passes_validator_fork_surfaces():
         or "declare one surface" in e
     ]
     assert fork_surface_errors == []
+
+
+def test_boot_kick_carries_handover():
+    kick = build_fork_boot_kick("p-fork", "p", "do it", handover="db is down, use cache")
+    assert "HANDOVER from p" in kick
+    assert "db is down, use cache" in kick
+
+
+def test_fresh_sets_session_fresh_and_marks_extension():
+    doc = derive_fork_spec(
+        _PARENT_DOC,
+        fork_name="p-fork",
+        parent_name="p",
+        persist=False,
+        task="t",
+        fresh=True,
+        handover="note",
+    )
+    assert doc["spec"]["extensions"]["fork"]["fresh"] is True
+    assert doc["spec"]["extensions"]["fork"]["handover"] is True
+    modes = {
+        entry.get("session", {}).get("mode")
+        for entry in doc["spec"]["available_harnesses"].values()
+    }
+    assert modes == {"fresh"}
+    assert "note" in doc["spec"]["startup_prompts"][0]
+
+
+def test_nonfresh_inherits_session_modes():
+    doc = derive_fork_spec(
+        _PARENT_DOC,
+        fork_name="p-fork",
+        parent_name="p",
+        persist=False,
+        task="t",
+    )
+    assert doc["spec"]["extensions"]["fork"]["fresh"] is False
