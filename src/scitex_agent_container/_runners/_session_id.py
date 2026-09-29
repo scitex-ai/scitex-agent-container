@@ -92,14 +92,34 @@ def write_session_id(state_dir: Path, session_id: str) -> None:
 
 
 def read_session_id(state_dir: Path) -> str | None:
-    """Return the persisted session id, or None if absent."""
+    """Return the persisted session id, or None if absent.
+
+    Falls back to the Hermes-owned session marker
+    (``hermes-owned-session.json`` → ``live_session_id``): Hermes TUI
+    agents record their live session there instead of the SDK-runner
+    ``session_id`` file, and fork/twin seeding must resolve those
+    parents too (operator, 2026-09-29).
+    """
     p = state_dir / "session_id"
-    if not p.is_file():
-        return None
-    try:
-        return p.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
+    if p.is_file():
+        try:
+            if text := p.read_text(encoding="utf-8").strip():
+                return text
+        except OSError:
+            pass
+    owned = state_dir / "hermes-owned-session.json"
+    if owned.is_file():
+        try:
+            import json as _json
+
+            data = _json.loads(owned.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                live = str(data.get("live_session_id") or "").strip()
+                if live:
+                    return live
+        except (OSError, ValueError):
+            pass
+    return None
 
 
 def clear_session_id(state_dir: Path) -> bool:
