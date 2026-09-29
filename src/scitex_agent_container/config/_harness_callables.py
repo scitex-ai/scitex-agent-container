@@ -29,11 +29,10 @@ lint error rather than dead weight.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover — typing only, no runtime import cycle
-    from pathlib import Path
-
     from ._types import AgentConfig
 
 __all__ = [
@@ -321,3 +320,31 @@ def _hermes_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]
         + _hermes_profile_env_argv(state_dir)
         + engine_env_flags(config)
     )
+
+
+def _opencode_tui_inner_argv(
+    config: "AgentConfig", options: "Mapping[str, object] | None" = None
+) -> list[str]:
+    """Inner argv delegates to the opencode gateway driver.
+
+    The driver builds the owner-module argv (loopback serve as owner +
+    TUI attached); ``/state/<name>`` mirrors the Hermes owner literal.
+    """
+    from ..runtimes._gateway_opencode import OPENCODE_GATEWAY
+
+    del options
+    return OPENCODE_GATEWAY.owner_argv(config, Path(f"/state/{config.name}"))
+
+
+def _opencode_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
+    """Expose the isolated opencode profile env plus engine parameters.
+
+    Mirrors ``_hermes_env_and_binds``: ``--env-file`` carries only a
+    path in argv, so the provider key stays absent from the
+    world-readable process command line. The derived ``opencode.json``
+    references it as ``{env:NAME}``.
+    """
+    from ..runtimes._apptainer_provider import engine_env_flags
+    from ..runtimes._opencode_profile import profile_env_argv
+
+    return profile_env_argv(state_dir) + engine_env_flags(config)
