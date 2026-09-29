@@ -33,7 +33,9 @@ STX-NM002: no mocks. STX-TQ002 / TQ007: AAA markers, one fact per test.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 import yaml
@@ -49,7 +51,7 @@ __all__ = ["fleet"]
 
 
 @pytest.fixture(autouse=True)
-def _wide_terminal_for_contiguous_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+def _wide_terminal_for_contiguous_evidence() -> Iterator[None]:
     """Pin COLUMNS so multi-line evidence stays contiguous.
 
     Readable output routes through render_rich, which builds a fresh
@@ -59,9 +61,18 @@ def _wide_terminal_for_contiguous_evidence(monkeypatch: pytest.MonkeyPatch) -> N
     _SPARTAN_EVIDENCE mid-phrase so contiguity assertions fail on
     wrapping, not on content. A wide COLUMNS restores the condition the
     evidence slices were chosen under (unbroken); tests must own their
-    width rather than inherit the machine's.
+    width rather than inherit the machine's. Plain save/restore (no
+    monkeypatch: PA-306 forbids mocks).
     """
-    monkeypatch.setenv("COLUMNS", "1000")
+    saved = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = "1000"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = saved
 
 PREDATES = "spartan"
 UNMEASURED = "scitex-compute-02"
