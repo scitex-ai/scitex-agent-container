@@ -238,5 +238,5 @@ async def run_openai_conversation(
     finally:
         try:
             await session.close()
-        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; the failure is still logged loudly)
+        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; the failure is still logged loudly (error to stderr via scitex-logging))
             logger.error("openai session close failed for %s: %s", name, exc)

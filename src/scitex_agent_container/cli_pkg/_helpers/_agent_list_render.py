@@ -440,7 +440,7 @@ def print_agent_list(
         cells.append(Text(str(started)))
         table.add_row(*cells)
 
-    render_rich(table, __name__)
+    render_rich(table, __name__, width=console.width)
 
     # Thirteen verbose columns collapse to unreadable one-character cells on a
     # narrow terminal.  Preserve every operator-facing identity/start value in

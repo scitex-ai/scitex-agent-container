@@ -167,7 +167,7 @@ async def run_codex_conversation(
     finally:
         try:
             await session.close()
-        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; a failed close here leaks a codex app-server subprocess, so it is logged loudly rather than raised over the real result)
+        except Exception as exc:  # stx-allow: fallback (reason: teardown must not mask the conversation's own outcome; a failed close here leaks a codex app-server subprocess, so it is logged loudly (error to stderr via scitex-logging) rather than raised over the real result)
             logger.error("codex session close failed for %s: %s", name, exc)
 
 
