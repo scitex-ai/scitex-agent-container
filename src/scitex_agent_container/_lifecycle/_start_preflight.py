@@ -364,7 +364,28 @@ def _rotate_to_healthy_account(
     ``usage_7d`` / ``quota_cache_path`` params are the same
     test-injection seams ``pick_healthy_account`` exposes; production
     passes ``None``.
+
+    Non-Claude launches skip the rotation entirely: API-key /
+    provider-backed and openai-harness agents never touch Claude OAuth,
+    so there is no credential to rotate and an expired pinned snapshot
+    must not block their start
+    (sac-harness-credential-gate-ignores-harness-20260928). This is the
+    same early-out the restart preflight
+    (:func:`_lifecycle._restart_preflight.resolve_successor_credential`)
+    and the bind
+    (:func:`runtimes._apptainer_auth_bind.credentials_file_bind`)
+    already carry, and the three must agree. Hermes/codex harnesses
+    intentionally keep the rotation: the bind still serves them.
     """
+    from ..runtimes._apptainer_provider import (
+        openai_harness_active,
+        provider_active,
+    )
+
+    # API-key / openai-harness launches have no OAuth credential to rotate.
+    if provider_active(config) or openai_harness_active(config):
+        return
+
     claude = getattr(config, "claude", None)
 
     # 1. Account POOL (plural, or the singular treated as a 1-element pool).
