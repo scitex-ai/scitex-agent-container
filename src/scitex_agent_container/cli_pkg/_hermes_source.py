@@ -107,6 +107,12 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     ``display.tool_progress=off`` (including focus mode). SAC consumes those
     events as an authoritative instrument, so the staging step removes only
     those two display gates and fails closed if the pinned anchors drift.
+
+    Fork-shape shortcut (scitex-ai/hermes-agent scitex-main and later):
+    the fork refactored the gates into ``_emit_tool_lifecycle``, which
+    stamps every event unconditionally — the instrumentation goal is
+    already met, so there is nothing to patch. Detected by the new
+    anchor; the old anchors are then not required.
     """
     module = staged / "tui_gateway" / "tool_progress.py"
     if not module.is_file():
@@ -114,6 +120,14 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
             "pinned Hermes tui_gateway/tool_progress.py is absent; refusing an "
             "uninstrumented build"
         )
+    text = module.read_text(encoding="utf-8")
+    if "def _emit_tool_lifecycle(event, sid, name, args, payload):" in text:
+        if "_stamp_event(frame)" not in text:
+            raise HermesSourceError(
+                "fork-shape Hermes lifecycle gate without unconditional "
+                "stamping; refusing an uninstrumented build"
+            )
+        return True
     text = module.read_text(encoding="utf-8")
     replacements = {
         """    if not _connector_tool_lifecycle(name, args):
