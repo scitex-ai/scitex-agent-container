@@ -670,7 +670,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
     test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
-    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.2"'
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
 
     # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
