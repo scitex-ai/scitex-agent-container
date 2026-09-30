@@ -9,14 +9,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Immutable SAC-lineage source for the cache fix proposed upstream in
-# https://github.com/NousResearch/hermes-agent/pull/110480 plus the external
-# inbound renderer proposed for current Hermes main in
-# https://github.com/ywatanabe1989/hermes-agent/pull/1. The current-main
-# history is unrelated to SAC's b635448 pin, so use this validated one-commit
-# descendant instead of importing that unrelated lineage into the base image.
-HERMES_COMMIT = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
-HERMES_REPOSITORY = "https://github.com/ywatanabe1989/hermes-agent.git"
+# SciTeX-org Hermes fork (operator, 2026-09-29): bake the fleet's own
+# fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
+# ship in the hermes SIF. Tracks the fork's scitex-main working branch.
+HERMES_COMMIT = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+HERMES_REPOSITORY = "https://github.com/scitex-ai/hermes-agent.git"
+HERMES_BRANCH = "scitex-main"
 HERMES_SOURCE_ENV = "SAC_HERMES_SOURCE_DIR"
 STAGED_HERMES_SOURCE = "hermes-agent-src"
 
@@ -109,6 +107,12 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     ``display.tool_progress=off`` (including focus mode). SAC consumes those
     events as an authoritative instrument, so the staging step removes only
     those two display gates and fails closed if the pinned anchors drift.
+
+    Fork-shape shortcut (scitex-ai/hermes-agent scitex-main and later):
+    the fork refactored the gates into ``_emit_tool_lifecycle``, which
+    stamps every event unconditionally — the instrumentation goal is
+    already met, so there is nothing to patch. Detected by the new
+    anchor; the old anchors are then not required.
     """
     module = staged / "tui_gateway" / "tool_progress.py"
     if not module.is_file():
@@ -116,6 +120,14 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
             "pinned Hermes tui_gateway/tool_progress.py is absent; refusing an "
             "uninstrumented build"
         )
+    text = module.read_text(encoding="utf-8")
+    if "def _emit_tool_lifecycle(event, sid, name, args, payload):" in text:
+        if "_stamp_event(frame)" not in text:
+            raise HermesSourceError(
+                "fork-shape Hermes lifecycle gate without unconditional "
+                "stamping; refusing an uninstrumented build"
+            )
+        return True
     text = module.read_text(encoding="utf-8")
     replacements = {
         """    if not _connector_tool_lifecycle(name, args):

@@ -145,22 +145,22 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
     """Loud, operator-readable conflict report. Written on stderr so
     JSON consumers can rely on stdout staying clean.
 
-    The shared ``_helpers.console`` is a plain ``Console()`` — i.e. stdout —
-    so this deliberately uses the module's ``_err_console`` instead. The
-    docstring above has promised stderr since the command landed; until
-    PR #1024 the code wrote to stdout regardless, which meant
-    ``sac fleet sync > out`` silently swallowed the whole conflict report.
+    Via ``click.echo(..., err=True)`` — the logging rail writes to
+    stdout, so log records would defeat the promise this docstring has
+    carried since the command landed (until PR #1024 the code wrote to
+    stdout regardless, which meant ``sac fleet sync > out`` silently
+    swallowed the whole conflict report).
     """
     fleet = diff["fleet"]
     unreachable = diff.get("unreachable", [])
-    log.error("FLEET SPEC CONFLICT — fail loud, no auto-merge")
-    log.error("=" * 72)
-    log.error(f"fleet hosts: {', '.join(fleet)}")
+    click.echo("FLEET SPEC CONFLICT — fail loud, no auto-merge", err=True)
+    click.echo("=" * 72, err=True)
+    click.echo(f"fleet hosts: {', '.join(fleet)}", err=True)
     if unreachable:
-        log.error("warnings (unresolvable peers):")
+        click.echo("warnings (unresolvable peers):", err=True)
         for u in unreachable:
-            log.error(f"  - {u['peer']}: {u.get('reason', '?')}")
-    log.error("")
+            click.echo(f"  - {u['peer']}: {u.get('reason', '?')}", err=True)
+    click.echo("", err=True)
 
     conflict_count = 0
     for agent in sorted(diff["agents"].keys()):
@@ -168,32 +168,32 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
         if entry["ok"]:
             continue
         conflict_count += 1
-        log.error(f"agent: {agent}")
+        click.echo(f"agent: {agent}", err=True)
         for c in entry["conflicts"]:
-            log.error(f"  file: {c['file']}")
-            log.error(f"    kind:       {c['kind']}")
+            click.echo(f"  file: {c['file']}", err=True)
+            click.echo(f"    kind:       {c['kind']}", err=True)
             for h in fleet:
                 ph = c["per_host"].get(h)
                 if ph is None:
                     continue
                 if not ph.get("present"):
                     marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                    log.error(f"    {h:<11} <missing>                                     {marker}")
+                    click.echo(f"    {h:<11} <missing>                                     {marker}", err=True)
                     continue
                 sha = ph.get("sha256", "")
                 size = ph.get("size", "")
                 mode = ph.get("mode", "")
                 marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                log.error(f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
-                    f"size={size}  mode={mode}   {marker}".rstrip())
-        log.error("")
-    log.error("=" * 72)
-    log.error(f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.")
-    log.error("Operator action (sac will NEVER do this for you):")
-    log.error("  1. Pick the authoritative copy per agent — sac has no opinion.")
-    log.error("  2. Rsync that tree to the diverged hosts manually.")
-    log.error("  3. Re-run `sac fleet sync` until it exits 0.")
-    log.error("=" * 72)
+                click.echo(f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
+                    f"size={size}  mode={mode}   {marker}".rstrip(), err=True)
+        click.echo("", err=True)
+    click.echo("=" * 72, err=True)
+    click.echo(f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.", err=True)
+    click.echo("Operator action (sac will NEVER do this for you):", err=True)
+    click.echo("  1. Pick the authoritative copy per agent — sac has no opinion.", err=True)
+    click.echo("  2. Rsync that tree to the diverged hosts manually.", err=True)
+    click.echo("  3. Re-run `sac fleet sync` until it exits 0.", err=True)
+    click.echo("=" * 72, err=True)
 
 
 def _fetch_peer_manifest(

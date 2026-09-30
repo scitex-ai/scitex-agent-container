@@ -10,7 +10,7 @@ import pytest
 from scitex_agent_container.cli_pkg import _hermes_source as source
 
 PINNED_TOOL_PROGRESS_ANCHORS = """\
-def _emit_tool_lifecycle(event, sid, name, args, payload):
+def _emit(event, sid, payload):
     if not _connector_tool_lifecycle(name, args):
         return _emit(event, sid, payload)
     return _emit(event, sid, payload)
@@ -26,12 +26,23 @@ def complete(sid, name, args, payload):
         _emit_tool_lifecycle("tool.complete", sid, name, args, payload)
 """
 
+FORK_TOOL_PROGRESS_ANCHORS = """\
+def _emit_tool_lifecycle(event, sid, name, args, payload):
+    if not _connector_tool_lifecycle(name, args):
+        return _emit(event, sid, payload)
+    from tui_gateway.event_replay import _stamp_event
+
+    frame = _event_frame(event, sid, payload)
+    _stamp_event(frame)
+    transport.write(frame)
+"""
+
 
 def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
-        "https://github.com/ywatanabe1989/hermes-agent.git",
-        "9ca9b7e5b9092465d37e4af0c2132aed188af5dd",
+        "https://github.com/scitex-ai/hermes-agent.git",
+        "17c5fde5a3f3642262003cd6aa09d54cf4d11de3",
     )
 
     # Act
@@ -229,3 +240,19 @@ print(json.dumps(event_replay.events_since("session-1", 0), sort_keys=True))
         payload.get("tool_id"),
         event.get("seq"),
     ) == (0, "", source.HERMES_COMMIT, "tool.start", "call-1", 1)
+
+
+def test_fork_shape_tree_needs_no_patch(tmp_path):
+    # Arrange — fork-refactored gates stamp unconditionally already.
+    staged = tmp_path / "hermes-agent-src"
+    module = staged / "tui_gateway" / "tool_progress.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(FORK_TOOL_PROGRESS_ANCHORS, encoding="utf-8")
+
+    # Act
+    result = source._patch_hermes_lifecycle_instrumentation(staged)
+    patched = module.read_text(encoding="utf-8")
+
+    # Assert — no-op, tree untouched.
+    assert result is True
+    assert patched == FORK_TOOL_PROGRESS_ANCHORS

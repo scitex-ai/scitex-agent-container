@@ -47,7 +47,7 @@ def render_content(content: str) -> None:
     print(content)
 
 
-def render_rich(renderable, name: str, *, level: str = "info") -> None:
+def render_rich(renderable, name: str, *, level: str = "info", width: int | None = None) -> None:
     """Render a Rich renderable through the SciTeX stdout console.
 
     Rich's ``Console.print`` is forbidden in shippable source (PS-220) and has
@@ -66,11 +66,18 @@ def render_rich(renderable, name: str, *, level: str = "info") -> None:
         Logger name — pass ``__name__`` from the call site.
     level : str
         One of ``info``/``warning``/``error``/``success``.
+    width : int | None
+        Render width. ``None`` (default) keeps the previous behaviour —
+        a fresh default-width console. Pass the caller's console width
+        when the table must honour it (tabular listings whose tests pin
+        a wide console so long values stay contiguous); without it a
+        wide pin on the caller's console is silently ignored and the
+        table wraps at 80.
     """
     import scitex_logging as slogging
     from rich.console import Console
 
-    console = Console()
+    console = Console(width=width) if width else Console()
     lines = console.render_lines(renderable, console.options, pad=False)
     text = "\n".join("".join(segment.text for segment in line) for line in lines)
     getattr(slogging.getConsole(name), level)(text.rstrip("\n"))

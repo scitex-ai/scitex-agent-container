@@ -364,7 +364,28 @@ def _rotate_to_healthy_account(
     ``usage_7d`` / ``quota_cache_path`` params are the same
     test-injection seams ``pick_healthy_account`` exposes; production
     passes ``None``.
+
+    Non-Claude launches skip the rotation entirely: API-key /
+    provider-backed and openai-harness agents never touch Claude OAuth,
+    so there is no credential to rotate and an expired pinned snapshot
+    must not block their start
+    (sac-harness-credential-gate-ignores-harness-20260928). This is the
+    same early-out the restart preflight
+    (:func:`_lifecycle._restart_preflight.resolve_successor_credential`)
+    and the bind
+    (:func:`runtimes._apptainer_auth_bind.credentials_file_bind`)
+    already carry, and the three must agree. Hermes/codex harnesses
+    intentionally keep the rotation: the bind still serves them.
     """
+    from ..runtimes._apptainer_provider import (
+        openai_harness_active,
+        provider_active,
+    )
+
+    # API-key / openai-harness launches have no OAuth credential to rotate.
+    if provider_active(config) or openai_harness_active(config):
+        return
+
     claude = getattr(config, "claude", None)
 
     # 1. Account POOL (plural, or the singular treated as a 1-element pool).
@@ -437,14 +458,35 @@ def _check_spec_source_drift_at_launch(
 
     This is intentionally fail-closed. Unknown sources, probe failures, dirty
     repositories, non-develop main checkouts, linked feature worktrees and all
-    live-branch drift refuse the launch. The only non-current form accepted is
+    live-branch drift refuse the launch. The non-current forms accepted are
     an immutable detached ``sac-authority`` snapshot validated by exact source,
-    commit and spec-blob identity.
+    commit and spec-blob identity, and a git-managed ``~/.scitex`` home
+    (``managed-home`` kind: no origin, clean, spec blob matches HEAD) which
+    this function ensures just before proving.
     """
     from .._drift._authority import SpecAuthorityError, validate_spec_authority
+    from .._drift._managed_home import ensure_home_managed
 
     _resolve_strict_drift(strict_drift)  # compatibility input; never a bypass
     try:
+        # Ensure-then-validate for specs inside a .scitex tree: the home
+        # CONTAINING the spec is adopted (never the process home — root
+        # in containers must not adopt root's tree while the operative
+        # specs live under /home/user). A spec in a custom repo must
+        # never trigger adoption as a launch side effect — that repo is
+        # the operator's to commit, and the proof below validates it
+        # as-is (live/snapshot rules when it names an origin).
+        from .._drift._managed_home import ensure_home_managed, home_for_spec
+
+        spec_home = home_for_spec(config_path)
+        if spec_home is not None:
+            try:
+                ensure_home_managed(
+                    home=spec_home,
+                    commit_message=f"sac: launch agent {agent_name}",
+                )
+            except RuntimeError as exc:
+                raise SpecAuthorityError(str(exc)) from exc
         validate_spec_authority(config_path)
     except SpecAuthorityError as exc:
         import scitex_logging
