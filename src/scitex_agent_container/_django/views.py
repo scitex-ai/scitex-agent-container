@@ -56,7 +56,7 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
     "/apps/agents")."""
-    from scitex_ui.mount import mount_prefix
+    from scitex_sdk.ui.mount import mount_prefix
 
     try:
         return mount_prefix(request, view_path=view_path)
@@ -66,8 +66,8 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
 def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     """Context for the standalone shell only (mounted mode uses global_base)."""
-    from scitex_ui.branding import shell_context
-    from scitex_ui.mount import mount_context
+    from scitex_sdk.ui.branding import shell_context
+    from scitex_sdk.ui.mount import mount_context
 
     # All three side panes are unused: this is a server-rendered fleet table,
     # not a file workspace. Declaring them unused is the scitex-ui API.

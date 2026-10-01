@@ -210,8 +210,7 @@ gui = [
     # what a deployment adds. The dashboard is a PROJECTION of the host
     # control plane; it adds no state store and no second lifecycle path.
     "django>=4.2",
-    "scitex-app>=0.11.0",
-    "scitex-ui>=0.13.0",
+    "scitex-sdk>=0.3.0",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -456,8 +455,7 @@ dev = [
     # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
-    "scitex-app>=0.11.0",
-    "scitex-ui>=0.13.0",
+    "scitex-sdk>=0.3.0",
 ]
 docs = [
     "sphinx>=7.0",

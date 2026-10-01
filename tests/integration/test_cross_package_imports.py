@@ -41,7 +41,7 @@ import pytest
 
 # ===== AUTO-GENERATED: cross-package imports =====
 CROSS_PACKAGE_IMPORTS = [
-    'scitex_app.embed',
+    'scitex_sdk.app.embed',
     'scitex_cards',
     'scitex_cards._mirror_rows',
     'scitex_cards._throughput',
@@ -64,8 +64,8 @@ CROSS_PACKAGE_IMPORTS = [
     'scitex_dev.versioning',
     'scitex_logging',
     'scitex_notification',
-    'scitex_ui.branding',
-    'scitex_ui.mount',
+    'scitex_sdk.ui.branding',
+    'scitex_sdk.ui.mount',
 ]
 # ===== END AUTO-GENERATED =====
 

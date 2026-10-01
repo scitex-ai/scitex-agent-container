@@ -22,7 +22,7 @@ def _run_server(
     open_browser: bool = False,
     hot_reload: bool = False,
 ) -> None:
-    from scitex_app.embed import run_standalone
+    from scitex_sdk.app.embed import run_standalone
 
     run_standalone(
         app_module=APP_MODULE,
@@ -68,7 +68,7 @@ def serve(
     hot_reload: bool = False,
 ) -> int:
     """Launch the guarded standalone server. Returns an exit code."""
-    from scitex_app.embed import serve_gui
+    from scitex_sdk.app.embed import serve_gui
 
     return serve_gui(
         package=package,

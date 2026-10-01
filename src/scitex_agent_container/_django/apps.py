@@ -16,7 +16,7 @@ hard scitex-app dependency (same idiom as scitex-cards).
 from __future__ import annotations
 
 try:
-    from scitex_app._django import ScitexAppConfig
+    from scitex_sdk.app._django import ScitexAppConfig
 except ImportError:  # scitex-app not installed — standalone still works
     from django.apps import AppConfig as ScitexAppConfig
 
