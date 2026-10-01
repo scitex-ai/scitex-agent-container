@@ -24,8 +24,7 @@
     "python": [
       "scitex-agent-container",
       "django",
-      "scitex-app",
-      "scitex-ui"
+      "scitex-sdk"
     ]
   },
   "mount_policy": {
