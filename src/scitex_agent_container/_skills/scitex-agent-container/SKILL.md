@@ -1,8 +1,8 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
-  [WHEN] Launching/managing a Claude Code agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
+  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs the selected Claude, Codex, Hermes, or OpenCode harness inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
+  [WHEN] Launching/managing an agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
   [HOW] `pip install scitex-agent-container`, then `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -18,10 +18,16 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Declarative lifecycle management for AI coding agents (Claude Code):
-define an agent in `spec.yaml`, launch it as a long-lived Claude SDK
-session inside Apptainer (local or remote via SSH), observe via
+Declarative lifecycle management for AI coding agents:
+define an agent in `spec.yaml`, select its harness and launch mode,
+run it inside Apptainer (local or remote via SSH), and observe via
 `sac agents list`/`tail`/`health`.
+
+Claude and direct Codex support TUI and headless modes; Hermes and OpenCode
+currently support TUI mode. Engine authentication is separate from harness
+selection. The OpenAI Agents SDK registry entry has no lifecycle launch
+adapter, and Command Code is not registered. See
+[how-sac-works.md](../../../../docs/how-sac-works.md) for the support matrix.
 
 ## What the package ships
 

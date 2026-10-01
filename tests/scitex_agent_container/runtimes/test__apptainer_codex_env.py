@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes._apptainer_codex_env import (
+    _codex_sdk_routing_flags,
     preflight_subscription,
     sync_subscription_auth,
 )
@@ -41,6 +44,28 @@ def test_selected_subscription_account_is_copied_to_private_codex_home(
         destination.read_bytes() if destination else b"",
         os.stat(destination).st_mode & 0o777 if destination else 0,
     ) == (destination_home / "auth.json", b'{"auth_mode":"chatgpt"}', 0o600)
+
+
+def test_headless_subscription_preserves_model_provider_and_reasoning_effort() -> None:
+    # Arrange
+    config = AgentConfig(name="native", harness="codex", runtime="headless")
+    config.model = "gpt-6.1-sol"
+    config.claude.model = "gpt-6.1-sol"
+    config.subscription_provider = "openai"
+    config.subscription_account = "openai:account-one"
+    config.reasoning_effort = "xhigh"
+    # Act
+    flags = _codex_sdk_routing_flags(config)
+    env = dict(value.split("=", 1) for value in flags[1::2])
+    overrides = json.loads(base64.b64decode(env["SAC_CODEX_CONFIG_OVERRIDES_B64"]))
+    # Assert
+    assert (
+        env["SAC_CODEX_MODEL"],
+        env["SAC_CODEX_MODEL_PROVIDER"],
+        'model_provider="openai"' in overrides,
+        'model="gpt-6.1-sol"' in overrides,
+        'model_reasoning_effort="xhigh"' in overrides,
+    ) == ("gpt-6.1-sol", "openai", True, True, True)
 
 
 def test_preflight_executes_the_exact_declared_model_with_selected_auth(
