@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from scitex_agent_container.runtimes._tui_compose import (
+    clear_compose_buffer,
     composer_holds_fragment,
     fragment_tail,
     verify_submit_by_advancement,
@@ -250,3 +251,103 @@ def test_unrelated_folded_paste_does_not_prove_our_turn_was_submitted():
     )
     # Assert
     assert (result, send.keys) == (False, [])
+
+
+_TALL_HOOKS = (
+    "Hooks need review\n"
+    + "\n".join(f"  public-hook-{index}" for index in range(51))
+    + "\n› Review enabled hooks\n? for shortcuts\n"
+)
+
+
+def test_folded_mission_inside_a_live_hook_picker_is_not_submission_proof():
+    # Arrange
+    payload = "mission " * 272
+    pane = (
+        _TALL_HOOKS
+        + f"» [Pasted Content {len(payload)} chars]\nPress enter to confirm\n"
+    )
+    send = _RecordingSend()
+    # Act
+    submitted = verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: pane,
+        send_keys_fn=send,
+        pending_fragment=payload,
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert submitted is False
+
+
+def test_folded_mission_inside_a_live_hook_picker_receives_no_enter():
+    # Arrange
+    payload = "mission " * 272
+    pane = (
+        _TALL_HOOKS
+        + f"» [Pasted Content {len(payload)} chars]\nPress enter to confirm\n"
+    )
+    send = _RecordingSend()
+    # Act
+    verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: pane,
+        send_keys_fn=send,
+        pending_fragment=payload,
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert send.keys == []
+
+
+def test_hook_picker_after_enter_cannot_prove_a_native_mission():
+    # Arrange
+    send = _RecordingSend()
+    # Act
+    submitted = verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: _TALL_HOOKS if send.keys else _CODEX_PENDING,
+        send_keys_fn=send,
+        pending_fragment=_TOKEN,
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert submitted is False
+
+
+def test_clear_does_not_send_escape_to_a_native_hook_picker():
+    # Arrange
+    send = _RecordingSend()
+    # Act
+    clear_compose_buffer("lead", capture_fn=lambda _: _TALL_HOOKS, send_keys_fn=send)
+    # Assert
+    assert send.keys == []
+
+
+def test_dismissed_hook_history_allows_the_current_composer_to_submit():
+    # Arrange
+    send = _RecordingSend()
+    # Act
+    submitted = verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: (
+            _TALL_HOOKS + (_CODEX_SUBMITTED if send.keys else _CODEX_PENDING)
+        ),
+        send_keys_fn=send,
+        pending_fragment=_TOKEN,
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert submitted is True

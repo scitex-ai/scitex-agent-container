@@ -102,20 +102,35 @@ class StartupPromptInjectorMixin:
                 name,
                 exc,
             )
+            if str(getattr(config, "harness", "") or "").lower() == "codex":
+                raise
         self._clear_compose_buffer(name)
         for index, prompt in enumerate(prompts, start=1):
             if not prompt:
                 continue
             try:
                 self.wait_until_input_ready(config)
+                codex = str(getattr(config, "harness", "") or "").lower() == "codex"
+                native_proof = None
+                if codex and getattr(self, "_production_command_builder", False):
+                    from ._codex_startup_admission import capture_startup_admission
+
+                    native_proof = capture_startup_admission(
+                        config, pane_pid=self._mux.pane_pid(name), mission=prompt
+                    )
                 # (a) paste LITERALLY (-l) — no submit here.
                 self._mux.send_text_literal(name, prompt)
                 # (b)+(c) submit ONLY when idle, verify advancement, retry
                 # bounded, then fail LOUD. No blind/defensive Enter.
-                codex = str(getattr(config, "harness", "") or "").lower() == "codex"
                 submitted = self._verify_submitted(
                     name, pasted=prompt, require_submission_proof=codex
                 )
+                if submitted and native_proof is not None:
+                    from ._codex_startup_admission import wait_for_startup_admission
+
+                    submitted = wait_for_startup_admission(
+                        native_proof, capture_fn=lambda: self._mux.capture_content(name)
+                    )
                 if codex and not submitted:
                     raise RuntimeError(
                         f"Codex startup mission was not admitted by {name}"
