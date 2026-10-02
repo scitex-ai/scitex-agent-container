@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._harness_callables import (
     _hermes_tui_inner_argv,
@@ -16,17 +18,16 @@ def _spec(harness: str = "hermes", **harness_fields: object) -> dict:
     }
 
 
-def test_yolo_defaults_off() -> None:
+@pytest.mark.parametrize(
+    "spec",
+    [{"harness": "hermes"}, {"harness": "hermes", "available_harnesses": {"hermes": {}}}],
+)
+def test_yolo_defaults_off(spec) -> None:
     # Arrange
     # Act
+    enabled = parse_selected_hermes_yolo(spec)
     # Assert
-    assert parse_selected_hermes_yolo({"harness": "hermes"}) is False
-    assert (
-        parse_selected_hermes_yolo(
-            {"harness": "hermes", "available_harnesses": {"hermes": {}}}
-        )
-        is False
-    )
+    assert enabled is False
 
 
 def test_yolo_reads_hermes_harness_block() -> None:

@@ -195,6 +195,17 @@ def test_portable_alternative_resolves_exact_responses_transport(
     )
 
 
+def test_free_engine_is_declared_in_example():
+    # Arrange
+    config = load_config(EXAMPLE)
+    # Act
+    selected = select_engine(
+        config.engines, "scitex-free-muse-spark-1.3-contributor-free"
+    )
+    # Assert
+    assert selected is not None
+
+
 def test_free_engine_resolves_exact_chat_completions_transport(
     env_save_restore,
 ):
@@ -206,7 +217,8 @@ def test_free_engine_resolves_exact_chat_completions_transport(
     selected = select_engine(
         config.engines, "scitex-free-muse-spark-1.3-contributor-free"
     )
-    assert selected is not None
+    if selected is None:
+        raise ValueError("the example must declare the free engine")
     apply_engine(config, selected)
 
     # Act

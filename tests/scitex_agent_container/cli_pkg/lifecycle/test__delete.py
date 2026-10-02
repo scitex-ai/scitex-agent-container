@@ -620,17 +620,33 @@ def test_instances_only_orphan_delete_closes_row(tmp_path):
     assert _active_rows_for("orphan") == []
 
 
-def test_local_delete_closes_active_row(tmp_path):
-    # Arrange — full agent on disk plus an active local row.
+@pytest.fixture
+def local_delete_result(tmp_path):
+    """Delete an agent with a synthetic, fixture-owned active row."""
     _seed_agent(tmp_path, "alpha")
     _seed_local_active_row("alpha")
     runner = CliRunner()
-    # Act
     with (
         _swap_registry(_FakeRegistry(exists=True)),
         _swap_agent_stop(lambda yaml, force: None),
     ):
         result = runner.invoke(delete, ["alpha"])
-    # Assert — dirs gone (existing behaviour) and the row closed (new).
-    assert result.exit_code == 0, result.output
-    assert _active_rows_for("alpha") == []
+    return result
+
+
+def test_local_delete_exits_successfully(local_delete_result):
+    # Arrange
+    result = local_delete_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 0, result.output
+
+
+def test_local_delete_closes_active_row(local_delete_result):
+    # Arrange
+    result = local_delete_result
+    # Act
+    rows = _active_rows_for("alpha")
+    # Assert
+    assert rows == [], result.output

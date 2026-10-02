@@ -58,11 +58,35 @@ def test_managed_home_accepts_clean_no_origin(managed_home):
     _, spec = managed_home
     # Act
     auth = validate_spec_authority(spec)
-    # Assert — third kind, local identity, digest equals the HEAD blob.
+    # Assert
     assert auth.kind == "managed-home"
+
+
+def test_managed_home_uses_local_source_identity(managed_home):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
     assert auth.source_identity == "local-dotscitex"
-    assert len(auth.head) == 40
-    assert len(auth.spec_digest) == 40
+
+
+@pytest.mark.parametrize("field", ["head", "spec_digest"])
+def test_managed_home_reports_full_git_identity(managed_home, field):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
+    assert len(getattr(auth, field)) == 40
+
+
+def test_managed_home_digest_is_distinct_from_commit(managed_home):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
     assert auth.spec_digest != auth.head  # blob sha, not the commit sha
 
 

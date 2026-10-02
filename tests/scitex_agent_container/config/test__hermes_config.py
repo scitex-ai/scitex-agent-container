@@ -334,7 +334,8 @@ def test_background_review_refuses_non_boolean_values(value):
         compile_hermes_config(plan, workdir="/work", background_review=value)
 
 
-def test_compiler_forwards_cct_token_into_tool_env():
+@pytest.mark.parametrize("name", ["CCT_BOT_TOKEN", "CCT_AGENT_ID"])
+def test_compiler_forwards_cct_identity_into_tool_env(name):
     # CCT rail: the agent's own bot token must reach its Bash tool env via
     # terminal.env_passthrough (Hermes does not blocklist CCT_* names).
     # Arrange
@@ -342,8 +343,7 @@ def test_compiler_forwards_cct_token_into_tool_env():
     # Act
     passthrough = result["terminal"].get("env_passthrough", [])
     # Assert
-    assert "CCT_BOT_TOKEN" in passthrough
-    assert "CCT_AGENT_ID" in passthrough
+    assert name in passthrough
 
 
 def _native_plan() -> LaunchPlan:
@@ -371,7 +371,7 @@ def _native_plan() -> LaunchPlan:
     )
 
 
-def test_native_provider_names_hermes_provider_without_custom_block():
+def test_native_provider_names_hermes_provider():
     # Arrange
     plan = _native_plan()
     # Act
@@ -381,6 +381,14 @@ def test_native_provider_names_hermes_provider_without_custom_block():
         "default": "muse-spark-1.3-contributor",
         "provider": "opencode-go",
     }
+
+
+def test_native_provider_does_not_create_a_custom_provider_block():
+    # Arrange
+    plan = _native_plan()
+    # Act
+    result = compile_hermes_config(plan, workdir="/work")
+    # Assert
     assert result["providers"] == {}
 
 
