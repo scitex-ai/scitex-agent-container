@@ -87,6 +87,14 @@ dependencies = [
     # stale. See cli_pkg/_image_repro_build.py.
     "scitex-container>=0.4.0",
     "scitex-logging>=0.1.5",
+    # Required by the control plane's Store/schema/ACL, exchange-status and
+    # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
+    # the earlier Store correctness floors are recorded in the history below.
+    "scitex-dev>=0.61.0",
+    # SAC directly opens PostgreSQL channel connections and classifies lost
+    # connections with psycopg exceptions. Match scitex_dev.store's driver
+    # floor and binary extra so a bare install does not require system libpq.
+    "psycopg[binary]>=3.1",
     "scitex-ssh>=1.0.0",
     # Hermes cannot consume Claude Code's notifications/claude/channel
     # extension.  SAC's host-side Hermes inbox bridge therefore reads Cards'
@@ -101,6 +109,9 @@ dependencies = [
     # (replaces the legacy `claude_cli` / `claude --print` path).
     "claude-agent-sdk>=0.1.0",
     "uvicorn>=0.27",
+    # Direct A2A proxy, completion and channel HTTP/SSE transports. Keep the
+    # floor aligned with the already-required a2a-sdk 1.0.2 wheel metadata.
+    "httpx>=0.28.1",
     # Hermes' official TUI and SAC share one gateway session over JSON-RPC.
     "websockets>=15,<16",
     "psutil>=5.9",
@@ -243,6 +254,8 @@ dev = [
     # ~285 MB native wheel to a bare `[dev]` install. Floor kept in step
     # with the `[codex-sdk]` extra above.
     "openai-codex>=0.144.4",
+    # Historical scitex-dev floor evidence; the runtime requirement is now
+    # declared in project.dependencies above, not in this maintainer extra.
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
     # first gained its `path=` parameter in 0.31.1 (verified against the
     # published wheels: 0.31.0 has NEITHER `path=` NOR the CWD-git-root
@@ -390,7 +403,6 @@ dev = [
     # scitex_dev.home (ensure_dotscitex_managed_by_git), which the
     # managed-home authority path calls at creation and launch; admitting
     # older would keep every created spec unprovable at the gate.
-    "scitex-dev>=0.61.0",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
