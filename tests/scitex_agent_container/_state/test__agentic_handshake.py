@@ -59,7 +59,8 @@ def _feedback(contract, exchange_id):
 
 
 def test_server_mints_distinct_nonce_payload_and_exchange_binding_without_expected_answer():
-    # Arrange / Act
+    # Arrange
+    # Act
     first = handshake.make_contract(TARGET, cursor=17, now=100)
     second = handshake.make_contract(TARGET, cursor=17, now=100)
     memory = MemoryLedger()
@@ -129,7 +130,8 @@ def test_ack_requires_exact_fresh_binding_and_authored_fields(case):
         feedback["next_checkpoint"] = contract["nonce"]
     elif case == "wrong_owner":
         feedback["owner"] = "daemon"
-    # Act / Assert
+    # Act
+    # Assert
     assert (
         handshake.validate_ack(
             contract, from_agent=peer, dispatch_id=nonce, feedback=feedback, now=now
@@ -180,7 +182,8 @@ def test_final_exchange_cannot_be_rewritten_as_a_fresh_pending_challenge():
     )
     status = StatusCode(kind="http", code=200, message='{"proven":true}')
     handshake.advance_handshake(exchange_id, status, store_factory=lambda: memory)
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(RuntimeError, match="final handshake"):
         handshake.record_acceptance(
             exchange_id, accepted=True, store_factory=lambda: memory
@@ -202,7 +205,8 @@ def test_bounded_authored_fields_do_not_require_a_specific_language_or_long_pros
     contract = handshake.make_contract(TARGET, cursor=17, now=100)
     feedback = _feedback(contract, "exchange")
     feedback["understood"], feedback["next_checkpoint"] = fields
-    # Act / Assert
+    # Act
+    # Assert
     assert handshake.validate_ack(
         contract,
         from_agent=TARGET["agent"],
@@ -218,7 +222,8 @@ def test_foreign_exchange_operation_or_responder_is_not_a_server_challenge():
     exchange_id = handshake.open_handshake(
         handshake.make_contract(TARGET, cursor=0, now=100), store_factory=lambda: memory
     )
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(PermissionError):
         handshake.read_handshake(
             exchange_id, agent="foreign-manager", store_factory=lambda: memory

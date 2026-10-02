@@ -252,7 +252,8 @@ async def test_round_trip_remains_202_until_new_correlated_native_output_is_sour
 async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
     rig, monkeypatch
 ):
-    # Arrange / Act
+    # Arrange
+    # Act
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=rig.app), base_url="http://test"
     ) as client:
@@ -280,7 +281,8 @@ async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
 async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(
     rig, monkeypatch
 ):
-    # Arrange / Act
+    # Arrange
+    # Act
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=rig.app), base_url="http://test"
     ) as client:
@@ -306,7 +308,8 @@ async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(
 async def test_owner_disappearing_after_authored_ack_stays_unknown(
     rig, monkeypatch, case
 ):
-    # Arrange / Act
+    # Arrange
+    # Act
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=rig.app), base_url="http://test"
     ) as client:
@@ -346,7 +349,8 @@ async def test_owner_disappearing_after_authored_ack_stays_unknown(
 
 @pytest.mark.asyncio
 async def test_client_cannot_select_nonce_or_runtime_identity(rig):
-    # Arrange / Act
+    # Arrange
+    # Act
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=rig.app), base_url="http://test"
     ) as client:

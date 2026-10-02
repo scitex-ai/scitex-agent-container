@@ -63,7 +63,8 @@ def test_invalid_native_identity_refuses_before_lifecycle(
         foreign.write_bytes(file.read_bytes())
         file.unlink()
         file.symlink_to(foreign)
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ResumePreflightError):
         preflight_native_resume_id(config, THREAD, native_home=root)
 
@@ -71,7 +72,8 @@ def test_invalid_native_identity_refuses_before_lifecycle(
 def test_other_home_cannot_supply_missing_native_thread(native_history, tmp_path):
     # Arrange
     config, _, _ = native_history
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ResumePreflightError, match="absent"):
         preflight_native_resume_id(config, THREAD, native_home=tmp_path / "other-home")
 
@@ -79,6 +81,7 @@ def test_other_home_cannot_supply_missing_native_thread(native_history, tmp_path
 def test_noncanonical_native_uuid_is_refused(native_history):
     # Arrange
     config, root, _ = native_history
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ResumePreflightError, match="exact thread UUID"):
         preflight_native_resume_id(config, THREAD.upper(), native_home=root)

@@ -167,6 +167,7 @@ def test_unowned_or_stale_canonical_record_cannot_bind_a_runtime(
     layout["record"][field] = value
 
     # Act and assert: readable native files cannot authorize another process.
+    # Assert
     with pytest.raises(CodexActivityError):
         _bind(layout)
 
@@ -179,6 +180,7 @@ def test_non_descendant_codex_is_not_selected_even_if_it_owns_the_same_root(tmp_
     (peer / "fd" / "3").symlink_to(layout["rollout"])
 
     # Act and assert: an accessible peer file is not a runtime binding.
+    # Assert
     with pytest.raises(CodexActivityError, match="exclusive CLI root"):
         _bind(layout)
 
@@ -191,6 +193,7 @@ def test_multiple_cli_root_fds_are_ambiguous_instead_of_using_newest_file(tmp_pa
     (layout["proc"] / "4003" / "fd" / "4").symlink_to(other)
 
     # Act and assert: no timestamp heuristic chooses a session.
+    # Assert
     with pytest.raises(CodexActivityError, match="exclusive CLI root"):
         _bind(layout)
 
@@ -228,6 +231,7 @@ def test_bound_owner_is_fenced_again_before_publication(tmp_path, change):
         layout["record"]["ended_at"] = "ended"
 
     # Act and assert: stale PID/session evidence cannot renew the owner.
+    # Assert
     with pytest.raises(CodexActivityError):
         assert_codex_binding_current(binding, layout["record"])
 

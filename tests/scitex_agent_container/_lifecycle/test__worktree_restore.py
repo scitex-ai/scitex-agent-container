@@ -106,10 +106,13 @@ def restore(owned, **kwargs):
 
 
 def test_restore_default_dry_run_and_reviewed_apply_preserve_identity(owned):
+    # Arrange
     original_owner = owned["owner"].read_bytes()
     primary_head = git(owned["repo"], "rev-parse", "HEAD")
     retained_history = git(owned["repo"], "rev-list", owned["branch"])
+    # Act
     receipt = restore(owned)
+    # Assert
     assert receipt["mode"] == "dry-run"
     assert not owned["target"].exists()
     applied = restore(owned, apply=True, receipt_sha256=receipt["receipt_sha256"])
@@ -125,6 +128,9 @@ def test_restore_default_dry_run_and_reviewed_apply_preserve_identity(owned):
 
 
 def test_apply_requires_exact_reviewed_receipt(owned):
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(WorktreePolicyError, match="receipt"):
         restore(owned, apply=True)
     with pytest.raises(WorktreePolicyError, match="receipt"):
@@ -133,15 +139,21 @@ def test_apply_requires_exact_reviewed_receipt(owned):
 
 
 def test_configured_recorded_missing_checkout_can_be_restored(owned):
+    # Arrange
     owned["config"].workdir = str(owned["target"])
+    # Act
     receipt = restore(owned)
+    # Assert
     assert receipt["receipt"]["repo_root"] == str(owned["repo"])
     restore(owned, apply=True, receipt_sha256=receipt["receipt_sha256"])
     assert owned["config"].workdir == str(owned["target"])
 
 
 def test_wrong_configured_repository_cannot_use_owner_record(owned, tmp_path):
+    # Arrange
+    # Act
     owned["config"].workdir = str(tmp_path / "another-repository")
+    # Assert
     with pytest.raises(WorktreePolicyError, match="configured workdir"):
         restore(owned)
     assert not owned["target"].exists()
@@ -149,7 +161,9 @@ def test_wrong_configured_repository_cannot_use_owner_record(owned, tmp_path):
 
 @pytest.mark.parametrize("change", ["owner", "primary", "tip", "target"])
 def test_stale_reviewed_receipt_cannot_apply(owned, change):
+    # Arrange
     receipt = restore(owned)
+    # Act
     if change == "owner":
         owned["owner"].write_bytes(owned["owner"].read_bytes() + b" ")
     elif change == "primary":
@@ -184,12 +198,14 @@ def test_stale_reviewed_receipt_cannot_apply(owned, change):
         )
     else:
         owned["target"].mkdir(parents=True)
+    # Assert
     with pytest.raises(WorktreePolicyError):
         restore(owned, apply=True, receipt_sha256=receipt["receipt_sha256"])
     assert not (owned["target"] / ".git").exists()
 
 
 def test_state_race_between_approval_and_add_is_refused(owned, monkeypatch):
+    # Arrange
     receipt = restore(owned)
     original = implementation._approval
     calls = 0
@@ -202,13 +218,16 @@ def test_state_race_between_approval_and_add_is_refused(owned, monkeypatch):
             owned["owner"].write_bytes(owned["owner"].read_bytes() + b" ")
         return result
 
+    # Act
     monkeypatch.setattr(implementation, "_approval", change_after_approval)
+    # Assert
     with pytest.raises(WorktreePolicyError, match="raced"):
         restore(owned, apply=True, receipt_sha256=receipt["receipt_sha256"])
     assert not owned["target"].exists()
 
 
 def test_postverification_failure_preserves_evidence(owned, monkeypatch):
+    # Arrange
     receipt = restore(owned)
     original = implementation._verify
 
@@ -216,7 +235,9 @@ def test_postverification_failure_preserves_evidence(owned, monkeypatch):
         (owned["target"] / "tracked.txt").write_text("changed after add\n")
         return original(*args)
 
+    # Act
     monkeypatch.setattr(implementation, "_verify", damage_after_add)
+    # Assert
     with pytest.raises(WorktreePolicyError, match="postverification"):
         restore(owned, apply=True, receipt_sha256=receipt["receipt_sha256"])
     assert (owned["target"] / ".git").exists()

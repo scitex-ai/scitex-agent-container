@@ -38,9 +38,12 @@ def load_changed(tmp_path, change):
 def test_actual_manager_profile_compiles_ultra_and_fast_independently(
     tmp_path, monkeypatch
 ):
+    # Arrange
     raw = yaml.safe_load(FIXTURE.read_text())
     config = load_config(FIXTURE)
+    # Act
     seen = overrides(config)
+    # Assert
     assert seen["model"] == "gpt-6.1-sol"
     assert seen["model_provider"] == "openai"
     assert seen["model_reasoning_effort"] == "ultra"
@@ -64,6 +67,9 @@ def test_actual_manager_profile_compiles_ultra_and_fast_independently(
 
 @pytest.mark.parametrize("tier", ["priority", "default", "fastest", 1, False, {}, []])
 def test_unknown_tiers_are_rejected_at_real_load_boundary(tmp_path, tier):
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="service_tier"):
         load_changed(
             tmp_path,
@@ -72,11 +78,16 @@ def test_unknown_tiers_are_rejected_at_real_load_boundary(tmp_path, tier):
 
 
 def test_fast_cannot_be_selected_on_another_harness(tmp_path):
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="service_tier"):
         load_changed(tmp_path, lambda spec: spec.update(harness="hermes"))
 
 
 def test_fast_cannot_be_selected_for_inline_provider(tmp_path):
+    # Arrange
+    # Act
     def change(spec):
         engine = spec["available_engines"][ENGINE]
         del engine["subscription"]
@@ -85,6 +96,7 @@ def test_fast_cannot_be_selected_for_inline_provider(tmp_path):
             "auth_token_env": "TEST_KEY",
         }
 
+    # Assert
     with pytest.raises(ValueError, match="service_tier"):
         load_changed(tmp_path, change)
 
@@ -92,9 +104,12 @@ def test_fast_cannot_be_selected_for_inline_provider(tmp_path):
 def test_omitted_tier_preserves_existing_generation_and_engine_switch_clears_it(
     tmp_path,
 ):
+    # Arrange
+    # Act
     config = load_changed(
         tmp_path, lambda spec: spec["available_engines"][ENGINE].pop("service_tier")
     )
+    # Assert
     assert "service_tier" not in overrides(config)
     selected = load_config(FIXTURE)
     apply_engine(
@@ -112,6 +127,7 @@ def test_omitted_tier_preserves_existing_generation_and_engine_switch_clears_it(
 def test_declared_native_sdk_fast_is_transported_without_staging_real_auth(
     tmp_path, monkeypatch
 ):
+    # Arrange
     config = load_config(FIXTURE)
     config.runtime = "headless"
     monkeypatch.delenv("CODEX_HOME", raising=False)
@@ -122,9 +138,11 @@ def test_declared_native_sdk_fast_is_transported_without_staging_real_auth(
         for index, value in enumerate(flags)
         if index and flags[index - 1] == "--env"
     )
+    # Act
     values = tomllib.loads(
         "\n".join(json.loads(base64.b64decode(env["SAC_CODEX_CONFIG_OVERRIDES_B64"])))
     )
+    # Assert
     assert values["service_tier"] == "fast"
     assert values["model_reasoning_effort"] == "ultra"
     assert env["SAC_CODEX_MODEL_PROVIDER"] == "openai"

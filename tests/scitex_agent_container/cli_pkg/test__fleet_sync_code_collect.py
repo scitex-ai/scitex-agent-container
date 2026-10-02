@@ -49,69 +49,93 @@ def _make_repo(d: Path) -> Path:
 
 
 def test_collect_finds_scitex_checkouts_only(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     _make_repo(proj / "scitex-foo")
     (proj / "not-scitex").mkdir()
     (proj / "random.txt").write_text("x")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert "scitex-foo" in got["checkouts"]
 
 
 def test_collect_ignores_non_scitex_dirs(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "other").mkdir()
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert got["checkouts"] == {}
 
 
 def test_collect_marks_dirty_tree(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     repo = _make_repo(proj / "scitex-foo")
     (repo / "f.txt").write_text("modified\n")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert got["checkouts"]["scitex-foo"]["dirty"] is True
 
 
 def test_collect_clean_tree_not_dirty(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     _make_repo(proj / "scitex-foo")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert got["checkouts"]["scitex-foo"]["dirty"] is False
 
 
 def test_collect_untracked_files_do_not_count_as_dirty(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     repo = _make_repo(proj / "scitex-foo")
     (repo / "new-untracked.txt").write_text("hello\n")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert got["checkouts"]["scitex-foo"]["dirty"] is False
 
 
 def test_collect_missing_proj_dir_reports_error(tmp_path: Path) -> None:
+    # Arrange
+    # Act
     got = collect_checkout_state(
         proj_dir=tmp_path / "nope", dotfiles_dir=tmp_path / "nodot"
     )
+    # Assert
     assert any("proj dir missing" in e for e in got["errors"])
 
 
 def test_collect_dotfiles_sha_when_present(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     dot = _make_repo(tmp_path / "dotfiles")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=dot)
+    # Assert
     assert got["dotfiles_sha"] is not None and len(got["dotfiles_sha"]) == 40
 
 
 def test_collect_state_is_json_serialisable(tmp_path: Path) -> None:
+    # Arrange
     proj = tmp_path / "proj"
     proj.mkdir()
     _make_repo(proj / "scitex-foo")
+    # Act
     got = collect_checkout_state(proj_dir=proj, dotfiles_dir=tmp_path / "nodot")
+    # Assert
     assert json.loads(json.dumps(got))["checkouts"]["scitex-foo"]["branch"] == "develop"
 
 
