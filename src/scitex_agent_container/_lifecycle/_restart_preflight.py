@@ -334,13 +334,16 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
     )
 
 
-def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
+def preflight_from_config_path(
+    config_path: str, *, opener: Any = None, engine_override: str | None = None,
+) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
     ``agent_restart`` holds a spec PATH (not a loaded config) and stops the
     agent BEFORE the successor ``agent_start`` loads + rotates it. So this
-    entry reproduces the launch's account resolution itself — load the spec,
-    run the SAME :func:`_lifecycle._start_preflight._rotate_to_healthy_account`
+    entry reproduces the launch's engine and account resolution — load the
+    spec, fold this restart's requested engine, then run the SAME
+    :func:`_lifecycle._start_preflight._rotate_to_healthy_account`
     pick (which may itself raise :class:`_creds.NoHealthyAccountError`, a
     legit abort-before-stop) — then probes the resolved successor credential.
 
@@ -351,9 +354,13 @@ def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
     import io
 
     from ..config import load_config
+    from ._engine_select import select_engine_at_start
     from ._start_preflight import _rotate_to_healthy_account
 
     config = load_config(config_path)
+    # The successor's requested engine owns auth, not the stored default.
+    # The caller's separate engine check retains any requested live probe.
+    select_engine_at_start(config, engine_override, probe=False, log=False)
     # Resolve the SAME successor account the launch will pick. NoHealthyAccountError
     # propagates as an abort-before-stop (better than stop-then-fail today).
     _rotate_to_healthy_account(config, log_stream=io.StringIO())

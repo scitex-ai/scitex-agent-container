@@ -34,9 +34,14 @@ import pytest
 from scitex_agent_container._lifecycle._restart_preflight import (
     RestartPreflightAbort,
     assert_successor_auth_usable,
+    preflight_from_config_path,
     resolve_successor_credential,
 )
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._lifecycle.test__engine_select import _TOKEN_ENV
+from tests.scitex_agent_container._lifecycle.test__start_prelaunch import (
+    _config_with_expired_default_auth,
+)
 
 # Non-secret fixture sentinels for the OAuth block. Deliberately NOT
 # secret-shaped (no ``sk-ant`` prefix, low entropy) so they are obviously
@@ -102,6 +107,18 @@ def test_non_claude_successor_does_not_resolve_an_absent_claude_pin(
     resolved = resolve_successor_credential(cfg)
     # Assert
     assert resolved == (None, "")
+
+
+def test_restart_auth_uses_the_requested_provider_engine(
+    tmp_path: Path, env_save_restore,
+) -> None:
+    # Arrange — the stored default's expired pin is unrelated successor auth.
+    _cfg, path = _config_with_expired_default_auth(tmp_path, env_save_restore)
+    env_save_restore.set(_TOKEN_ENV, "provider-fixture-value")
+    # Act — only preflight, never the stop/start lifecycle.
+    outcome = preflight_from_config_path(path, engine_override="qwen38-27b")
+    # Assert
+    assert outcome is None
 
 
 # --- real urllib ``opener`` seams (no mocks) -------------------------------

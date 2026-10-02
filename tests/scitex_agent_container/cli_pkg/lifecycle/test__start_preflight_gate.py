@@ -38,12 +38,19 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
+from click.testing import CliRunner
+
 import scitex_agent_container._state._preflight_creds as creds_mod
 import scitex_agent_container.config as config_mod
 import scitex_agent_container.config._resolve as resolve_mod
+from scitex_agent_container.cli_pkg.lifecycle._start import start
 from scitex_agent_container.cli_pkg.lifecycle._start_preflight_gate import (
     any_target_needs_anthropic_oauth,
     make_preflight_runner,
+)
+from tests.scitex_agent_container._lifecycle.test__engine_select import _TOKEN_ENV
+from tests.scitex_agent_container._lifecycle.test__start_prelaunch import (
+    _config_with_expired_default_auth,
 )
 
 _MISSING_SPEC = "spec file is absent on this host"
@@ -262,3 +269,34 @@ def test_a_hermes_harness_spec_does_not_need_oauth():
         result = any_target_needs_anthropic_oauth([cfg.name], [])
     # Assert
     assert result is False
+
+
+def test_explicit_provider_preflight_uses_its_selected_auth(
+    tmp_path, env_save_restore,
+):
+    # Arrange — load the real authoritative spec and its expired default pin.
+    _cfg, path = _config_with_expired_default_auth(tmp_path, env_save_restore)
+    env_save_restore.set(_TOKEN_ENV, "provider-fixture-value")
+    run = make_preflight_runner(
+        single_targets=[path], bulk_yamls=[], no_redispatch=False,
+        broker_self=False, engine_override="qwen38-27b",
+    )
+    # Act
+    outcome = run()
+    # Assert
+    assert outcome is None
+
+
+def test_start_cli_refuses_the_selected_engine_key_before_default_oauth(
+    tmp_path, env_save_restore,
+):
+    # Arrange — both paths refuse before dispatch; the cause must be selected auth.
+    _cfg, path = _config_with_expired_default_auth(tmp_path, env_save_restore)
+    env_save_restore.delete(_TOKEN_ENV)
+    # Act
+    result = CliRunner().invoke(
+        start, [path, "--yes", "--engine", "qwen38-27b"],
+        catch_exceptions=False,
+    )
+    # Assert
+    assert _TOKEN_ENV in result.stderr
