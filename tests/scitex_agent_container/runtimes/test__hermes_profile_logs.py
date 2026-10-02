@@ -1,157 +1,287 @@
-"""Generated-log controls use only synthetic profiles; no account/store calls."""
+"""Generated-log controls use synthetic profiles and isolated boundary fakes."""
 
 from __future__ import annotations
 
+import builtins
 import os
 import stat
-from types import SimpleNamespace
+from types import FunctionType, SimpleNamespace
 
 import pytest
 
 from scitex_agent_container.runtimes import _hermes_profile_logs as log_profile
 
 
-def test_fresh_profile_has_private_appendable_logs(tmp_path):
-    # Arrange / Act
-    assert log_profile.ensure_hermes_log_files(tmp_path) == ()
-
-    # Assert
-    assert stat.S_IMODE((tmp_path / "logs").stat().st_mode) == 0o700
-    for name in ("agent.log", "gui.log"):
-        path = tmp_path / "logs" / name
-        assert stat.S_ISREG(path.lstat().st_mode)
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write("synthetic startup\n")
-        assert path.read_text() == "synthetic startup\n"
+def _bind(function, namespace):
+    bound = FunctionType(
+        function.__code__,
+        namespace,
+        function.__name__,
+        function.__defaults__,
+        function.__closure__,
+    )
+    bound.__kwdefaults__ = function.__kwdefaults__
+    return bound
 
 
-@pytest.mark.parametrize("target_exists", [False, True])
-def test_archives_link_objects_without_following_targets(tmp_path, target_exists):
-    # Arrange
+def _snapshot(logs):
+    entries = {}
+    for path in logs.iterdir():
+        info = path.lstat()
+        contents = (
+            os.readlink(path)
+            if path.is_symlink()
+            else path.read_bytes()
+            if path.is_file()
+            else None
+        )
+        entries[path.name] = (info.st_ino, info.st_mode, info.st_mtime_ns, contents)
+    return stat.S_IMODE(logs.stat().st_mode), entries
+
+
+@pytest.fixture(params=[False, True])
+def imported_profile(tmp_path, request):
     profile = tmp_path / "profile"
     logs = profile / "logs"
     logs.mkdir(parents=True)
     target = tmp_path / "foreign-home" / "log"
-    if target_exists:
+    if request.param:
         target.parent.mkdir()
         target.write_text("foreign history\n")
     links = [logs / name for name in ("agent.log", "gui.log")]
     for link in links:
         link.symlink_to(target)
-    original_inodes = {link.name: link.lstat().st_ino for link in links}
+    return (
+        profile,
+        target,
+        {link.name: (True, link.lstat().st_ino, str(target)) for link in links},
+    )
+
+
+@pytest.mark.parametrize("name", ["agent.log", "gui.log"])
+@pytest.mark.parametrize(
+    "fact, expected",
+    [("regular", True), ("mode", 0o600), ("append", "synthetic startup\n")],
+)
+def test_fresh_generated_logs_are_private_and_appendable(
+    tmp_path, name, fact, expected
+):
+    # Arrange
+    path = tmp_path / "logs" / name
+
+    # Act
+    log_profile.ensure_hermes_log_files(tmp_path)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write("synthetic startup\n")
+    observed = {
+        "regular": stat.S_ISREG(path.lstat().st_mode),
+        "mode": stat.S_IMODE(path.stat().st_mode),
+        "append": path.read_text(),
+    }
+
+    # Assert
+    assert observed[fact] == expected
+
+
+def test_fresh_generated_log_directory_is_private(tmp_path):
+    # Arrange
+    logs = tmp_path / "logs"
+
+    # Act
+    log_profile.ensure_hermes_log_files(tmp_path)
+
+    # Assert
+    assert stat.S_IMODE(logs.stat().st_mode) == 0o700
+
+
+def test_imported_link_objects_are_archived_without_dereferencing(imported_profile):
+    # Arrange
+    profile, _target, expected = imported_profile
 
     # Act
     archives = log_profile.ensure_hermes_log_files(profile)
-    assert log_profile.ensure_hermes_log_files(profile) == ()
+    observed = {
+        path.name.split(".sac-link-")[0]: (
+            path.is_symlink(),
+            path.lstat().st_ino,
+            os.readlink(path),
+        )
+        for path in archives
+    }
 
     # Assert
-    assert len(archives) == 2
-    for name, archive in zip(("agent.log", "gui.log"), archives):
-        assert archive.is_symlink()
-        assert os.readlink(archive) == str(target)
-        assert archive.lstat().st_ino == original_inodes[name]
-        assert stat.S_ISREG((logs / name).lstat().st_mode)
-        with (logs / name).open("a") as stream:
+    assert observed == expected
+
+
+@pytest.mark.parametrize("name", ["agent.log", "gui.log"])
+def test_imported_links_become_regular_generated_files(imported_profile, name):
+    # Arrange
+    profile, _target, _links = imported_profile
+
+    # Act
+    log_profile.ensure_hermes_log_files(profile)
+
+    # Assert
+    assert stat.S_ISREG((profile / "logs" / name).lstat().st_mode)
+
+
+def test_generated_append_never_changes_foreign_target(imported_profile):
+    # Arrange
+    profile, target, _links = imported_profile
+    expected = target.read_bytes() if target.exists() else None
+
+    # Act
+    log_profile.ensure_hermes_log_files(profile)
+    for name in ("agent.log", "gui.log"):
+        with (profile / "logs" / name).open("a") as stream:
             stream.write("local startup\n")
-    assert target.exists() == target_exists
-    if target_exists:
-        assert target.read_text() == "foreign history\n"
+    observed = target.read_bytes() if target.exists() else None
+
+    # Assert
+    assert observed == expected
 
 
-def test_existing_logs_rotations_and_archives_are_preserved(tmp_path):
+def test_repaired_profile_is_idempotent_without_additional_archives(imported_profile):
+    # Arrange
+    profile, _target, _links = imported_profile
+    log_profile.ensure_hermes_log_files(profile)
+
+    # Act
+    repeated = log_profile.ensure_hermes_log_files(profile)
+
+    # Assert
+    assert repeated == ()
+
+
+def test_existing_regular_rotated_history_and_archive_logs_are_preserved(tmp_path):
     # Arrange
     logs = tmp_path / "logs"
     logs.mkdir(mode=0o700)
     for name in ("agent.log", "gui.log", "agent.log.1", "history.log"):
         (logs / name).write_text(f"{name} history\n")
-    archive = logs / "agent.log.sac-link-preserved"
-    archive.symlink_to("/synthetic/previous-home/log")
-    before = {path.name: path.lstat() for path in logs.iterdir()}
+    (logs / "agent.log.sac-link-preserved").symlink_to("/synthetic/previous/log")
+    expected = _snapshot(logs)
 
     # Act
-    assert log_profile.ensure_hermes_log_files(tmp_path) == ()
-    assert log_profile.ensure_hermes_log_files(tmp_path) == ()
+    log_profile.ensure_hermes_log_files(tmp_path)
+    log_profile.ensure_hermes_log_files(tmp_path)
 
     # Assert
-    assert {path.name for path in logs.iterdir()} == set(before)
-    assert stat.S_IMODE(logs.stat().st_mode) == 0o700
-    for name, metadata in before.items():
-        assert (logs / name).lstat().st_ino == metadata.st_ino
-        assert (logs / name).lstat().st_mtime_ns == metadata.st_mtime_ns
-        if name != archive.name:
-            assert (logs / name).read_text() == f"{name} history\n"
-    assert os.readlink(archive) == "/synthetic/previous-home/log"
+    assert _snapshot(logs) == expected
 
 
-def test_archive_name_collision_preserves_existing_archive(tmp_path, monkeypatch):
-    # Arrange
+def test_archive_name_collision_preserves_previous_and_imported_links(tmp_path):
+    # Arrange: bind real helper code to a deterministic archive-name source.
     logs = tmp_path / "logs"
     logs.mkdir()
     (logs / "agent.log").symlink_to("/synthetic/imported/log")
-    previous = logs / "agent.log.sac-link-preserved"
-    previous.symlink_to("/synthetic/previous/log")
+    (logs / "agent.log.sac-link-preserved").symlink_to("/synthetic/previous/log")
     names = iter(("preserved", "new"))
-    monkeypatch.setattr(log_profile, "uuid4", lambda: SimpleNamespace(hex=next(names)))
+    namespace = {**vars(log_profile), "uuid4": lambda: SimpleNamespace(hex=next(names))}
+    namespace["_archive_link"] = _bind(log_profile._archive_link, namespace)
+    provision = _bind(log_profile.ensure_hermes_log_files, namespace)
 
     # Act
-    archives = log_profile.ensure_hermes_log_files(tmp_path)
+    provision(tmp_path)
+    observed = {
+        name: os.readlink(logs / name)
+        for name in ("agent.log.sac-link-preserved", "agent.log.sac-link-new")
+    }
 
     # Assert
-    assert archives == (logs / "agent.log.sac-link-new",)
-    assert os.readlink(previous) == "/synthetic/previous/log"
-    assert os.readlink(archives[0]) == "/synthetic/imported/log"
+    assert observed == {
+        "agent.log.sac-link-preserved": "/synthetic/previous/log",
+        "agent.log.sac-link-new": "/synthetic/imported/log",
+    }
 
 
-@pytest.mark.parametrize("kind", ["directory", "fifo"])
-def test_unexpected_generated_entry_fails_before_any_log_changes(tmp_path, kind):
-    # Arrange
+@pytest.fixture(params=["directory", "fifo"])
+def unexpected_profile(tmp_path, request):
     logs = tmp_path / "logs"
     logs.mkdir()
     (logs / "agent.log").symlink_to("/synthetic/missing/log")
     unexpected = logs / "gui.log"
-    if kind == "directory":
+    if request.param == "directory":
         unexpected.mkdir()
     else:
         os.mkfifo(unexpected)
-    before = {path.name: path.lstat().st_ino for path in logs.iterdir()}
+    return tmp_path
+
+
+def test_unexpected_generated_entry_is_refused_before_provisioning(unexpected_profile):
+    # Arrange
+    profile = unexpected_profile
 
     # Act
-    with pytest.raises(ValueError, match="not a file or link"):
-        log_profile.ensure_hermes_log_files(tmp_path)
+    def call():
+        return log_profile.ensure_hermes_log_files(profile)
 
     # Assert
-    assert {path.name: path.lstat().st_ino for path in logs.iterdir()} == before
-    assert (logs / "agent.log").is_symlink()
+    with pytest.raises(ValueError, match="not a file or link"):
+        call()
 
 
-def test_symlinked_log_directory_is_rejected_without_touching_target(tmp_path):
+def _attempt_refused_provision(profile, error_type):
+    try:
+        log_profile.ensure_hermes_log_files(profile)
+    except error_type:
+        return
+
+
+def test_unexpected_entry_preserves_all_existing_log_objects(unexpected_profile):
     # Arrange
+    logs = unexpected_profile / "logs"
+    expected = _snapshot(logs)
+
+    # Act
+    _attempt_refused_provision(unexpected_profile, ValueError)
+
+    # Assert
+    assert _snapshot(logs) == expected
+
+
+@pytest.fixture
+def symlink_log_directory(tmp_path):
     target = tmp_path / "foreign-logs"
     target.mkdir()
     profile = tmp_path / "profile"
     profile.mkdir()
     (profile / "logs").symlink_to(target, target_is_directory=True)
+    return profile, target
+
+
+def test_symlinked_log_directory_is_refused_without_dereferencing(
+    symlink_log_directory,
+):
+    # Arrange
+    profile, _target = symlink_log_directory
 
     # Act
-    with pytest.raises(OSError):
-        log_profile.ensure_hermes_log_files(profile)
+    def call():
+        return log_profile.ensure_hermes_log_files(profile)
 
     # Assert
-    assert list(target.iterdir()) == []
-    assert (profile / "logs").is_symlink()
+    with pytest.raises(OSError):
+        call()
 
 
-@pytest.mark.parametrize("launch_mode", ["sdk", "tui"])
-def test_both_materializers_repair_each_home_backing(
-    tmp_path, monkeypatch, launch_mode
+def test_symlinked_log_directory_preserves_foreign_target_contents(
+    symlink_log_directory,
 ):
-    # Arrange: replace all provider, credential, store, and deployment work.
-    from scitex_agent_container.runtimes import (
-        _hermes_cct,
-        _hermes_profile,
-        _pg_identity_credentials,
-    )
+    # Arrange
+    profile, target = symlink_log_directory
+    expected = _snapshot(target)
+
+    # Act
+    _attempt_refused_provision(profile, OSError)
+
+    # Assert
+    assert _snapshot(target) == expected
+
+
+@pytest.fixture(params=["sdk", "tui"])
+def materialized_home_backings(tmp_path, request):
+    from scitex_agent_container.runtimes import _hermes_profile as profile
 
     state = tmp_path / "state"
     upper = tmp_path / "synthetic-upper-home"
@@ -159,62 +289,78 @@ def test_both_materializers_repair_each_home_backing(
     for home in targets:
         logs = home / ".hermes" / "logs"
         logs.mkdir(parents=True)
-        (logs / "agent.log").symlink_to("/synthetic/old-home/log")
-        (logs / "gui.log").symlink_to("/synthetic/old-home/gui-log")
+        for name in ("agent.log", "gui.log"):
+            (logs / name).symlink_to("/synthetic/old-home/log")
+    fake_modules = {
+        "_hermes_cct": SimpleNamespace(wire_hermes_cct_rail=lambda *args, **kwargs: {}),
+        "_pg_identity_credentials": SimpleNamespace(
+            materialize_project_pgpass=lambda *args, **kwargs: None
+        ),
+    }
 
-    def noop(*args, **kwargs):
-        pass
+    def import_boundary(name, *args, **kwargs):
+        return (
+            fake_modules[name]
+            if name in fake_modules
+            else builtins.__import__(name, *args, **kwargs)
+        )
 
-    for name in ("deploy_to_home", "setup_mcp_config"):
-        monkeypatch.setattr(_hermes_profile, name, noop)
-    for name in ("deploy_to_home_overlay", "resolve_overlay_upper_home"):
-        monkeypatch.setattr(_hermes_profile, name, lambda *args: upper)
-    monkeypatch.setattr(
-        _hermes_profile, "ensure_api_key", lambda *args: "synthetic-key"
-    )
-    monkeypatch.setattr(
-        _hermes_profile, "resolve_provider_api_key", lambda *args: "synthetic"
-    )
-    monkeypatch.setattr(
-        _hermes_profile, "_verified_instruction_text", lambda *args: "synthetic"
-    )
-    monkeypatch.setattr(
-        _hermes_profile,
-        "_launch_plan",
-        lambda *args, **kwargs: SimpleNamespace(
+    namespace = {
+        **vars(profile),
+        "__builtins__": {**vars(builtins), "__import__": import_boundary},
+        "deploy_to_home": lambda *args: None,
+        "setup_mcp_config": lambda *args: None,
+        "deploy_to_home_overlay": lambda *args: upper,
+        "resolve_overlay_upper_home": lambda *args: upper,
+        "ensure_api_key": lambda *args: "synthetic-key",
+        "resolve_provider_api_key": lambda *args: "synthetic",
+        "_verified_instruction_text": lambda *args: "synthetic",
+        "_launch_plan": lambda *args, **kwargs: SimpleNamespace(
             endpoint=SimpleNamespace(auth_env="SYNTHETIC_KEY")
         ),
-    )
-    monkeypatch.setattr(
-        _hermes_profile, "compile_hermes_config", lambda *args, **kwargs: {}
-    )
-    monkeypatch.setattr(
-        _hermes_profile, "_mcp_servers", lambda *args, **kwargs: ({}, [])
-    )
-    monkeypatch.setattr(_hermes_profile, "_sac_profile_env", lambda *args: {})
-    monkeypatch.setattr(_hermes_profile, "_cct_profile_env", lambda *args: {})
-    monkeypatch.setattr(_hermes_cct, "wire_hermes_cct_rail", lambda *args, **kwargs: {})
-    monkeypatch.setattr(_pg_identity_credentials, "materialize_project_pgpass", noop)
+        "compile_hermes_config": lambda *args, **kwargs: {},
+        "_mcp_servers": lambda *args, **kwargs: ({}, []),
+        "_sac_profile_env": lambda *args: {},
+        "_cct_profile_env": lambda *args: {},
+    }
     config = SimpleNamespace(
         name="synthetic",
         workdir="/synthetic",
+        engine_key="synthetic",
+        runtime="tui",
+        hermes_failover=SimpleNamespace(accounts={}, engines=[]),
         hermes_run_budget_seconds=60,
         hermes_compression=None,
         hermes_background_review=None,
         claude=SimpleNamespace(channels=None),
     )
+    sdk = _bind(profile.materialize_hermes_profile, namespace)
+    tui = _bind(profile.materialize_hermes_tui_profile, namespace)
+    calls = {
+        "sdk": lambda: sdk(config, state_dir=state, api_port=19_000),
+        "tui": lambda: tui(config, state_dir=state),
+    }
+    return targets, calls[request.param]
+
+
+def test_materializers_repair_each_declared_home_backing(materialized_home_backings):
+    # Arrange
+    targets, materialize = materialized_home_backings
 
     # Act
-    if launch_mode == "sdk":
-        _hermes_profile.materialize_hermes_profile(
-            config, state_dir=state, api_port=19000
+    materialize()
+    observed = {
+        (index, name): (
+            stat.S_ISREG((home / ".hermes" / "logs" / name).lstat().st_mode),
+            len(list((home / ".hermes" / "logs").glob(f"{name}.sac-link-*"))),
         )
-    else:
-        _hermes_profile.materialize_hermes_tui_profile(config, state_dir=state)
+        for index, home in enumerate(targets)
+        for name in ("agent.log", "gui.log")
+    }
 
-    # Assert: the actual materializers must call the real repair for both homes.
-    for home in targets:
-        logs = home / ".hermes" / "logs"
-        for name in ("agent.log", "gui.log"):
-            assert stat.S_ISREG((logs / name).lstat().st_mode)
-            assert len(list(logs.glob(f"{name}.sac-link-*"))) == 1
+    # Assert
+    assert observed == {
+        (index, name): (True, 1)
+        for index in range(2)
+        for name in ("agent.log", "gui.log")
+    }
