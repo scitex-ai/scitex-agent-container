@@ -48,6 +48,7 @@ class WorktreePlan:
     branch: str
     action: str
     owner_file: str
+    primary_repo_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -237,7 +238,41 @@ def _planned_from_authority(config: Any, info: Mapping[str, Any]) -> WorktreePla
         branch=f"feature/sac-{name}",
         action="reuse" if target.exists() else "create",
         owner_file=str(_owner_path(config)),
+        primary_repo_root=str(repo_root),
     )
+
+
+def _primary_root_from_linked_context(info: Mapping[str, Any], authored: Path) -> str:
+    """Map neutral common-dir metadata only after verifying both Git contexts."""
+    common = Path(_text(info, "git_common_dir"))
+    if not common.is_absolute():
+        return ""
+    common = common.resolve()
+    checkout_root = Path(_text(info, "repo_root")).resolve()
+    metadata = _git(
+        authored, "rev-parse", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    if len(metadata) != 2 or (
+        Path(metadata[0]).resolve() != checkout_root
+        or (authored / metadata[1]).resolve() != common
+    ):
+        raise WorktreePolicyError(
+            "neutral linked-worktree metadata does not match its Git checkout"
+        )
+    if common.name != ".git":
+        return ""
+    primary = common.parent
+    metadata = _git(
+        primary, "rev-parse", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    if len(metadata) != 2 or (
+        Path(metadata[0]).resolve() != primary
+        or (primary / metadata[1]).resolve() != common
+    ):
+        raise WorktreePolicyError(
+            "neutral common-dir metadata does not match its primary Git root"
+        )
+    return str(primary)
 
 
 def _branch_exists(plan: WorktreePlan) -> bool:
@@ -300,6 +335,7 @@ def plan_task_worktree(
             branch=_text(info, "branch"),
             action="reuse-explicit",
             owner_file=str(_owner_path(config)),
+            primary_repo_root=_primary_root_from_linked_context(info, authored),
         )
         owner = _read_owner(Path(plan.owner_file))
         if owner is None and _dirty(authored):

@@ -111,6 +111,155 @@ def _authority(path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def explicit_linked_context(tmp_path, runtime_dir, real_policy_cli):
+    repo = _authority(tmp_path / "explicit-repo")
+    linked = repo / ".worktrees/spec-linked"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/spec-linked",
+            str(linked),
+        ],
+        check=True,
+    )
+    config = _config(linked)
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    return repo, linked, config
+
+
+def test_explicit_linked_plan_records_the_verified_primary_root(
+    explicit_linked_context,
+):
+    # Arrange
+    repo, _, config = explicit_linked_context
+    # Act
+    root = config._worktree_plan.primary_repo_root
+    # Assert
+    assert root == str(repo)
+
+
+def test_explicit_linked_plan_retains_its_existing_neutral_root(
+    explicit_linked_context,
+):
+    # Arrange
+    _, linked, config = explicit_linked_context
+    # Act
+    root = config._worktree_plan.repo_root
+    # Assert
+    assert root == str(linked)
+
+
+def test_explicit_linked_owner_keeps_its_original_root_semantics(
+    explicit_linked_context,
+):
+    # Arrange
+    _, linked, config = explicit_linked_context
+    # Act
+    owner = json.loads(Path(config._worktree_plan.owner_file).read_text())
+    # Assert
+    assert owner["repo_root"] == str(linked)
+
+
+def test_explicit_linked_reuse_keeps_retained_owner_bytes(
+    explicit_linked_context, real_policy_cli
+):
+    # Arrange
+    _, _, config = explicit_linked_context
+    owner = Path(config._worktree_plan.owner_file)
+    before = owner.read_bytes()
+    # Act
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    # Assert
+    assert owner.read_bytes() == before
+
+
+@pytest.fixture(params=["repo_root", "git_common_dir"])
+def conflicting_linked_metadata(
+    explicit_linked_context, tmp_path, real_policy_cli, request
+):
+    _, _, config = explicit_linked_context
+    other = _authority(tmp_path / "different-real-repo")
+    replacements = {"repo_root": str(other), "git_common_dir": str(other / ".git")}
+    wrapper = tmp_path / "conflicting-neutral-metadata"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, subprocess, sys\n"
+        f"result = subprocess.run([{str(real_policy_cli)!r}, *sys.argv[1:]], capture_output=True, text=True)\n"
+        "payload = json.loads(result.stdout)\n"
+        "if sys.argv[1] == 'inspect' and payload.get('surface') == 'linked-worktree':\n"
+        f"    payload[{request.param!r}] = {replacements[request.param]!r}\n"
+        "print(json.dumps(payload))\n"
+        "raise SystemExit(result.returncode)\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    owner = Path(config._worktree_plan.owner_file)
+    before = owner.read_bytes()
+    error = _captured_policy_error(
+        lambda: enforce_task_worktree_policy(config, cli_path=wrapper)
+    )
+    return error, owner, before
+
+
+def test_conflicting_neutral_git_metadata_refuses_adoption(conflicting_linked_metadata):
+    # Arrange
+    error, _, _ = conflicting_linked_metadata
+    # Act
+    refused = "does not match its Git checkout" in error
+    # Assert
+    assert refused is True
+
+
+def test_conflicting_neutral_git_metadata_preserves_the_owner(
+    conflicting_linked_metadata,
+):
+    # Arrange
+    _, owner, before = conflicting_linked_metadata
+    # Act
+    after = owner.read_bytes()
+    # Assert
+    assert after == before
+
+
+def test_nonstandard_git_common_directory_gains_no_primary_trust(
+    tmp_path, runtime_dir, real_policy_cli
+):
+    # Arrange
+    repo = _authority(tmp_path / "external-git-repo")
+    common = tmp_path / "separate-git-metadata"
+    subprocess.run(
+        ["git", "-C", str(repo), "init", "-q", f"--separate-git-dir={common}"],
+        check=True,
+    )
+    linked = repo / ".worktrees/separate-linked"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/separate-linked",
+            str(linked),
+        ],
+        check=True,
+    )
+    config = _config(linked)
+    # Act
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    # Assert
+    assert config._worktree_plan.primary_repo_root == ""
+
+
 def test_real_cli_allow_attaches_the_resolved_proof(
     real_policy_cli: Path, tmp_path: Path, runtime_dir: Path
 ) -> None:

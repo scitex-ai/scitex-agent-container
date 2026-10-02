@@ -253,8 +253,8 @@ def _trusted_projects(config):
     return tomllib.loads("\n".join(flags[1::2]))["projects"]
 
 
-@pytest.fixture
-def approved_linked_worktree(tmp_path, env_save_restore):
+@pytest.fixture(params=["auto-provision", "explicit-linked"])
+def approved_linked_worktree(tmp_path, env_save_restore, request):
     """Real Git, owner files, and the existing neutral-policy CLI boundary."""
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
@@ -290,6 +290,23 @@ def approved_linked_worktree(tmp_path, env_save_restore):
     cli.chmod(0o700)
     config = _config()
     config.workdir = str(repo)
+    if request.param == "explicit-linked":
+        linked = repo / ".worktrees/spec-linked"
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature/spec-linked",
+                str(linked),
+            ],
+            check=True,
+        )
+        config.workdir = str(linked)
     enforce_task_worktree_policy(config, cli_path=cli)
     return config, repo
 
@@ -357,6 +374,7 @@ def test_spec_like_repository_attributes_cannot_extend_trust():
     # Arrange
     config = _config()
     config.repo_root = "/unverified"
+    config.primary_repo_root = "/unverified"
     config.trusted_projects = ["/"]
     # Act
     projects = _trusted_projects(config)
@@ -390,7 +408,9 @@ def test_repository_trust_cannot_expand_to_global_or_pattern_paths(
 ):
     # Arrange
     config, _ = approved_linked_worktree
-    config._worktree_plan = replace(config._worktree_plan, repo_root=root)
+    config._worktree_plan = replace(
+        config._worktree_plan, repo_root=root, primary_repo_root=root
+    )
     # Act
     projects = _trusted_projects(config)
     # Assert

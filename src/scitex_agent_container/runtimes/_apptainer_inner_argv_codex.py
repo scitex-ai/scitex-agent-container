@@ -100,11 +100,9 @@ def _trusted_project_paths(config: AgentConfig) -> tuple[str, ...]:
     plan = getattr(config, "_worktree_plan", None)
     if not isinstance(plan, WorktreePlan) or plan.resolved_workdir != workdir:
         return paths
-    root = Path(plan.repo_root)
-    if (
-        not root.is_absolute()
-        or any(character in plan.repo_root for character in "*?[]")
-    ):
+    root_text = plan.primary_repo_root or plan.repo_root
+    root = Path(root_text)
+    if not root.is_absolute() or any(character in root_text for character in "*?[]"):
         return paths
     root = root.resolve()
     if root == Path(root.anchor):
