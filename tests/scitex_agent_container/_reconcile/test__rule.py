@@ -18,9 +18,15 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
+
 import pytest
 
+from scitex_agent_container._reconcile._pass import _declared_host_is_local
 from scitex_agent_container._reconcile._rule import Verdict, decide
+from scitex_agent_container.config import load_config
+from tests.scitex_agent_container._reconcile._fleet import HOST, write_spec
 
 
 def _decide(**overrides):
@@ -52,6 +58,88 @@ def _row(**overrides) -> dict:
     }
     row.update(overrides)
     return row
+
+
+@contextmanager
+def _synthetic_host_routing(tmp_path, hostname):
+    """Real private host configuration, never the operator's registry."""
+    config_path = tmp_path / "host-config.yaml"
+    config_path.write_text(
+        f"host:\n  canonical: {HOST}\n"
+        "peers:\n  foreign-peer:\n    ssh: foreign.invalid\n"
+    )
+    values = {
+        "HOSTNAME": hostname,
+        "SCITEX_AGENT_CONTAINER_CONFIG": str(config_path),
+    }
+    saved = {name: os.environ.get(name) for name in values}
+    for name, value in values.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+@pytest.mark.parametrize("hostname", ["unexpected-ci-runner", None])
+def test_real_fleet_fixture_routes_locally_under_ambient_hostname(tmp_path, hostname):
+    # Arrange
+    registry = tmp_path / "agents"
+
+    # Act
+    with _synthetic_host_routing(tmp_path, hostname):
+        spec = write_spec(registry, "alpha")
+        config = load_config(spec)
+        local = _declared_host_is_local(config)
+
+    # Assert
+    assert local is True
+
+
+def test_real_fleet_fixture_blind_probe_is_unknown(tmp_path):
+    # Arrange
+    registry = tmp_path / "agents"
+
+    # Act
+    with _synthetic_host_routing(tmp_path, "unexpected-ci-runner"):
+        spec = write_spec(registry, "alpha")
+        config = load_config(spec)
+        decision = _decide(
+            row=_row(),
+            probe_ran=None,
+            declared_host_is_local=_declared_host_is_local(config),
+        )
+
+    # Assert
+    assert decision.verdict is Verdict.UNKNOWN
+
+
+def test_real_foreign_pin_still_blocks_a_local_corpse(tmp_path):
+    # Arrange
+    import yaml
+
+    registry = tmp_path / "agents"
+
+    # Act
+    with _synthetic_host_routing(tmp_path, "unexpected-ci-runner"):
+        spec = write_spec(registry, "alpha")
+        document = yaml.safe_load(spec.read_text())
+        document["spec"]["host"] = "foreign-peer"
+        spec.write_text(yaml.safe_dump(document))
+        config = load_config(spec)
+        decision = _decide(
+            row=_row(), declared_host_is_local=_declared_host_is_local(config)
+        )
+
+    # Assert
+    assert (decision.verdict, decision.reason) == (Verdict.SKIPPED, "pinned-elsewhere")
 
 
 # --- the PIN: ownership is asked before liveness -----------------------------
@@ -208,9 +296,7 @@ def test_ghost_active_row_names_the_corpse_signature():
     assert decision.reason == "ghost-active-row"
 
 
-@pytest.mark.parametrize(
-    "reason", ["pid_absent_at_sweep", "crashed", "reboot-swept"]
-)
+@pytest.mark.parametrize("reason", ["pid_absent_at_sweep", "crashed", "reboot-swept"])
 def test_unexpected_exit_reason_is_restarted(reason):
     # Arrange — the reaper writes 'pid_absent_at_sweep' (and wrote 'crashed'
     # before 2026-08-12); the reboot sweep wrote 'reboot-swept'. None of them
