@@ -99,7 +99,7 @@ jobs:
     name: no-hosted-runners-guard-on-self-hosted
     # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
     #
-    # 13s median, single-core, needs nothing but PyYAML, and never enters the
+    # 13s median, single-core, needs PyYAML + scitex-logging, and never enters the
     # CI SIF. It was holding one of four 32-core machines per run on a pool at
     # 93-94% utilisation, then queueing 289s median (p90 902s) — a 13-second
     # job waiting twenty times its own runtime for a machine it used 1/32 of.
@@ -120,7 +120,7 @@ jobs:
 
       # Same pattern as lint.yml: the bare Spartan node has no Python and is
       # PEP-668 externally-managed, so setup-uv + uv's own managed CPython is
-      # the only thing that works there. The guard needs nothing but PyYAML.
+      # the only thing that works there. The guards import PyYAML + scitex-logging.
       - uses: astral-sh/setup-uv@v3
         with:
           # PINNED: unpinned `latest` made CI a function of wall-clock
@@ -135,12 +135,12 @@ jobs:
       # first of them fails: an `if: always()` step that also owned the venv
       # creation would be reporting a missing interpreter instead of a
       # violation whenever setup broke.
-      - name: Prepare interpreter (the guards need only PyYAML)
+      - name: Prepare interpreter (PyYAML + scitex-logging)
         id: prepare
         run: |
           set -euo pipefail
           uv venv --python 3.12 "$GUARD_VENV"
-          uv pip install --python "$GUARD_VENV/bin/python" pyyaml
+          uv pip install --python "$GUARD_VENV/bin/python" pyyaml "scitex-logging>=0.1.5"
 
       - name: Guard — no GitHub-hosted runners
         run: |
