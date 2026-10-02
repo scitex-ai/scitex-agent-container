@@ -137,7 +137,8 @@ def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]
 
     Returns ``(None, "")`` — pre-flight is a NO-OP — for:
 
-      * provider / openai-family backends (API key, no OAuth to probe), and
+      * provider-backed Claude and non-Anthropic harnesses (no Claude
+        OAuth to probe), and
       * pure-unpinned host-live agents (no account / credentials_file /
         credentials_files). Their account NEVER swaps on restart, so the
         swap-to-a-stale-snapshot mechanism does not apply, and probing would
@@ -150,13 +151,10 @@ def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]
     abort-BEFORE-stop (strictly better than today's stop-then-fail, where
     the same error tears down a running agent it then cannot restart).
     """
-    from ..runtimes._apptainer_provider import (
-        openai_harness_active,
-        provider_active,
-    )
+    from ..runtimes._apptainer_provider import anthropic_oauth_active
 
-    # API-key backends have no OAuth credential to probe.
-    if provider_active(config) or openai_harness_active(config):
+    # Resolve auth only for the selected harness and backend.
+    if not anthropic_oauth_active(config):
         return None, ""
 
     claude_spec = getattr(config, "claude", None)

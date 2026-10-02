@@ -91,6 +91,19 @@ def _account_config(name: str, account: str) -> AgentConfig:
     return cfg
 
 
+@pytest.mark.parametrize("harness", ["hermes", "codex", "opencode"])
+def test_non_claude_successor_does_not_resolve_an_absent_claude_pin(
+    _isolate_home: Path, harness: str,
+) -> None:
+    # Arrange — an unused fallback pin must not block the selected successor.
+    cfg = _account_config("other-harness", "absent-claude-account")
+    cfg.harness = harness
+    # Act
+    resolved = resolve_successor_credential(cfg)
+    # Assert
+    assert resolved == (None, "")
+
+
 # --- real urllib ``opener`` seams (no mocks) -------------------------------
 
 

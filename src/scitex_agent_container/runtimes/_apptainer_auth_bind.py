@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._apptainer_provider import openai_harness_active, provider_active
+from ._apptainer_provider import anthropic_oauth_active
 
 
 class CredentialExpiredError(RuntimeError):
@@ -108,8 +108,7 @@ def credentials_file_bind(
          server-managed. A pinned-account TUI agent gets this bind
          AUTOMATICALLY without any manual ``credentials_file:`` line.
       3. Neither set, an Anthropic-compat backend override is active,
-         or the launch resolves to the ``openai`` agent-SDK family
-         (openai-compat-3 — no Anthropic backend to auth to) → no bind.
+         or the selected harness is not Anthropic-family → no bind.
 
     Binds the resolved host file WRITABLE (``:rw``) at
     ``<container_home>/.claude/.credentials.json`` so the in-container
@@ -154,7 +153,7 @@ def credentials_file_bind(
     by name on every open and so DOES reflect atomic-replace refreshes
     without a restart.
     """
-    if provider_active(config) or openai_harness_active(config):
+    if not anthropic_oauth_active(config):
         return []
     claude_spec = getattr(config, "claude", None)
     designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()
