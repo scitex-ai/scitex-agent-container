@@ -85,6 +85,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "migrate-images",
                 "scratch-migrate",
                 "link-specs",
+                "restore-worktree",
                 "provision-cards-notify",
                 "sync-cards-store-credential",
                 "reconcile-turn-bridge",
@@ -295,6 +296,9 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_link_specs import register as _register_link_specs  # noqa: E402
 
 _register_link_specs(agent_group)
+from ._agents_restore_worktree import register as _register_restore_worktree  # noqa: E402
+
+_register_restore_worktree(agent_group)
 # `migrate-layers` — step 3 of the to_home_layers migration: write into each
 # spec the ``to_home`` cascade it ALREADY resolves, so what an agent inherits
 # is readable from the spec instead of only derivable by re-running the

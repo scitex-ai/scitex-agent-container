@@ -44,6 +44,39 @@ response, invalid hash, identity change between checks, dirty/conflicting
 ownership, or failed provisioning refuses launch. There is no permissive
 fallback.
 
+## Recovering an absent owned checkout
+
+`sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID` is an explicit
+dry-run operation on the agent's declared owning host. It reads the existing
+canonical runtime ownership record and asks the neutral CLI's
+`check-owned-restore` verb to approve only that recorded missing path and
+retained existing branch. The authored workdir must name either the recorded
+primary repository or the exact recorded checkout. The command emits JSON with
+the owner digest, primary branch/HEAD/status, retained full tip, worktree
+registration digest, policy/projection hashes, exact Git argv and receipt hash.
+
+After reviewing that receipt, apply the same operation with
+`--apply --receipt-sha256 RECEIPT_SHA256`. SAC refuses changed receipts,
+serializes official restores, repeats neutral approval immediately before
+normal `git worktree add PATH EXISTING_BRANCH`, and verifies the result. It
+preserves primary branch/content/HEAD, ownership bytes, retained branch tip
+and history. It does not use force, create a branch, reset, delete, adopt a
+checkout, or launch an agent. A postverification failure preserves the
+checkout for inspection.
+
+This bounded capability requires an explicitly enabled neutral manifest and
+fresh generated projections. General `check-shell` and launch gates retain
+their existing rules. If the primary's current branch is unsuitable for the
+normal launch gate, author the spec workdir as the matching restored owned
+checkout, then perform the ordinary launch preflight. Restoring committed
+branch content cannot recover absent uncommitted files.
+
+The SAC suite uses a subprocess protocol fixture for hermetic mechanics tests.
+To run its additional cross-repository contract against the actual neutral CLI,
+set `SCITEX_WORKTREE_POLICY_TEST_CLI` to its reviewed executable and run
+`tests/scitex_agent_container/_lifecycle/test__worktree_restore.py`; the neutral
+repository independently tests all approval and refusal shapes with real Git.
+
 ## Runtime and container compatibility
 
 Resolution happens on the host. The container does not need dotfiles or a
