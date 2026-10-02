@@ -24,14 +24,24 @@ import re
 from typing import Any
 from urllib.parse import urlencode
 
-from django.http import (
-    HttpRequest,
-    HttpResponseForbidden,
-    HttpResponseRedirect,
-    JsonResponse,
-)
-from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
+try:
+    from django.http import (
+        HttpRequest,
+        HttpResponseForbidden,
+        HttpResponseRedirect,
+        JsonResponse,
+    )
+    from django.shortcuts import render
+    from django.views.decorators.http import (
+        require_GET,
+        require_http_methods,
+        require_POST,
+    )
+except ImportError as exc:
+    raise ImportError(
+        "SAC GUI dependencies are unavailable; install "
+        "scitex-agent-container[gui]."
+    ) from exc
 
 from ._authorization import can_control, fleet_visibility, resolve_identity, scope_rows
 from ._constants import API_URL_ENV
@@ -56,7 +66,13 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
     "/apps/agents")."""
-    from scitex_ui.mount import mount_prefix
+    try:
+        from scitex_ui.mount import mount_prefix
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     try:
         return mount_prefix(request, view_path=view_path)
@@ -66,8 +82,14 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
 def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     """Context for the standalone shell only (mounted mode uses global_base)."""
-    from scitex_ui.branding import shell_context
-    from scitex_ui.mount import mount_context
+    try:
+        from scitex_ui.branding import shell_context
+        from scitex_ui.mount import mount_context
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     # All three side panes are unused: this is a server-rendered fleet table,
     # not a file workspace. Declaring them unused is the scitex-ui API.

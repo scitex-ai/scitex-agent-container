@@ -22,7 +22,13 @@ def _run_server(
     open_browser: bool = False,
     hot_reload: bool = False,
 ) -> None:
-    from scitex_app.embed import run_standalone
+    try:
+        from scitex_app.embed import run_standalone
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     run_standalone(
         app_module=APP_MODULE,
@@ -68,7 +74,13 @@ def serve(
     hot_reload: bool = False,
 ) -> int:
     """Launch the guarded standalone server. Returns an exit code."""
-    from scitex_app.embed import serve_gui
+    try:
+        from scitex_app.embed import serve_gui
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     return serve_gui(
         package=package,

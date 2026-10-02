@@ -48,7 +48,13 @@ def _default_load_get_server():
 
 def _default_load_fastmcp_version():
     """Default ``fastmcp.__version__`` loader — for ``doctor``."""
-    import fastmcp
+    try:
+        import fastmcp
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     return fastmcp.__version__
 
