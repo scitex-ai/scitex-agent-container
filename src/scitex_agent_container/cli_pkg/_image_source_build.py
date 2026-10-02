@@ -637,6 +637,12 @@ def _stage_cards_source(build_context: Path) -> Path:
     return stage_cards_source(build_context)
 
 
+def _stage_noto_cjk_source(build_context: Path) -> Path:
+    from ..containers._noto_cjk import _stage_assets
+
+    return _stage_assets(build_context)
+
+
 def stage_layer_build_context(
     *,
     layer: str,
@@ -646,6 +652,7 @@ def stage_layer_build_context(
     bootstrap_sif: Path | None = None,
     stage_cards: Callable[[Path], Path] | None = None,
     stage_hermes: Callable[[Path], Path] | None = None,
+    stage_fonts: Callable[[Path], Path] | None = None,
 ) -> Path:
     """Stage every source input required by one image layer.
 
@@ -662,10 +669,12 @@ def stage_layer_build_context(
     )
     cards_stager = stage_cards or _stage_cards_source
     hermes_stager = stage_hermes or _stage_hermes_source
+    fonts_stager = stage_fonts or _stage_noto_cjk_source
     if layer in {"base", "scitex"}:
         cards_stager(staging_dir)
     if layer == "base":
         hermes_stager(staging_dir)
+        fonts_stager(staging_dir)
     return staged_def
 
 

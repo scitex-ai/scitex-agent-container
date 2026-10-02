@@ -281,6 +281,10 @@ if [ "$LAYER" = "base" ] || [ "$LAYER" = "scitex" ]; then
         || fail "stage-cards-marker"
 fi
 if [ "$LAYER" = "base" ]; then
+    # Same pinned/cached font context as ordinary and reproducible builds.
+    "$PYTHON" "$REPO/src/scitex_agent_container/containers/_noto_cjk.py" \
+        stage "$CTX" --cache "$WORKDIR/upstream/noto-cjk-jp" \
+        || fail "stage-noto-cjk-fonts"
     # apptainer-base.def installs Hermes from a sibling %files input. Fetch
     # and export the same immutable commit as cli_pkg/_hermes_source.py; a
     # remote bake that stages only SAC otherwise dies at %files.

@@ -119,6 +119,7 @@ class _FakeResult:
 def _build(tmp_path, pkg_root, recipe, **kw):
     kw.setdefault("stage_cards", lambda path: path)
     kw.setdefault("stage_hermes", lambda path: path)
+    kw.setdefault("stage_fonts", lambda path: path)
     return irb.build_layer_reproducible(
         layer=kw.pop("layer", "proxy"),
         def_path=recipe,
@@ -137,7 +138,9 @@ class TestBuildContextReachesTheRoundTrip:
             # Act
             _build(tmp_path, fake_pkg_root, recipe)
         # Assert
-        assert calls[0]["cwd"] == tmp_path / "containers" / "sac-proxy" / "build-context"
+        assert (
+            calls[0]["cwd"] == tmp_path / "containers" / "sac-proxy" / "build-context"
+        )
 
     def test_staged_source_tree_exists_at_that_cwd(
         self, tmp_path, fake_pkg_root, recipe
@@ -202,18 +205,14 @@ class TestBuildContextReachesTheRoundTrip:
         assert (
             staged,
             calls[0]["cwd"],
-            (
-                calls[0]["cwd"] / "scitex-cards-src" / "SAC_UPSTREAM_COMMIT"
-            ).read_text(),
+            (calls[0]["cwd"] / "scitex-cards-src" / "SAC_UPSTREAM_COMMIT").read_text(),
         ) == (
             [expected],
             expected,
             "exact-commit\n",
         )
 
-    def test_proxy_does_not_stage_cards_source(
-        self, tmp_path, fake_pkg_root, recipe
-    ):
+    def test_proxy_does_not_stage_cards_source(self, tmp_path, fake_pkg_root, recipe):
         # Arrange
         staged: list[Path] = []
         with _use_roundtrip(result=_FakeResult()):
@@ -252,7 +251,7 @@ class TestOrdinaryAndReproducibleStagingParity:
     @pytest.mark.parametrize(
         ("layer", "expected_auxiliary"),
         [
-            ("base", {"scitex-cards-src", "hermes-agent-src"}),
+            ("base", {"scitex-cards-src", "hermes-agent-src", "noto-cjk-jp"}),
             ("scitex", {"scitex-cards-src"}),
         ],
     )
@@ -277,10 +276,13 @@ class TestOrdinaryAndReproducibleStagingParity:
 
         cards = _stage_named("scitex-cards-src")
         hermes = _stage_named("hermes-agent-src")
+        fonts = _stage_named("noto-cjk-jp")
         saved_cards = isb._stage_cards_source
         saved_hermes = isb._stage_hermes_source
+        saved_fonts = isb._stage_noto_cjk_source
         isb._stage_cards_source = cards
         isb._stage_hermes_source = hermes
+        isb._stage_noto_cjk_source = fonts
         try:
             with _use_plain_build(tmp_path / "plain-result.sif") as plain_calls:
                 isb.build_layer_from_source(
@@ -297,22 +299,24 @@ class TestOrdinaryAndReproducibleStagingParity:
                     layer=layer,
                     stage_cards=cards,
                     stage_hermes=hermes,
+                    stage_fonts=fonts,
                 )
         finally:
             isb._stage_cards_source = saved_cards
             isb._stage_hermes_source = saved_hermes
+            isb._stage_noto_cjk_source = saved_fonts
 
         # Act
         plain_context = plain_calls[0]["cwd"]
         repro_context = repro_calls[0]["cwd"]
         ordinary_aux = {
             name
-            for name in ("scitex-cards-src", "hermes-agent-src")
+            for name in ("scitex-cards-src", "hermes-agent-src", "noto-cjk-jp")
             if (plain_context / name).is_dir()
         }
         reproducible_aux = {
             name
-            for name in ("scitex-cards-src", "hermes-agent-src")
+            for name in ("scitex-cards-src", "hermes-agent-src", "noto-cjk-jp")
             if (repro_context / name).is_dir()
         }
 
