@@ -275,6 +275,10 @@ class TuiSessionRuntime(
             from ._hermes_profile import validate_hermes_tui_profile
 
             validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
+        if getattr(config, "harness", "") == "opencode":
+            from ._opencode_profile import validate_opencode_profile
+
+            validate_opencode_profile(config, state_dir=state_dir, launch_argv=argv)
         return argv
 
     def resolved_image_identity(self) -> dict[str, str] | None:

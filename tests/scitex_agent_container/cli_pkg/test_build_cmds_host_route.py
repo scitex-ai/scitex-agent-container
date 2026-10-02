@@ -127,7 +127,9 @@ def _register_peers(tmp_path: Path, env_revert) -> None:
 def _host_line(output: str) -> str:
     """The one preflight line this module is about."""
     for line in output.splitlines():
-        if line.strip().startswith(_HOST_LINE):
+        # Records arrive with a level prefix (``INFO:   host: ...``), so
+        # the marker is searched past it rather than at the line start.
+        if _HOST_LINE in line:
             return line
     return ""
 

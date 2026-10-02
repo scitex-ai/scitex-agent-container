@@ -12,7 +12,12 @@ from ._provider_validation import validate_provider
 __all__ = ["validate_engine_entry"]
 
 _ENGINE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_REASONING_EFFORTS = ("none", "low", "medium", "high")
+# Go documents none/minimal/low/medium/high/xhigh/max; Hermes' ladder
+# carries the same set plus Hermes-internal ultra. sac admits xhigh
+# (fleet muse-spark runs at xhigh on Go since 2026-09-29); ultra is
+# accepted because the harness itself lists it (operator order
+# 2026-09-29); minimal/max stay out until a fleet engine needs them.
+_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "ultra")
 
 
 def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]:

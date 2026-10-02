@@ -26,6 +26,7 @@ from ..config._harness_registry import (
     HARNESS_DESCRIPTORS,
     HERMES_TUI,
     OPENAI_AGENTS,
+    OPENCODE_TUI,
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
 from ..config._residency_types import DEFAULT_AGENT_RESIDENCY
@@ -186,7 +187,7 @@ def build_inner_argv(
         from ._apptainer_codex_env import codex_harness_active
 
         harness_key = resolve_harness_key(config)
-        if harness_key == HERMES_TUI:
+        if harness_key in {HERMES_TUI, OPENCODE_TUI}:
             runner_tail = HARNESS_DESCRIPTORS[harness_key].inner_argv(
                 config, tui_options
             )

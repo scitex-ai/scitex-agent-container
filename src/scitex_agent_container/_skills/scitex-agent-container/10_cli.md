@@ -30,15 +30,15 @@ board. `rename` moves all of them together, or none:
 | # | Location |
 |---|---|
 | 1 | spec dir — `~/.scitex/agent-container/agents/<name>/` |
-| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, and `SCITEX_TODO_AGENT_ID` |
+| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, and `SCITEX_CARDS_AGENT_ID` |
 | 3 | overlay dir — `.../containers/overlays/<name>/` |
 | 4 | runtime + state dir — `.../runtime/<name>/` (bound into the container at `/state/<name>`) |
 | 5 | registry entry — `.../runtime/registry/<name>.json` |
 | 6 | shared PostgreSQL state-store records keyed by the agent name (identity **and** history) |
-| 7 | **task cards** — reassigned via scitex-todo's own `reassign_task` |
+| 7 | **task cards** — reassigned via scitex-cards' own `reassign_task` |
 
 Step 7 is the reason the verb exists. The board knows an agent by
-`SCITEX_TODO_AGENT_ID`. Change it without migrating the cards and every card
+`SCITEX_CARDS_AGENT_ID`. Change it without migrating the cards and every card
 that agent owns is **orphaned** — it can no longer see its own work, and
 nothing tells you.
 

@@ -9,14 +9,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Immutable SAC-lineage source for the cache fix proposed upstream in
-# https://github.com/NousResearch/hermes-agent/pull/110480 plus the external
-# inbound renderer proposed for current Hermes main in
-# https://github.com/ywatanabe1989/hermes-agent/pull/1. The current-main
-# history is unrelated to SAC's b635448 pin, so use this validated one-commit
-# descendant instead of importing that unrelated lineage into the base image.
-HERMES_COMMIT = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
-HERMES_REPOSITORY = "https://github.com/ywatanabe1989/hermes-agent.git"
+# SciTeX-org Hermes fork (operator, 2026-09-29): bake the fleet's own
+# fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
+# ship in the hermes SIF. Tracks the fork's scitex-main working branch.
+HERMES_COMMIT = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+HERMES_REPOSITORY = "https://github.com/scitex-ai/hermes-agent.git"
+HERMES_BRANCH = "scitex-main"
 HERMES_SOURCE_ENV = "SAC_HERMES_SOURCE_DIR"
 STAGED_HERMES_SOURCE = "hermes-agent-src"
 

@@ -11,6 +11,7 @@ from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._hermes_background_review import parse_selected_hermes_background_review
 from ._hermes_compression import parse_selected_hermes_compression
 from ._hermes_run_budget import parse_selected_hermes_run_budget
+from ._hermes_yolo import parse_selected_hermes_yolo
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -26,6 +27,9 @@ from ._loader_startup_defaults import (
     DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
     _with_default_direnv_allow,
 )
+from ._opencode_approval import parse_selected_opencode_approval_policy
+from ._opencode_run_budget import parse_selected_opencode_run_budget
+from ._opencode_serve import parse_selected_opencode_serve_port
 from ._parsers import (
     MODEL_ENV_KEY,
     interpolate_mcp_servers,
@@ -445,8 +449,12 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
         hermes_background_review=parse_selected_hermes_background_review(spec),
+        hermes_yolo=parse_selected_hermes_yolo(spec),
         hermes_run_budget_seconds=parse_selected_hermes_run_budget(spec),
         hermes_compression=parse_selected_hermes_compression(spec),
+        opencode_approval_policy=parse_selected_opencode_approval_policy(spec),
+        opencode_run_budget_seconds=parse_selected_opencode_run_budget(spec),
+        opencode_serve_port=parse_selected_opencode_serve_port(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),

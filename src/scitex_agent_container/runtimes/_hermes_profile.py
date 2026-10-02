@@ -505,6 +505,10 @@ def materialize_hermes_profile(
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
+        # Hermes opens logs/agent.log at startup and fails with Errno 2
+        # when the directory is absent (measured 2026-09-29: fresh agents
+        # IDLE with this startup error). Pre-create it with the profile.
+        (profile / "logs").mkdir(parents=True, exist_ok=True)
         (profile / "config.yaml").write_text(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )
@@ -575,6 +579,9 @@ def materialize_hermes_tui_profile(
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
+        # Same startup-logs guarantee as the SDK profile above: Hermes
+        # opens logs/agent.log at boot (Errno 2 without it).
+        (profile / "logs").mkdir(parents=True, exist_ok=True)
         (profile / "config.yaml").write_text(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )

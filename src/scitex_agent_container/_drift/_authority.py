@@ -1,13 +1,18 @@
 """Fail-closed authority validation for lifecycle spec reads.
 
 Diagnostics may describe an unknown source.  A lifecycle operation may not
-launch from one.  This module is the launch boundary: it accepts only the live
-``develop`` main checkout at exactly its fetched upstream, or an intentionally
-detached snapshot whose directory name pins both source identity and commit.
+launch from one.  This module is the launch boundary: it accepts the live
+``develop`` main checkout at exactly its fetched upstream, an intentionally
+detached snapshot whose directory name pins both source identity and commit,
+or a locally managed ``~/.scitex`` home repository (no ``origin`` remote)
+whose tracked spec blob matches HEAD — the ``managed-home`` kind adopted by
+:func:`scitex_dev.home.ensure_dotscitex_managed_by_git`, which every
+``sac agents create`` / launch path runs before reaching this gate.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -37,6 +42,8 @@ class SpecAuthority:
 
 def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
     """Run one bounded git query or raise a named authority failure."""
+    import os
+
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -44,6 +51,12 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
             text=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
+            # Fleet homes are capacity-split across mounts (the
+            # agent-container subtree lives on a scratch LV while the
+            # repo root sits on the container rootfs). Discovery must
+            # cross that boundary; _repo_for already path-contains the
+            # spec under the reported repo, so no trust is added.
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
         )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         raise SpecAuthorityError(
@@ -117,6 +130,61 @@ def _require_stable(repo: Path, expected_head: str) -> None:
             f"{expected_head} to {observed}"
         )
     _require_clean(repo)
+
+
+def _origin_present(repo: Path) -> bool:
+    """Return True when the repo names any ``origin`` remote.
+
+    A managed ``~/.scitex`` home repository must NEVER gain an origin: the
+    moment one exists the repo stops being self-contained local state and
+    the live/snapshot rules below take over (and fail, unless blessed).
+    Checked by return code, not output — an empty URL is no remote.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        raise SpecAuthorityError(
+            f"spec authority is unreachable: git 'remote get-url origin' "
+            f"failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
+def _validate_managed_home(spec: Path, repo: Path, head: str) -> SpecAuthority:
+    """Accept a self-contained home repo: no origin, clean, spec == HEAD.
+
+    The proof is self-consistency, not provenance: anyone with home write
+    access could commit a malicious spec — but they already own the user,
+    so there is nothing to launder. What this proof DOES close is the
+    launch-from-uncommitted-drift hole: the running spec always equals a
+    committed blob, reproducibly. A repo that names an origin is refused
+    here on purpose — foreign code must never ride the local trust path.
+    """
+    if _origin_present(repo):
+        raise SpecAuthorityError(
+            f"managed-home authority must not name an origin remote: {repo}; "
+            "remove it, or launch through the live/snapshot rules"
+        )
+    digest = _spec_blob_digest(repo, spec)
+    _require_stable(repo, head)
+    if _origin_present(repo):
+        raise SpecAuthorityError(
+            f"managed-home authority gained an origin during validation: {repo}"
+        )
+    return SpecAuthority(
+        kind="managed-home",
+        repo=str(repo),
+        head=head,
+        source_identity="local-dotscitex",
+        spec_digest=digest,
+    )
 
 
 def _origin_identity(repo: Path) -> str:
@@ -215,6 +283,8 @@ def validate_spec_authority(spec_path: str | Path) -> SpecAuthority:
     spec, repo = _repo_for(spec_path)
     _require_clean(repo)
     head = _head(repo)
+    if not _origin_present(repo):
+        return _validate_managed_home(spec, repo, head)
     branch = _git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", ok=(0, 1))
     if not branch:
         return _validate_snapshot(spec, repo, head)

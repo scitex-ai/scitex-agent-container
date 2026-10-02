@@ -8,6 +8,7 @@ from typing import Mapping
 
 from ._harness_lookup import canonical_harness
 from ._harness_types import resolve_spec_harness
+from ._opencode_approval import OPENCODE_APPROVAL_POLICIES
 from ._parsers._claude import parse_claude
 
 AVAILABLE_ENGINES_KEY = "available_engines"
@@ -174,6 +175,10 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.add("background_review")
         if "run_budget_seconds" in raw_entry:
             allowed.add("run_budget_seconds")
+        if "approval_policy" in raw_entry:
+            allowed.add("approval_policy")
+        if "serve" in raw_entry:
+            allowed.add("serve")
         if family == "claude-code":
             allowed.update({"account", "approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
@@ -182,6 +187,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
             allowed.update({"background_review", "compression", "run_budget_seconds"})
+        elif family == "opencode":
+            allowed.update({"approval_policy", "run_budget_seconds", "serve"})
         missing = sorted(required - entry_keys)
         unknown = sorted(entry_keys - allowed - {"channels"})
         if missing:
@@ -216,7 +223,13 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 errors.append(f"{path}.background_review must be a boolean")
 
         if "run_budget_seconds" in raw_entry:
-            if family != "hermes":
+            if family == "opencode":
+                opencode_budget = raw_entry.get("run_budget_seconds")
+                if type(opencode_budget) is not int or opencode_budget <= 0:
+                    errors.append(
+                        f"{path}.run_budget_seconds must be a positive integer"
+                    )
+            elif family != "hermes":
                 errors.append(
                     f"{path}.run_budget_seconds is only valid for the Hermes harness"
                 )
@@ -226,6 +239,34 @@ def canonical_surface_errors(raw: object) -> list[str]:
                     errors.append(
                         f"{path}.run_budget_seconds must be a positive integer"
                     )
+
+        if "approval_policy" in raw_entry and family == "opencode":
+            if raw_entry.get("approval_policy") not in OPENCODE_APPROVAL_POLICIES:
+                errors.append(
+                    f"{path}.approval_policy must be one of "
+                    f"{sorted(OPENCODE_APPROVAL_POLICIES)}"
+                )
+
+        if "serve" in raw_entry:
+            if family != "opencode":
+                errors.append(
+                    f"{path}.serve is only valid for the opencode harness"
+                )
+            else:
+                serve = raw_entry.get("serve")
+                if not isinstance(serve, Mapping):
+                    errors.append(f"{path}.serve must be a mapping")
+                else:
+                    serve_unknown = sorted(set(map(str, serve)) - {"port"})
+                    if serve_unknown:
+                        errors.append(
+                            f"{path}.serve has unknown fields: {serve_unknown}"
+                        )
+                    port = serve.get("port", "auto")
+                    if port != "auto" and (type(port) is not int or port <= 0):
+                        errors.append(
+                            f"{path}.serve.port must be 'auto' or a positive integer"
+                        )
 
         session = raw_entry.get("session")
         if not isinstance(session, Mapping):

@@ -149,6 +149,20 @@ def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
     "Defaults to SAC_NAME (the parent when an agent spawns its own fork).",
 )
 @click.option(
+    "--fresh",
+    is_flag=True,
+    default=False,
+    help="Start a clean session (0 inherited exchanges) instead of "
+    "continuing the parent's session.",
+)
+@click.option(
+    "--handover",
+    type=str,
+    default=None,
+    help="Handover note (伝言) prepended to the fork's boot-kick — the "
+    "parent's direct message, newest context first.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -163,6 +177,8 @@ def fork(
     ttl: str | None,
     role: str | None,
     caller: str | None,
+    fresh: bool,
+    handover: str | None,
     as_json: bool,
 ) -> None:
     """Spawn a context-inheriting FORK of PARENT.
@@ -208,7 +224,13 @@ def fork(
     # unknown parent or a taken explicit --name.
     try:
         resolved_name, doc = prepare_fork_spawn(
-            parent, fork_name=fork_name, task=task, persist=persist, role=role
+            parent,
+            fork_name=fork_name,
+            task=task,
+            persist=persist,
+            role=role,
+            fresh=fresh,
+            handover=handover,
         )
     except ForkSeedError as exc:
         _fail(str(exc))

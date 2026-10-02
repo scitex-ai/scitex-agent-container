@@ -127,3 +127,33 @@ def test_endpoint_enrichment_uses_supplied_snapshot_without_per_row_store_reads(
         19123,
         "http://remote-node:19123/v1/turn",
     )
+
+
+def test_configless_row_from_other_host_is_remote_not_blank() -> None:
+    row = annotate_runtime_rows(
+        [{"name": "handyman-01", "host": "scitex-compute-04"}],
+        active_reader=lambda host=None: [],
+        local_host="scitex-compute-03",
+    )[0]
+    assert row["status"] == "remote"
+    assert row["liveness"]["verdict"] == "remote"
+    assert "scitex-compute-04" in row["liveness"]["evidence"][0]["detail"]
+
+
+def test_configless_row_without_host_stays_blank() -> None:
+    row = annotate_runtime_rows(
+        [{"name": "mystery"}],
+        active_reader=lambda host=None: [],
+        local_host="scitex-compute-03",
+    )[0]
+    assert "status" not in row
+    assert "liveness" not in row
+
+
+def test_configless_row_on_local_host_stays_blank() -> None:
+    row = annotate_runtime_rows(
+        [{"name": "local-ghost", "host": "scitex-compute-03"}],
+        active_reader=lambda host=None: [],
+        local_host="scitex-compute-03",
+    )[0]
+    assert "status" not in row
