@@ -327,7 +327,7 @@ def clear_compose_buffer(
     log = slogging.getLogger(__name__)
 
     pane = capture_fn(name)
-    if _prompts.has_esc_cancel_modal(pane):
+    if _prompts.has_esc_cancel_modal(pane) or _prompts.codex_blocking_modal(pane):
         # A dev-channels / "Esc to cancel" modal is up: an Escape here would
         # CANCEL the launch and kill the session. Refuse to clear now — the
         # modal drainer must dismiss it (Enter → option 1) first.
@@ -366,7 +366,9 @@ def clear_compose_buffer(
         # Re-check before EVERY resend: a modal may have (re)appeared between
         # attempts, and an Escape into it would cancel/kill the session.
         current = capture_fn(name)
-        if _prompts.has_esc_cancel_modal(current):
+        if _prompts.has_esc_cancel_modal(current) or _prompts.codex_blocking_modal(
+            current
+        ):
             log_pane_fault(
                 log,
                 name,
@@ -523,10 +525,16 @@ def verify_submit_by_advancement(
 
     tail = fragment_tail(pending_fragment or "")
 
+    def _blocked(pane: str) -> bool:
+        from .prompts import codex_blocking_modal
+
+        return codex_blocking_modal(pane) is not None
+
     def _fragment_in_transcript(pane: str) -> bool:
         """Our unique payload is visible, but not in the live composer."""
         return (
             bool(tail)
+            and not _blocked(pane)
             and tail in _squeeze(pane)
             and not composer_holds_fragment(pane, tail)
         )
@@ -570,6 +578,8 @@ def verify_submit_by_advancement(
         was never sent. A composer visibly holding OUR payload is the same
         proof, and it still has to pass the shared busy check.
         """
+        if _blocked(pane):
+            return False
         if _pane_is_input_idle(pane):
             return True
         from .._lifecycle.liveness_probe import pane_is_busy
@@ -582,6 +592,8 @@ def verify_submit_by_advancement(
     last_pane = ""
     while time_fn() < appear_deadline:
         last_pane = _advanced()
+        if _blocked(last_pane):
+            return False
         if _pending(last_pane):
             saw_pending = True
             break
@@ -606,6 +618,8 @@ def verify_submit_by_advancement(
         idle = False
         while time_fn() < idle_deadline:
             last_pane = _advanced()
+            if _blocked(last_pane):
+                return False
             if not _pending(last_pane):
                 if not require_submission_proof:
                     return True
@@ -672,6 +686,8 @@ def verify_submit_by_advancement(
                 sleep_fn(poll_s)
             last_pane = _advanced()
             phase = _SubmitPhase.PROVING
+            if _blocked(last_pane):
+                return False
             if _fragment_in_transcript(last_pane):
                 phase = _SubmitPhase.SUBMITTED
                 return True
