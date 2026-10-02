@@ -51,9 +51,7 @@ def _proof(lines, cursor=0):
 
 
 @pytest.mark.parametrize("family", ["function", "custom_tool"])
-def test_digest_in_correlated_new_native_output_proves_lifecycle_without_private_text(
-    family,
-):
+def test_digest_in_correlated_new_native_output_proves_lifecycle(family):
     # Arrange: exact native call/output format, with private surrounding output.
     lines = [
         _meta(),
@@ -68,6 +66,19 @@ def test_digest_in_correlated_new_native_output_proves_lifecycle_without_private
         "event_seq": 2,
         "completed_at": 22.0,
     }
+
+
+@pytest.mark.parametrize("family", ["function", "custom_tool"])
+def test_digest_proof_excludes_private_native_output(family):
+    # Arrange
+    lines = [
+        _meta(),
+        _tool(f"{family}_call", 21),
+        _tool(f"{family}_call_output", 22, output=f"private-result {ANSWER}"),
+    ]
+    # Act
+    proof = _proof(lines)
+    # Assert
     assert "private-result" not in repr(proof)
 
 
@@ -94,50 +105,55 @@ def test_manager_terminal_error_zero_tools_cannot_prove_handshake(manager):
 
 
 @pytest.mark.parametrize(
-    "shape",
+    "call_at,outputs,cursor,extra",
     [
-        "old",
-        "pre_cursor",
-        "foreign",
-        "inflight",
-        "arguments",
-        "wrong_hash",
-        "embedded_hash",
+        pytest.param(19, [ANSWER], 0, {}, id="old"),
+        pytest.param(21, [ANSWER], 1, {}, id="pre_cursor"),
+        pytest.param(21, [ANSWER], 0, {"thread_id": "foreign-child"}, id="foreign"),
+        pytest.param(21, [], 0, {}, id="inflight"),
+        pytest.param(21, ["unrelated-output"], 0, {}, id="arguments"),
+        pytest.param(21, ["wrong-hash"], 0, {}, id="wrong_hash"),
+        pytest.param(21, ["a" + ANSWER + "b"], 0, {}, id="embedded_hash"),
     ],
 )
-def test_nonproof_shapes_never_satisfy_fresh_computation(shape):
+def test_nonproof_shapes_never_satisfy_fresh_computation(
+    call_at, outputs, cursor, extra
+):
     # Arrange
-    call_at = 19 if shape == "old" else 21
-    extra = {"thread_id": "foreign-child"} if shape == "foreign" else {}
     lines = [_meta(), _tool("function_call", call_at, arguments=ANSWER, **extra)]
-    if shape != "inflight":
-        output = "unrelated-output" if shape in {"arguments", "wrong_hash"} else ANSWER
-        if shape == "embedded_hash":
-            output = "a" + ANSWER + "b"
-        lines.append(_tool("function_call_output", 22, output=output, **extra))
+    lines.extend(
+        _tool("function_call_output", 22, output=output, **extra) for output in outputs
+    )
     # Act
     # Assert
-    assert _proof(lines, cursor=1 if shape == "pre_cursor" else 0) is None
+    assert _proof(lines, cursor=cursor) is None
 
 
-@pytest.mark.parametrize("shape", ["child_history", "orphan", "partial", "regressed"])
-def test_unknown_or_unbound_rollout_is_refused_even_with_the_right_hash(shape):
+@pytest.mark.parametrize(
+    "mutate,cursor",
+    [
+        pytest.param(
+            lambda lines: lines.insert(1, _meta("foreign-child")), 0, id="child_history"
+        ),
+        pytest.param(lambda lines: lines.pop(1), 0, id="orphan"),
+        pytest.param(
+            lambda lines: lines.__setitem__(-1, lines[-1].rstrip("\n")), 0, id="partial"
+        ),
+        pytest.param(lambda lines: None, 3, id="regressed"),
+    ],
+)
+def test_unknown_or_unbound_rollout_is_refused_even_with_the_right_hash(mutate, cursor):
     # Arrange
     lines = [
         _meta(),
         _tool("function_call", 21),
         _tool("function_call_output", 22, output=ANSWER),
     ]
-    if shape == "child_history":
-        lines.insert(1, _meta("foreign-child"))
-    elif shape == "orphan":
-        lines.pop(1)
-    elif shape == "partial":
-        lines[-1] = lines[-1].rstrip("\n")
+    mutate(lines)
     # Act
     # Assert
     with pytest.raises(CodexActivityError):
-        _proof(lines, cursor=3 if shape == "regressed" else 0)
+        _proof(lines, cursor=cursor)
 
 
 def test_duplicate_records_preserve_the_authoritative_cursor():

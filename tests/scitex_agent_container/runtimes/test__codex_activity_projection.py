@@ -170,42 +170,53 @@ def test_new_active_turn_can_work_while_previous_terminal_error_remains_visible(
     ) == ("busy", "active", "error", 1)
 
 
-@pytest.mark.parametrize(
-    "mutation", ["missing-owner", "ended", "missing-birth", "wrong-model-route"]
+def _wrong_model_route(layout):
+    compiled = json.loads(layout["birth"]["compiled_spec_json"])
+    compiled["harness"] = "hermes"
+    layout["birth"]["compiled_spec_json"] = json.dumps(compiled)
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(
+            (lambda layout: None, {"instance_reader": lambda _: None}),
+            id="missing-owner",
+        ),
+        pytest.param(
+            (lambda layout: layout["record"].update(ended_at="ended"), {}), id="ended"
+        ),
+        pytest.param(
+            (lambda layout: None, {"birth_reader": lambda _: None}), id="missing-birth"
+        ),
+        pytest.param((_wrong_model_route, {}), id="wrong-model-route"),
+    ]
 )
-def test_missing_or_wrong_authority_preserves_the_previous_heartbeat(
-    tmp_path, mutation
-):
+def refused_authority(tmp_path, request):
     # Arrange: a previous authoritative cache exists before evidence becomes unknown.
     layout = _layout(tmp_path)
     previous = b'{"writer":"previous-owner","session_id":"old-session"}\n'
     (layout["state"] / "heartbeat.json").write_bytes(previous)
-    instance_reader = None
-    birth_reader = None
-
-    def missing(_):
-        return None
-
-    if mutation == "missing-owner":
-        instance_reader = missing
-    elif mutation == "ended":
-        layout["record"]["ended_at"] = "ended"
-    elif mutation == "missing-birth":
-        birth_reader = missing
-    else:
-        compiled = json.loads(layout["birth"]["compiled_spec_json"])
-        compiled["harness"] = "hermes"
-        layout["birth"]["compiled_spec_json"] = json.dumps(compiled)
+    mutate, readers = request.param
+    mutate(layout)
 
     # Act: attempt native publication with missing/wrong canonical authority.
     with pytest.raises(CodexActivityError):
-        _promote(layout, instance_reader=instance_reader, birth_reader=birth_reader)
+        _promote(layout, **readers)
+    return layout["state"] / "heartbeat.json", previous
+
+
+def test_missing_or_wrong_authority_preserves_the_previous_heartbeat(refused_authority):
+    # Arrange: the real publisher refused the changed canonical authority.
+    path, previous = refused_authority
+    # Act
+    current = path.read_bytes()
 
     # Assert: UNKNOWN does not overwrite a known previous authority.
-    assert (layout["state"] / "heartbeat.json").read_bytes() == previous
+    assert current == previous
 
 
-def test_owner_change_after_write_retracts_only_this_observer_cache(tmp_path):
+@pytest.fixture
+def ended_during_write(tmp_path):
     # Arrange: the canonical record ends during the real shared writer call.
     layout = _layout(tmp_path)
     previous = b'{"writer":"previous-owner","session_id":"old-session"}\n'
@@ -217,12 +228,21 @@ def test_owner_change_after_write_retracts_only_this_observer_cache(tmp_path):
     # Act: fence again after publication and detect the actual metadata change.
     with pytest.raises(CodexActivityError):
         _promote(layout, writer=end_owner)
+    return layout["state"] / "heartbeat.json", previous
+
+
+def test_owner_change_after_write_retracts_only_this_observer_cache(ended_during_write):
+    # Arrange
+    path, previous = ended_during_write
+    # Act
+    current = path.read_bytes()
 
     # Assert: this stale observer's cache is restored without a new authority claim.
-    assert (layout["state"] / "heartbeat.json").read_bytes() == previous
+    assert current == previous
 
 
-def test_concurrent_successor_cache_is_preserved_after_old_owner_race(tmp_path):
+@pytest.fixture
+def successor_during_write(tmp_path):
     # Arrange: a successor publishes after this observer's write.
     layout = _layout(tmp_path)
     successor = b'{"writer":"successor","session_id":"successor-session"}\n'
@@ -234,12 +254,23 @@ def test_concurrent_successor_cache_is_preserved_after_old_owner_race(tmp_path):
     # Act: detect the changed canonical marker after publication.
     with pytest.raises(CodexActivityError):
         _promote(layout, writer=replace_owner)
+    return layout["state"] / "heartbeat.json", successor
+
+
+def test_concurrent_successor_cache_is_preserved_after_old_owner_race(
+    successor_during_write,
+):
+    # Arrange
+    path, successor = successor_during_write
+    # Act
+    current = path.read_bytes()
 
     # Assert: retraction cannot clobber a cache another owner already owns.
-    assert (layout["state"] / "heartbeat.json").read_bytes() == successor
+    assert current == successor
 
 
-def test_truncated_replay_cannot_regress_counters_within_same_engine(tmp_path):
+@pytest.fixture
+def regressed_during_write(tmp_path):
     # Arrange: a published pair exists, then the same inode loses its tool history.
     layout = _layout(tmp_path)
     _promote(layout)
@@ -249,9 +280,19 @@ def test_truncated_replay_cannot_regress_counters_within_same_engine(tmp_path):
     # Act: a syntactically complete shortened replay must not reset trusted work.
     with pytest.raises(CodexActivityError, match="regressed"):
         _promote(layout, now=101)
+    return layout["state"] / "heartbeat.json", previous
+
+
+def test_truncated_replay_cannot_regress_counters_within_same_engine(
+    regressed_during_write,
+):
+    # Arrange
+    path, previous = regressed_during_write
+    # Act
+    current = path.read_bytes()
 
     # Assert: preserve the previous native watermark rather than fabricated zero.
-    assert (layout["state"] / "heartbeat.json").read_bytes() == previous
+    assert current == previous
 
 
 def test_listener_uses_native_birth_harness_even_when_current_spec_defaults_to_hermes(

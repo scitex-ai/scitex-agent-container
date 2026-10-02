@@ -35,34 +35,59 @@ def test_exact_native_header_qualifies_without_claude_store(native_history):
     assert result == THREAD
 
 
+def _rewrite_header(file, updates):
+    row = json.loads(file.read_text())
+    row["payload"].update(updates)
+    file.write_text(json.dumps(row) + "\n")
+
+
+def _escape_history(file, tmp_path):
+    foreign = tmp_path / "foreign-history"
+    foreign.write_bytes(file.read_bytes())
+    file.unlink()
+    file.symlink_to(foreign)
+
+
 @pytest.mark.parametrize(
-    "defect", ["child", "different-id", "partial", "missing", "duplicate", "escape"]
+    "mutate",
+    [
+        pytest.param(
+            lambda file, tmp: _rewrite_header(
+                file,
+                {
+                    "source": {
+                        "subagent": {"thread_spawn": {"parent_thread_id": THREAD}}
+                    }
+                },
+            ),
+            id="child",
+        ),
+        pytest.param(
+            lambda file, tmp: _rewrite_header(
+                file, {"id": "01a0fdd8-24b2-7b23-a264-4ae60f30245b"}
+            ),
+            id="different-id",
+        ),
+        pytest.param(
+            lambda file, tmp: file.write_text(file.read_text().rstrip("\n")),
+            id="partial",
+        ),
+        pytest.param(lambda file, tmp: file.unlink(), id="missing"),
+        pytest.param(
+            lambda file, tmp: (
+                file.parent / f"rollout-copy-{THREAD}.jsonl"
+            ).write_bytes(file.read_bytes()),
+            id="duplicate",
+        ),
+        pytest.param(_escape_history, id="escape"),
+    ],
 )
 def test_invalid_native_identity_refuses_before_lifecycle(
-    native_history, tmp_path, defect
+    native_history, tmp_path, mutate
 ):
     # Arrange
     config, root, file = native_history
-    row = json.loads(file.read_text())
-    if defect == "child":
-        row["payload"]["source"] = {
-            "subagent": {"thread_spawn": {"parent_thread_id": THREAD}}
-        }
-        file.write_text(json.dumps(row) + "\n")
-    elif defect == "different-id":
-        row["payload"]["id"] = "01a0fdd8-24b2-7b23-a264-4ae60f30245b"
-        file.write_text(json.dumps(row) + "\n")
-    elif defect == "partial":
-        file.write_text(json.dumps(row))
-    elif defect == "missing":
-        file.unlink()
-    elif defect == "duplicate":
-        (file.parent / f"rollout-copy-{THREAD}.jsonl").write_bytes(file.read_bytes())
-    elif defect == "escape":
-        foreign = tmp_path / "foreign-history"
-        foreign.write_bytes(file.read_bytes())
-        file.unlink()
-        file.symlink_to(foreign)
+    mutate(file, tmp_path)
     # Act
     # Assert
     with pytest.raises(ResumePreflightError):
