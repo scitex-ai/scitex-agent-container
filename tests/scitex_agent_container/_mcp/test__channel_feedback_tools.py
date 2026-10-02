@@ -53,8 +53,8 @@ def _registered(listen_url: str = "http://127.0.0.1:1") -> _ToolRecorder:
     return recorder
 
 
-@pytest.mark.asyncio
-async def test_server_handshake_ack_uses_exact_exchange_route_and_preserves_authored_fields():
+@pytest_asyncio.fixture
+async def submitted_handshake():
     # Arrange: challenge identity is listen-minted, never caller-selected.
     from scitex_dev.status import new_exchange_id
 
@@ -97,19 +97,61 @@ async def test_server_handshake_ack_uses_exact_exchange_route_and_preserves_auth
     # Act
     result = await send_agentic_ack(arguments, orig, wrap=lambda **kw: kw, send=send)
     # Assert
-    assert posts == [
+    return posts, result, orig, arguments, exchange_id
+
+
+@pytest.mark.asyncio
+async def test_server_handshake_ack_uses_exact_exchange_route(submitted_handshake):
+    # Arrange
+    posts, result, orig, arguments, exchange_id = submitted_handshake
+    # Act
+    actual = posts
+    # Assert
+    assert actual == [
         ("daemon", f"/agents/bob/handshakes/{exchange_id}/ack", {"feedback": arguments})
     ]
-    assert (
-        _payload(result)["body"]["proven"] is None and orig["_agentic_ack"] == arguments
-    )
+
+
+@pytest.mark.asyncio
+async def test_server_handshake_ack_preserves_authored_fields(submitted_handshake):
+    # Arrange
+    posts, result, orig, arguments, exchange_id = submitted_handshake
+    # Act
+    response = _payload(result)
+    # Assert
+    assert response["body"]["proven"] is None and orig["_agentic_ack"] == arguments
+
+
+def _foreign_exchange(arguments, orig):
+    from scitex_dev.status import new_exchange_id
+
+    arguments["handshake_proof"]["exchange_id"] = new_exchange_id(host="other")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", ["missing_proof", "foreign_exchange", "foreign_sender", "foreign_target"]
+    "mutate",
+    [
+        pytest.param(
+            lambda arguments, orig: arguments.pop("handshake_proof"), id="missing_proof"
+        ),
+        pytest.param(
+            _foreign_exchange,
+            id="foreign_exchange",
+        ),
+        pytest.param(
+            lambda arguments, orig: orig.update(from_agent="unrelated-peer"),
+            id="foreign_sender",
+        ),
+        pytest.param(
+            lambda arguments, orig: orig["extra"]["handshake"]["target"].update(
+                agent="foreign-agent"
+            ),
+            id="foreign_target",
+        ),
+    ],
 )
-async def test_server_challenge_ack_never_falls_back_to_ordinary_message_send(case):
+async def test_server_challenge_ack_never_falls_back_to_ordinary_message_send(mutate):
     # Arrange
     from scitex_dev.status import new_exchange_id
 
@@ -135,14 +177,7 @@ async def test_server_challenge_ack_never_falls_back_to_ordinary_message_send(ca
         "next_checkpoint": "Report current tool activity.",
         "handshake_proof": {"exchange_id": exchange_id, "nonce": "nonce-issued"},
     }
-    if case == "missing_proof":
-        arguments.pop("handshake_proof")
-    elif case == "foreign_exchange":
-        arguments["handshake_proof"]["exchange_id"] = new_exchange_id(host="other")
-    elif case == "foreign_sender":
-        orig["from_agent"] = "unrelated-peer"
-    elif case == "foreign_target":
-        orig["extra"]["handshake"]["target"]["agent"] = "foreign-agent"
+    mutate(arguments, orig)
     calls = []
 
     async def send(*args):

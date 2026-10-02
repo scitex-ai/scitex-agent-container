@@ -124,26 +124,27 @@ def test_fenced_native_api_exposes_lifecycle_counters_and_real_event_time(tmp_pa
 
 
 @pytest.mark.parametrize(
-    "fault", ["expired", "wrong-session", "wrong-boot", "pane-writer"]
+    "patch,now",
+    [
+        pytest.param({}, 191, id="expired"),
+        pytest.param({"session_id": "another-thread"}, 110, id="wrong-session"),
+        pytest.param({"boot_id": "another-owner"}, 110, id="wrong-boot"),
+        pytest.param({"writer": "listen-tui-observer"}, 110, id="pane-writer"),
+    ],
 )
-def test_unfenced_or_stale_heartbeat_cannot_publish_native_activity(tmp_path, fault):
+def test_unfenced_or_stale_heartbeat_cannot_publish_native_activity(
+    tmp_path, patch, now
+):
     # Arrange: previously valid measurements lose their current identity/lease.
     layout = _layout(tmp_path)
     _promote(layout)
     path = layout["state"] / "heartbeat.json"
     beat = json.loads(path.read_text())
-    if fault == "wrong-session":
-        beat["session_id"] = "another-thread"
-    elif fault == "wrong-boot":
-        beat["boot_id"] = "another-owner"
-    elif fault == "pane-writer":
-        beat["writer"] = "listen-tui-observer"
+    beat.update(patch)
     path.write_text(json.dumps(beat))
 
     # Act: a live pane or old cache cannot renew native event authority.
-    activity = activity_projection(
-        layout["state"], now=191 if fault == "expired" else 110
-    )
+    activity = activity_projection(layout["state"], now=now)
 
     # Assert: all native counters/session/progress are typed UNKNOWN, never zero.
     assert {
