@@ -1,9 +1,9 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs the selected Claude, Codex, Hermes, or OpenCode harness inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
-  [WHEN] Launching/managing an agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
-  [HOW] `pip install scitex-agent-container`, then `sac agents start <name>` or `import scitex_agent_container`.
+  [WHAT] `spec.yaml` selects Claude, Codex, Hermes or OpenCode in Apptainer; A2A inbound (`POST /v1/turn`), SSH deploy and JSON status.
+  [WHEN] Managing agents/fleets, remote launch, MCP wiring or A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
+  [HOW] `pip install scitex-agent-container`; `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
 interfaces:
@@ -18,15 +18,13 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Declarative lifecycle management for AI coding agents:
-define an agent in `spec.yaml`, select its harness and launch mode,
-run it inside Apptainer (local or remote via SSH), and observe via
+Define an agent in `spec.yaml`, select its harness and launch mode,
+run it in Apptainer locally or via SSH, and observe with
 `sac agents list`/`tail`/`health`.
 
-Claude and direct Codex support TUI and headless modes; Hermes and OpenCode
-currently support TUI mode. Engine authentication is separate from harness
-selection. The OpenAI Agents SDK registry entry has no lifecycle launch
-adapter, and Command Code is not registered. See
+Claude and direct Codex support TUI/headless; Hermes and OpenCode support
+TUI. Authentication is separate from harness selection. OpenAI Agents SDK
+has no lifecycle launch adapter; Command Code is unregistered. See
 [how-sac-works.md](../../../../docs/how-sac-works.md) for the support matrix.
 
 ## What the package ships
@@ -108,7 +106,6 @@ adapter, and Command Code is not registered. See
 
 ## 30-second start
 
-See [02_quick-start.md](02_quick-start.md) — `pip install
-scitex-agent-container`, drop a `spec.yaml` under
-`~/.scitex/agent-container/agents/<name>/`, then `sac agents start
-<name>` / `list` / `tail`.
+See [02_quick-start.md](02_quick-start.md). After installation, place
+`spec.yaml` in `~/.scitex/agent-container/agents/<name>/`; use
+`sac agents start <name>` / `list` / `tail`.
