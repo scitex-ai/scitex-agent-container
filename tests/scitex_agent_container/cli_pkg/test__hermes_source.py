@@ -30,8 +30,8 @@ def complete(sid, name, args, payload):
 def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
-        "https://github.com/ywatanabe1989/hermes-agent.git",
-        "9ca9b7e5b9092465d37e4af0c2132aed188af5dd",
+        "https://github.com/scitex-ai/hermes-agent.git",
+        "17c5fde5a3f3642262003cd6aa09d54cf4d11de3",
     )
 
     # Act
@@ -100,6 +100,29 @@ def test_heartbeat_instrumentation_fails_closed_when_an_anchor_drifts(tmp_path):
     module = staged / "tui_gateway" / "tool_progress.py"
     module.parent.mkdir(parents=True)
     module.write_text("def changed_upstream_anchor():\n    pass\n", encoding="utf-8")
+
+    # Act
+    # Assert
+    with pytest.raises(source.HermesSourceError, match="gate drifted"):
+        source._patch_hermes_lifecycle_instrumentation(staged)
+
+
+@pytest.mark.parametrize("gate_count", [1, 3])
+def test_instrumented_fork_rejects_missing_or_extra_lifecycle_gate(
+    tmp_path, gate_count
+):
+    # Arrange
+    staged = tmp_path / "hermes-agent-src"
+    module = staged / "tui_gateway" / "tool_progress.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "def _emit_tool_lifecycle(event, sid, name, args, payload):\n"
+        "    if not _connector_tool_lifecycle(name, args):\n"
+        "        return _emit(event, sid, payload)\n"
+        + "    if True:  # SAC heartbeat instrumentation is display-independent\n"
+        * gate_count,
+        encoding="utf-8",
+    )
 
     # Act
     # Assert

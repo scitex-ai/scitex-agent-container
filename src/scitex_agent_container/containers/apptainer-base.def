@@ -1054,8 +1054,8 @@ EOF
     org.scitex.runtime apptainer
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
-    org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
-    org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
+    org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
+    org.scitex.hermes.commit 17c5fde5a3f3642262003cd6aa09d54cf4d11de3
     org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
 
 %help
