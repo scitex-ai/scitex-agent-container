@@ -272,7 +272,9 @@ def validate_ack(contract, *, from_agent, dispatch_id, feedback, now):
     return True
 
 
-def record_handshake_ack(event: dict, *, now=None, store_factory=None) -> bool:
+def record_handshake_ack(
+    event: dict, *, now=None, store_factory=None, record_ack=None
+) -> bool:
     """Save authored fields in dispatch_feedback and safe proof IDs/hash only."""
     feedback = event.get("extra", {})
     proof = feedback.get("handshake_proof", {})
@@ -293,7 +295,7 @@ def record_handshake_ack(event: dict, *, now=None, store_factory=None) -> bool:
     state = json.loads(values["message"])
     if state.get("candidate") not in (None, safe):
         return False
-    saved = record_agentic_ack(
+    saved = (record_ack or record_agentic_ack)(
         feedback["dispatch_id"],
         from_agent=event["from_agent"],
         understood=feedback.get("understood"),

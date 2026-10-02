@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_agentic_ack_status_is_registered() -> None:
     # Arrange
@@ -35,7 +37,9 @@ def test_record_agentic_ack_marks_exact_dispatch(pg_schema: str) -> None:
         record_dispatch,
     )
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     # Act
     record_agentic_ack(
         did,
@@ -81,7 +85,9 @@ def test_unexpected_peer_cannot_claim_nonce(pg_schema: str) -> None:
         record_dispatch,
     )
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     # Act
     result = record_agentic_ack(
         did,
@@ -101,7 +107,9 @@ def test_exact_ack_replay_is_idempotent(pg_schema: str) -> None:
     from scitex_agent_container._state.dispatch_feedback import record_agentic_ack
     from scitex_agent_container._state.dispatch_ledger import record_dispatch
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     kwargs = {
         "from_agent": "bob",
         "understood": "Do work.",
@@ -121,7 +129,9 @@ def test_progress_before_agentic_ack_is_refused(pg_schema: str) -> None:
     from scitex_agent_container._state.dispatch_feedback import record_progress
     from scitex_agent_container._state.dispatch_ledger import record_dispatch
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     # Act
     result = record_progress(
         did,
@@ -145,7 +155,9 @@ def test_progress_updates_sender_status(pg_schema: str) -> None:
         record_dispatch,
     )
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     record_agentic_ack(
         did,
         from_agent="bob",
@@ -194,7 +206,9 @@ def test_late_mechanical_reaction_cannot_regress_agentic_ack(pg_schema: str) -> 
         record_dispatch,
     )
 
-    did = record_dispatch(agent="alice", from_agent="alice", to_agent="bob", text="work")
+    did = record_dispatch(
+        agent="alice", from_agent="alice", to_agent="bob", text="work"
+    )
     record_agentic_ack(
         did,
         from_agent="bob",
@@ -207,3 +221,64 @@ def test_late_mechanical_reaction_cannot_regress_agentic_ack(pg_schema: str) -> 
     mark_dispatch_reacted(did, agent="alice")
     # Assert
     assert list_dispatches(agent="alice")[0]["status"] == "agentic_acked"
+
+
+@pytest.mark.parametrize(
+    "dispatch", [None, {"agent": "alice", "to_agent": "mallory", "status": "sent"}]
+)
+def test_injected_store_cannot_authorize_wrong_nonce_or_peer(dispatch):
+    # Arrange
+    from scitex_agent_container._state.dispatch_feedback import record_agentic_ack
+
+    writes, updates = [], []
+    # Act
+    result = record_agentic_ack(
+        "nonce",
+        from_agent="bob",
+        understood="Implement protocol",
+        owner="bob",
+        next_checkpoint="Report tests",
+        agent="alice",
+        dispatch_lookup=lambda did, **kw: dispatch,
+        feedback_lookup=lambda did, agent: None,
+        feedback_write=lambda values, **kw: writes.append(values),
+        dispatch_update=lambda *args, **kw: updates.append((args, kw)),
+    )
+    # Assert
+    assert (result, writes, updates) == (None, [], [])
+
+
+def test_conflicting_replay_cannot_mutate_injected_feedback_or_dispatch():
+    # Arrange
+    from scitex_agent_container._state.dispatch_feedback import record_agentic_ack
+
+    existing = {
+        "understood": "Original task",
+        "owner": "bob",
+        "next_checkpoint": "Original report",
+    }
+    writes, updates = [], []
+    # Act
+    result = record_agentic_ack(
+        "nonce",
+        from_agent="bob",
+        understood="Changed task",
+        owner="bob",
+        next_checkpoint="Original report",
+        agent="alice",
+        dispatch_lookup=lambda did, **kw: {
+            "agent": "alice",
+            "to_agent": "bob",
+            "status": "sent",
+        },
+        feedback_lookup=lambda did, agent: existing,
+        feedback_write=lambda values, **kw: writes.append(values),
+        dispatch_update=lambda *args, **kw: updates.append((args, kw)),
+    )
+    # Assert
+    assert (result, writes, updates, existing["understood"]) == (
+        None,
+        [],
+        [],
+        "Original task",
+    )

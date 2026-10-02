@@ -1,6 +1,7 @@
 """Immutable exchange binding and explicit authored ACK contract."""
 
 import json
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from scitex_dev.status import StatusCode
 from scitex_dev.store import NEW_RECORD
 
 from scitex_agent_container._state import _agentic_handshake as handshake
+from scitex_agent_container._state.dispatch_feedback import record_agentic_ack
 
 TARGET = {
     "agent": "scitex-hub",
@@ -58,18 +60,25 @@ def _feedback(contract, exchange_id):
     }
 
 
-def test_server_mints_distinct_nonce_payload_and_exchange_binding_without_expected_answer():
+def test_server_mints_distinct_nonce_and_payload():
     # Arrange
     # Act
     first = handshake.make_contract(TARGET, cursor=17, now=100)
     second = handshake.make_contract(TARGET, cursor=17, now=100)
+    # Assert
+    assert first["nonce"] != second["nonce"] and first["payload"] != second["payload"]
+
+
+def test_exchange_binds_the_original_pending_server_contract():
+    # Arrange
+    first = handshake.make_contract(TARGET, cursor=17, now=100)
     memory = MemoryLedger()
+    # Act
     exchange_id = handshake.open_handshake(first, store_factory=lambda: memory)
     row, contract = handshake.read_handshake(
         exchange_id, agent=TARGET["agent"], store_factory=lambda: memory
     )
     # Assert
-    assert first["nonce"] != second["nonce"] and first["payload"] != second["payload"]
     assert (
         contract,
         row["code"],
@@ -77,101 +86,121 @@ def test_server_mints_distinct_nonce_payload_and_exchange_binding_without_expect
         row["initiator"],
         row["responder"],
     ) == (first, 202, False, "sac.listen", TARGET["agent"])
-    assert handshake.expected_answer(first) not in handshake.challenge_prompt(
-        first, exchange_id
+
+
+def test_server_challenge_does_not_supply_the_computed_answer():
+    # Arrange
+    contract = handshake.make_contract(TARGET, cursor=17, now=100)
+    # Act
+    prompt = handshake.challenge_prompt(contract, "exchange")
+    # Assert
+    assert handshake.expected_answer(contract) not in prompt
+
+
+def _replace_proof(key):
+    return lambda args: args["feedback"]["handshake_proof"].update(
+        {key: "foreign-value"}
     )
 
 
 @pytest.mark.parametrize(
-    "case",
+    "mutate",
     [
-        "wrong_peer",
-        "wrong_nonce",
-        "wrong_instance",
-        "wrong_boot",
-        "wrong_thread",
-        "wrong_answer",
-        "expired",
-        "empty",
-        "mechanical",
-        "nonce_only",
-        "wrong_owner",
+        pytest.param(
+            lambda args: args.update(from_agent="another-manager"), id="wrong_peer"
+        ),
+        pytest.param(
+            lambda args: args.update(dispatch_id="stale-nonce"), id="wrong_nonce"
+        ),
+        pytest.param(_replace_proof("instance_id"), id="wrong_instance"),
+        pytest.param(_replace_proof("boot_id"), id="wrong_boot"),
+        pytest.param(_replace_proof("session_id"), id="wrong_thread"),
+        pytest.param(_replace_proof("answer"), id="wrong_answer"),
+        pytest.param(lambda args: args.update(now=221), id="expired"),
+        pytest.param(lambda args: args["feedback"].update(understood=""), id="empty"),
+        pytest.param(
+            lambda args: args["feedback"].update(understood="ACK received"),
+            id="mechanical",
+        ),
+        pytest.param(
+            lambda args: args["feedback"].update(next_checkpoint=args["dispatch_id"]),
+            id="nonce_only",
+        ),
+        pytest.param(
+            lambda args: args["feedback"].update(owner="daemon"), id="wrong_owner"
+        ),
     ],
 )
-def test_ack_requires_exact_fresh_binding_and_authored_fields(case):
+def test_ack_requires_exact_fresh_binding_and_authored_fields(mutate):
     # Arrange
     contract = handshake.make_contract(TARGET, cursor=17, now=100)
     feedback = _feedback(contract, "exchange")
-    peer, nonce, now = TARGET["agent"], contract["nonce"], 101
-    if case == "wrong_peer":
-        peer = "another-manager"
-    elif case == "wrong_nonce":
-        nonce = "stale-nonce"
-    elif case.startswith("wrong_") and case[6:] in {
-        "instance",
-        "boot",
-        "thread",
-        "answer",
-    }:
-        key = {
-            "instance": "instance_id",
-            "boot": "boot_id",
-            "thread": "session_id",
-            "answer": "answer",
-        }[case[6:]]
-        feedback["handshake_proof"][key] = "foreign-value"
-    elif case == "expired":
-        now = 221
-    elif case == "empty":
-        feedback["understood"] = ""
-    elif case == "mechanical":
-        feedback["understood"] = "ACK received"
-    elif case == "nonce_only":
-        feedback["next_checkpoint"] = contract["nonce"]
-    elif case == "wrong_owner":
-        feedback["owner"] = "daemon"
+    args = dict(
+        from_agent=TARGET["agent"],
+        dispatch_id=contract["nonce"],
+        feedback=feedback,
+        now=101,
+    )
+    mutate(args)
     # Act
     # Assert
-    assert (
-        handshake.validate_ack(
-            contract, from_agent=peer, dispatch_id=nonce, feedback=feedback, now=now
-        )
-        is False
-    )
+    assert handshake.validate_ack(contract, **args) is False
 
 
-def test_ack_persists_safe_candidate_and_acceptance_cannot_erase_it(monkeypatch):
+@pytest.fixture
+def accepted_candidate():
     # Arrange
     memory = MemoryLedger()
     contract = handshake.make_contract(TARGET, cursor=17, now=100)
     exchange_id = handshake.open_handshake(contract, store_factory=lambda: memory)
     feedback = _feedback(contract, exchange_id)
-    authored = []
-    monkeypatch.setattr(
-        handshake,
-        "record_agentic_ack",
-        lambda *args, **kwargs: authored.append(kwargs) or kwargs,
+    dispatch = {"agent": "daemon", "to_agent": TARGET["agent"], "status": "sent"}
+    authored = {}
+    recorder = partial(
+        record_agentic_ack,
+        dispatch_lookup=lambda did, **kw: dispatch,
+        feedback_lookup=lambda did, agent: authored.get(did),
+        feedback_write=lambda values, **kw: authored.setdefault(
+            values["dispatch_id"], dict(values)
+        ),
+        dispatch_update=lambda did, status, **kw: dispatch.update(status=status),
     )
     event = {"from_agent": TARGET["agent"], "extra": feedback}
     # Act: ACK can race ahead of publish-count persistence.
-    saved = handshake.record_handshake_ack(event, now=101, store_factory=lambda: memory)
+    saved = handshake.record_handshake_ack(
+        event, now=101, store_factory=lambda: memory, record_ack=recorder
+    )
     handshake.record_acceptance(
         exchange_id, accepted=True, store_factory=lambda: memory
     )
     values, _ = handshake.read_handshake(exchange_id, store_factory=lambda: memory)
     state = json.loads(values["message"])
-    # Assert: ACK remains provisional and prose is kept only in dispatch_feedback.
-    assert (
-        saved
-        and state["accepted"] is True
-        and state["candidate"]["answer"] == handshake.expected_answer(contract)
-    )
-    assert values["code"] == 202 and values["final"] is False
-    assert feedback["understood"] not in values["message"]
-    assert (
-        authored[0]["understood"] == feedback["understood"]
-        and authored[0]["agent"] == "daemon"
-    )
+    return {
+        "candidate_retained": (
+            saved
+            and state["accepted"] is True
+            and state["candidate"]["answer"] == handshake.expected_answer(contract)
+        ),
+        "pending": values["code"] == 202 and values["final"] is False,
+        "safe_ledger": feedback["understood"] not in values["message"],
+        "authored_store": authored[contract["nonce"]]["understood"]
+        == feedback["understood"]
+        and authored[contract["nonce"]]["agent"] == "daemon",
+    }
+
+
+@pytest.mark.parametrize(
+    "key", ["candidate_retained", "pending", "safe_ledger", "authored_store"]
+)
+def test_ack_persists_safe_candidate_and_acceptance_cannot_erase_it(
+    accepted_candidate, key
+):
+    # Arrange
+    observations = accepted_candidate
+    # Act
+    value = observations[key]
+    # Assert
+    assert value is True
 
 
 def test_final_exchange_cannot_be_rewritten_as_a_fresh_pending_challenge():
@@ -188,7 +217,33 @@ def test_final_exchange_cannot_be_rewritten_as_a_fresh_pending_challenge():
         handshake.record_acceptance(
             exchange_id, accepted=True, store_factory=lambda: memory
         )
-    assert memory.values[exchange_id]["code"] == 200
+
+
+@pytest.fixture
+def refused_final_update():
+    memory = MemoryLedger()
+    exchange_id = handshake.open_handshake(
+        handshake.make_contract(TARGET, cursor=0, now=100), store_factory=lambda: memory
+    )
+    handshake.advance_handshake(
+        exchange_id,
+        StatusCode(kind="http", code=200, message='{"proven":true}'),
+        store_factory=lambda: memory,
+    )
+    with pytest.raises(RuntimeError, match="final handshake"):
+        handshake.record_acceptance(
+            exchange_id, accepted=True, store_factory=lambda: memory
+        )
+    return memory.values[exchange_id]
+
+
+def test_refused_acceptance_preserves_the_final_exchange(refused_final_update):
+    # Arrange
+    row = refused_final_update
+    # Act
+    code = row["code"]
+    # Assert
+    assert code == 200
 
 
 @pytest.mark.parametrize(
@@ -216,7 +271,7 @@ def test_bounded_authored_fields_do_not_require_a_specific_language_or_long_pros
     )
 
 
-def test_foreign_exchange_operation_or_responder_is_not_a_server_challenge():
+def test_foreign_responder_is_not_this_server_challenge():
     # Arrange
     memory = MemoryLedger()
     exchange_id = handshake.open_handshake(
@@ -228,6 +283,16 @@ def test_foreign_exchange_operation_or_responder_is_not_a_server_challenge():
         handshake.read_handshake(
             exchange_id, agent="foreign-manager", store_factory=lambda: memory
         )
+
+
+def test_foreign_exchange_initiator_is_not_a_server_challenge():
+    # Arrange
+    memory = MemoryLedger()
+    exchange_id = handshake.open_handshake(
+        handshake.make_contract(TARGET, cursor=0, now=100), store_factory=lambda: memory
+    )
     memory.values[exchange_id]["initiator"] = "another-source"
+    # Act
+    # Assert
     with pytest.raises(PermissionError):
         handshake.read_handshake(exchange_id, store_factory=lambda: memory)
