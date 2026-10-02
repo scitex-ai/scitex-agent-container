@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 
 class TurnRequest(BaseModel):
@@ -14,6 +21,7 @@ class TurnRequest(BaseModel):
     exit_after: StrictBool = False
     dispatch_id: str | None = Field(default=None, min_length=1)
     from_agent: str | None = Field(default=None, min_length=1)
+    visible_delivery_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("text")
     @classmethod
@@ -28,3 +36,16 @@ class TurnRequest(BaseModel):
         if value == "":
             return None
         return value
+
+    @model_validator(mode="after")
+    def visible_delivery_must_bind_to_text(self) -> TurnRequest:
+        # Match the public sender and TUI receiver's exact marker contract.
+        # The field binds prompt text; it is not proof that a turn completed.
+        if self.visible_delivery_id is not None and (
+            f"<!-- delivery:{self.visible_delivery_id} -->" not in self.text
+        ):
+            raise ValueError(
+                "visible_delivery_id is not bound to the submitted text; "
+                "include its exact delivery marker before retrying"
+            )
+        return self
