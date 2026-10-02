@@ -42,8 +42,53 @@ async def send_agentic_ack(
             "owner": _text(arguments, "owner", OWNER_LIMIT),
             "next_checkpoint": _text(arguments, "next_checkpoint", SUMMARY_LIMIT),
         }
+        extra = orig.get("extra")
+        handshake = extra.get("handshake") if isinstance(extra, dict) else None
+        if orig.get("kind") == "agentic_challenge" and not isinstance(handshake, dict):
+            raise ValueError("server challenge metadata is missing or malformed")
+        if orig.get("kind") == "agentic_challenge" and isinstance(handshake, dict):
+            from scitex_dev.status import is_exchange_id
+
+            proof = arguments.get("handshake_proof")
+            target_identity = handshake.get("target")
+            if (
+                orig.get("from_agent") != "daemon"
+                or not isinstance(target_identity, dict)
+                or target_identity.get("agent") != orig.get("to_agent")
+                or not isinstance(target_identity.get("agent"), str)
+                or not all(
+                    c.isascii() and (c.isalnum() or c in "-_.")
+                    for c in target_identity["agent"]
+                )
+                or not is_exchange_id(handshake.get("exchange_id"))
+                or handshake.get("nonce") != feedback["dispatch_id"]
+                or not isinstance(proof, dict)
+                or proof.get("exchange_id") != handshake.get("exchange_id")
+                or proof.get("nonce") != handshake.get("nonce")
+            ):
+                raise ValueError(
+                    "server challenge requires proof for its exact exchange_id"
+                )
+            feedback["handshake_proof"] = proof
     except ValueError as exc:
         return lookup_error_result(str(exc))
+    if orig.get("kind") == "agentic_challenge" and isinstance(handshake, dict):
+        target_name = handshake["target"]["agent"]
+        exchange_id = handshake["exchange_id"]
+        try:
+            resp = await send(
+                target,
+                f"/agents/{target_name}/handshakes/{exchange_id}/ack",
+                {"feedback": feedback},
+            )
+        except SendError as exc:
+            return error_result(exc)
+        if resp.get("status") != 202:
+            return lookup_error_result(
+                "server refused the exact-exchange acknowledgement"
+            )
+        orig["_agentic_ack"] = feedback
+        return [TextContent(type="text", text=json.dumps(resp))]
     payload = wrap(
         json.dumps(feedback, sort_keys=True),
         conversation_id=orig.get("conversation_id"),
@@ -123,9 +168,7 @@ def read_dispatch_status(arguments: dict[str, Any], *, agent: str):
         state = dispatch_status(
             dispatch_id,
             agent=agent,
-            agentic_ack_timeout_s=float(
-                arguments.get("agentic_ack_timeout_s", 120.0)
-            ),
+            agentic_ack_timeout_s=float(arguments.get("agentic_ack_timeout_s", 120.0)),
         )
     except (TypeError, ValueError) as exc:
         return lookup_error_result(str(exc))

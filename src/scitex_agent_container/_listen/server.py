@@ -388,6 +388,7 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # path keep working unchanged.
 from ..a2a._inbox_ack import inbox_ack_route  # noqa: E402
 from ._agent_delete import agent_delete  # noqa: E402
+from ._agent_handshake import handshake_routes  # noqa: E402
 
 # ``agent_restart`` (POST /agents/<name>/restart) is the container-side
 # mirror of the spawn bypass: an in-SIF agent cannot resolve a peer's
@@ -417,6 +418,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        *handshake_routes(prefix),
         Route(
             f"{prefix}/{{name}}/exchanges/{{exchange_id}}",
             agent_exchange,

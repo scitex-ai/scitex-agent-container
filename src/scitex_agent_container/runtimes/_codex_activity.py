@@ -219,6 +219,17 @@ def read_codex_activity(
     expected_file_identity: tuple[int, int],
 ) -> CodexActivityObservation:
     """Read the bound device/inode, refusing replacement or concurrent change."""
+    return _read_codex_snapshot(
+        path,
+        expected_file_identity=expected_file_identity,
+        reduce_fn=lambda lines: reduce_codex_activity(
+            lines, expected_thread_id=expected_thread_id, observed_at=observed_at
+        ),
+    )
+
+
+def _read_codex_snapshot(path: Path, *, expected_file_identity, reduce_fn):
+    """Run a privacy-safe reducer within the existing captured-file fence."""
     try:
         with Path(path).open("rb") as stream:
             before = os.fstat(stream.fileno())
@@ -233,11 +244,7 @@ def read_codex_activity(
             raw = stream.read(before.st_size + 1)
             if len(raw) != before.st_size:
                 raise CodexActivityError("native activity source changed during read")
-            result = reduce_codex_activity(
-                raw.decode("utf-8").splitlines(keepends=True),
-                expected_thread_id=expected_thread_id,
-                observed_at=observed_at,
-            )
+            result = reduce_fn(raw.decode("utf-8").splitlines(keepends=True))
             after = os.fstat(stream.fileno())
         current = Path(path).stat()
     except (OSError, UnicodeError) as exc:

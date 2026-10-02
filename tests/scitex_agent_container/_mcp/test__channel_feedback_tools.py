@@ -53,6 +53,108 @@ def _registered(listen_url: str = "http://127.0.0.1:1") -> _ToolRecorder:
     return recorder
 
 
+@pytest.mark.asyncio
+async def test_server_handshake_ack_uses_exact_exchange_route_and_preserves_authored_fields():
+    # Arrange: challenge identity is listen-minted, never caller-selected.
+    from scitex_dev.status import new_exchange_id
+
+    from scitex_agent_container._mcp._channel_feedback_tools import send_agentic_ack
+
+    exchange_id = new_exchange_id(host="test-listen")
+    orig = {
+        "from_agent": "daemon",
+        "to_agent": "bob",
+        "kind": "agentic_challenge",
+        "extra": {
+            "handshake": {
+                "exchange_id": exchange_id,
+                "nonce": "nonce-issued",
+                "target": {"agent": "bob"},
+            }
+        },
+    }
+    proof = {
+        "exchange_id": exchange_id,
+        "nonce": "nonce-issued",
+        "instance_id": "instance",
+        "boot_id": "boot",
+        "session_id": "thread",
+        "answer": "a" * 64,
+    }
+    arguments = {
+        "dispatch_id": "nonce-issued",
+        "understood": "Compute and verify ownership.",
+        "owner": "bob",
+        "next_checkpoint": "Report current tool activity.",
+        "handshake_proof": proof,
+    }
+    posts = []
+
+    async def send(target, path, payload):
+        posts.append((target, path, payload))
+        return {"status": 202, "body": {"proven": None}}
+
+    # Act
+    result = await send_agentic_ack(arguments, orig, wrap=lambda **kw: kw, send=send)
+    # Assert
+    assert posts == [
+        ("daemon", f"/agents/bob/handshakes/{exchange_id}/ack", {"feedback": arguments})
+    ]
+    assert (
+        _payload(result)["body"]["proven"] is None and orig["_agentic_ack"] == arguments
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["missing_proof", "foreign_exchange", "foreign_sender", "foreign_target"]
+)
+async def test_server_challenge_ack_never_falls_back_to_ordinary_message_send(case):
+    # Arrange
+    from scitex_dev.status import new_exchange_id
+
+    from scitex_agent_container._mcp._channel_feedback_tools import send_agentic_ack
+
+    exchange_id = new_exchange_id(host="test-listen")
+    orig = {
+        "from_agent": "daemon",
+        "to_agent": "bob",
+        "kind": "agentic_challenge",
+        "extra": {
+            "handshake": {
+                "exchange_id": exchange_id,
+                "nonce": "nonce-issued",
+                "target": {"agent": "bob"},
+            }
+        },
+    }
+    arguments = {
+        "dispatch_id": "nonce-issued",
+        "understood": "Compute and verify ownership.",
+        "owner": "bob",
+        "next_checkpoint": "Report current tool activity.",
+        "handshake_proof": {"exchange_id": exchange_id, "nonce": "nonce-issued"},
+    }
+    if case == "missing_proof":
+        arguments.pop("handshake_proof")
+    elif case == "foreign_exchange":
+        arguments["handshake_proof"]["exchange_id"] = new_exchange_id(host="other")
+    elif case == "foreign_sender":
+        orig["from_agent"] = "unrelated-peer"
+    elif case == "foreign_target":
+        orig["extra"]["handshake"]["target"]["agent"] = "foreign-agent"
+    calls = []
+
+    async def send(*args):
+        calls.append(args)
+        return {"status": 202}
+
+    # Act
+    result = await send_agentic_ack(arguments, orig, wrap=lambda **kw: kw, send=send)
+    # Assert: no endpoint received malformed or downgraded feedback.
+    assert calls == [] and "_agentic_ack" not in orig and _payload(result).get("error")
+
+
 class _Listen:
     def __init__(self) -> None:
         self.posts: list[dict[str, Any]] = []
@@ -219,7 +321,9 @@ async def test_progress_posts_typed_status_for_exact_nonce(listen: _Listen) -> N
 
 
 @pytest.mark.asyncio
-async def test_http_200_send_returns_delivered_unacknowledged_hint(listen: _Listen) -> None:
+async def test_http_200_send_returns_delivered_unacknowledged_hint(
+    listen: _Listen,
+) -> None:
     # Arrange
     recorder = _registered(f"http://127.0.0.1:{listen.port}")
     # Act
