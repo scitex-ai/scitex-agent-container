@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from functools import reduce
 from pathlib import Path
+
+import pytest
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes.mcp_config import (
@@ -171,13 +174,20 @@ def test_setup_mcp_merges_with_existing_servers(tmp_path: Path) -> None:
     assert set(data["mcpServers"]) == {"old", "new"}
 
 
-def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+@pytest.fixture
+def foreign_cct_environment():
+    restore_identity = _set_env_save("CCT_AGENT_ID", "paper-scitex-clew")
+    restore_token = _set_env_save("CCT_BOT_TOKEN", None)
+    try:
+        yield
+    finally:
+        restore_token()
+        restore_identity()
+
+
+@pytest.fixture
+def pinned_cct(tmp_path, foreign_cct_environment):
     # Arrange
-    monkeypatch.setenv("CCT_AGENT_ID", "paper-scitex-clew")
-    monkeypatch.delenv("CCT_BOT_TOKEN", raising=False)
     cfg = _make_config(
         name="scitex-research-lead",
         mcp_servers={
@@ -198,20 +208,49 @@ def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
     setup_mcp_config(cfg, str(tmp_path))
 
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    return cfg, servers
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        (("claude-code-telegrammer", "env", "CCT_AGENT_ID"), "scitex-research-lead"),
+        (("claude-code-telegrammer", "env", "CCT_BOT_TOKEN"), "${CCT_BOT_TOKEN}"),
+        (
+            (
+                "claude-code-telegrammer",
+                "env",
+                "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER",
+            ),
+            "1",
+        ),
+        (("other", "env", "CCT_AGENT_ID"), "other-id"),
+    ],
+)
+def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
+    pinned_cct, path, expected
+):
+    # Arrange
+    _, servers = pinned_cct
     # Act
-    cct = servers["claude-code-telegrammer"]
+    value = reduce(lambda node, key: node[key], path, servers)
     # Assert
-    assert cct["env"]["CCT_AGENT_ID"] == cfg.name
-    assert cct["env"]["CCT_BOT_TOKEN"] == "${CCT_BOT_TOKEN}"
-    assert cct["env"]["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] == "1"
-    assert servers["other"]["env"]["CCT_AGENT_ID"] == "other-id"
-    assert (
-        cfg.mcp_servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"]
-        == "${CCT_AGENT_ID}"
-    )
+    assert value == expected
 
 
-def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> None:
+def test_setup_mcp_does_not_mutate_declared_identity_template(pinned_cct):
+    # Arrange
+    config, _ = pinned_cct
+    # Act
+    value = config.mcp_servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"]
+    # Assert
+    assert value == "${CCT_AGENT_ID}"
+
+
+@pytest.mark.parametrize("server", ["claude-code-telegrammer", "scitex-cards"])
+def test_setup_mcp_pins_baseline_cct_without_spec_servers(
+    tmp_path: Path, server
+) -> None:
     # Arrange
     baseline = {
         "mcpServers": {
@@ -225,6 +264,13 @@ def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> Non
     (tmp_path / ".mcp.json").write_text(json.dumps(baseline))
     cfg = _make_config(name="scitex-infrastructure-lead")
     cfg.env = {"UNRELATED": "new-value"}
+    expected = {
+        "claude-code-telegrammer": {
+            "command": "bun",
+            "env": {"CCT_AGENT_ID": cfg.name},
+        },
+        "scitex-cards": baseline["mcpServers"]["scitex-cards"],
+    }
 
     setup_mcp_config(cfg, str(tmp_path))
     setup_mcp_config(cfg, str(tmp_path))
@@ -232,20 +278,24 @@ def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> Non
     # Act
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
     # Assert
-    assert servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"] == cfg.name
-    assert servers["scitex-cards"] == baseline["mcpServers"]["scitex-cards"]
+    assert servers[server] == expected[server]
 
 
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        (("env", "CCT_AGENT_ID"), "scitex-research-lead"),
+        (("env_vars",), ["CCT_AGENT_ID"]),
+    ],
+)
 def test_generated_cct_identity_survives_codex_env_forwarding(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path: Path, foreign_cct_environment, path, expected
 ) -> None:
     # Arrange
     import tomllib
 
     from scitex_agent_container.runtimes._apptainer_codex_exec import mcp_overrides
 
-    monkeypatch.setenv("CCT_AGENT_ID", "paper-scitex-clew")
     cfg = _make_config(
         name="scitex-research-lead",
         mcp_servers={
@@ -265,8 +315,7 @@ def test_generated_cct_identity_survives_codex_env_forwarding(
     ]
 
     # Assert
-    assert effective["env"]["CCT_AGENT_ID"] == cfg.name
-    assert effective["env_vars"] == ["CCT_AGENT_ID"]
+    assert reduce(lambda node, key: node[key], path, effective) == expected
 
 
 def test_setup_mcp_recovers_from_malformed_existing_file(tmp_path: Path) -> None:

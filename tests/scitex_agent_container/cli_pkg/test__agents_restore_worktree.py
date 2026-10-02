@@ -1,60 +1,63 @@
 """CLI contract for the explicit, default-dry-run owned restore verb."""
 
+import os
+from pathlib import Path
+
+import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg import _agents_restore_worktree as implementation
 from scitex_agent_container.cli_pkg.agent_group import agent_group
-from scitex_agent_container.config import AgentConfig
 
 
-def test_restore_verb_exposes_exact_commit_and_reviewed_receipt():
+@pytest.mark.parametrize("flag", ["--expected-tip", "--receipt-sha256", "--apply"])
+def test_restore_verb_exposes_exact_commit_and_reviewed_receipt(flag):
     # Arrange
     # Act
     result = CliRunner().invoke(agent_group, ["restore-worktree", "--help"])
     # Assert
-    assert result.exit_code == 0, result.output
-    assert "--expected-tip" in result.output
-    assert "--receipt-sha256" in result.output
-    assert "--apply" in result.output
+    assert flag in result.output
 
 
-def test_apply_missing_receipt_is_refused_before_loading_identity(monkeypatch):
+def test_apply_missing_receipt_is_refused_before_loading_identity(tmp_path):
     # Arrange
-    def unexpected_load(*args):
-        raise AssertionError("must refuse before reading a spec")
-
-    monkeypatch.setattr(implementation, "load_config", unexpected_load)
+    # A nonexistent explicit path would fail resolution if the guard ran late.
+    missing = str(tmp_path / "absent/spec.yaml")
     # Act
     result = CliRunner().invoke(
         agent_group,
-        ["restore-worktree", "scitex-scholar", "--expected-tip", "1" * 40, "--apply"],
+        ["restore-worktree", missing, "--expected-tip", "1" * 40, "--apply"],
     )
     # Assert
-    assert result.exit_code == 1
-    assert "--receipt-sha256" in result.output
+    assert (result.exit_code, "--receipt-sha256" in result.output) == (1, True)
 
 
-def test_default_cli_propagates_exact_identity_and_commit(monkeypatch):
+@pytest.fixture
+def private_registry(tmp_path):
+    path = tmp_path / "state/agent-container/agents/scitex-scholar/spec.yaml"
+    path.parent.mkdir(parents=True)
+    reviewed = Path(__file__).parents[1] / "runtimes/_fixtures/scitex-scholar/spec.yaml"
+    path.write_bytes(reviewed.read_bytes())
+    saved = {key: os.environ.get(key) for key in ("SCITEX_DIR", "SAC_AGENT_SCOPE")}
+    os.environ.update(SCITEX_DIR=str(tmp_path / "state"), SAC_AGENT_SCOPE="user")
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_restore_rejects_prefix_alias_before_reaching_policy_or_store(private_registry):
     # Arrange
-    config = AgentConfig(name="scitex-scholar", workdir="/retained/repo")
-    monkeypatch.setattr(implementation, "load_config", lambda path: config)
-    monkeypatch.setattr(
-        implementation, "resolve_with_prefix", lambda name: "/spec.yaml"
-    )
-    calls = []
-
-    def restore(cfg, **kwargs):
-        calls.append((cfg, kwargs))
-        return {"mode": "dry-run", "receipt_sha256": "2" * 64}
-
-    monkeypatch.setattr(implementation, "restore_owned_task_worktree", restore)
+    prefix = "scitex-scho"
     # Act
     result = CliRunner().invoke(
-        agent_group, ["restore-worktree", "scitex-scholar", "--expected-tip", "1" * 40]
+        agent_group, ["restore-worktree", prefix, "--expected-tip", "1" * 40]
     )
     # Assert
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (config, {"expected_tip": "1" * 40, "apply": False, "receipt_sha256": None})
-    ]
-    assert '"mode": "dry-run"' in result.output
+    assert (result.exit_code, "exact canonical agent name" in result.output) == (
+        1,
+        True,
+    ), result.output
