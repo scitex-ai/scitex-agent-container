@@ -47,8 +47,13 @@ __all__ = ["create_app", "_urlrequest", "_urlerror"]
 # --- Handlers --------------------------------------------------------------
 
 
-async def health(_request: Request) -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "sac-listen", "v": 1})
+async def health(request: Request) -> JSONResponse:
+    payload = {"ok": True, "service": "sac-listen", "v": 1}
+    if getattr(request.state, "host_bearer_authenticated", False):
+        from .._lifecycle._start_session_wire import start_session_capability
+
+        payload["capabilities"] = {"start_session": start_session_capability()}
+    return JSONResponse(payload)
 
 
 # ``list_agents`` (GET /agents — the peer-discovery route backing the
@@ -80,7 +85,9 @@ def _runtime_liveness(cfg, *, runtime_factory=None) -> tuple[bool, str, dict[str
 
             runtime_factory = _get_runtime
         running = bool(runtime_factory(cfg).is_running(cfg))
-    except Exception as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
         return (
             False,
             "unknown",

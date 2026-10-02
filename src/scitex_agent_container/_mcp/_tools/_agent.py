@@ -190,6 +190,12 @@ def agent_start(
                     "fresh|continue|resume (or the alias new-session)."
                 ),
             }
+    from ...cli_pkg._send_host import host_authority_declared
+
+    if host_authority_declared():
+        from ._agent_host import start_on_host
+
+        return start_on_host(name, foreground=foreground, session=session)
     return invoke_cli_text(argv)
 
 
