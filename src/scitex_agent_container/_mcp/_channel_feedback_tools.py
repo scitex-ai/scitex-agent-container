@@ -30,7 +30,13 @@ async def send_agentic_ack(
     send: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]],
 ):
     """Send one intentional ACK and mark this inbound event locally acknowledged."""
-    from mcp.types import TextContent
+    try:
+        from mcp.types import TextContent
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     target = orig.get("from_agent", "")
     if not target:
@@ -114,7 +120,13 @@ async def send_progress(
     send: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]],
 ):
     """Send typed progress only after this process issued the nonce-bound ACK."""
-    from mcp.types import TextContent
+    try:
+        from mcp.types import TextContent
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     target = orig.get("from_agent", "")
     if not target:
@@ -159,7 +171,13 @@ async def send_progress(
 
 def read_dispatch_status(arguments: dict[str, Any], *, agent: str):
     """Render the durable sender-side status/timeout query as an MCP result."""
-    from mcp.types import TextContent
+    try:
+        from mcp.types import TextContent
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     from .._state.dispatch_feedback import dispatch_status
 
