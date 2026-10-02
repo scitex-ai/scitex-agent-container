@@ -291,10 +291,12 @@ def _detect_codex_dir_trust(content: str) -> bool:
     2. No, quit / Press enter to continue" — the cursor already sits on
     option 1, so Enter alone accepts.
     """
-    return (
+    legacy = (
         "Do you trust the contents of this directory" in content
         and "1. Yes, continue" in content
     )
+    current = "Trust this folder?" in content and "1. Trust and continue" in content
+    return legacy or current
 
 
 def _detect_codex_hooks_review(content: str) -> bool:
@@ -312,9 +314,11 @@ def _detect_codex_hooks_review(content: str) -> bool:
 #: banner has scrolled away: ``› Use /skills to list available skills`` over
 #: ``qwen38-27b default · /home/ywatanabe/proj/local-coder``. The footer's
 #: second word is the reasoning effort Codex is running with.
-_CODEX_COMPOSER_MARKER = "\u203a"
+_CODEX_COMPOSER_MARKERS = ("\u203a", "\u00bb")
 _CODEX_FOOTER = re.compile(
-    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh) \u00b7 /", re.M
+    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh|max|ultra)"
+    r"(?: (?:fast|ultrafast))? \u00b7 /",
+    re.M,
 )
 _CODEX_TAIL_ROWS = 8
 
@@ -330,12 +334,18 @@ def _detect_codex_done(content: str) -> bool:
     Codex agent after its first turn was refused as "a modal is blocking the
     input" — measured on handyman-01, which had been idle at its composer.
     """
-    if "Press enter to continue" in content or "Press enter to confirm" in content:
+    live = _recent_tail(content)
+    if _detect_codex_dir_trust(live) or _detect_codex_hooks_review(live):
+        return False
+    if "Press enter to continue" in live or "Press enter to confirm" in live:
         return False
     if "OpenAI Codex (v" in content and "permissions:" in content:
         return True
     tail = "\n".join(content.rstrip().splitlines()[-_CODEX_TAIL_ROWS:])
-    return _CODEX_COMPOSER_MARKER in tail and _CODEX_FOOTER.search(tail) is not None
+    return (
+        any(marker in tail for marker in _CODEX_COMPOSER_MARKERS)
+        and _CODEX_FOOTER.search(tail) is not None
+    )
 
 
 def _detect_hermes_contributor_tier(content: str) -> bool:

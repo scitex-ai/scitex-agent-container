@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from scitex_agent_container.runtimes._tui_compose import (
     composer_holds_fragment,
     fragment_tail,
@@ -208,3 +210,43 @@ def _ticking():
         return state["now"]
 
     return _now
+
+
+@pytest.mark.parametrize("marker", ["›", "»"])
+def test_large_codex_paste_is_submitted_from_its_folded_composer(marker):
+    # Arrange
+    payload = "mission " * 700
+    send = _RecordingSend()
+    pending = f"{marker} [Pasted Content {len(payload)} chars]\n  GPT-6.1-Sol ultra fast · /work\n"
+    # Act
+    result = verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: _CODEX_SUBMITTED if send.keys else pending,
+        send_keys_fn=send,
+        pending_fragment=payload,
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert (send.keys, result) == (["Enter"], True)
+
+
+def test_unrelated_folded_paste_does_not_prove_our_turn_was_submitted():
+    # Arrange
+    send = _RecordingSend()
+    pending = "» [Pasted Content 100 chars]\n  GPT-6.1-Sol ultra fast · /work\n"
+    # Act
+    result = verify_submit_by_advancement(
+        "lead",
+        capture_fn=lambda _: pending,
+        send_keys_fn=send,
+        pending_fragment="different message",
+        require_submission_proof=True,
+        poll_s=0,
+        sleep_fn=lambda _: None,
+        time_fn=_ticking(),
+    )
+    # Assert
+    assert (result, send.keys) == (False, [])

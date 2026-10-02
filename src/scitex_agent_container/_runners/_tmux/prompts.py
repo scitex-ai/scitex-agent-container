@@ -280,10 +280,9 @@ def _detect_codex_dir_trust(content: str) -> bool:
     first live codex pane (handyman-01), where the drain sat at this
     screen until its timeout.
     """
-    return (
-        "Do you trust the contents of this directory" in content
-        and "1. Yes, continue" in content
-    )
+    from ...runtimes.prompts import _detect_codex_dir_trust as detect_trust
+
+    return detect_trust(content)
 
 
 def _detect_codex_hooks_review(content: str) -> bool:
@@ -307,11 +306,9 @@ def _detect_codex_done(content: str) -> bool:
     ready state is the "OpenAI Codex (vX)" box with the permissions row
     ("YOLO mode" when sac turns the sandbox off) and no pending picker.
     """
-    return (
-        "OpenAI Codex (v" in content
-        and "permissions:" in content
-        and "Press enter to continue" not in content
-    )
+    from ...runtimes.prompts import _detect_codex_done as detect_ready
+
+    return detect_ready(content)
 
 
 def _detect_done(content: str) -> bool:

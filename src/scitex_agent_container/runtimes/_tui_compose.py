@@ -109,7 +109,8 @@ def _compose_pending_live(pane: str) -> bool:
 #: row carrying either.
 _CLAUDE_COMPOSE_MARKER = "❯"
 _CODEX_COMPOSE_MARKER = "›"
-_COMPOSE_MARKERS = (_CLAUDE_COMPOSE_MARKER, _CODEX_COMPOSE_MARKER)
+_COMPOSE_MARKERS = (_CLAUDE_COMPOSE_MARKER, _CODEX_COMPOSE_MARKER, "\u00bb")
+_CODEX_FOLDED_PASTE_RE = re.compile(r"\[Pasted Content (\d+) chars\]")
 
 _WS_RUN_RE = re.compile(r"[\s\xa0]+")
 
@@ -543,7 +544,23 @@ def verify_submit_by_advancement(
             return True
         if _CLAUDE_COMPOSE_MARKER in (pane or ""):
             return False
-        return composer_holds_fragment(pane, tail)
+        if composer_holds_fragment(pane, tail):
+            return True
+        # Codex 0.159 folds large pastes into a character-count placeholder.
+        # Match our payload's length only in the current composer; an old
+        # placeholder in the transcript cannot prove a pending submission.
+        rows = (pane or "").splitlines()
+        for index in range(len(rows) - 1, -1, -1):
+            if any(
+                marker in rows[index] for marker in (_CODEX_COMPOSE_MARKER, "\u00bb")
+            ):
+                match = _CODEX_FOLDED_PASTE_RE.search("\n".join(rows[index:]))
+                return bool(
+                    match
+                    and pending_fragment
+                    and int(match.group(1)) == len(pending_fragment)
+                )
+        return False
 
     def _input_idle(pane: str) -> bool:
         """Safe to submit an Enter into?
