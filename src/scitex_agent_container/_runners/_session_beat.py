@@ -301,12 +301,11 @@ def write_heartbeat(
 
     previous_heartbeat = read_heartbeat(state_dir)
     payload.update(
-        incarnation_beat_fields(
-            state_dir, prev_beat=previous_heartbeat, writer=writer
-        )
+        incarnation_beat_fields(state_dir, prev_beat=previous_heartbeat, writer=writer)
     )
-    payload.update(_heartbeat_usage_fields(state_dir, now))
-    payload.update(_tmp_pressure_fields())
+    if writer != "codex-rollout-events":
+        payload.update(_heartbeat_usage_fields(state_dir, now))
+        payload.update(_tmp_pressure_fields())
     # Operator-requested (feedback_sac_heartbeat_observability):
     # surface session.jsonl movement next to liveness so one read
     # answers "alive AND producing?". Extracted helper — see
@@ -319,8 +318,9 @@ def write_heartbeat(
     # flips green→amber/red without scraping session.jsonl downstream.
     from ._heartbeat_fields import heartbeat_jsonl_fields, heartbeat_progress_fields
 
-    payload.update(heartbeat_jsonl_fields(state_dir, now))
-    payload.update(heartbeat_progress_fields(state_dir))
+    if writer != "codex-rollout-events":
+        payload.update(heartbeat_jsonl_fields(state_dir, now))
+        payload.update(heartbeat_progress_fields(state_dir))
     if authoritative_fields:
         # Harness-native instruments may replace fields whose generic source
         # does not exist for that harness.  Hermes, for example, has no SDK
@@ -336,7 +336,10 @@ def write_heartbeat(
             )
         payload.update(authoritative_fields)
     resident_heartbeat = None
-    if writer == "hermes-session-events" and authoritative_fields:
+    if (
+        writer in {"hermes-session-events", "codex-rollout-events"}
+        and authoritative_fields
+    ):
         required = (
             "agent_id",
             "spec_id",
@@ -354,9 +357,7 @@ def write_heartbeat(
             resident_state = "active" if state == STATE_BUSY else "idle"
             if str(payload.get("current_phase") or "").lower() == "blocked":
                 resident_state = "blocked"
-            resident_heartbeat = {
-                key: authoritative_fields[key] for key in required
-            }
+            resident_heartbeat = {key: authoritative_fields[key] for key in required}
             prior_resident = (
                 previous_heartbeat.get("authoritative_heartbeat")
                 if isinstance(previous_heartbeat, dict)
@@ -387,15 +388,19 @@ def write_heartbeat(
                 expected_agent=str(resident_heartbeat["agent_id"]),
                 expected_host=str(resident_heartbeat["host"]),
                 now=now,
-                previous=(
-                    prior_resident if isinstance(prior_resident, dict) else None
-                ),
+                previous=(prior_resident if isinstance(prior_resident, dict) else None),
             )
             payload["authoritative_heartbeat"] = resident_heartbeat
     atomic_write_text(state_dir / "heartbeat.json", json.dumps(payload))
     if name and host:
         db = _resolve_db_writer(db_writer)
-        record = {"name": name, "host": host, "pid": pid, "state": state, "ts": payload["ts"]}
+        record = {
+            "name": name,
+            "host": host,
+            "pid": pid,
+            "state": state,
+            "ts": payload["ts"],
+        }
         db.record_heartbeat(**record)
         if resident_heartbeat is not None:
             from ._session_state import read_instance_id
