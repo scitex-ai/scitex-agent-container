@@ -209,7 +209,8 @@ def evaluate_handshake(
             proven=False,
             code=CODE_NO_REPLY,
             reason=(
-                f"the challenge was accepted by the target and no reply reached {who}"
+                "the challenge was accepted for delivery and no reply was observed "
+                f"by {who} within the observation window"
             ),
             hint=(
                 "do NOT hand over the lease. Accepted-but-silent is the exact shape "

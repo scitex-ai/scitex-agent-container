@@ -153,6 +153,24 @@ def test_a_silent_target_tells_the_operator_not_to_hand_over_the_lease() -> None
     assert "do NOT hand over the lease" in verdict.hint
 
 
+def test_missing_reply_does_not_claim_the_agent_admitted_delivery() -> None:
+    # Arrange: sidecar acceptance can precede actual target admission.
+    facts = _facts(reply_observed=False)
+    # Act
+    verdict = evaluate_handshake(facts, nonce=NONCE, expected_answer=ANSWER)
+    # Assert
+    assert "accepted for delivery" in verdict.reason
+
+
+def test_missing_reply_is_bounded_to_the_observation_window() -> None:
+    # Arrange: the observer cannot claim a permanent absence.
+    facts = _facts(reply_observed=False)
+    # Act
+    verdict = evaluate_handshake(facts, nonce=NONCE, expected_answer=ANSWER)
+    # Assert
+    assert "within the observation window" in verdict.reason
+
+
 def test_an_unobserved_reply_is_unknown_because_waiting_longer_may_answer_it() -> None:
     # Arrange: "I did not see one in the time I waited" is not "the target is
     # broken", and the two call for different next actions.
