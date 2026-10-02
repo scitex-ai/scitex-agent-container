@@ -21,9 +21,9 @@ retain the separate idle-input contract below.
 
 from __future__ import annotations
 
-import logging
 import time
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._tui_drain import (
     drain_modals_until_ready,
@@ -81,7 +81,7 @@ def wait_for_hermes_boot(
         except (HermesTuiRpcError, FileNotFoundError) as error:
             last_error = str(error)
         sleep_fn(max(0.01, min(poll_s, deadline - time_fn())))
-    logging.getLogger(__name__).error(
+    get_logger(__name__).error(
         "Hermes boot not ready for %s: %s", config.name, last_error
     )
     return False
