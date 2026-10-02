@@ -11,7 +11,8 @@ from pathlib import Path
 
 # SciTeX-org Hermes fork (operator, 2026-09-29): bake the fleet's own
 # fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
-# ship in the hermes SIF. Tracks the fork's scitex-main working branch.
+# ship in the hermes SIF. Always export this immutable commit; the branch
+# records its origin and is never substituted for the build pin.
 HERMES_COMMIT = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
 HERMES_REPOSITORY = "https://github.com/scitex-ai/hermes-agent.git"
 HERMES_BRANCH = "scitex-main"
@@ -107,6 +108,8 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     ``display.tool_progress=off`` (including focus mode). SAC consumes those
     events as an authoritative instrument, so the staging step removes only
     those two display gates and fails closed if the pinned anchors drift.
+    The current immutable fork already removes the outer gates; verify
+    their exact instrumented form while patching the hidden replay path.
     """
     module = staged / "tui_gateway" / "tool_progress.py"
     if not module.is_file():
@@ -135,14 +138,6 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
         frame = _event_frame(event, sid, payload)
         _stamp_event(frame)
         return None""",
-        """    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
-            or _connector_tool_lifecycle(name, args)):""": (
-            "    if True:  # SAC heartbeat instrumentation is display-independent"
-        ),
-        """    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
-            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):""": (
-            "    if True:  # SAC heartbeat instrumentation is display-independent"
-        ),
     }
     for old, new in replacements.items():
         if text.count(old) != 1:
@@ -151,6 +146,25 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
                 "uninstrumented build"
             )
         text = text.replace(old, new)
+
+    gates = (
+        """    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
+            or _connector_tool_lifecycle(name, args)):""",
+        """    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
+            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):""",
+    )
+    instrumented_gate = (
+        "    if True:  # SAC heartbeat instrumentation is display-independent"
+    )
+    counts = tuple(text.count(gate) for gate in gates)
+    if counts == (1, 1) and text.count(instrumented_gate) == 0:
+        for gate in gates:
+            text = text.replace(gate, instrumented_gate)
+    elif counts != (0, 0) or text.count(instrumented_gate) != 2:
+        raise HermesSourceError(
+            "pinned Hermes tool lifecycle gate drifted; refusing an "
+            "uninstrumented build"
+        )
     module.write_text(text, encoding="utf-8")
     return True
 
