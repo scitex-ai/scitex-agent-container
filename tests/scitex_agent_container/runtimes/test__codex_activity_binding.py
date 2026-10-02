@@ -210,25 +210,40 @@ def test_duplicate_root_fd_in_same_owner_is_one_file_identity(tmp_path):
     assert binding.thread_id == THREAD
 
 
+def _reuse_fd(layout, binding):
+    fd = binding.rollout_path
+    fd.unlink()
+    fd.symlink_to(_child_fd(layout, 6))
+
+
 @pytest.mark.parametrize(
-    "change", ["pid-reuse", "lineage", "cgroup", "fd-reuse", "ended"]
+    "mutate",
+    [
+        pytest.param(
+            lambda layout, binding: _process(layout["proc"], 4003, 4002, 999),
+            id="pid-reuse",
+        ),
+        pytest.param(
+            lambda layout, binding: _process(layout["proc"], 4003, 0, 102), id="lineage"
+        ),
+        pytest.param(
+            lambda layout, binding: _process(
+                layout["proc"], 4003, 4002, 102, cgroup="/other.scope"
+            ),
+            id="cgroup",
+        ),
+        pytest.param(_reuse_fd, id="fd-reuse"),
+        pytest.param(
+            lambda layout, binding: layout["record"].update(ended_at="ended"),
+            id="ended",
+        ),
+    ],
 )
-def test_bound_owner_is_fenced_again_before_publication(tmp_path, change):
+def test_bound_owner_is_fenced_again_before_publication(tmp_path, mutate):
     # Arrange: the descriptor was valid before a metadata race.
     layout = _layout(tmp_path)
     binding = _bind(layout)
-    if change == "pid-reuse":
-        _process(layout["proc"], 4003, 4002, 999)
-    elif change == "lineage":
-        _process(layout["proc"], 4003, 0, 102)
-    elif change == "cgroup":
-        _process(layout["proc"], 4003, 4002, 102, cgroup="/other.scope")
-    elif change == "fd-reuse":
-        fd = binding.rollout_path
-        fd.unlink()
-        fd.symlink_to(_child_fd(layout, 6))
-    else:
-        layout["record"]["ended_at"] = "ended"
+    mutate(layout, binding)
 
     # Act and assert: stale PID/session evidence cannot renew the owner.
     # Assert
@@ -236,13 +251,29 @@ def test_bound_owner_is_fenced_again_before_publication(tmp_path, change):
         assert_codex_binding_current(binding, layout["record"])
 
 
+@pytest.fixture
+def unrelated_listener_environment(tmp_path):
+    values = {
+        "CODEX_HOME": str(tmp_path / "unrelated-home"),
+        "SAC_INSTANCE_UUID": "492e3624-e623-454f-91fe-d28b6b22305b",
+    }
+    saved = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def test_inherited_home_and_handover_uuid_do_not_select_the_native_owner(
-    tmp_path, monkeypatch
+    tmp_path, unrelated_listener_environment
 ):
     # Arrange: the listener inherited another private home and handover identity.
     layout = _layout(tmp_path)
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "unrelated-home"))
-    monkeypatch.setenv("SAC_INSTANCE_UUID", "492e3624-e623-454f-91fe-d28b6b22305b")
 
     # Act: bind only canonical instance/kernel/FD evidence.
     binding = _bind(layout)
