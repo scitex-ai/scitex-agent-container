@@ -5,35 +5,25 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-PREFIXES = (
-    "SCITEX_",
-    "SAC_",
-    "PG",
-    "CODEX_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "CLAUDE_",
-    "CCT_",
-    "UV_INDEX",
-    "UV_EXTRA_INDEX",
-)
 
 
 def _probe(body: str, blocked: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
+    # CI installs peers into a target directory added to the parent sys.path.
+    # The child uses the same interpreter, whose own site-packages may be bare.
+    # Preserve actual import paths without inheriting auth/store environment.
     env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(PREFIXES)
-        and not any(
-            word in key.upper() for word in ("AUTH", "TOKEN", "SECRET", "API_KEY")
-        )
+        "PATH": os.environ.get("PATH", os.defpath),
+        "LANG": "C.UTF-8",
+        "TZ": "UTC",
+        "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), *filter(None, sys.path)]),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
     }
-    env["PYTHONPATH"] = str(ROOT / "src")
     code = """
 import asyncio
 import importlib
@@ -50,14 +40,17 @@ class MissingDependencyFinder(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, MissingDependencyFinder())
 """
     code = "BLOCKED = " + repr(blocked) + "\n" + code + body
-    return subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
+    with tempfile.TemporaryDirectory(prefix="sac-optional-probe-") as home:
+        env["HOME"] = home
+        env["TMPDIR"] = home
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
 
 
 @pytest.mark.parametrize(
@@ -204,3 +197,44 @@ def test_gui_views_use_real_django_request_type():
     request_type = views.HttpRequest
     # Assert
     assert request_type is HttpRequest
+
+
+def test_probe_preserves_dependencies_in_the_active_ci_target_path(tmp_path):
+    # Arrange -- CI layers peers outside the interpreter's own site-packages.
+    target = tmp_path / "ci-target-site"
+    target.mkdir()
+    (target / "synthetic_layered_peer.py").write_text("IDENTITY = 'ci-target-peer'\n")
+    original = sys.path[:]
+    sys.path.insert(0, str(target))
+    # Act
+    try:
+        result = _probe(
+            "import synthetic_layered_peer\nprint(synthetic_layered_peer.IDENTITY)\n"
+        )
+    finally:
+        sys.path[:] = original
+    # Assert
+    assert (result.returncode, result.stdout) == (0, "ci-target-peer\n"), result.stderr
+
+
+def test_probe_does_not_inherit_auth_or_store_pins(tmp_path):
+    # Arrange
+    pins = {
+        "CODEX_HOME": str(tmp_path / "synthetic-profile"),
+        "SCITEX_STORE_DSN": "synthetic-invalid-store",
+    }
+    previous = {key: os.environ.get(key) for key in pins}
+    os.environ.update(pins)
+    # Act
+    try:
+        result = _probe(
+            "import os\nprint(any(key in os.environ for key in ('CODEX_HOME', 'SCITEX_STORE_DSN')))\n"
+        )
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    # Assert
+    assert (result.returncode, result.stdout) == (0, "False\n"), result.stderr
