@@ -38,7 +38,7 @@ overridden:
 | `claude.session` | `continue` (marker seeded host-side) | inherit at first boot; continue own session on restart |
 | `restart.policy` | `never` (ephemeral) / `always` (`--persist`) | lifetime, below |
 | `a2a.port` | `auto` | a fresh sidecar port — never the parent's |
-| `env.SCITEX_TODO_AGENT_ID` | the twin | writes authored as the twin |
+| `env.SCITEX_CARDS_AGENT_ID` | the twin | writes authored as the twin |
 | `env.SAC_FORK_PARENT` | the parent | the owner-convention value (below) |
 | channels | telegrammer dropped, `server:sac` kept | two agents must not fight one bot's getUpdates slot |
 
@@ -74,14 +74,14 @@ settings — nothing about twinning implies short-lived.
 ## Identity split — author = twin, owner = parent (READ THIS)
 
 The operator's ask: a twin's writes should be attributed to the **twin's**
-name ("分身の名前で書いて欲しい"). So `SCITEX_TODO_AGENT_ID` is set to the
-twin — its scitex-todo `created_by` / comment author / actor are the twin.
+name ("分身の名前で書いて欲しい"). So `SCITEX_CARDS_AGENT_ID` is set to the
+twin — its scitex-cards `created_by` / comment author / actor are the twin.
 That part is automatic.
 
-**But scitex-todo card OWNERSHIP must stay with the PARENT — and this
-CANNOT be enforced from env.** Verified against `scitex_todo._store`:
+**But scitex-cards card OWNERSHIP must stay with the PARENT — and this
+CANNOT be enforced from env.** Verified against the `scitex_cards` store:
 `add_task` **fails loud** without an explicit `assignee`, and
-`SCITEX_TODO_AGENT_ID` feeds ONLY the author path — owner (`agent` /
+`SCITEX_CARDS_AGENT_ID` feeds ONLY the author path — owner (`agent` /
 `assignee` / `scope`) has no env default at all. So:
 
 > **HARD RULE — the twin passes `assignee=<parent>` (== `$SAC_FORK_PARENT`)

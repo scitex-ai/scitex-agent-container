@@ -66,7 +66,7 @@ wired into `sac-listen.service` via `Environment=SAC_SECRETS_ENVRC=…`.
 At deploy (`runtimes/_cct_token_pool.ensure_cct_bot_token`, called from
 `deploy_to_home` AFTER the `.envrc` cascade fold) sac resolves the token
 deterministically — per-agent identity never depends on `.envrc` goodwill
-(SCITEX_TODO_AGENT incident doctrine). Resolution order, first hit wins:
+(SCITEX_CARDS_AGENT incident doctrine). Resolution order, first hit wins:
 
 1. A non-empty `CCT_BOT_TOKEN` already folded into `$HOME/.env` (the
    hand-authored per-project `.envrc` mapping stays authoritative).
@@ -74,7 +74,7 @@ deterministically — per-agent identity never depends on `.envrc` goodwill
    for names that don't map mechanically (e.g. `SAC`). Only that slot is
    tried; a typo fails loud instead of binding another project's bot.
 3. Mechanical candidates from the AGENT NAME only: upper-snake, plus the
-   same with a leading `scitex-` stripped (`scitex-todo` → `TODO`). The
+   same with a leading `scitex-` stripped (`scitex-cards` → `CARDS`). The
    WORKDIR is NOT consulted — it was until 2026-07-17, which let a second
    agent in a repo take the first one's bot.
 
