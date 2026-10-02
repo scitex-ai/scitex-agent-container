@@ -49,6 +49,7 @@ from ._projection import project_detail, project_row
 from ._remote import RemoteFleet, safe_error_message
 from ._timeline import (
     KINDS,
+    NATIVE_LABELS,
     REFRESH_SECONDS,
     STALE_AFTER_SECONDS,
     build_timeline,
@@ -251,7 +252,7 @@ def timeline(request: HttpRequest):
         entries=timeline_rows(entries),
         summary=_timeline_summary(entries),
         agent_names=sorted(names),
-        kinds=KINDS,
+        kinds=[(name, NATIVE_LABELS.get(name, name)) for name in KINDS],
         selected_agent=agent_filter,
         selected_kind=kind_filter,
         refresh_seconds=REFRESH_SECONDS,
@@ -331,7 +332,7 @@ def timeline_api(request: HttpRequest) -> JsonResponse:
             "ok": True,
             "identity": identity,
             "count": len(entries),
-            "entries": [e.as_dict() for e in entries],
+            "entries": timeline_rows(entries),
             "stale_after_seconds": STALE_AFTER_SECONDS,
         }
     )
