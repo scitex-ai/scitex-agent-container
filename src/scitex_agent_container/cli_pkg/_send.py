@@ -10,17 +10,24 @@ Failure surfaces are sharp — no silent fallbacks:
 
   * Agent has no active state.db row     -> status="error", agent not running
   * Row has no a2a_port                  -> status="error", no a2a_port
-  * Lead or peer creds expired           -> status="creds-expired" (loud)
+  * Selected local Claude creds expired  -> status="creds-expired" (loud)
   * Transport timeout                    -> status="timeout", informative msg
   * Sidecar returns non-200              -> status="error", HTTP code + body
   * Sidecar returns malformed JSON       -> status="error", malformed body
   * Cross-host (row.host != current)     -> ssh://<host>:<port> via peer.py
 
+Container prompts and an explicit host listen URL submit to the authenticated
+host send route first. The host owns the selected spec, provider and ACL; a
+validated HTTP 202 remains pending. Bare-host local targets validate their
+selected spec and its genuine Claude credentials. Foreign live endpoints keep
+the canonical SSH route and its peer-owned provider authority.
+
 For unit testing without hitting the OS network stack, callers can
 swap :data:`_post_turn` for a fake at the module level — the helper
 resolves the symbol at call time, so the swap takes effect. The
-preflight creds check accepts an explicit ``ssh_runner=`` callable so
-the peer probe path is testable without an actual ssh subprocess.
+local preflight accepts a synthetic ``lead_creds_path`` only when the selected
+Claude spec has no declared account/file. Legacy ``ssh_runner`` remains an
+accepted argument but dispatch no longer probes guessed peer Claude files.
 
 ``status_code`` (ADR-0007, added 2026-08-29)
 ---------------------------------------------
@@ -188,15 +195,9 @@ def send_to_agent(
             reply inline (legacy behavior). When ``False`` (default)
             validate reachability and return a ``dispatched`` payload
             with a backgroundable ``track_command``.
-        ssh_runner: Optional injection seam for the peer-side OAuth
-            probe. Defaults to :func:`_send_preflight.default_ssh_runner`
-            (real ssh). Tests pass a fake that returns a
-            ``CompletedProcess`` with the desired ``returncode``.
-        lead_creds_path: Optional override for the lead-local
-            credentials path. Defaults to
-            ``~/.claude/.credentials.json`` inside the preflight helper.
-            Tests pass a ``tmp_path`` so the operator's real file is
-            never read.
+        ssh_runner: Legacy accepted argument; no peer OAuth probe is issued.
+        lead_creds_path: Synthetic fallback seam for an unpinned local Claude
+            spec. A declared account/file always owns its credential check.
 
     Raises:
         ValueError: When ``prompt`` and ``key`` are both passed (or
@@ -207,6 +208,17 @@ def send_to_agent(
         raise ValueError("prompt and key are mutually exclusive")
     if not prompt and not key:
         raise ValueError("either prompt or key is required")
+
+    from ._send_host import host_authority_declared, send_to_host
+
+    if prompt and host_authority_declared():
+        return send_to_host(
+            name,
+            prompt,
+            model=model,
+            max_turns=max_turns,
+            timeout_s=float(timeout_seconds),
+        )
 
     from .._network.peer import PeerError
     from .._state.state_store import _resolve_host
@@ -352,10 +364,8 @@ def send_to_agent(
     if max_turns is not None:
         metadata_extras["max_turns"] = int(max_turns)
 
-    # Preflight: refuse to dispatch on stale OAuth so a 401 doesn't
-    # silently land in the in-container session.jsonl. Lead-local
-    # creds are always probed; cross-host adds an ssh probe of the
-    # peer's ~/.claude/.credentials.json.
+    # Only the local selected target can declare model credentials here.
+    # Container sends have already reached the authenticated host authority.
     preflight_result = preflight_send_creds(
         name,
         peer_host=peer_host or current_host,

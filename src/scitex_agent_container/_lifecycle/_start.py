@@ -180,6 +180,11 @@ def agent_start(
             f"sac agents start {config.name} --force --yes --engine "
             f"{engine_override}"
         )
+    if resume_id_override and not dry_run and is_in_sif():
+        raise RuntimeError(
+            "an explicit --resume ID cannot be carried by this host spawn protocol; "
+            "run the exact resume command on the owning host"
+        )
     if maybe_broker_in_sif_spawn(
         config.name,
         dry_run=dry_run,
@@ -188,6 +193,7 @@ def agent_start(
         one_shot=one_shot,
         assume_yes=assume_yes,
         force=force,
+        session=session_override,
     ):
         return True
 

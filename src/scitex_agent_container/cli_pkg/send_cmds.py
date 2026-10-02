@@ -80,50 +80,16 @@ def _send_via_host_listen(
     """
     import sys as _sys
 
-    from scitex_dev.status import StatusCode, is_exchange_id
-
-    from .._lifecycle._in_sif_http_client import (
-        HostListenTransportError,
-        host_listen_call,
-    )
+    from .._lifecycle._in_sif_http_client import HostListenTransportError
     from .._lifecycle._in_sif_outcome import (
         build_outcome,
         outcome_to_stdout_json,
         transport_outcome,
     )
+    from ._send_host import request_host_send
 
-    body: dict = {"prompt": prompt}
-    if model is not None:
-        body["model"] = model
-    if max_turns is not None:
-        body["max_turns"] = max_turns
     try:
-        status, resp = host_listen_call("POST", f"/agents/{name}/send", body=body)
-        if status == 202:
-            try:
-                receipt = StatusCode.from_dict(resp.get("status_code", {}))
-                exchange_id = resp.get("exchange_id")
-            except Exception as exc:
-                raise HostListenTransportError(
-                    "host send returned an invalid canonical 202 receipt: "
-                    f"{exc}; inspect the host listen and turn-bridge logs",
-                    url=f"/agents/{name}/send",
-                ) from exc
-            if receipt.kind != "http" or receipt.code != 202 or receipt.final:
-                raise HostListenTransportError(
-                    "host send returned HTTP 202 without a non-final http/202 "
-                    "status_code; inspect the host listen and turn-bridge logs",
-                    url=f"/agents/{name}/send",
-                )
-            if not is_exchange_id(exchange_id):
-                raise HostListenTransportError(
-                    "host send returned HTTP 202 without a canonical xch_ exchange_id; "
-                    "inspect the host listen and turn-bridge logs",
-                    url=f"/agents/{name}/send",
-                )
-            # Submission owns the responder-issued receipt, not the target's
-            # wall-clock turn. Return this validated 202 immediately; callers
-            # that need finality can poll the named exchange explicitly.
+        status, resp = request_host_send(name, prompt, model=model, max_turns=max_turns)
         outcome = build_outcome(http_status=status, body=resp)
     except HostListenTransportError as exc:
         outcome = transport_outcome(str(exc), url=exc.url)
@@ -428,9 +394,9 @@ def send(
     # (already wired into node_message_send + the per-agent send
     # surface) enforces caller permission. Outcome JSON + exit code
     # follow the same Checkpoint 2 contract as the other in-SIF verbs.
-    from .._lifecycle._in_sif_broker import is_in_sif
+    from ._send_host import host_authority_declared
 
-    if is_in_sif():
+    if host_authority_declared():
         _send_via_host_listen(
             name=name,
             prompt=prompt,

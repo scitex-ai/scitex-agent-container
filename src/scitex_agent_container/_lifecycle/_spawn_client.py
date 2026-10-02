@@ -52,6 +52,17 @@ from urllib import request as urlrequest
 
 import scitex_logging as slogging
 
+from .._listen._handler_deadline import client_timeout_for
+from ._listen_client_resolve import (  # noqa: F401
+    SpawnRequestError,
+    _parse_body,
+    _read_bearer_token_file,
+    _resolve_base_url,
+    _resolve_bearer,
+    _resolve_caller,
+)
+from ._start_session_wire import normalize_start_session, require_host_session_support
+
 logger = slogging.getLogger(__name__)
 
 __all__ = ["SpawnRequestError", "request_spawn"]
@@ -81,7 +92,7 @@ __all__ = ["SpawnRequestError", "request_spawn"]
 # inside the handler) while this snapshot does not. The ordering client > server
 # would invert silently, which is the bug this comment is about, arriving by way
 # of its own fix.
-from .._listen._handler_deadline import client_timeout_for
+
 
 # Request-construction plumbing — where do I send this, and as whom — now lives
 # in ._listen_client_resolve. It was never spawn-specific: _host_exec_client
@@ -90,14 +101,6 @@ from .._listen._handler_deadline import client_timeout_for
 # happened to get written down first. Re-exported so every existing import path
 # (_host_exec_client, the MCP tools, _in_sif_broker, cli_pkg/lifecycle/_twin and
 # the tests) keeps working byte-identically.
-from ._listen_client_resolve import (  # noqa: F401
-    SpawnRequestError,
-    _parse_body,
-    _read_bearer_token_file,
-    _resolve_base_url,
-    _resolve_bearer,
-    _resolve_caller,
-)
 
 
 def _http_error_message(child_name: str, status: int, parsed: Any) -> str:
@@ -144,6 +147,7 @@ def request_spawn(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    session: str | None = None,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -231,7 +235,13 @@ def request_spawn(
         listen's ``post_ack_no_apptainer_pid`` probe.
 
         Back-compat: only emitted when truthy, so a pre-fix host simply
-        ignores the absent field and behaves exactly as before.
+        ignores the absent force field and behaves exactly as before.
+
+    session
+        Optional explicit continuity policy: continue, resume, fresh, or the
+        legacy new-session alias. Absent preserves the selected host spec.
+        An explicit override requires an authenticated typed health capability
+        before POST; the host validates and carries it through its public CLI.
 
     Returns
     -------
@@ -255,11 +265,21 @@ def request_spawn(
     if not isinstance(child_name, str) or not child_name:
         raise SpawnRequestError("child_name must be a non-empty string")
 
+    try:
+        session = normalize_start_session(session)
+    except ValueError as exc:
+        raise SpawnRequestError(str(exc)) from exc
     base = _resolve_base_url(base_url)
     tok = _resolve_bearer(bearer)
+    if session is not None:
+        require_host_session_support(
+            session, base_url=base, bearer=tok, timeout_s=timeout_s, opener=opener
+        )
     resolved_caller = _resolve_caller(caller)
 
     body: dict[str, Any] = {"name": child_name}
+    if session is not None:
+        body["session"] = session
     if resolved_caller:
         body["caller"] = resolved_caller
     if spec is not None:
