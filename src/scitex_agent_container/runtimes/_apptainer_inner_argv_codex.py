@@ -43,6 +43,7 @@ from npm; the fleet card carries the evidence):
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..config._session_continuity import SESSION_RESUME, wants_continue
@@ -88,8 +89,32 @@ def _override(key: str, value: object) -> list[str]:
     return ["-c", f"{key}={_toml(value)}"]
 
 
+def _trusted_project_paths(config: AgentConfig) -> tuple[str, ...]:
+    """Trust the workdir and the matching internal worktree plan's Git root."""
+    from .._lifecycle._worktree_policy import WorktreePlan
+
+    workdir = str(
+        getattr(config, "expanded_workdir", "") or getattr(config, "workdir", "") or ""
+    ).strip()
+    paths = (workdir,) if workdir else ()
+    plan = getattr(config, "_worktree_plan", None)
+    if not isinstance(plan, WorktreePlan) or plan.resolved_workdir != workdir:
+        return paths
+    root = Path(plan.repo_root)
+    if (
+        not root.is_absolute()
+        or any(character in plan.repo_root for character in "*?[]")
+    ):
+        return paths
+    root = root.resolve()
+    if root == Path(root.anchor):
+        return paths
+    repo_root = str(root)
+    return paths if repo_root in paths else (*paths, repo_root)
+
+
 def codex_config_overrides(config: AgentConfig) -> list[str]:
-    """The static ``-c`` overrides for one agent, rendered from its spec."""
+    """The static ``-c`` overrides from one agent's resolved launch config."""
     from ..config._engine_service_tier import validate_service_tier
 
     try:
@@ -141,10 +166,10 @@ def codex_config_overrides(config: AgentConfig) -> list[str]:
     # contents of this directory?" at first boot in every new cwd (measured on
     # handyman-01, 2026-09-05). This is the entry Codex itself writes to
     # config.toml when the operator answers "Yes, continue".
-    workdir = str(
-        getattr(config, "expanded_workdir", "") or getattr(config, "workdir", "") or ""
-    ).strip()
-    if workdir:
+    # Codex applies a linked worktree's trust to its Git repository root.
+    # That extra path comes only from SAC's typed neutral-policy plan, never
+    # from a spec-authored repository hint or a broad parent directory.
+    for workdir in _trusted_project_paths(config):
         flags += ["-c", f'projects.{json.dumps(workdir)}.trust_level="trusted"']
     max_ctx = getattr(config, "max_context_tokens", None)
     if max_ctx:
