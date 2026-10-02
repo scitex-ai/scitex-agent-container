@@ -171,6 +171,95 @@ def test_setup_mcp_merges_with_existing_servers(tmp_path: Path) -> None:
     assert set(data["mcpServers"]) == {"old", "new"}
 
 
+def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CCT_AGENT_ID", "paper-scitex-clew")
+    monkeypatch.delenv("CCT_BOT_TOKEN", raising=False)
+    cfg = _make_config(
+        name="scitex-research-lead",
+        mcp_servers={
+            "claude-code-telegrammer": {
+                "command": "bun",
+                "args": ["telegram-server.ts"],
+                "env": {
+                    "CCT_AGENT_ID": "${CCT_AGENT_ID}",
+                    "CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}",
+                    "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER": "1",
+                },
+            },
+            "other": {"command": "other", "env": {"CCT_AGENT_ID": "other-id"}},
+        },
+    )
+    cfg.env = {"CCT_AGENT_ID": "stale-spec-id"}
+
+    setup_mcp_config(cfg, str(tmp_path))
+
+    servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    cct = servers["claude-code-telegrammer"]
+    assert cct["env"]["CCT_AGENT_ID"] == cfg.name
+    assert cct["env"]["CCT_BOT_TOKEN"] == "${CCT_BOT_TOKEN}"
+    assert cct["env"]["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] == "1"
+    assert servers["other"]["env"]["CCT_AGENT_ID"] == "other-id"
+    assert (
+        cfg.mcp_servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"]
+        == "${CCT_AGENT_ID}"
+    )
+
+
+def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> None:
+    baseline = {
+        "mcpServers": {
+            "claude-code-telegrammer": {
+                "command": "bun",
+                "env": {"CCT_AGENT_ID": "old-project"},
+            },
+            "scitex-cards": {"command": "scitex-cards", "env": {"KEEP": "existing"}},
+        },
+    }
+    (tmp_path / ".mcp.json").write_text(json.dumps(baseline))
+    cfg = _make_config(name="scitex-infrastructure-lead")
+    cfg.env = {"UNRELATED": "new-value"}
+
+    setup_mcp_config(cfg, str(tmp_path))
+    setup_mcp_config(cfg, str(tmp_path))
+
+    servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    assert servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"] == cfg.name
+    assert servers["scitex-cards"] == baseline["mcpServers"]["scitex-cards"]
+
+
+def test_generated_cct_identity_survives_codex_env_forwarding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import tomllib
+
+    from scitex_agent_container.runtimes._apptainer_codex_exec import mcp_overrides
+
+    monkeypatch.setenv("CCT_AGENT_ID", "paper-scitex-clew")
+    cfg = _make_config(
+        name="scitex-research-lead",
+        mcp_servers={
+            "claude-code-telegrammer": {
+                "command": "bun",
+                "env": {"CCT_AGENT_ID": "${CCT_AGENT_ID}"},
+            },
+        },
+    )
+    setup_mcp_config(cfg, str(tmp_path))
+    document = json.loads((tmp_path / ".mcp.json").read_text())
+
+    flags = mcp_overrides([document], environ={"CCT_AGENT_ID": "paper-scitex-clew"})
+    effective = tomllib.loads("\n".join(flags[1::2]))["mcp_servers"][
+        "claude-code-telegrammer"
+    ]
+
+    assert effective["env"]["CCT_AGENT_ID"] == cfg.name
+    assert effective["env_vars"] == ["CCT_AGENT_ID"]
+
+
 def test_setup_mcp_recovers_from_malformed_existing_file(tmp_path: Path) -> None:
     # Arrange
     (tmp_path / ".mcp.json").write_text("not-json{[")
