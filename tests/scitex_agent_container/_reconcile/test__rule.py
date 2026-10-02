@@ -71,6 +71,8 @@ def _synthetic_host_routing(tmp_path, hostname):
     values = {
         "HOSTNAME": hostname,
         "SCITEX_AGENT_CONTAINER_CONFIG": str(config_path),
+        "SAC_HOST": None,
+        "SCITEX_AGENT_CONTAINER_HOST": None,
     }
     saved = {name: os.environ.get(name) for name in values}
     for name, value in values.items():
@@ -121,7 +123,25 @@ def test_real_fleet_fixture_blind_probe_is_unknown(tmp_path):
     assert decision.verdict is Verdict.UNKNOWN
 
 
-def test_real_foreign_pin_still_blocks_a_local_corpse(tmp_path):
+@pytest.fixture(params=[None, "SAC_HOST", "SCITEX_AGENT_CONTAINER_HOST"])
+def inherited_host_alias(request):
+    """Synthetic ambient override; restore it before leaving this case."""
+    name = request.param
+    if name is None:
+        yield
+        return
+    saved = os.environ.get(name)
+    os.environ[name] = "foreign-peer"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = saved
+
+
+def test_real_foreign_pin_still_blocks_a_local_corpse(tmp_path, inherited_host_alias):
     # Arrange
     import yaml
 
