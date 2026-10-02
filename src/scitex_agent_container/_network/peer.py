@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -74,8 +75,6 @@ def post_control_to_url(
     control_url = url.removesuffix("/v1/turn") + "/v1/control"
     body = json.dumps({"kind": "control", "action": "ui.key", "key": key}).encode()
     if control_url.startswith("ssh://"):
-        import urllib.parse
-
         from ._ssh_curl import _post_via_ssh_curl
 
         parsed = urllib.parse.urlparse(control_url)
