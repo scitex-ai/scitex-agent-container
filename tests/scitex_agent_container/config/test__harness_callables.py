@@ -55,12 +55,19 @@ def test_resolved_backend_reaches_every_hermes_session_mode(
     config = _config(session=session, resume_id=resume_id)
     # Act
     argv = _hermes_tui_inner_argv(config)
-    # Assert — no explicit model/provider override: the generated hermes
-    # config.yaml carries the default, and the override path trips the
-    # data-training-tier guard in non-interactive runs.
-    assert "--model" not in argv
-    assert "--provider" not in argv
+    # Assert
     assert _session_tail(argv) == expected_tail
+
+
+@pytest.mark.parametrize("session", ["fresh", "continue", "resume"])
+@pytest.mark.parametrize("flag", ["--model", "--provider"])
+def test_hermes_session_uses_generated_backend_config(session, flag):
+    # Arrange — the generated config owns backend selection in every mode.
+    config = _config(session=session, resume_id="session-20260910")
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert flag not in argv
 
 
 def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():

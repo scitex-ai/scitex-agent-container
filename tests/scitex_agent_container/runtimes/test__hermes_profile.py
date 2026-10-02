@@ -998,18 +998,27 @@ def test_cct_profile_env_empty_without_token(tmp_path: Path):
     # Arrange
     home = tmp_path / "home"
     home.mkdir()
-    # Act
     (home / ".env").write_text("SOME_OTHER_VAR=x\n", encoding="utf-8")
+    # Act
+    environment = profile._cct_profile_env(home)
     # Assert
-    assert profile._cct_profile_env(home) == {}
-    assert profile._cct_profile_env(tmp_path / "missing") == {}
+    assert environment == {}
 
 
-def test_launch_plan_native_provider_survives_endpoint_build():
+def test_cct_profile_env_empty_without_home(tmp_path: Path):
+    # Arrange
+    home = tmp_path / "missing"
+    # Act
+    environment = profile._cct_profile_env(home)
+    # Assert
+    assert environment == {}
+
+
+@pytest.fixture
+def native_provider_config():
     # Regression: the shared OpenAI tail once overwrote the native
     # endpoint, materializing custom:sac-* with base_url /v1 and every
     # turn 400ing on the Go relay.
-    # Arrange
     config = AgentConfig(name="lead", harness="hermes", runtime="headless")
     config.engine_key = "scitex-free"
     config.model = "muse-spark-1.3-contributor"
@@ -1022,9 +1031,31 @@ def test_launch_plan_native_provider_survives_endpoint_build():
         auth_token_env="OPENCODE_GO_API_KEY",
         hermes_provider="opencode-go",
     )
+    return config
+
+
+def test_launch_plan_native_provider_survives_endpoint_build(native_provider_config):
+    # Arrange
+    config = native_provider_config
     # Act
     plan = profile._launch_plan(config)
     # Assert
     assert plan.endpoint.protocol == "hermes-native:opencode-go"
+
+
+def test_launch_plan_native_provider_has_no_custom_url(native_provider_config):
+    # Arrange
+    config = native_provider_config
+    # Act
+    plan = profile._launch_plan(config)
+    # Assert
     assert plan.endpoint.url == ""
+
+
+def test_launch_plan_native_provider_retains_auth_env(native_provider_config):
+    # Arrange
+    config = native_provider_config
+    # Act
+    plan = profile._launch_plan(config)
+    # Assert
     assert plan.endpoint.auth_env == "OPENCODE_GO_API_KEY"

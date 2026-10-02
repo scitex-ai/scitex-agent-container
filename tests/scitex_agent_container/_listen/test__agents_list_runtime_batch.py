@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from scitex_agent_container._listen._agents_list import annotate_runtime_rows
 from scitex_agent_container._listen._registry_endpoints import enrich_row_with_endpoint
 
@@ -129,21 +131,44 @@ def test_endpoint_enrichment_uses_supplied_snapshot_without_per_row_store_reads(
     )
 
 
-def test_configless_row_from_other_host_is_remote_not_blank() -> None:
-    # Arrange
-    # Act
-    row = annotate_runtime_rows(
+@pytest.fixture
+def remote_configless_row() -> dict:
+    return annotate_runtime_rows(
         [{"name": "handyman-01", "host": "scitex-compute-04"}],
         active_reader=lambda host=None: [],
         local_host="scitex-compute-03",
     )[0]
+
+
+def test_configless_row_from_other_host_is_remote_not_blank(remote_configless_row) -> None:
+    # Arrange
+    row = remote_configless_row
+    # Act
+    status = row["status"]
     # Assert
-    assert row["status"] == "remote"
-    assert row["liveness"]["verdict"] == "remote"
-    assert "scitex-compute-04" in row["liveness"]["evidence"][0]["detail"]
+    assert status == "remote"
 
 
-def test_configless_row_without_host_stays_blank() -> None:
+def test_remote_configless_row_reports_remote_liveness(remote_configless_row) -> None:
+    # Arrange
+    row = remote_configless_row
+    # Act
+    verdict = row["liveness"]["verdict"]
+    # Assert
+    assert verdict == "remote"
+
+
+def test_remote_configless_evidence_names_actual_host(remote_configless_row) -> None:
+    # Arrange
+    row = remote_configless_row
+    # Act
+    detail = row["liveness"]["evidence"][0]["detail"]
+    # Assert
+    assert "scitex-compute-04" in detail
+
+
+@pytest.mark.parametrize("field", ["status", "liveness"])
+def test_configless_row_without_host_stays_blank(field) -> None:
     # Arrange
     # Act
     row = annotate_runtime_rows(
@@ -152,8 +177,7 @@ def test_configless_row_without_host_stays_blank() -> None:
         local_host="scitex-compute-03",
     )[0]
     # Assert
-    assert "status" not in row
-    assert "liveness" not in row
+    assert field not in row
 
 
 def test_configless_row_on_local_host_stays_blank() -> None:
