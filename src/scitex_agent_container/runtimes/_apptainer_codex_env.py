@@ -243,6 +243,22 @@ def preflight_subscription(
         raise ProviderEnvError(
             "native Codex subscription preflight requires `codex` on the host PATH"
         )
+    from ._apptainer_inner_argv_codex import codex_config_overrides
+
+    # --ignore-user-config must not erase the selected engine's admission
+    # settings. Reuse launch validation/routing, retaining the read-only
+    # probe sandbox rather than its production full-access override.
+    launch_flags = codex_config_overrides(config)
+    admission_keys = {
+        "model_provider", "service_tier",
+        "model_reasoning_effort", "model_context_window",
+    }
+    admission_flags = [
+        item
+        for index in range(0, len(launch_flags), 2)
+        if launch_flags[index + 1].partition("=")[0] in admission_keys
+        for item in launch_flags[index:index + 2]
+    ]
     codex_home = resolve_codex_home(state_dir)
     codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
     sync_subscription_auth(config, codex_home)
@@ -262,8 +278,7 @@ def preflight_subscription(
             "read-only",
             "-m",
             model,
-            "-c",
-            'model_provider="openai"',
+            *admission_flags,
             "Reply with exactly OK. Do not call tools.",
         ],
         stdin=subprocess.DEVNULL,

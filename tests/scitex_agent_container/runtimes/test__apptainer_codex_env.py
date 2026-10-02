@@ -91,6 +91,9 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
     config.claude.model = "gpt-5.6-sol"
     config.subscription_provider = "openai"
     config.subscription_account = "openai:account-one"
+    config.reasoning_effort = "ultra"
+    config.service_tier = "fast"
+    config.max_context_tokens = 196000
     seen: list[tuple[list[str], str]] = []
 
     def run(argv, **kwargs):
@@ -104,10 +107,20 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
         which=lambda name: "/usr/bin/codex",
         run=run,
     )
+    argv = seen[0][0]
+    overrides = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
     # Assert
-    assert (seen[0][0][seen[0][0].index("-m") + 1], seen[0][1]) == (
+    assert (
+        argv[argv.index("-m") + 1], seen[0][1], overrides,
+        argv[argv.index("-s") + 1],
+    ) == (
         "gpt-5.6-sol",
         str(tmp_path / "state" / "codex-home"),
+        [
+            'model_provider="openai"', 'service_tier="fast"',
+            'model_context_window=196000', 'model_reasoning_effort="ultra"',
+        ],
+        "read-only",
     )
 
 

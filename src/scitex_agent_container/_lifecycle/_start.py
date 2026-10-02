@@ -273,6 +273,10 @@ def agent_start(
         )
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
+    if uses_production_runtime and force and not dry_run:
+        from ..runtimes._native_tui_admission import preflight_native_tui
+
+        preflight_native_tui(config, production=True)
     if really_running:
         if force:
             # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-

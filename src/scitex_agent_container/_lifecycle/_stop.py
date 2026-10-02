@@ -525,6 +525,15 @@ def agent_restart(
 
     check_engine_before_stop(config_path, engine_override, probe=probe_engine)
 
+    if runtime_factory is None:
+        from ..runtimes._native_tui_admission import (
+            preflight_native_tui_from_config_path,
+        )
+
+        preflight_native_tui_from_config_path(
+            config_path, engine_override=engine_override
+        )
+
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
     # ad-hoc-launched agents with no row.
