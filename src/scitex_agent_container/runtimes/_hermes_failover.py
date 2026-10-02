@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config._engine_types import apply_engine
 from ..config._hermes_config import compile_hermes_config
 from ._apptainer_provider import resolve_provider_api_key
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +39,7 @@ def configure_failover(
     policy = config.hermes_failover
     if not policy.accounts and not policy.engines:
         return {}, {}
+    logger = get_logger(__name__)
     from ._hermes_profile import _launch_plan
 
     primary_plan = _launch_plan(
