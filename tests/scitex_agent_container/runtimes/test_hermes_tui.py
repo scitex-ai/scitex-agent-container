@@ -501,7 +501,13 @@ class FakeMux:
         return True
 
     def capture_content(self, name):
-        return self._panes.pop(0) if self._panes else self._panes[-1] if self._panes else ""
+        return (
+            self._panes.pop(0)
+            if self._panes
+            else self._panes[-1]
+            if self._panes
+            else ""
+        )
 
     def send_keys(self, name, key):
         self.keys.append(key)
@@ -511,7 +517,24 @@ def test_drain_answers_contributor_tier_then_reports_ready():
     """Regression (2026-09-23): the Hermes drain watched the [y/N] prompt
     until timeout and reported SUCC over a corpse; the supervisor reaped
     the agent minutes later. Now the shared prompt registry answers it."""
-    from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
+    # Arrange: the real drain and native gate use an isolated session probe.
+    import builtins
+    from types import FunctionType, SimpleNamespace
+
+    from scitex_agent_container.runtimes import hermes_tui
+    from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTurnActivity
+    from scitex_agent_container.runtimes._tui_boot_drain import wait_for_hermes_boot
+
+    def initialized_session(*args, **kwargs):
+        return HermesTurnActivity("working", "working", "synthetic-live")
+
+    def native_gate(config, **kwargs):
+        return wait_for_hermes_boot(config, probe_fn=initialized_session, **kwargs)
+
+    def import_boundary(name, *args, **kwargs):
+        if name == "_tui_boot_drain":
+            return SimpleNamespace(wait_for_hermes_boot=native_gate)
+        return builtins.__import__(name, *args, **kwargs)
 
     boot_prompt = (
         "This is Meta's contributor tier. Training on your data.\n"
@@ -520,11 +543,20 @@ def test_drain_answers_contributor_tier_then_reports_ready():
     ready_pane = "─ ready │ muse spark 1.3 contributor free ─ sac:ut…\n❯\n"
     mux = FakeMux([boot_prompt, ready_pane])
 
-    rt = HermesTuiSessionRuntime.__new__(HermesTuiSessionRuntime)
+    rt = hermes_tui.HermesTuiSessionRuntime.__new__(hermes_tui.HermesTuiSessionRuntime)
     rt._mux = mux
 
     class Cfg:
         name = "ut-agent"
 
-    assert rt._drain_at_boot(Cfg(), timeout_s=5, poll_s=0) is True
-    assert "y" in mux.keys and "Enter" in mux.keys
+    namespace = {
+        **vars(hermes_tui),
+        "__builtins__": {**vars(builtins), "__import__": import_boundary},
+    }
+    drain = FunctionType(rt._drain_at_boot.__func__.__code__, namespace)
+
+    # Act
+    ready = drain(rt, Cfg(), timeout_s=5, poll_s=0)
+
+    # Assert
+    assert (ready, mux.keys) == (True, ["y", "Enter"])

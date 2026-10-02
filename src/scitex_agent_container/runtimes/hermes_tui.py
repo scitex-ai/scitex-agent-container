@@ -133,25 +133,27 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         timeout_s: float,
         poll_s: float = 0.5,
     ) -> bool:
-        """Drain Hermes boot modals (incl. contributor-tier confirm), then
-        observe its footer until the session composer is bound.
+        """Answer registered boot modals, then require a native live session.
 
-        The observation-only loop used to sit through an answerable [y/N]
-        until timeout and then report the start SUCC over a corpse; the
-        supervisor reaped it minutes later. Now each frame first runs the
-        shared prompt registry (which holds the fleet-accepted
-        hermes-contributor-tier handler) before checking boot readiness.
+        A working startup turn is initialized even while no composer/footer
+        is rendered. Input delivery retains its separate readiness contract.
         """
         import scitex_logging as slogging
 
         from . import prompts as _prompts
+        from ._tui_boot_drain import wait_for_hermes_boot
 
         name = self.session_name(config)
-        deadline = time.monotonic() + timeout_s
-        while name and self._mux.exists(name) and time.monotonic() < deadline:
+        if not name:
+            return False
+
+        def poll_ui():
             pane = self._mux.capture_content(name)
             modal = _prompts.detect(pane)
-            if modal is not None:
+            # Claude's generic compose detector also matches Hermes' busy
+            # "Ctrl+C to interrupt" hint. Only answer Hermes' boot confirm;
+            # never submit an interrupt hint or a human's staged input.
+            if modal == "hermes-contributor-tier":
                 answered = _prompts.respond_modal(
                     modal, lambda key: self._mux.send_keys(name, key)
                 )
@@ -161,21 +163,24 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
                         config.name,
                         modal,
                     )
-                    if poll_s > 0:
-                        time.sleep(poll_s)
-                    continue
+                    return None
             ready = _hermes_pane_boot_ready(pane)
-            if ready is not None:
-                if not ready:
-                    slogging.getLogger(__name__).error(
-                        "Hermes TUI start refused for %s: pane is at Setup Required "
-                        "and has no active model session",
-                        config.name,
-                    )
-                return ready
-            if poll_s > 0:
-                time.sleep(poll_s)
-        return False
+            if ready is False:
+                slogging.getLogger(__name__).error(
+                    "Hermes TUI start refused for %s: pane is at Setup Required "
+                    "and has no active model session",
+                    config.name,
+                )
+                return False
+            return True
+
+        return wait_for_hermes_boot(
+            config,
+            exists_fn=lambda: self._mux.exists(name),
+            timeout_s=timeout_s,
+            poll_s=poll_s,
+            poll_ui=poll_ui,
+        )
 
     @staticmethod
     def _start_recovery(config: AgentConfig) -> None:

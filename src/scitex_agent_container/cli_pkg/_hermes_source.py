@@ -169,6 +169,28 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     return True
 
 
+def _patch_hermes_quota_failover(staged: Path) -> None:
+    """Ship fail-fast quota recovery with the immutable Hermes source pin."""
+    patch = Path(__file__).with_name("_hermes_quota_failover.patch")
+    if not patch.is_file():
+        raise HermesSourceError(
+            "Hermes quota failover patch is missing; refusing an unsafe build"
+        )
+    for arguments in (("--check",), ()):
+        completed = subprocess.run(
+            ["git", "apply", *arguments, str(patch)],
+            cwd=staged,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode:
+            raise HermesSourceError(
+                "could not apply Hermes quota failover patch; refusing an unsafe build: "
+                + completed.stderr.strip()
+            )
+
+
 def stage_hermes_source(dest_dir: Path) -> Path:
     """Export only tracked bytes at the pinned commit into the build context."""
     repo = resolve_hermes_repo()
@@ -190,10 +212,14 @@ def stage_hermes_source(dest_dir: Path) -> Path:
             archive.extractall(destination, filter="data")
     finally:
         archive_path.unlink(missing_ok=True)
+    patches = []
     if _patch_hermes_lifecycle_instrumentation(destination):
-        (destination / "SAC_LOCAL_PATCHES").write_text(
-            "heartbeat-tool-lifecycle-display-independent\n", encoding="utf-8"
-        )
+        patches.append("heartbeat-tool-lifecycle-display-independent")
+    _patch_hermes_quota_failover(destination)
+    patches.append("quota-failover-fail-closed")
+    (destination / "SAC_LOCAL_PATCHES").write_text(
+        "\n".join(patches) + "\n", encoding="utf-8"
+    )
     (destination / "SAC_UPSTREAM_COMMIT").write_text(
         f"{HERMES_COMMIT}\n", encoding="utf-8"
     )

@@ -21,6 +21,7 @@ from ..config._launch_plan import (
     ResolvedEngine,
 )
 from ._apptainer_provider import resolve_provider_api_key
+from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
 from ._hermes_profile_logs import ensure_hermes_log_files
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
@@ -184,17 +185,13 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         # endpoint, protocol and session handling. SAC only names the
         # provider + model and delivers the key via the agent env.
         if base_url:
-            raise RuntimeError(
-                "Hermes native provider must not declare base_url"
-            )
+            raise RuntimeError("Hermes native provider must not declare base_url")
         endpoint = Endpoint(
             protocol="hermes-native:" + native,
             url="",
             auth_kind="bearer",
             auth_env=str(provider.auth_token_env or ""),
-            extra_headers=tuple(
-                (getattr(provider, "extra_headers", {}) or {}).items()
-            ),
+            extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
         )
     else:
         if not base_url:
@@ -458,7 +455,7 @@ def materialize_hermes_profile(
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
     api_key = ensure_api_key(state_dir)
-    provider_key = resolve_provider_api_key(config)
+    provider_key = resolve_primary_key(config, resolve_provider_api_key)
     plan = _launch_plan(config)
     rendered = compile_hermes_config(
         plan,
@@ -469,6 +466,7 @@ def materialize_hermes_profile(
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
+    failover_env, credential_pools = configure_failover(config, rendered)
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -502,7 +500,10 @@ def materialize_hermes_profile(
         env_name: provider_key,
         **_sac_profile_env(config, servers),
         **cct_env,
+        **failover_env,
     }
+    if credential_pools and plan.endpoint.auth_env not in failover_env:
+        profile_env.pop(plan.endpoint.auth_env, None)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -511,6 +512,7 @@ def materialize_hermes_profile(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )
         _write_profile_env(profile / ".env", profile_env)
+        materialize_pools(profile, credential_pools)
     (state_dir / API_PORT_FILE).write_text(f"{api_port}\n", encoding="utf-8")
     return api_key, targets
 
@@ -535,7 +537,7 @@ def materialize_hermes_tui_profile(
         setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
-    provider_key = resolve_provider_api_key(config)
+    provider_key = resolve_primary_key(config, resolve_provider_api_key)
     plan = _launch_plan(config, launch_mode="tui")
     rendered = compile_hermes_config(
         plan,
@@ -546,6 +548,7 @@ def materialize_hermes_tui_profile(
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
+    failover_env, credential_pools = configure_failover(config, rendered)
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )
@@ -573,7 +576,10 @@ def materialize_hermes_tui_profile(
         # reported TOKEN-LEN=0 with the value present in home/.env and the
         # Hermes process env but absent from the scope file).
         **_cct_profile_env(home),
+        **failover_env,
     }
+    if credential_pools and plan.endpoint.auth_env not in failover_env:
+        profile_env.pop(plan.endpoint.auth_env, None)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -582,6 +588,7 @@ def materialize_hermes_tui_profile(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )
         _write_profile_env(profile / ".env", profile_env)
+        materialize_pools(profile, credential_pools)
     return targets
 
 

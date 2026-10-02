@@ -1,0 +1,199 @@
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index 0db6fb0c8..b53843cb2 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -31,3 +31,3 @@ from agent.credential_pool import (
+ )
+-from agent.error_classifier import FailoverReason
++from agent.error_classifier import FailoverReason, is_usage_cap_error
+ from agent.retry_utils import parse_retry_after_seconds, reset_delay_from_message
+@@ -747,4 +747,2 @@ _STATUS_TO_FAILOVER_REASON = {
+ }
+-_USAGE_LIMIT_REASON_TOKENS = ("usage_limit_reached", "gousagelimit")
+-_USAGE_LIMIT_MESSAGE_TOKENS = ("usage limit reached", "usage limit has been reached")
+ 
+@@ -866,9 +864,6 @@ def _recover_rate_limit(pool, *, has_retried_429, error_context, api_key_hint, c
+         return (True, False) if rotate_and_swap(429, "rate limit, pre-exhausted") else (False, True)
+-    usage_limit_reached = False
+-    if error_context:
+-        context_reason = str(error_context.get("reason") or "").lower()
+-        context_message = str(error_context.get("message") or "").lower()
+-        usage_limit_reached = any(t in context_reason for t in _USAGE_LIMIT_REASON_TOKENS) or any(
+-            t in context_message for t in _USAGE_LIMIT_MESSAGE_TOKENS
+-        )
++    context = error_context or {}
++    usage_limit_reached = is_usage_cap_error(
++        reason=context.get("reason") or "", message=context.get("message") or ""
++    )
+     if not has_retried_429 and not usage_limit_reached:
+@@ -948,7 +943,14 @@ def recover_with_credential_pool(
+             return False
+-        _ra().logger.info(
+-            "Credential %s (%s) — rotated to pool entry %s",
+-            rotate_status, label, getattr(next_entry, "id", "?"),
+-        )
+         swapped = agent._swap_credential(next_entry) is not False
++        if swapped:
++            account = getattr(next_entry, "label", None) or next_entry.id
++            _ra().logger.warning(
++                "Credential failover for %s after %s (%s): using account %s",
++                pool.provider, rotate_status, label, account,
++            )
++            agent._emit_diagnostic_status(
++                f"⚠️ Credential failover for {pool.provider} after {rotate_status} ({label}): using account {account}"
++            )
++        else:
++            _ra().logger.warning("Credential failover for %s failed to activate account %s", pool.provider, next_entry.id)
+         benched = next((e for e in pool.entries() if e.id == credential_id), None) if credential_id else None
+diff --git a/agent/error_classifier.py b/agent/error_classifier.py
+index 6523ac7ba..25c32aa21 100644
+--- a/agent/error_classifier.py
++++ b/agent/error_classifier.py
+@@ -173,2 +173,12 @@ _USAGE_LIMIT_TRANSIENT_SIGNALS = (
+ 
++
++def is_usage_cap_error(*, reason: str = "", message: str = "") -> bool:
++    """An exhausted subscription allowance needs another account, not a timed retry."""
++    return any(token in str(reason).lower() for token in ("usage_limit_reached", "gousagelimit")) or any(
++        token in str(message).lower() for token in (
++            "usage limit reached", "usage limit has been reached", "usage limit exceeded",
++            "reached its usage limit", "hit your usage limit",
++        )
++    )
++
+ # 413 detected from message text (proxies embed the status or re-wrap
+@@ -984,2 +994,6 @@ def classify_api_error(
+     verdict = next((v for v in (stage(c) for stage in _STAGES) if v is not None), _V_UNKNOWN)
++    if verdict["reason"] == _R.rate_limit and is_usage_cap_error(reason=c.code, message=c.msg):
++        # Keep the reset-bearing rate_limit identity for cooldowns and terminal copy,
++        # but never enter backoff or auto-recovery once rotation/failover is exhausted.
++        verdict = {**verdict, "retryable": False, "should_rotate_credential": True, "should_fallback": True}
+     message = _extract_message(error, body)
+diff --git a/agent/turn_api_error.py b/agent/turn_api_error.py
+index 90c095df3..4d2a4db68 100644
+--- a/agent/turn_api_error.py
++++ b/agent/turn_api_error.py
+@@ -298,2 +298,5 @@ def settle_unrecovered_error(
+         or reasoning_spent
++        # Subscription caps retain rate_limit identity for reset/cooldown copy,
++        # but rotation already declined; honour their explicit no-retry verdict.
++        or (classified.reason == FailoverReason.rate_limit and not classified.retryable)
+         or (
+diff --git a/agent/turn_failure_copy.py b/agent/turn_failure_copy.py
+index 115231f66..eb5237db9 100644
+--- a/agent/turn_failure_copy.py
++++ b/agent/turn_failure_copy.py
+@@ -426,2 +426,14 @@ def nonretryable_copy(
+     label = provider_label_for(provider)
++    if classified.reason == FailoverReason.rate_limit and not classified.retryable:
++        reset_at = classified.error_context.get("reset_at")
++        remaining = max(0, reset_at - time.time()) if isinstance(reset_at, (int, float)) else None
++        if remaining:
++            from agent.retry_utils import format_reset_window
++            next_step = f"Its usage limit resets in {format_reset_window(remaining)}; send /retry after that."
++        else:
++            next_step = "Check the account's usage allowance or choose another provider with /model."
++        return (
++            f"{label}'s usage allowance is exhausted, and no configured account or backup could continue. "
++            f"{next_step}\n\nProvider said: {summary}"
++        )
+     if getattr(classified, "is_auth", False):
+diff --git a/hermes_cli/auth.py b/hermes_cli/auth.py
+index adf870a25..d39dd2fa6 100644
+--- a/hermes_cli/auth.py
++++ b/hermes_cli/auth.py
+@@ -446,4 +446,5 @@ def is_rate_limited_auth_error(error: Exception) -> bool:
+     re-authenticating cannot fix it, so callers should say "retry later", not ``hermes auth``."""
++    from hermes_cli.auth_constants import CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE
+     return (isinstance(error, AuthError) and not error.relogin_required
+-            and error.code == CODEX_RATE_LIMITED_CODE)
++            and error.code in (CODEX_RATE_LIMITED_CODE, CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE))
+ 
+@@ -454,3 +455,6 @@ def primary_failure_wording(error: Exception) -> tuple[str, str]:
+     operators hunting for an expired token (#117482), so it reads as quota at every surface."""
++    from hermes_cli.auth_constants import CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE
+     if is_rate_limited_auth_error(error):
++        if error.code == CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE:
++            return "quota exhausted", "Primary provider quota exhausted"
+         return "rate-limited (429)", "Primary provider quota exhausted"
+diff --git a/hermes_cli/auth_constants.py b/hermes_cli/auth_constants.py
+index 0f0c1301e..d1020ddf5 100644
+--- a/hermes_cli/auth_constants.py
++++ b/hermes_cli/auth_constants.py
+@@ -133,2 +133,3 @@ ACTUAL_LOCAL_NOAUTH_PLACEHOLDER = "dummy-actual-local-api-key"
+ CODEX_RATE_LIMITED_CODE = "codex_rate_limited"
++CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE = "credential_pool_quota_exhausted"
+ 
+diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
+index 2e1f9d263..dc5a1fc96 100644
+--- a/hermes_cli/runtime_provider.py
++++ b/hermes_cli/runtime_provider.py
+@@ -641,4 +641,7 @@ def _resolve_from_pool(provider: str, requested_provider: str, model_cfg: Dict[s
+         pool = load_pool(provider) if should_use_pool else None
+-    except Exception:
+-        pool = None
++    except Exception as exc:
++        raise AuthError(
++            f"Could not load credential pool for {provider} ({type(exc).__name__}); "
++            "refusing unpooled credentials."
++        ) from exc
+     if not (pool and pool.has_credentials()):
+@@ -647,3 +650,4 @@ def _resolve_from_pool(provider: str, requested_provider: str, model_cfg: Dict[s
+     if entry is None:
+-        return None
++        from hermes_cli.runtime_provider_pool import exhausted_pool_error
++        raise exhausted_pool_error(pool, model=target_model or None)
+     pool_api_key = _pool_entry_api_key(entry)
+diff --git a/hermes_cli/runtime_provider_custom.py b/hermes_cli/runtime_provider_custom.py
+index d0ee1a81e..0b1ba8689 100644
+--- a/hermes_cli/runtime_provider_custom.py
++++ b/hermes_cli/runtime_provider_custom.py
+@@ -383,2 +383,5 @@ def _try_resolve_from_custom_pool(
+             entry = pool.select() if pool.has_credentials() else None
++            if entry is None and pool.has_credentials():
++                from hermes_cli.runtime_provider_pool import exhausted_pool_error
++                raise exhausted_pool_error(pool)
+             pool_api_key = rp._pool_entry_api_key(entry) if entry is not None else ""
+@@ -397,4 +400,9 @@ def _try_resolve_from_custom_pool(
+                                base_url, pool_api_key, source=f"pool:{pool_key}", credential_pool=pool)
+-        except Exception:
+-            continue
++        except rp.AuthError:
++            raise
++        except Exception as exc:
++            raise rp.AuthError(
++                f"Could not resolve credential pool {pool_key} ({type(exc).__name__}); "
++                "refusing unpooled credentials."
++            ) from exc
+     return None
+diff --git a/hermes_cli/runtime_provider_pool.py b/hermes_cli/runtime_provider_pool.py
+new file mode 100644
+index 000000000..4b668a4a3
+--- /dev/null
++++ b/hermes_cli/runtime_provider_pool.py
+@@ -0,0 +1,25 @@
++"""Exhausted credential pools must not fall through to unpooled credentials."""
++
++from datetime import datetime, timezone
++import time
++
++from hermes_cli.auth import AuthError
++from hermes_cli.auth_constants import CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE
++
++
++def exhausted_pool_error(pool, *, model=None):
++    """Name the failed pool and its earliest reset without exposing credentials."""
++    until = pool.next_available_at(model=model)
++    reset = (
++        datetime.fromtimestamp(until, timezone.utc).isoformat()
++        if until is not None else "unknown; inspect the credential pool"
++    )
++    quota = any(entry.last_error_code in (402, 429) for entry in pool.entries())
++    return AuthError(
++        f"All credentials exhausted for {pool.provider}; next reset: {reset}. "
++        "Use a configured fallback provider or wait for the reset.",
++        provider=pool.provider,
++        code=CREDENTIAL_POOL_QUOTA_EXHAUSTED_CODE if quota else "credential_pool_exhausted",
++        retryable=False,
++        retry_after=max(0, until - time.time()) if until is not None else None,
++    )
