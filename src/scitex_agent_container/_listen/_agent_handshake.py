@@ -12,7 +12,11 @@ from functools import partial
 from scitex_dev.status import StatusCode
 from starlette.responses import JSONResponse
 
-from .._lifecycle._relocate_handshake import HandshakeFacts, evaluate_handshake
+from .._lifecycle._relocate_handshake import (
+    CODE_NO_REPLY,
+    HandshakeFacts,
+    evaluate_handshake,
+)
 from .._state._agentic_handshake import (
     DAEMON,
     advance_handshake,
@@ -375,11 +379,19 @@ async def agent_handshake_status(request, *, dependencies=None):
         verdict = evaluate_handshake(
             facts, nonce=contract["nonce"], expected_answer=expected_answer(contract)
         )
+        reason = verdict.reason
+        if verdict.code == CODE_NO_REPLY:
+            # accepted records persistence/publication, not target admission.
+            reason = (
+                "The challenge was persisted and published to the durable inbox; "
+                f"no authored proof was observed by {facts.observed_by} within the "
+                "issued handshake lease. Target admission was not proven."
+            )
         message = json.dumps(
             {
                 "phase": "proven" if verdict.proven is True else "not_proven",
                 "proven": verdict.proven,
-                "reason": verdict.reason,
+                "reason": reason,
                 "candidate": state.get("candidate"),
                 "tool_proof": asdict(proof) if proof is not None else None,
                 "completion_semantics": "native lifecycle completion; no nested tool success inference",

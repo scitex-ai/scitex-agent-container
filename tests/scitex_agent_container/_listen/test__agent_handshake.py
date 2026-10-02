@@ -293,6 +293,9 @@ async def mechanical_round_trip(rig):
             expired.json()["proven"] is False
             and expired.json()["status_code"]["code"] == 504
         ),
+        "expiry_reason": json.loads(expired.json()["status_code"]["message"])[
+            "reason"
+        ],
     }
 
 
@@ -317,6 +320,42 @@ async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
 
 
 @pytest.mark.asyncio
+async def test_expired_undelivered_challenge_reports_broker_publication(
+    mechanical_round_trip,
+):
+    # Arrange: no subscriber ever admitted the persisted challenge.
+    result = mechanical_round_trip
+    # Act
+    reason = result["expiry_reason"]
+    # Assert
+    assert "persisted and published to the durable inbox" in reason
+
+
+@pytest.mark.asyncio
+async def test_expired_undelivered_challenge_limits_missing_proof_to_lease(
+    mechanical_round_trip,
+):
+    # Arrange: expiry is an observation boundary, not a dead-target claim.
+    result = mechanical_round_trip
+    # Act
+    reason = result["expiry_reason"]
+    # Assert
+    assert "within the issued handshake lease" in reason
+
+
+@pytest.mark.asyncio
+async def test_expired_undelivered_challenge_keeps_target_admission_unproven(
+    mechanical_round_trip,
+):
+    # Arrange: broker acceptance alone cannot prove target admission.
+    result = mechanical_round_trip
+    # Act
+    reason = result["expiry_reason"]
+    # Assert
+    assert "Target admission was not proven." in reason
+
+
+@pytest.mark.asyncio
 async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(rig):
     # Arrange
     # Act
@@ -338,6 +377,57 @@ async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(r
     assert (
         result.json()["proven"] is False and result.json()["status_code"]["code"] == 422
     )
+
+
+@pytest_asyncio.fixture
+async def late_reply(rig):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=rig.app), base_url="http://test"
+    ) as client:
+        started = await client.post(
+            "/agents/scitex-hub/handshakes", json={"timeout_s": 1}
+        )
+        exchange_id = started.json()["exchange_id"]
+        contract = json.loads(rig.memory.values[exchange_id]["operation"])
+        uri = f"/agents/scitex-hub/handshakes/{exchange_id}"
+        rig.clock.now = contract["deadline"] + 1
+        await client.get(uri)
+        final_revision = rig.memory.revisions[exchange_id]
+        for payload in (
+            {"type": "function_call", "call_id": "late-call", "arguments": "private"},
+            {
+                "type": "function_call_output",
+                "call_id": "late-call",
+                "output": state.expected_answer(contract),
+            },
+        ):
+            with rig.rollout.open("a") as output:
+                output.write(_row("response_item", payload, rig.clock.now))
+        acked = await client.post(
+            uri + "/ack", json={"feedback": _feedback(contract, exchange_id)}
+        )
+        status = await client.get(uri)
+    return {
+        "late_ack_code": acked.status_code,
+        "timeout_code": status.json()["status_code"]["code"],
+        "ledger_unchanged": rig.memory.revisions[exchange_id] == final_revision,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key,expected",
+    [("late_ack_code", 422), ("timeout_code", 504), ("ledger_unchanged", True)],
+)
+async def test_late_real_tool_output_and_authored_ack_preserve_final_timeout(
+    late_reply, key, expected
+):
+    # Arrange: real-format correlated tool output and authored ACK arrive late.
+    observations = late_reply
+    # Act
+    value = observations[key]
+    # Assert
+    assert value == expected
 
 
 @pytest.mark.asyncio
