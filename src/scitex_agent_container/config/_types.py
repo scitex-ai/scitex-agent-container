@@ -300,6 +300,7 @@ class AgentConfig:
     # nothing new. Empty / None = the engine states no opinion. Delivered
     # to the container by ``runtimes._apptainer_provider.engine_env_flags``.
     reasoning_effort: str = ""
+    service_tier: str = ""
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
