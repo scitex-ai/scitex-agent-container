@@ -90,6 +90,12 @@ def _override(key: str, value: object) -> list[str]:
 
 def codex_config_overrides(config: AgentConfig) -> list[str]:
     """The static ``-c`` overrides for one agent, rendered from its spec."""
+    from ..config._engine_service_tier import validate_service_tier
+
+    try:
+        validate_service_tier(config)
+    except ValueError as exc:
+        raise ProviderEnvError(str(exc)) from exc
     subscription_provider = str(
         getattr(config, "subscription_provider", "") or ""
     ).strip()
@@ -127,6 +133,8 @@ def codex_config_overrides(config: AgentConfig) -> list[str]:
         flags += _override(f"model_providers.{pid}.env_key", CODEX_KEY_ENV)
         flags += _override(f"model_providers.{pid}.requires_openai_auth", False)
     flags += _override("model", model)
+    if getattr(config, "service_tier", ""):
+        flags += _override("service_tier", config.service_tier)
     flags += _override("sandbox_mode", _SANDBOX)
     flags += _override("approval_policy", "never")
     # Trust the workdir up front: without it Codex parks on "Do you trust the
