@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -73,6 +75,7 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
 ) -> None:
     # Arrange
     env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("CODEX_HOME", str(tmp_path / "state" / "codex-home"))
     source = (
         tmp_path
         / ".scitex"
@@ -106,3 +109,27 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
         "gpt-5.6-sol",
         str(tmp_path / "state" / "codex-home"),
     )
+
+
+def test_preflight_fixture_preserves_an_inherited_external_auth_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a synthetic inherited profile stands in for the agent's own.
+    external_home = tmp_path / "external-codex-home"
+    external_home.mkdir()
+    external_auth = external_home / "auth.json"
+    sentinel = b'{"external_fixture":"preserve"}'
+    external_auth.write_bytes(sentinel)
+    child_env = dict(os.environ)
+    child_env["CODEX_HOME"] = str(external_home)
+    target = (
+        f"{Path(__file__).resolve()}::"
+        "test_preflight_executes_the_exact_declared_model_with_selected_auth"
+    )
+    # Act — exercise the real fixture in a child, never the current profile.
+    subprocess.run(
+        [sys.executable, "-m", "pytest", target, "-q", "--no-header"],
+        env=child_env, capture_output=True, check=True, timeout=5,
+    )
+    # Assert
+    assert external_auth.read_bytes() == sentinel
