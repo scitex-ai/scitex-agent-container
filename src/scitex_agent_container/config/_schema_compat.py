@@ -186,7 +186,9 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
-            allowed.update({"background_review", "compression", "run_budget_seconds"})
+            allowed.update(
+                {"background_review", "compression", "failover", "run_budget_seconds"}
+            )
         elif family == "opencode":
             allowed.update({"approval_policy", "run_budget_seconds", "serve"})
         missing = sorted(required - entry_keys)
@@ -249,9 +251,7 @@ def canonical_surface_errors(raw: object) -> list[str]:
 
         if "serve" in raw_entry:
             if family != "opencode":
-                errors.append(
-                    f"{path}.serve is only valid for the opencode harness"
-                )
+                errors.append(f"{path}.serve is only valid for the opencode harness")
             else:
                 serve = raw_entry.get("serve")
                 if not isinstance(serve, Mapping):

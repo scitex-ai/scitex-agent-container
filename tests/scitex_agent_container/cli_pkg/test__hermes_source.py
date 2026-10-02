@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -145,6 +147,30 @@ def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
     tool_progress = repository / "tui_gateway" / "tool_progress.py"
     tool_progress.parent.mkdir()
     tool_progress.write_text(PINNED_TOOL_PROGRESS_ANCHORS, encoding="utf-8")
+    # The complete staging contract includes the deployed quota patch. Seed
+    # its tracked preimages from the same immutable pin, without executing
+    # any credential code or depending on the cache's working branch.
+    pinned_repository = source.resolve_hermes_repo()
+    quota_patch = Path(source.__file__).with_name("_hermes_quota_failover.patch")
+    sections = quota_patch.read_text().split("diff --git ")[1:]
+    for section in sections:
+        if "\nnew file mode " in section:
+            continue
+        name = re.match(r"a/(\S+) b/", section).group(1)
+        preimage = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(pinned_repository),
+                "show",
+                f"{source.HERMES_COMMIT}:{name}",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
+        destination = repository / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(preimage)
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
     commit = subprocess.run(
