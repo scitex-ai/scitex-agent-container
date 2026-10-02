@@ -133,6 +133,17 @@ def test_hermes_resume_id_bypasses_claude_transcript_preflight():
     assert should_preflight is False
 
 
+@pytest.mark.parametrize("harness", ["codex", "opencode", "openai"])
+def test_native_resume_bypasses_claude_projects_store(harness):
+    # Arrange
+    config = _config(session="resume", resume_id="01a0fdf5-a004-75a3-ae59-86f9a7eac19a")
+    config.harness = harness
+    # Act
+    should_preflight = should_preflight_claude_resume(config, config.claude.resume_id)
+    # Assert
+    assert should_preflight is False
+
+
 def test_setup_required_is_not_boot_readiness():
     # Arrange
     pane = "─ setup required │ qwen ─ /work\n ❯\n ☤ setup required"
