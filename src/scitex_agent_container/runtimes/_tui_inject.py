@@ -94,7 +94,7 @@ class StartupPromptInjectorMixin:
         # doubling the wait (the per-prompt gate below owns the real patience).
         try:
             self.wait_until_input_ready(config, timeout_s=5.0)
-        except Exception as exc:  # stx-allow: fallback (reason: a drain timeout here must not skip prompt injection outright — the compose-clear Esc-guard + per-prompt wait_until_input_ready are the downstream nets; logged LOUD)
+        except Exception as exc:  # stx-allow: fallback (reason: a drain timeout here must not skip prompt injection outright — the compose-clear Esc-guard + per-prompt wait_until_input_ready are the downstream nets; scitex_logging warning goes to stderr)
             log.warning(
                 "TuiSessionRuntime: pre-clear modal drain for %s did not reach "
                 "input-ready (%s); proceeding — the compose-clear Esc-guard and "
