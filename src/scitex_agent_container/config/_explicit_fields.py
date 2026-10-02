@@ -32,7 +32,8 @@ EXCLUDED from the required map, each with its reason:
   * ``spec.session`` — top-level ergonomic alias of the canonical
     ``spec.claude.session``; requiring both would force a double
     declaration. The canonical nested key is required instead.
-  * ``spec.claude.*`` — required only for ``kind: Agent``;
+  * ``spec.claude.*`` — required only for a Claude-harness ``kind: Agent``;
+    selecting another known harness does not require a legacy Claude block.
     ``validate_proxy_coupling`` FORBIDS the block on ``kind: AgentProxy``.
   * ``spec.proxy.*`` — required only for ``kind: AgentProxy``; the same
     coupling validator forbids the block on ``kind: Agent``.
@@ -90,7 +91,8 @@ from ._acl_types import (
     OutboundCommsSpec,
 )
 from ._apptainer_spec import ApptainerSpec
-from ._harness_types import HARNESS_KEY, LEGACY_HARNESS_KEY
+from ._harness_lookup import canonical_harness
+from ._harness_types import DEFAULT_AGENT_HARNESS, HARNESS_KEY, LEGACY_HARNESS_KEY
 from ._proxy_types import ProxySpec
 from ._types import (
     A2ASpec,
@@ -297,14 +299,20 @@ def _proxy_fields() -> list[RequiredField]:
     )
 
 
-def required_fields_for_kind(kind: object) -> tuple[RequiredField, ...]:
-    """The full required-key map for a ``kind: Agent|AgentProxy`` spec.
+def required_fields_for_kind(
+    kind: object, *, harness: str = DEFAULT_AGENT_HARNESS
+) -> tuple[RequiredField, ...]:
+    """The required-key map for a kind and its resolved selected harness.
 
     Unknown kinds get the both-kinds set only — ``validate_raw`` already
     rejects the kind itself with its own error.
+    Unknown harnesses retain the Claude requirements; their value diagnostic
+    belongs to ``validate_raw``. Only a recognized non-Claude selection
+    removes the unrelated legacy block. Canonical selected-entry requirements
+    remain owned by ``canonical_surface_errors``.
     """
     fields = _both_kinds_fields()
-    if kind == "Agent":
+    if kind == "Agent" and canonical_harness(harness) in (None, "anthropic"):
         fields += _claude_fields()
     elif kind == "AgentProxy":
         fields += _proxy_fields()
