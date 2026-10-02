@@ -110,13 +110,16 @@ def isolated_hermes_source_stager():
     """Keep unrelated image-build tests offline and deterministic."""
     saved = isb._stage_hermes_source
     saved_cards = isb._stage_cards_source
+    saved_fonts = isb._stage_noto_cjk_source
     isb._stage_hermes_source = lambda build_context: build_context
     isb._stage_cards_source = lambda build_context: build_context
+    isb._stage_noto_cjk_source = lambda build_context: build_context
     try:
         yield
     finally:
         isb._stage_hermes_source = saved
         isb._stage_cards_source = saved_cards
+        isb._stage_noto_cjk_source = saved_fonts
 
 
 @contextmanager
@@ -993,6 +996,32 @@ def test_non_base_build_does_not_stage_hermes_source(tmp_path, fake_pkg_root, fa
 
     # Assert
     assert staged == []
+
+
+@pytest.mark.parametrize("layer", ["base", "scitex", "proxy"])
+def test_only_shared_base_stages_noto_fonts(tmp_path, fake_pkg_root, fake_def, layer):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_noto_cjk_source
+    isb._stage_noto_cjk_source = lambda path: staged.append(path)
+    output = tmp_path / "out"
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            isb.build_layer_from_source(
+                layer=layer,
+                def_path=fake_def,
+                pkg_root=fake_pkg_root,
+                output_dir=output,
+            )
+    finally:
+        isb._stage_noto_cjk_source = saved
+
+    # Assert
+    assert staged == (
+        [output / "sac-base" / "build-context"] if layer == "base" else []
+    )
 
 
 def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(

@@ -110,6 +110,7 @@ def build_layer_reproducible(
     verify: bool = True,
     stage_cards: Callable[[Path], Path] | None = None,
     stage_hermes: Callable[[Path], Path] | None = None,
+    stage_fonts: Callable[[Path], Path] | None = None,
 ) -> Any:
     """Build a sac SIF through scitex-container's reproducible round trip.
 
@@ -172,6 +173,7 @@ def build_layer_reproducible(
             bootstrap_sif=bootstrap_sif,
             stage_cards=stage_cards,
             stage_hermes=stage_hermes,
+            stage_fonts=stage_fonts,
         )
 
         return _container_build_reproducible(

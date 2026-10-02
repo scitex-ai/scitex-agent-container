@@ -51,6 +51,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     scitex-agent-container-src /opt/scitex-agent-container-src
     scitex-cards-src /opt/scitex-cards-src
     hermes-agent-src /opt/hermes-agent
+    noto-cjk-jp /opt/noto-cjk-jp
 
 %post
     set -e
@@ -139,11 +140,18 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
         libcups2t64 libdrm2 libgbm1 libxshmfence1 \
         libxkbcommon0 libasound2t64 \
-        libcairo2 libpango-1.0-0 \
+        libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
         libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libxext6 libxrender1 \
-        fonts-liberation
+        fontconfig fonts-liberation
     locale-gen en_US.UTF-8
+
+    # Canonical shared JP faces: Dev ci-cpu's pinned Sans/OFL contract plus
+    # Serif from the same immutable upstream. Staging caches verified bytes;
+    # this install is offline and all applications inherit the foundation.
+    python3 /opt/scitex-agent-container-src/src/scitex_agent_container/containers/_noto_cjk.py \
+        install /opt/noto-cjk-jp
+    rm -rf /opt/noto-cjk-jp
 
     # ---- 1a. Canonical container user `agent` (UID 1000) --------------
     # Ubuntu 24.04's base image ships a `ubuntu` user at UID 1000. sac's

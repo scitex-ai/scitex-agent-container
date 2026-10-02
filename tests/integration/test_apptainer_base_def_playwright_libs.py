@@ -66,6 +66,9 @@ _REQUIRED_LIBS = (
     "libxext6",
     "libxrender1",
     "fonts-liberation",
+    "fontconfig",
+    "libpangoft2-1.0-0",
+    "libharfbuzz-subset0",
 )
 
 
