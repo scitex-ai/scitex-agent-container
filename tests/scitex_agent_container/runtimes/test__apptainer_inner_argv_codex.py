@@ -6,6 +6,19 @@ objects through the real builder. Each test pins one observable fact.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import tomllib
+
+from scitex_agent_container._lifecycle._worktree_policy import (
+    WorktreePlan,
+    enforce_task_worktree_policy,
+)
 from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
 from scitex_agent_container.runtimes._apptainer_inner_argv_codex import (
     CODEX_EXEC_MODULE,
@@ -233,3 +246,172 @@ def test_subscription_overrides_select_native_openai_and_exact_model():
         '"gpt-5.6-sol"',
         False,
     )
+
+
+def _trusted_projects(config):
+    flags = codex_config_overrides(config)
+    return tomllib.loads("\n".join(flags[1::2]))["projects"]
+
+
+@pytest.fixture
+def approved_linked_worktree(tmp_path, env_save_restore):
+    """Real Git, owner files, and the existing neutral-policy CLI boundary."""
+    env_save_restore.set(
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
+    )
+    repo = tmp_path / 'repo "quoted"'
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "develop"], check=True)
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        check=True,
+    )
+    fixture = (
+        Path(__file__).parents[1]
+        / "_lifecycle/_fixtures/worktree-policy/src/.bin/scitex-worktree-policy"
+    )
+    cli = tmp_path / "neutral-policy"
+    shutil.copy2(fixture, cli)
+    cli.chmod(0o700)
+    config = _config()
+    config.workdir = str(repo)
+    enforce_task_worktree_policy(config, cli_path=cli)
+    return config, repo
+
+
+def test_overrides_trust_the_policy_verified_repository_root(approved_linked_worktree):
+    # Arrange
+    config, repo = approved_linked_worktree
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert projects[str(repo)]["trust_level"] == "trusted"
+
+
+def test_verified_repository_trust_keeps_the_selected_worktree(
+    approved_linked_worktree,
+):
+    # Arrange
+    config, _ = approved_linked_worktree
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert projects[config.expanded_workdir]["trust_level"] == "trusted"
+
+
+def test_verified_repository_trust_is_limited_to_the_root_and_worktree(
+    approved_linked_worktree,
+):
+    # Arrange
+    config, repo = approved_linked_worktree
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert set(projects) == {str(repo), config.expanded_workdir}
+
+
+def test_rendering_repository_trust_keeps_the_primary_branch(approved_linked_worktree):
+    # Arrange
+    config, repo = approved_linked_worktree
+    # Act
+    codex_config_overrides(config)
+    branch = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # Assert
+    assert branch == "develop"
+
+
+@pytest.mark.parametrize("plan_factory", [dict, SimpleNamespace])
+def test_untyped_repository_hints_cannot_extend_trust(plan_factory):
+    # Arrange
+    config = _config()
+    config._worktree_plan = plan_factory(
+        repo_root="/unverified", resolved_workdir=config.workdir
+    )
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert set(projects) == {config.workdir}
+
+
+def test_spec_like_repository_attributes_cannot_extend_trust():
+    # Arrange
+    config = _config()
+    config.repo_root = "/unverified"
+    config.trusted_projects = ["/"]
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert set(projects) == {config.workdir}
+
+
+def test_a_stale_internal_worktree_plan_cannot_extend_trust(approved_linked_worktree):
+    # Arrange
+    config, _ = approved_linked_worktree
+    config.workdir = "/different/declared-workdir"
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert set(projects) == {config.workdir}
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "/",
+        "/tmp/..",
+        "relative/repository",
+        "/wildcard/*",
+        "/wildcard/?",
+        "/wildcard/[ab]",
+    ],
+)
+def test_repository_trust_cannot_expand_to_global_or_pattern_paths(
+    approved_linked_worktree, root
+):
+    # Arrange
+    config, _ = approved_linked_worktree
+    config._worktree_plan = replace(config._worktree_plan, repo_root=root)
+    # Act
+    projects = _trusted_projects(config)
+    # Assert
+    assert set(projects) == {config.workdir}
+
+
+def test_workdir_and_repository_root_trust_are_not_duplicated():
+    # Arrange
+    config = _config()
+    config._worktree_plan = WorktreePlan(
+        authored_workdir=config.workdir,
+        resolved_workdir=config.workdir,
+        repo_root=config.workdir,
+        branch="feature/example",
+        action="reuse-explicit",
+        owner_file="/fixture/runtime/worktree-owner.json",
+    )
+    # Act
+    flags = codex_config_overrides(config)
+    trust_entries = [
+        value for value in flags if value.endswith('.trust_level="trusted"')
+    ]
+    # Assert
+    assert len(trust_entries) == 1
