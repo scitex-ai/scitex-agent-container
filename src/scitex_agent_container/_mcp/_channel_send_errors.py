@@ -401,7 +401,13 @@ def error_result(exc: SendError) -> "CallToolResult":
     and what to do instead) is preserved in the payload — failing loudly
     must not cost the caller the information it needs to recover.
     """
-    from mcp.types import CallToolResult, TextContent
+    try:
+        from mcp.types import CallToolResult, TextContent
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     return CallToolResult(
         content=[

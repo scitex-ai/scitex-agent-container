@@ -6,7 +6,13 @@ no closures, so it has no business living inside ``register_tools``.
 
 from __future__ import annotations
 
-from mcp.types import Tool
+try:
+    from mcp.types import Tool
+except ImportError as exc:
+    raise ImportError(
+        "SAC MCP dependencies are unavailable; install "
+        "scitex-agent-container[mcp]."
+    ) from exc
 
 __all__ = ["build_tool_list"]
 

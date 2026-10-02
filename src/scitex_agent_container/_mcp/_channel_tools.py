@@ -56,7 +56,13 @@ def register_tools(
     """
     import uuid as _uuid
 
-    from mcp.types import CallToolResult, TextContent, Tool
+    try:
+        from mcp.types import CallToolResult, TextContent, Tool
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     from .._state.dispatch_ledger import (
         STATUS_DELIVERED,
