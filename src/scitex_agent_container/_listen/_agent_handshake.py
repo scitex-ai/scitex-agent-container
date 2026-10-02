@@ -34,6 +34,11 @@ from ..runtimes._codex_activity_binding import (
 )
 from ..runtimes._codex_activity_projection import _launch_identity
 from ..runtimes._codex_handshake_proof import read_codex_tool_proof
+from ._handshake_observation import (
+    handshake_observation,
+    require_observation_time,
+    server_verification_time,
+)
 
 
 def _host(request):
@@ -143,7 +148,19 @@ class HandshakeDependencies:
         )
 
     def advance(self, exchange_id, status):
-        return advance_handshake(exchange_id, status, store_factory=self.store_factory)
+        def retain_first_final(values):
+            # Another finalizer may already have committed its server clock.
+            if values["final"]:
+                return StatusCode(
+                    kind=values["kind"], code=values["code"], message=values["message"]
+                )
+            return status
+
+        return advance_handshake(
+            exchange_id,
+            status_fn=retain_first_final,
+            store_factory=self.store_factory,
+        )
 
     def observe(self, contract):
         return _observe_proof(contract, capture=self.capture_target, clock=self.now)
@@ -164,7 +181,7 @@ class HandshakeDependencies:
         return (self.ack_recorder or absorb_agentic_feedback)(event, agent=agent)
 
 
-def _response(exchange_id, contract, values):
+def _response(exchange_id, contract, values, *, observed_at):
     state = json.loads(values["message"])
     return {
         "exchange_id": exchange_id,
@@ -180,7 +197,20 @@ def _response(exchange_id, contract, values):
         "proven": state.get("proven"),
         "phase": state.get("phase"),
         "proof": state.get("tool_proof"),
+        **handshake_observation(contract, state, observed_at=observed_at),
     }
+
+
+def _final_response(exchange_id, contract, values, *, observed_at):
+    result = _response(exchange_id, contract, values, observed_at=observed_at)
+    if values["code"] == 200 and observed_at > contract["deadline"]:
+        result.update(
+            proven=None,
+            phase="expired",
+            reason="The issued handshake lease has expired.",
+        )
+        return JSONResponse(result, status_code=410)
+    return JSONResponse(result)
 
 
 async def agent_handshake_start(request, *, dependencies=None):
@@ -241,7 +271,9 @@ async def agent_handshake_start(request, *, dependencies=None):
         values, contract = await asyncio.to_thread(
             dependencies.read, exchange_id, agent=name
         )
-        result = _response(exchange_id, contract, values)
+        result = _response(
+            exchange_id, contract, values, observed_at=dependencies.now()
+        )
         result["transport"] = {
             "persisted": True,
             "subscriber_count": subscribers,
@@ -298,15 +330,21 @@ async def agent_handshake_ack(request, *, dependencies=None):
             return JSONResponse(
                 {"proven": False, "phase": "ack_refused"}, status_code=422
             )
-        return JSONResponse(
-            {
-                "exchange_id": exchange_id,
-                "proven": None,
-                "phase": "awaiting_native_tool_evidence",
-                "poll": f"/agents/{name}/handshakes/{exchange_id}",
-            },
-            status_code=202,
+        values, contract = await asyncio.to_thread(
+            dependencies.read, exchange_id, agent=name
         )
+        result = _response(
+            exchange_id,
+            contract,
+            values,
+            observed_at=require_observation_time(contract, dependencies.now()),
+        )
+        result.update(
+            proven=None,
+            phase="awaiting_native_tool_evidence",
+            poll=f"/agents/{name}/handshakes/{exchange_id}",
+        )
+        return JSONResponse(result, status_code=202)
     except CodexActivityError:
         return JSONResponse(
             {
@@ -331,18 +369,9 @@ async def agent_handshake_status(request, *, dependencies=None):
         values, contract = await asyncio.to_thread(
             dependencies.read, exchange_id, agent=name
         )
+        now = require_observation_time(contract, dependencies.now())
         if values["final"]:
             if values["code"] == 200:
-                if dependencies.now() > contract["deadline"]:
-                    return JSONResponse(
-                        {
-                            "exchange_id": exchange_id,
-                            "proven": None,
-                            "phase": "expired",
-                            "reason": "The issued handshake lease has expired.",
-                        },
-                        status_code=410,
-                    )
                 target, _, binding = await asyncio.to_thread(
                     dependencies.capture_target, name, _host(request)
                 )
@@ -353,21 +382,25 @@ async def agent_handshake_status(request, *, dependencies=None):
                     raise CodexActivityError(
                         "completed handshake no longer has its issued target"
                     )
-            return JSONResponse(_response(exchange_id, contract, values))
+            return _final_response(
+                exchange_id,
+                contract,
+                values,
+                observed_at=require_observation_time(contract, dependencies.now()),
+            )
         state = json.loads(values["message"])
         proof = None
-        if (
-            state.get("accepted") is not True
-            and dependencies.now() < contract["deadline"]
-        ):
+        if state.get("accepted") is not True and now < contract["deadline"]:
             return JSONResponse(
-                _response(exchange_id, contract, values), status_code=202
+                _response(exchange_id, contract, values, observed_at=now),
+                status_code=202,
             )
         if state.get("candidate") is not None:
             proof = await asyncio.to_thread(dependencies.observe, contract)
-        if proof is None and dependencies.now() < contract["deadline"]:
+        if proof is None and now < contract["deadline"]:
             return JSONResponse(
-                _response(exchange_id, contract, values), status_code=202
+                _response(exchange_id, contract, values, observed_at=now),
+                status_code=202,
             )
         facts = HandshakeFacts(
             challenge_accepted=state.get("accepted"),
@@ -387,10 +420,16 @@ async def agent_handshake_status(request, *, dependencies=None):
                 f"no authored proof was observed by {facts.observed_by} within the "
                 "issued handshake lease. Target admission was not proven."
             )
+        verified_at = (
+            server_verification_time(contract, proof, observed_at=dependencies.now())
+            if verdict.proven is True and proof is not None
+            else None
+        )
         message = json.dumps(
             {
                 "phase": "proven" if verdict.proven is True else "not_proven",
                 "proven": verdict.proven,
+                "verified_at": verified_at,
                 "reason": reason,
                 "candidate": state.get("candidate"),
                 "tool_proof": asdict(proof) if proof is not None else None,
@@ -406,7 +445,12 @@ async def agent_handshake_status(request, *, dependencies=None):
         values, contract = await asyncio.to_thread(
             dependencies.read, exchange_id, agent=name
         )
-        return JSONResponse(_response(exchange_id, contract, values))
+        return _final_response(
+            exchange_id,
+            contract,
+            values,
+            observed_at=require_observation_time(contract, dependencies.now()),
+        )
     except CodexActivityError:
         return JSONResponse(
             {
