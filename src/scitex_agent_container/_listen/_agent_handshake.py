@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from functools import partial
 
 from scitex_dev.status import StatusCode
 from starlette.responses import JSONResponse
@@ -78,9 +80,11 @@ def _capture_target(name: str, host: str):
     )
 
 
-def _observe_proof(contract):
+def _observe_proof(contract, *, capture=None, clock=None):
+    capture = capture or _capture_target
+    clock = clock or time.time
     target = contract["target"]
-    current, cursor, binding = _capture_target(target["agent"], target["host"])
+    current, cursor, binding = capture(target["agent"], target["host"])
     if (
         current != target
         or list(binding.rollout_identity) != contract["source_identity"]
@@ -90,18 +94,70 @@ def _observe_proof(contract):
         raise CodexActivityError("challenge runtime activity regressed")
     proof = read_codex_tool_proof(
         binding,
-        observed_at=time.time(),
+        observed_at=clock(),
         cursor=contract["cursor"],
         issued_at=contract["issued_at"],
         answer=expected_answer(contract),
     )
     # A response and its process/instance provenance must survive the read.
-    again, _, rebound = _capture_target(target["agent"], target["host"])
+    again, _, rebound = capture(target["agent"], target["host"])
     if again != target or rebound.rollout_identity != binding.rollout_identity:
         raise CodexActivityError("challenge owner changed during proof observation")
     return (
         proof if proof is None or proof.completed_at <= contract["deadline"] else None
     )
+
+
+@dataclass
+class HandshakeDependencies:
+    """Explicit process/store boundaries; omitted collaborators use live services."""
+
+    capture: Callable[..., tuple] | None = None
+    clock: Callable[[], float] | None = None
+    store_factory: Callable | None = None
+    dispatch_recorder: Callable | None = None
+    event_persister: Callable | None = None
+    ack_recorder: Callable | None = None
+
+    def now(self):
+        return (self.clock or time.time)()
+
+    def capture_target(self, name, host):
+        return (self.capture or _capture_target)(name, host)
+
+    def open(self, contract):
+        return open_handshake(contract, store_factory=self.store_factory)
+
+    def read(self, exchange_id, *, agent):
+        return read_handshake(
+            exchange_id, agent=agent, store_factory=self.store_factory
+        )
+
+    def accept(self, exchange_id, *, accepted):
+        return record_acceptance(
+            exchange_id, accepted=accepted, store_factory=self.store_factory
+        )
+
+    def advance(self, exchange_id, status):
+        return advance_handshake(exchange_id, status, store_factory=self.store_factory)
+
+    def observe(self, contract):
+        return _observe_proof(contract, capture=self.capture_target, clock=self.now)
+
+    def dispatch(self, **values):
+        from .._state.dispatch_ledger import record_dispatch
+
+        return (self.dispatch_recorder or record_dispatch)(**values)
+
+    def persist(self, **values):
+        from .._state.state_store_channel import persist_event
+
+        return (self.event_persister or persist_event)(**values)
+
+    def ack(self, event, *, agent):
+        from .._mcp._channel_agentic_feedback import absorb_agentic_feedback
+
+        return (self.ack_recorder or absorb_agentic_feedback)(event, agent=agent)
 
 
 def _response(exchange_id, contract, values):
@@ -123,9 +179,10 @@ def _response(exchange_id, contract, values):
     }
 
 
-async def agent_handshake_start(request):
+async def agent_handshake_start(request, *, dependencies=None):
     """POST: request one server-issued challenge; no client-selected identity."""
     name = request.path_params["name"]
+    dependencies = dependencies or HandshakeDependencies()
     try:
         body = await request.json()
         if not isinstance(body, dict) or set(body) - {"timeout_s"}:
@@ -133,23 +190,21 @@ async def agent_handshake_start(request):
                 "only timeout_s may be supplied; server selects all identities"
             )
         target, cursor, binding = await asyncio.to_thread(
-            _capture_target, name, _host(request)
+            dependencies.capture_target, name, _host(request)
         )
         contract = make_contract(
             target,
             cursor=cursor,
-            now=time.time(),
+            now=dependencies.now(),
             timeout_s=body.get("timeout_s", 120.0),
         )
         contract["source_identity"] = list(binding.rollout_identity)
-        exchange_id = await asyncio.to_thread(open_handshake, contract)
+        exchange_id = await asyncio.to_thread(dependencies.open, contract)
         prompt = challenge_prompt(contract, exchange_id)
-        from .._state.dispatch_ledger import record_dispatch
-        from .._state.state_store_channel import persist_event
         from ..a2a._inbox_bus import mint_event
 
         await asyncio.to_thread(
-            record_dispatch,
+            dependencies.dispatch,
             agent=DAEMON,
             from_agent=DAEMON,
             to_agent=name,
@@ -175,12 +230,12 @@ async def agent_handshake_start(request):
             },
         )
         event["_row_id"] = await asyncio.to_thread(
-            persist_event, target=name, event=event
+            dependencies.persist, target=name, event=event
         )
         subscribers = await request.app.state.inbox.publish(name, event)
-        await asyncio.to_thread(record_acceptance, exchange_id, accepted=True)
+        await asyncio.to_thread(dependencies.accept, exchange_id, accepted=True)
         values, contract = await asyncio.to_thread(
-            read_handshake, exchange_id, agent=name
+            dependencies.read, exchange_id, agent=name
         )
         result = _response(exchange_id, contract, values)
         result["transport"] = {
@@ -202,20 +257,21 @@ async def agent_handshake_start(request):
         return JSONResponse({"error": str(exc)}, status_code=400)
 
 
-async def agent_handshake_ack(request):
+async def agent_handshake_ack(request, *, dependencies=None):
     """POST: observe model-authored ACK for one already issued server exchange."""
     name = request.path_params["name"]
+    dependencies = dependencies or HandshakeDependencies()
     exchange_id = request.path_params["exchange_id"]
     try:
         body = await request.json()
         if not isinstance(body, dict) or not isinstance(body.get("feedback"), dict):
             raise ValueError("feedback must be an object")
         values, contract = await asyncio.to_thread(
-            read_handshake, exchange_id, agent=name
+            dependencies.read, exchange_id, agent=name
         )
         feedback = body["feedback"]
         target, _, binding = await asyncio.to_thread(
-            _capture_target, name, _host(request)
+            dependencies.capture_target, name, _host(request)
         )
         if (
             target != contract["target"]
@@ -225,10 +281,8 @@ async def agent_handshake_ack(request):
         proof = feedback.get("handshake_proof")
         if not isinstance(proof, dict) or proof.get("exchange_id") != exchange_id:
             raise ValueError("proof must name this exact issued exchange")
-        from .._mcp._channel_agentic_feedback import absorb_agentic_feedback
-
         saved = await asyncio.to_thread(
-            absorb_agentic_feedback,
+            dependencies.ack,
             {
                 "kind": "agentic_ack",
                 "from_agent": name,
@@ -264,17 +318,18 @@ async def agent_handshake_ack(request):
         return JSONResponse({"error": "No matching issued handshake."}, status_code=404)
 
 
-async def agent_handshake_status(request):
+async def agent_handshake_status(request, *, dependencies=None):
     """GET: source-observe proof; acceptance/ACK alone can never finalize 200."""
     name = request.path_params["name"]
+    dependencies = dependencies or HandshakeDependencies()
     exchange_id = request.path_params["exchange_id"]
     try:
         values, contract = await asyncio.to_thread(
-            read_handshake, exchange_id, agent=name
+            dependencies.read, exchange_id, agent=name
         )
         if values["final"]:
             if values["code"] == 200:
-                if time.time() > contract["deadline"]:
+                if dependencies.now() > contract["deadline"]:
                     return JSONResponse(
                         {
                             "exchange_id": exchange_id,
@@ -285,7 +340,7 @@ async def agent_handshake_status(request):
                         status_code=410,
                     )
                 target, _, binding = await asyncio.to_thread(
-                    _capture_target, name, _host(request)
+                    dependencies.capture_target, name, _host(request)
                 )
                 if (
                     target != contract["target"]
@@ -297,13 +352,16 @@ async def agent_handshake_status(request):
             return JSONResponse(_response(exchange_id, contract, values))
         state = json.loads(values["message"])
         proof = None
-        if state.get("accepted") is not True and time.time() < contract["deadline"]:
+        if (
+            state.get("accepted") is not True
+            and dependencies.now() < contract["deadline"]
+        ):
             return JSONResponse(
                 _response(exchange_id, contract, values), status_code=202
             )
         if state.get("candidate") is not None:
-            proof = await asyncio.to_thread(_observe_proof, contract)
-        if proof is None and time.time() < contract["deadline"]:
+            proof = await asyncio.to_thread(dependencies.observe, contract)
+        if proof is None and dependencies.now() < contract["deadline"]:
             return JSONResponse(
                 _response(exchange_id, contract, values), status_code=202
             )
@@ -329,12 +387,12 @@ async def agent_handshake_status(request):
             sort_keys=True,
         )
         await asyncio.to_thread(
-            advance_handshake,
+            dependencies.advance,
             exchange_id,
             StatusCode(kind="http", code=verdict.code, message=message),
         )
         values, contract = await asyncio.to_thread(
-            read_handshake, exchange_id, agent=name
+            dependencies.read, exchange_id, agent=name
         )
         return JSONResponse(_response(exchange_id, contract, values))
     except CodexActivityError:
@@ -352,20 +410,24 @@ async def agent_handshake_status(request):
         return JSONResponse({"error": "No matching issued handshake."}, status_code=404)
 
 
-def handshake_routes(prefix):
+def handshake_routes(prefix, *, dependencies=None):
     """Add the bounded handshake surface to the existing authenticated app."""
     from starlette.routing import Route
 
     return [
-        Route(f"{prefix}/{{name}}/handshakes", agent_handshake_start, methods=["POST"]),
+        Route(
+            f"{prefix}/{{name}}/handshakes",
+            partial(agent_handshake_start, dependencies=dependencies),
+            methods=["POST"],
+        ),
         Route(
             f"{prefix}/{{name}}/handshakes/{{exchange_id}}",
-            agent_handshake_status,
+            partial(agent_handshake_status, dependencies=dependencies),
             methods=["GET"],
         ),
         Route(
             f"{prefix}/{{name}}/handshakes/{{exchange_id}}/ack",
-            agent_handshake_ack,
+            partial(agent_handshake_ack, dependencies=dependencies),
             methods=["POST"],
         ),
     ]

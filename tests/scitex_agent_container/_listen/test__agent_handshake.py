@@ -2,17 +2,18 @@
 
 import json
 from datetime import datetime, timezone
+from functools import partial
 from types import SimpleNamespace
 
 import httpx
 import pytest
+import pytest_asyncio
 from scitex_dev.store import NEW_RECORD
 from starlette.applications import Starlette
-from starlette.routing import Route
 
 from scitex_agent_container._listen import _agent_handshake as routes
 from scitex_agent_container._state import _agentic_handshake as state
-from scitex_agent_container._state import dispatch_feedback, dispatch_ledger
+from scitex_agent_container._state import dispatch_feedback
 from scitex_agent_container.a2a._inbox_bus import Broker
 from scitex_agent_container.runtimes._codex_activity import (
     CodexActivityError,
@@ -66,40 +67,21 @@ def _row(record_type, payload, at=90):
 
 
 @pytest.fixture
-def rig(tmp_path, monkeypatch):
+def rig(tmp_path):
     # Existing protocol adapters and existing dispatch_feedback write logic run;
     # only their public store boundaries and kernel capture are test doubles.
     memory = _MemoryLedger()
     dispatches, feedbacks, events = {}, {}, []
-    monkeypatch.setattr(state, "_store", lambda: memory)
-    monkeypatch.setattr(routes.time, "time", lambda: 100.0)
-    monkeypatch.setattr(
-        dispatch_ledger,
-        "record_dispatch",
-        lambda **kw: dispatches.setdefault(kw["dispatch_id"], {**kw, "status": "sent"}),
-    )
-    monkeypatch.setattr(
-        dispatch_feedback, "get_dispatch", lambda did, **kw: dispatches.get(did)
-    )
-    monkeypatch.setattr(
-        dispatch_feedback, "_feedback", lambda did, agent: feedbacks.get(did)
-    )
-    monkeypatch.setattr(
-        dispatch_feedback,
-        "_put",
-        lambda values, **kw: feedbacks.setdefault(values["dispatch_id"], dict(values)),
-    )
-    monkeypatch.setattr(
-        dispatch_feedback,
-        "update_dispatch_status",
-        lambda did, status, **kw: dispatches[did].update(status=status),
-    )
-    from scitex_agent_container._state import state_store_channel
-
-    monkeypatch.setattr(
-        state_store_channel,
-        "persist_event",
-        lambda **kw: events.append(kw["event"]) or len(events),
+    clock = SimpleNamespace(now=100.0)
+    source = SimpleNamespace(available=True, target=dict(TARGET), replaced=False)
+    record_ack = partial(
+        dispatch_feedback.record_agentic_ack,
+        dispatch_lookup=lambda did, **kw: dispatches.get(did),
+        feedback_lookup=lambda did, agent: feedbacks.get(did),
+        feedback_write=lambda values, **kw: feedbacks.setdefault(
+            values["dispatch_id"], dict(values)
+        ),
+        dispatch_update=lambda did, status, **kw: dispatches[did].update(status=status),
     )
     rollout = tmp_path / "rollout-test.jsonl"
     rollout.write_text(_row("session_meta", {"id": THREAD, "source": "cli"}))
@@ -111,35 +93,46 @@ def rig(tmp_path, monkeypatch):
     )
 
     def capture(name, host):
+        if not source.available:
+            raise CodexActivityError("private process path and error")
         assert (name, host) == (TARGET["agent"], TARGET["host"])
         observed = reduce_codex_activity(
             rollout.read_text().splitlines(keepends=True),
             expected_thread_id=THREAD,
-            observed_at=100,
+            observed_at=clock.now,
         )
-        return dict(TARGET), observed.event_seq, binding
+        current = SimpleNamespace(**vars(binding))
+        if source.replaced:
+            current.rollout_identity = (
+                binding.rollout_identity[0],
+                binding.rollout_identity[1] + 1,
+            )
+        return dict(source.target), observed.event_seq, current
 
-    monkeypatch.setattr(routes, "_capture_target", capture)
+    dependencies = routes.HandshakeDependencies(
+        store_factory=lambda: memory,
+        clock=lambda: clock.now,
+        capture=capture,
+        dispatch_recorder=lambda **kw: dispatches.setdefault(
+            kw["dispatch_id"], {**kw, "status": "sent"}
+        ),
+        event_persister=lambda **kw: events.append(kw["event"]) or len(events),
+        ack_recorder=lambda event, **kw: state.record_handshake_ack(
+            event, now=clock.now, store_factory=lambda: memory, record_ack=record_ack
+        ),
+    )
     app = Starlette(
-        routes=[
-            Route(
-                "/agents/{name}/handshakes",
-                routes.agent_handshake_start,
-                methods=["POST"],
-            ),
-            Route(
-                "/agents/{name}/handshakes/{exchange_id}", routes.agent_handshake_status
-            ),
-            Route(
-                "/agents/{name}/handshakes/{exchange_id}/ack",
-                routes.agent_handshake_ack,
-                methods=["POST"],
-            ),
-        ]
+        routes=routes.handshake_routes("/agents", dependencies=dependencies)
     )
     app.state.local_host, app.state.inbox = TARGET["host"], Broker()
     return SimpleNamespace(
-        app=app, memory=memory, rollout=rollout, feedbacks=feedbacks, events=events
+        app=app,
+        memory=memory,
+        rollout=rollout,
+        feedbacks=feedbacks,
+        events=events,
+        clock=clock,
+        source=source,
     )
 
 
@@ -158,11 +151,8 @@ def _feedback(contract, exchange_id):
     }
 
 
-@pytest.mark.asyncio
-async def test_round_trip_remains_202_until_new_correlated_native_output_is_source_observed(
-    rig,
-    monkeypatch,
-):
+@pytest_asyncio.fixture
+async def round_trip(rig):
     # Arrange: subscribe only to observe actual persisted daemon challenge.
     queue = await rig.app.state.inbox.subscribe(TARGET["agent"])
     async with httpx.AsyncClient(
@@ -215,43 +205,70 @@ async def test_round_trip_remains_202_until_new_correlated_native_output_is_sour
             )
             + "\n"
         )
-        monkeypatch.setattr(routes.time, "time", lambda: contract["deadline"] + 1)
+        rig.clock.now = contract["deadline"] + 1
         expired_success = await client.get(uri)
     # Assert: same server nonce, authored fields, actual output, privacy-safe result.
-    assert (
-        started.status_code,
-        acked.status_code,
-        pending.status_code,
-        proven.status_code,
-    ) == (202, 202, 202, 200)
-    assert (
-        event["from_agent"] == "daemon"
-        and event["kind"] == "agentic_challenge"
-        and event["_row_id"] == 1
-    )
-    assert (
-        started.json()["transport"]["agentic_proof"] is False
-        and pending.json()["proven"] is None
-    )
-    assert (
-        proven.json()["proven"] is True
-        and proven.json()["proof"]["call_id"] == "call-compute"
-    )
-    assert "private-command" not in proven.text and "private-result" not in proven.text
-    assert (
-        expired_success.status_code == 410 and expired_success.json()["proven"] is None
-    )
-    assert rig.memory.values[exchange_id]["code"] == 200
-    assert (
-        rig.feedbacks[contract["nonce"]]["understood"]
-        == "Compute and verify session ownership."
-    )
+    return {
+        "statuses": (
+            started.status_code,
+            acked.status_code,
+            pending.status_code,
+            proven.status_code,
+        ),
+        "persisted_daemon_challenge": (
+            event["from_agent"] == "daemon"
+            and event["kind"] == "agentic_challenge"
+            and event["_row_id"] == 1
+        ),
+        "acceptance_is_unproven": (
+            started.json()["transport"]["agentic_proof"] is False
+            and pending.json()["proven"] is None
+        ),
+        "source_proof": (
+            proven.json()["proven"] is True
+            and proven.json()["proof"]["call_id"] == "call-compute"
+        ),
+        "privacy": "private-command" not in proven.text
+        and "private-result" not in proven.text,
+        "expired_success": (
+            expired_success.status_code == 410
+            and expired_success.json()["proven"] is None
+        ),
+        "final_ledger_code": rig.memory.values[exchange_id]["code"],
+        "authored_feedback": (
+            rig.feedbacks[contract["nonce"]]["understood"]
+            == "Compute and verify session ownership."
+        ),
+    }
 
 
 @pytest.mark.asyncio
-async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
-    rig, monkeypatch
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("statuses", (202, 202, 202, 200)),
+        ("persisted_daemon_challenge", True),
+        ("acceptance_is_unproven", True),
+        ("source_proof", True),
+        ("privacy", True),
+        ("expired_success", True),
+        ("final_ledger_code", 200),
+        ("authored_feedback", True),
+    ],
+)
+async def test_round_trip_requires_authorship_source_proof_and_current_lease(
+    round_trip, key, expected
 ):
+    # Arrange
+    observations = round_trip
+    # Act
+    value = observations[key]
+    # Assert
+    assert value == expected
+
+
+@pytest_asyncio.fixture
+async def mechanical_round_trip(rig):
     # Arrange
     # Act
     async with httpx.AsyncClient(
@@ -266,21 +283,41 @@ async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
         feedback["understood"] = contract["nonce"]
         uri = f"/agents/scitex-hub/handshakes/{exchange_id}"
         refused = await client.post(uri + "/ack", json={"feedback": feedback})
-        monkeypatch.setattr(routes.time, "time", lambda: 102.0)
+        rig.clock.now = 102.0
         expired = await client.get(uri)
     # Assert
-    assert started.json()["transport"]["subscriber_count"] == 0
-    assert refused.status_code == 422 and rig.feedbacks == {}
-    assert (
-        expired.json()["proven"] is False
-        and expired.json()["status_code"]["code"] == 504
-    )
+    return {
+        "subscribers": started.json()["transport"]["subscriber_count"],
+        "refused_without_feedback": refused.status_code == 422 and rig.feedbacks == {},
+        "expired_unproven": (
+            expired.json()["proven"] is False
+            and expired.json()["status_code"]["code"] == 504
+        ),
+    }
 
 
 @pytest.mark.asyncio
-async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(
-    rig, monkeypatch
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("subscribers", 0),
+        ("refused_without_feedback", True),
+        ("expired_unproven", True),
+    ],
+)
+async def test_zero_subscribers_and_mechanical_ack_never_prove_agentic_work(
+    mechanical_round_trip, key, expected
 ):
+    # Arrange
+    observations = mechanical_round_trip
+    # Act
+    value = observations[key]
+    # Assert
+    assert value == expected
+
+
+@pytest.mark.asyncio
+async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(rig):
     # Arrange
     # Act
     async with httpx.AsyncClient(
@@ -295,7 +332,7 @@ async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(
         await client.post(
             uri + "/ack", json={"feedback": _feedback(contract, exchange_id)}
         )
-        monkeypatch.setattr(routes.time, "time", lambda: 102.0)
+        rig.clock.now = 102.0
         result = await client.get(uri)
     # Assert: semantic ACK proves receipt; it still cannot prove native work.
     assert (
@@ -305,9 +342,7 @@ async def test_echoing_correct_hash_without_a_new_tool_output_expires_unproven(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["unavailable", "foreign_session", "replaced_source"])
-async def test_owner_disappearing_after_authored_ack_stays_unknown(
-    rig, monkeypatch, case
-):
+async def test_owner_disappearing_after_authored_ack_stays_unknown(rig, case):
     # Arrange
     # Act
     async with httpx.AsyncClient(
@@ -321,28 +356,20 @@ async def test_owner_disappearing_after_authored_ack_stays_unknown(
             uri + "/ack", json={"feedback": _feedback(contract, exchange_id)}
         )
 
-        original = routes._capture_target
-
-        def unavailable(*args):
-            if case == "unavailable":
-                raise CodexActivityError("private process path and error")
-            target, cursor, binding = original(*args)
-            if case == "foreign_session":
-                target["session_id"] = "foreign-thread"
-            else:
-                binding = SimpleNamespace(**vars(binding))
-                binding.rollout_identity = (
-                    binding.rollout_identity[0],
-                    binding.rollout_identity[1] + 1,
-                )
-            return target, cursor, binding
-
-        monkeypatch.setattr(routes, "_capture_target", unavailable)
+        mutations = {
+            "unavailable": lambda: setattr(rig.source, "available", False),
+            "foreign_session": lambda: rig.source.target.update(
+                session_id="foreign-thread"
+            ),
+            "replaced_source": lambda: setattr(rig.source, "replaced", True),
+        }
+        mutations[case]()
         result = await client.get(uri)
     # Assert: no terminal success or private failure strings.
-    assert result.status_code == 503 and result.json()["proven"] is None
     assert (
-        "private process" not in result.text
+        result.status_code == 503
+        and result.json()["proven"] is None
+        and "private process" not in result.text
         and rig.memory.values[exchange_id]["final"] is False
     )
 
