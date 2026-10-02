@@ -24,13 +24,16 @@ HOST = "host-a"
 
 def _scaffold() -> dict:
     """Fully-explicit spec body (red-start ruling 2026-07-21)."""
+    from scitex_agent_container._state.state_store_hostname import resolve_host
     from tests.scitex_agent_container._helpers.explicit_spec import (
         explicit_spec,
     )
 
     return explicit_spec(
         {
-            "host": "${HOSTNAME}",
+            # Pin the fixture to the same canonical metadata authority used
+            # by the real routing guard. Ambient HOSTNAME may be another alias.
+            "host": resolve_host(None),
             "runtime": "apptainer",
             "claude": {"model": "claude-opus-4-8[1m]"},
             "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
