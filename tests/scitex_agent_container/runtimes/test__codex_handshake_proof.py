@@ -88,7 +88,8 @@ def test_manager_terminal_error_zero_tools_cannot_prove_handshake(manager):
             23,
         ),
     ]
-    # Act / Assert
+    # Act
+    # Assert
     assert _proof(lines) is None
 
 
@@ -114,7 +115,8 @@ def test_nonproof_shapes_never_satisfy_fresh_computation(shape):
         if shape == "embedded_hash":
             output = "a" + ANSWER + "b"
         lines.append(_tool("function_call_output", 22, output=output, **extra))
-    # Act / Assert
+    # Act
+    # Assert
     assert _proof(lines, cursor=1 if shape == "pre_cursor" else 0) is None
 
 
@@ -132,7 +134,8 @@ def test_unknown_or_unbound_rollout_is_refused_even_with_the_right_hash(shape):
         lines.pop(1)
     elif shape == "partial":
         lines[-1] = lines[-1].rstrip("\n")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(CodexActivityError):
         _proof(lines, cursor=3 if shape == "regressed" else 0)
 

@@ -249,6 +249,7 @@ def test_subagent_activity_item_in_parent_thread_is_not_parent_tool_work():
 def test_wrong_copied_or_inconsistent_history_is_unknown(lines):
     # Arrange: malformed ownership/correlation must not create trusted counters.
     # Act and assert: the entire observation refuses instead of returning zero.
+    # Assert
     with pytest.raises(CodexActivityError):
         _reduce(lines)
 
@@ -271,6 +272,7 @@ def test_wrong_copied_or_inconsistent_history_is_unknown(lines):
 def test_partial_malformed_future_or_stale_records_refuse(lines):
     # Arrange: source completeness and time ordering are authority requirements.
     # Act and assert: an incomplete/stale source remains UNKNOWN.
+    # Assert
     with pytest.raises(CodexActivityError):
         _reduce(lines)
 
@@ -298,6 +300,7 @@ def test_interruption_is_a_terminal_status_without_success_or_tools():
 def test_invalid_observation_time_cannot_bless_a_native_source(observed_at):
     # Arrange: the owner must supply an actual finite observation timestamp.
     # Act and assert: malformed timing remains UNKNOWN.
+    # Assert
     with pytest.raises(CodexActivityError, match="observation time"):
         reduce_codex_activity(
             [_meta()], expected_thread_id=THREAD, observed_at=observed_at
@@ -333,6 +336,7 @@ def test_reader_refuses_replaced_source_identity(tmp_path):
     replacement.replace(path)
 
     # Act and assert: matching textual UUID cannot bless a replaced source.
+    # Assert
     with pytest.raises(CodexActivityError, match="identity changed"):
         read_codex_activity(
             path,
@@ -364,6 +368,7 @@ def test_reader_refuses_a_real_concurrently_appended_source(tmp_path):
     started.wait(1)
 
     # Act and assert: preserve prior authority until a stable complete read.
+    # Assert
     try:
         with pytest.raises(CodexActivityError):
             read_codex_activity(
@@ -385,6 +390,7 @@ def test_reader_refuses_an_oversize_source_without_partial_tail_inference(tmp_pa
     stat = path.stat()
 
     # Act and assert: no tail-only count or fabricated zero is returned.
+    # Assert
     with pytest.raises(CodexActivityError, match="bounded replay"):
         read_codex_activity(
             path,

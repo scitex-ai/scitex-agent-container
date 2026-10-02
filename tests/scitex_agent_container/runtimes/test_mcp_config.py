@@ -175,6 +175,7 @@ def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # Arrange
     monkeypatch.setenv("CCT_AGENT_ID", "paper-scitex-clew")
     monkeypatch.delenv("CCT_BOT_TOKEN", raising=False)
     cfg = _make_config(
@@ -197,7 +198,9 @@ def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
     setup_mcp_config(cfg, str(tmp_path))
 
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    # Act
     cct = servers["claude-code-telegrammer"]
+    # Assert
     assert cct["env"]["CCT_AGENT_ID"] == cfg.name
     assert cct["env"]["CCT_BOT_TOKEN"] == "${CCT_BOT_TOKEN}"
     assert cct["env"]["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] == "1"
@@ -209,6 +212,7 @@ def test_setup_mcp_pins_cct_identity_over_project_and_spec_env(
 
 
 def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> None:
+    # Arrange
     baseline = {
         "mcpServers": {
             "claude-code-telegrammer": {
@@ -225,7 +229,9 @@ def test_setup_mcp_pins_baseline_cct_without_spec_servers(tmp_path: Path) -> Non
     setup_mcp_config(cfg, str(tmp_path))
     setup_mcp_config(cfg, str(tmp_path))
 
+    # Act
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    # Assert
     assert servers["claude-code-telegrammer"]["env"]["CCT_AGENT_ID"] == cfg.name
     assert servers["scitex-cards"] == baseline["mcpServers"]["scitex-cards"]
 
@@ -234,6 +240,7 @@ def test_generated_cct_identity_survives_codex_env_forwarding(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # Arrange
     import tomllib
 
     from scitex_agent_container.runtimes._apptainer_codex_exec import mcp_overrides
@@ -252,10 +259,12 @@ def test_generated_cct_identity_survives_codex_env_forwarding(
     document = json.loads((tmp_path / ".mcp.json").read_text())
 
     flags = mcp_overrides([document], environ={"CCT_AGENT_ID": "paper-scitex-clew"})
+    # Act
     effective = tomllib.loads("\n".join(flags[1::2]))["mcp_servers"][
         "claude-code-telegrammer"
     ]
 
+    # Assert
     assert effective["env"]["CCT_AGENT_ID"] == cfg.name
     assert effective["env_vars"] == ["CCT_AGENT_ID"]
 

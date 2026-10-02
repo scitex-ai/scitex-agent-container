@@ -783,15 +783,18 @@ def test_detect_still_matches_live_theme_selection_modal():
 
 def test_hermes_contributor_tier_accepts_training():
     """Fleet runs the contributor tier deliberately: answer y + Enter."""
+    # Arrange
     from scitex_agent_container.runtimes.prompts import (
         _detect_hermes_contributor_tier,
         detect_and_respond,
     )
 
+    # Act
     content = (
         "!!! CONTRIBUTOR TIER \u2014 TRAINS ON YOUR DATA !!!\n"
         "Use this model for this invocation? [y/N]"
     )
+    # Assert
     assert _detect_hermes_contributor_tier(content) is True
     assert _detect_hermes_contributor_tier("bypass permissions ready") is False
     sent: list[str] = []

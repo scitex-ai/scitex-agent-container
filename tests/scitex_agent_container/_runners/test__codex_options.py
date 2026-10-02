@@ -33,7 +33,8 @@ def test_build_codex_config_decodes_apptainer_safe_transport(env_save_restore):
 def test_build_codex_config_refuses_invalid_transport(encoded, env_save_restore):
     # Arrange
     env_save_restore.set(_codex_options.SAC_CODEX_CONFIG_OVERRIDES_B64_ENV, encoded)
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="must encode UTF-8 JSON"):
         _codex_options.build_codex_config(_CodexModule)
 

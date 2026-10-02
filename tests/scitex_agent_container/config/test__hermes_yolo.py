@@ -17,6 +17,9 @@ def _spec(harness: str = "hermes", **harness_fields: object) -> dict:
 
 
 def test_yolo_defaults_off() -> None:
+    # Arrange
+    # Act
+    # Assert
     assert parse_selected_hermes_yolo({"harness": "hermes"}) is False
     assert (
         parse_selected_hermes_yolo(
@@ -27,10 +30,16 @@ def test_yolo_defaults_off() -> None:
 
 
 def test_yolo_reads_hermes_harness_block() -> None:
+    # Arrange
+    # Act
+    # Assert
     assert parse_selected_hermes_yolo(_spec()) is True
 
 
 def test_yolo_ignored_off_hermes() -> None:
+    # Arrange
+    # Act
+    # Assert
     assert parse_selected_hermes_yolo(_spec(harness="openai")) is False
 
 
@@ -42,10 +51,16 @@ def _argv_config() -> AgentConfig:
 
 
 def test_argv_carries_yolo_flag_when_set() -> None:
+    # Arrange
     cfg = _argv_config()
+    # Act
     cfg.hermes_yolo = True
+    # Assert
     assert "--yolo" in _hermes_tui_inner_argv(cfg)
 
 
 def test_argv_omits_yolo_flag_by_default() -> None:
+    # Arrange
+    # Act
+    # Assert
     assert "--yolo" not in _hermes_tui_inner_argv(_argv_config())

@@ -982,19 +982,25 @@ def test_tui_profile_disables_harness_approvals_even_without_autonomous_drive(
 
 
 def test_cct_profile_env_mirrors_token_from_home_env(tmp_path: Path):
+    # Arrange
     home = tmp_path / "home"
     home.mkdir()
     (home / ".env").write_text(
         "CCT_AGENT_ID=scitex-apps-lead\nCCT_BOT_TOKEN=abc123\n", encoding="utf-8"
     )
+    # Act
     out = profile._cct_profile_env(home)
+    # Assert
     assert out == {"CCT_BOT_TOKEN": "abc123", "CCT_AGENT_ID": "scitex-apps-lead"}
 
 
 def test_cct_profile_env_empty_without_token(tmp_path: Path):
+    # Arrange
     home = tmp_path / "home"
     home.mkdir()
+    # Act
     (home / ".env").write_text("SOME_OTHER_VAR=x\n", encoding="utf-8")
+    # Assert
     assert profile._cct_profile_env(home) == {}
     assert profile._cct_profile_env(tmp_path / "missing") == {}
 

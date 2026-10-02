@@ -935,6 +935,7 @@ def test_stale_env_file_token_refreshed_from_declared_pool_slot(tmp_path):
     their DECLARED slots; every start failed bot_token_valid because the
     .env value won and was never refreshed.
     """
+    # Arrange
     from scitex_agent_container.runtimes import _cct_token_pool as pool_mod
     from scitex_agent_container.runtimes._cct_token_pool import ensure_cct_bot_token
 
@@ -942,7 +943,9 @@ def test_stale_env_file_token_refreshed_from_declared_pool_slot(tmp_path):
     dest.mkdir()
     (dest / ".env").write_text("CCT_BOT_TOKEN=1111111111:SHORTSTALE\n")
 
+    # Act
     full = "2222222222:" + "A" * 35
+    # Assert
     assert len(full) == 46
 
     class FakePool:

@@ -8,7 +8,10 @@ from scitex_agent_container.config import AgentConfig
 
 
 def test_restore_verb_exposes_exact_commit_and_reviewed_receipt():
+    # Arrange
+    # Act
     result = CliRunner().invoke(agent_group, ["restore-worktree", "--help"])
+    # Assert
     assert result.exit_code == 0, result.output
     assert "--expected-tip" in result.output
     assert "--receipt-sha256" in result.output
@@ -16,19 +19,23 @@ def test_restore_verb_exposes_exact_commit_and_reviewed_receipt():
 
 
 def test_apply_missing_receipt_is_refused_before_loading_identity(monkeypatch):
+    # Arrange
     def unexpected_load(*args):
         raise AssertionError("must refuse before reading a spec")
 
     monkeypatch.setattr(implementation, "load_config", unexpected_load)
+    # Act
     result = CliRunner().invoke(
         agent_group,
         ["restore-worktree", "scitex-scholar", "--expected-tip", "1" * 40, "--apply"],
     )
+    # Assert
     assert result.exit_code == 1
     assert "--receipt-sha256" in result.output
 
 
 def test_default_cli_propagates_exact_identity_and_commit(monkeypatch):
+    # Arrange
     config = AgentConfig(name="scitex-scholar", workdir="/retained/repo")
     monkeypatch.setattr(implementation, "load_config", lambda path: config)
     monkeypatch.setattr(
@@ -41,9 +48,11 @@ def test_default_cli_propagates_exact_identity_and_commit(monkeypatch):
         return {"mode": "dry-run", "receipt_sha256": "2" * 64}
 
     monkeypatch.setattr(implementation, "restore_owned_task_worktree", restore)
+    # Act
     result = CliRunner().invoke(
         agent_group, ["restore-worktree", "scitex-scholar", "--expected-tip", "1" * 40]
     )
+    # Assert
     assert result.exit_code == 0, result.output
     assert calls == [
         (config, {"expected_tip": "1" * 40, "apply": False, "receipt_sha256": None})
