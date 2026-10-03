@@ -251,6 +251,19 @@ async def agent_status(request: Request) -> JSONResponse:
     from ._inbox_fault import annotate_status_fault
 
     body = annotate_status_fault(body)
+    from .._lifecycle._off_loop import run_blocking_or
+    from ..cli_pkg._helpers._agent_observation import observe_status, unknown
+
+    try:
+        detail = min(3, max(0, int(request.query_params.get("detail", "0"))))
+    except ValueError:
+        return JSONResponse({"kind": "invalid_detail", "name": name}, status_code=400)
+    body["observation"] = await run_blocking_or(
+        lambda: observe_status(name, detail),
+        default=unknown("canonical-observation-unavailable"),
+        op="canonical status observation",
+        timeout_s=3.0,
+    )
     return JSONResponse(body)
 
 
