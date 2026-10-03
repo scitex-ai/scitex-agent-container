@@ -189,6 +189,12 @@ def test_runtime_owned_state_must_equal_the_supplied_state(
     assert (observed, calls) == ("SessionEvidenceError", [])
 
 
+def _replace_key_with_symlink(key: Path) -> None:
+    outside = key.with_name("outside.key")
+    key.rename(outside)
+    key.symlink_to(outside)
+
+
 @pytest.mark.parametrize("kind", ["absent", "public", "symlink"])
 def test_unproven_private_gateway_key_refuses_before_transport(
     owned_state, kind
@@ -198,13 +204,12 @@ def test_unproven_private_gateway_key_refuses_before_transport(
         owned_state
     )
     key = state / "hermes-api.key"
-    if kind == "absent":
-        key.unlink()
-    elif kind == "public":
-        key.chmod(0o644)
-    else:
-        key.rename(state / "outside.key")
-        key.symlink_to(state / "outside.key")
+    mutate = {
+        "absent": key.unlink,
+        "public": lambda: key.chmod(0o644),
+        "symlink": lambda: _replace_key_with_symlink(key),
+    }
+    mutate[kind]()
     calls = []
     # Act
     observed = _observe(
