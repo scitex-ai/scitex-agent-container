@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .._runners._atomic import atomic_write_text
+from ._activity_source_identity import activity_source_id
 from ._codex_activity import (
     CodexActivityError,
     CodexActivityObservation,
@@ -17,6 +18,19 @@ from ._codex_activity import (
 from ._codex_activity_binding import assert_codex_binding_current, bind_codex_runtime
 
 WRITER_CODEX_ROLLOUT = "codex-rollout-events"
+
+
+def _activity_source_id(binding):
+    return activity_source_id(
+        {
+            "agent": binding.agent_name,
+            "host": binding.host,
+            "instance_id": binding.instance_id,
+            "boot_id": binding.boot_id,
+            "session_id": binding.thread_id,
+        },
+        binding.rollout_identity,
+    )
 
 
 def activity_harness(
@@ -186,6 +200,8 @@ def promote_codex_activity(
         **identity,
         "session_id": binding.thread_id,
         "boot_id": binding.boot_id,
+        "activity_source_id": _activity_source_id(binding),
+        "activity_instance_id": binding.instance_id,
         "progress_at": observed.activity_at,
         "progress_seq": observed.event_seq,
         "engine_incarnation_id": f"{binding.boot_id}:{binding.thread_id}",
