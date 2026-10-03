@@ -15,6 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
+from .._runners._hermes_owned_session import (
+    gateway_owner_evidence,
+    owned_session_projection,
+)
 from ._hermes_tui_context_owner import (
     apply_session_age_policy,
     clear_session_heartbeat,
@@ -127,6 +131,11 @@ def _publish_gateway_state(
         "pid": gateway_pid,
         "port": port,
     }
+    value.update(
+        gateway_owner_evidence(
+            state_dir, owner_pid=os.getpid(), gateway_pid=gateway_pid
+        )
+    )
     with _gateway_state_lock(state_dir):
         # Readers use the descriptor. Publishing it last means every visible
         # descriptor has a matching readiness projection.
@@ -239,7 +248,9 @@ def _supervise_tui(
         from ._hermes_tui_rpc import active_sessions as active_list
 
     pending_fresh = recover_fresh(state_dir) if recover_fresh is not None else False
-    pending_recovery = recover_pending(state_dir) if recover_pending is not None else None
+    pending_recovery = (
+        recover_pending(state_dir) if recover_pending is not None else None
+    )
     if pending_fresh and pending_recovery:
         raise RuntimeError("Hermes has conflicting pending completion and rotation")
     if pending_fresh:
@@ -397,12 +408,7 @@ def _supervise_tui(
 
             _atomic_json(
                 state_dir / OWNED_SESSION_FILE,
-                {
-                    "live_session_id": str(owned_session.get("id") or ""),
-                    "stored_session_id": str(
-                        owned_session.get("session_key") or owned_session.get("id") or ""
-                    ),
-                },
+                owned_session_projection(state_dir, owned_session),
             )
             resume_key = str(
                 owned_session.get("session_key")
@@ -628,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         from ._hermes_context_gc import OWNED_SESSION_FILE
 
-        (state_dir / OWNED_SESSION_FILE).unlink(missing_ok=True)
+        _unlink_if_generation(state_dir / OWNED_SESSION_FILE, generation)
         _remove_owned_gateway_state(state_dir, generation=generation)
         gateway_ready_path.unlink(missing_ok=True)
         _write_supervision(state_dir, state="stopped")

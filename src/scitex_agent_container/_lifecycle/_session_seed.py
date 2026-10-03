@@ -60,11 +60,12 @@ def seed_pinned_session_id(config: AgentConfig, runtime: Any) -> bool:
     if state_dir is None:
         return False
 
-    from .._runners._session_state import read_session_id, write_session_id
+    from .._runners._session_state import write_session_id
+    from ._session_identity import read_session_id_for
 
     # Fork-preservation: an existing marker (the latest, possibly forked,
     # live id) is authoritative — never re-pin it back to the original.
-    if read_session_id(state_dir) is not None:
+    if read_session_id_for(config, runtime, state_dir) is not None:
         return False
 
     write_session_id(state_dir, resume_id)
