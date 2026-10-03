@@ -307,3 +307,65 @@ def test_tool_output_in_native_source_does_not_finalize_pending_ledger(native):
         pending,
         len(store.calls),
     ) == ("pending", None, 1, original, 1)
+
+
+@pytest.mark.parametrize("harness", ["codex", "hermes"])
+@pytest.mark.parametrize("order", [1, -1])
+def test_same_name_foreign_row_cannot_borrow_local_evidence(
+    native, harness, order
+):
+    # Arrange: the local source has real native work and a verified ledger reply.
+    layout, authority = native
+    compiled = json.loads(layout["birth"]["compiled_spec_json"])
+    compiled["harness"] = harness
+    layout["birth"]["compiled_spec_json"] = json.dumps(compiled)
+    record = _record(authority)
+    operation = json.loads(record["operation"])
+    operation["source_identity"] = [
+        layout["rollout"].stat().st_dev,
+        layout["rollout"].stat().st_ino,
+    ]
+    record["operation"] = json.dumps(operation)
+    store = _ReadOnlyLedger([record])
+    rows = [
+        {"name": AGENT, "host": HOST, "liveness": {"verdict": "alive"}},
+        {"name": AGENT, "host": "foreign-peer", "liveness": {"verdict": "busy"}},
+    ]
+    # Act
+    result = annotate_observation_rows(
+        rows[::order],
+        active=[layout["record"]],
+        births={AGENT: layout["birth"]},
+        local_host=HOST,
+        capture_fn=partial(capture_observation_authority, proc_root=layout["proc"]),
+        state_dir_fn=lambda name: layout["state"],
+        ledger_reader=partial(read_handshake_page, store_factory=lambda: store),
+        clock=lambda: 106,
+    )
+    by_host = {row["host"]: row for row in result}
+    local = by_host[HOST]["observation"]
+    foreign = by_host["foreign-peer"]["observation"]
+    # Assert
+    assert (
+        local["authority"],
+        local["runtime"]["tools_completed"],
+        local["handshake"]["reason"],
+        foreign["authority"],
+        foreign["runtime"]["state"],
+        foreign["runtime"]["tools_completed"],
+        foreign["handshake"]["reason"],
+        foreign["handshake"]["last_verified_reply"],
+        by_host["foreign-peer"]["liveness"],
+        len(store.calls),
+    ) == (
+        authority.model_dump() if harness == "codex" else None,
+        1 if harness == "codex" else None,
+        "" if harness == "codex" else "capability_unknown",
+        None,
+        "unknown",
+        None,
+        "authority_unknown",
+        None,
+        {"verdict": "busy"},
+        1 if harness == "codex" else 0,
+    )
