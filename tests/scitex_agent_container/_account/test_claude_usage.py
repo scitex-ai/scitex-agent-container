@@ -978,3 +978,90 @@ def test_fetch_usage_for_credentials_per_account_cache_isolation(
     # Assert
     assert result_b["used_pct_5h"] == 4.0
 
+
+@pytest.fixture
+def read_only_expired(tmp_path):
+    # Arrange
+    path = tmp_path / "account" / ".credentials.json"
+    _make_creds_at(path, expires_at_ms=1)
+    before = path.read_bytes()
+    calls = []
+
+    def opener(request, timeout=None):
+        calls.append(request.method)
+        return _FakeResp(b"{}")
+
+    # Act
+    result = cu.fetch_usage_for_credentials(path, opener=opener, allow_refresh=False)
+    return path, before, calls, result
+
+
+def test_listing_expired_credential_bytes_are_unchanged(read_only_expired):
+    # Arrange
+    path, before, _, _ = read_only_expired
+    # Act
+    after = path.read_bytes()
+    # Assert
+    assert after == before
+
+
+def test_listing_expired_credential_performs_no_refresh_or_usage_request(read_only_expired):
+    # Arrange
+    _, _, calls, _ = read_only_expired
+    # Act
+    methods = calls
+    # Assert
+    assert methods == []
+
+
+def test_listing_expired_credential_has_unknown_usage(read_only_expired):
+    # Arrange
+    _, _, _, result = read_only_expired
+    # Act
+    usage = result["used_pct_5h"]
+    # Assert
+    assert usage is None
+
+
+@pytest.fixture
+def read_only_401(tmp_path):
+    # Arrange
+    path = tmp_path / "account" / ".credentials.json"
+    _make_creds_at(path, expires_at_ms=int(time.time() * 1000) + 60_000)
+    before = path.read_bytes()
+    calls = []
+
+    def opener(request, timeout=None):
+        calls.append(request.method)
+        raise urllib.error.HTTPError(request.full_url, 401, "fixture", {}, None)
+
+    # Act
+    result = cu.fetch_usage_for_credentials(path, opener=opener, allow_refresh=False)
+    return path, before, calls, result
+
+
+def test_listing_401_credential_bytes_are_unchanged(read_only_401):
+    # Arrange
+    path, before, _, _ = read_only_401
+    # Act
+    after = path.read_bytes()
+    # Assert
+    assert after == before
+
+
+def test_listing_401_does_not_retry_or_post_refresh(read_only_401):
+    # Arrange
+    _, _, calls, _ = read_only_401
+    # Act
+    methods = calls
+    # Assert
+    assert methods == ["GET"]
+
+
+def test_listing_401_has_unknown_usage(read_only_401):
+    # Arrange
+    _, _, _, result = read_only_401
+    # Act
+    usage = result["used_pct_7d"]
+    # Assert
+    assert usage is None
