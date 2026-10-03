@@ -114,3 +114,15 @@ allow:
       and verdict context. The hosted verdict receives no company Store role
       and never checks out or executes the native feedback rail. Native writes
       retain the control-plane label and execute only a trusted base checkout.
+
+  - workflow: pypi-publish-and-github-release-on-tag.yml
+    jobs: [runner-admission, preflight, build, publish, release]
+    approved_by: operator
+    approved_on: 2026-10-03
+    reason: >-
+      Shared admission precedes native full-suite execution. Tag resolution,
+      pure packaging and artifact validation run on disposable hosted hardware
+      after exact source/run/test gates. The standard top-level pypi environment
+      retains the existing Trusted Publisher filename and OIDC identity; moving
+      this publisher into a reusable callee would violate PyPI's supported trust
+      contract. Hosted packaging never substitutes for the three SIF test legs.

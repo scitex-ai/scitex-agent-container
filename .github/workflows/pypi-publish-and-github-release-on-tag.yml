@@ -1,318 +1,190 @@
 name: release
 
-# Tag-driven release pipeline — SELF-HOSTED (Spartan CPU) via the scitex-ci SIF.
-#
-# The intended operator flow is:
-#
-#     git tag vX.Y.Z && git push origin vX.Y.Z
-#
-# Everything else fires automatically:
-#
-#   1. test          — matrix pytest INSIDE the SIF. Must pass or the pipeline
-#                      halts; nothing is published until tests are green on the
-#                      tagged commit.
-#   2. build         — wheel + sdist built INSIDE the SIF, uploaded as artifact.
-#   3. publish       — PyPI via MANUAL OIDC trusted publishing INSIDE the SIF.
-#   4. release       — GitHub Release with CHANGELOG notes + artifacts.
-#
-# develop→main promotion is a DELIBERATE, separate PR (operator policy);
-# this pipeline never auto-syncs main.
-#
-# WHY the SIF (operator standardization 2026-06-18, fleet canary 2026-06-21):
-# the Spartan compute runners have NO Python on the bare node, so the old
-# `actions/setup-python@v5` step failed at init ("version 3.x not found for
-# this OS"). The working pytest-matrix CI runs INSIDE the pre-built, reused
-# scitex-ci SIF (`apptainer exec ci-cpu.sif`), which bakes python 3.11/3.12/
-# 3.13 + pip + uv + fd at /opt/venv-<ver>. This release pipeline mirrors that:
-#   - test/build run `bash .github/ci/exec-in-sif.sh <inner>.sh <pyver>`.
-#   - publish CANNOT use pypa/gh-action-pypi-publish (a Docker action; the
-#     compute nodes have no Docker), so it does MANUAL OIDC trusted publishing
-#     inside the SIF (.github/ci/publish-in-sif.sh): GitHub OIDC JWT →
-#     PyPI mint-token → twine upload. Trust config on PyPI is unchanged.
-#   - actions/checkout, upload/download-artifact, codecov are JS actions and
-#     run fine on the self-hosted runner.
-# fail-loud: a missing SIF/shim/interpreter is a HARD error, never a
-# bare-runner fallback.
-#
-# runs-on driven by repo Actions Variable CI_RUNS_ON; SIF + apptainer paths
-# come from SCITEX_CI_SIF / SCITEX_CI_APPTAINER (same as pytest-matrix).
-#
-# Manual re-run: the workflow also accepts a `version` input via
-# workflow_dispatch so you can re-publish without re-tagging.
-
+# The requested existing tag must resolve to this run's source commit. Tests
+# keep the fixed central full all/dev SIF body for 3.11, 3.12 and 3.13. Its
+# registered image/runtime/PG/source closure must qualify before packaging.
+# develop -> main promotion remains a separate deliberate operation.
+# The PyPI publisher stays a standard top-level job in this SAME file and
+# environment; reusable workflows are not a Trusted Publisher replacement.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Tag to publish (e.g. v0.10.19) — must already exist on the repo'
+        description: 'Existing vX.Y.Z tag; dispatch from its exact commit'
         required: true
         type: string
 
-env:
-  SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
-  SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
-  # Same knob as the PR gate, on purpose. The PR workflow's header exists to
-  # keep these two gates the SAME BYTES in the SAME environment — a difference
-  # between them is what left PyPI on 0.21.17 while nine tags shipped nothing.
-  # Adding a worker-count input to one and not the other would re-open exactly
-  # that gap.
-  CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
+permissions:
+  contents: read
+  actions: read
 
 jobs:
-  test:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # ALL THREE, UNCONDITIONALLY, AND WRITTEN OUT RATHER THAN REFERENCED.
-        #
-        # The PR gate narrowed to the ends of the range on 2026-08-12 (3.11 +
-        # 3.13; the middle moved to a hosted nightly) because a human waits on
-        # it. NOTHING about that narrowing may reach this job: a release has
-        # correctness as its only job and nobody is waiting on it, so it pays
-        # for full coverage. That is also why there is no shared "matrix
-        # variable" for the two to read — a single referenced list is one edit
-        # away from silently narrowing the release too, which is the exact
-        # half-applied shape this fleet keeps getting caught by. The lists are
-        # instead kept in agreement by
-        # tests/integration/test_ci_python_matrix_shape.py, which fails if this
-        # one stops being the full supported set or grows an event condition.
-        #
-        # AND IT RUNS ON OUR POOL, not on the hosted runner the nightly uses:
-        # this gate exists to be byte-identical to what ships (same SIF, same
-        # xdist invocation, same runner expression). Divergence between the
-        # release gate and the release itself is what left PyPI at 0.21.17 while
-        # eight tags shipped nothing — see the header of
-        # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
-        python-version: ["3.11", "3.12", "3.13"]
+  runner-admission:
+    uses: scitex-ai/.github/.github/workflows/runner-admission.yml@main
+    with:
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
+
+  preflight:
+    needs: runner-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      commit: ${{ steps.identity.outputs.commit }}
+      version: ${{ steps.identity.outputs.version }}
+    env:
+      RELEASE_AUTHORIZED: ${{ needs.runner-admission.outputs.native_authorized }}
+      REQUESTED_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Resolve version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            v="${GITHUB_REF#refs/tags/}"
-          else
-            v="${{ inputs.version }}"
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Require the existing shared organization admission
+        run: test "$RELEASE_AUTHORIZED" = true
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.ver.outputs.version }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
-      # SIF-based self-hosted test run — mirrors pytest-matrix exactly. No
-      # setup-python (the bare Spartan node has no Python tool cache; that step
-      # failed "version not found for this OS"); no apt fd-install (fd is baked
-      # in the SIF). exec-in-sif.sh apptainer-execs the reused ci-cpu.sif and
-      # run-in-sif.sh layers THIS (tagged) checkout + [all,dev] into a writable
-      # target, then runs pytest. fail-loud on a missing SIF/shim.
-      - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
-        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run pure release boundary controls
+        run: python -I .github/ci/test_release_identity.py
+      - name: Resolve the existing tag and exact workflow source
+        id: identity
+        run: python -I .github/ci/release-identity.py resolve --tag "$REQUESTED_TAG"
 
-      # The persistent runner keeps whatever this job leaves in /tmp — 1.8-2.2 GB
-      # per leg. `always()` covers failure and cancellation; the version arg
-      # scopes the removal to THIS leg, because all three share GITHUB_RUN_ID and
-      # an unscoped cleanup would delete the siblings' live scratch. Mirrors the
-      # step above by design (tests/integration/test_ci_tmpdir_lifecycle.py
-      # enforces the pairing).
-      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
+  test:
+    needs: preflight
+    # The shared callee's matrix profile is all THREE minors for tag pushes
+    # and workflow_dispatch. This is a context transition to test / test-sac-py*.
+    # A null/unqualified image is a real refusal, never a native/hosted fallback.
+    uses: scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      suite: matrix
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
+      ci_xdist_workers: ${{ vars.CI_XDIST_WORKERS }}
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
-    needs: test
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    needs: [runner-admission, preflight, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
-      version: ${{ steps.ver.outputs.version }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      RELEASE_AUTHORIZED: ${{ needs.runner-admission.outputs.native_authorized }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Resolve version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            v="${GITHUB_REF#refs/tags/}"
-          else
-            v="${{ inputs.version }}"
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.ver.outputs.version }}
+          ref: ${{ needs.preflight.outputs.commit }}
           fetch-depth: 0
-      # Build INSIDE the SIF (no setup-python on the bare Spartan node).
-      # build-in-sif.sh installs the `build` frontend into a writable --target
-      # inside the SIF, then `python -m build` → dist/. fail-loud on empty dist.
-      - name: Build wheel + sdist in the CI SIF (apptainer exec)
-        run: bash .github/ci/exec-in-sif.sh build-in-sif.sh 3.12
-      - name: Assert the built wheel carries the tagged version (belt; never trust the version string)
-        env:
-          VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          V="${VERSION#v}"
-          # A wheel whose baked version != the tag is the ghost-tag-at-birth /
-          # stale-(name,version)-wheel-cache edge — make it RED here, before
-          # publish, not a caught ghost after a partial upload.
-          if ! ls dist/*"${V}"*.whl >/dev/null 2>&1; then
-            echo "::error::no wheel in dist/ carries the tagged version ${V} — built version != tag."
-            ls -la dist/ || true
-            exit 1
-          fi
-          echo "OK: dist/ contains a wheel for the tagged version ${V}."
-      # upload-artifact is a JS action — runs fine on the self-hosted runner.
-      - uses: actions/upload-artifact@v4
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          name: dist
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Bind the declared packaging interpreter
+        run: echo "BUILD_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+      - name: Build and bind the whole source, metadata and genuine test run
+        run: bash .github/ci/build-in-sif.sh 3.12
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: dist-${{ needs.preflight.outputs.commit }}
           path: dist/
-
-      # build-in-sif.sh leaks the same way run-in-sif.sh did, just once per
-      # release instead of three times per push — slower to notice, not smaller
-      # a bug. LAST, after the wheel assertion and the artifact upload, so the
-      # scratch is only removed once nothing can still want it. `always()` so a
-      # failed or cancelled build does not keep the disk.
-      - name: Remove this job's build scratch (persistent runner — nothing else reclaims it)
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh build-in-sif.sh 3.12
+          if-no-files-found: error
 
   publish:
-    needs: build
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    needs: [runner-admission, preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/p/scitex-agent-container
-    # id-token: write is what populates ACTIONS_ID_TOKEN_REQUEST_{TOKEN,URL},
-    # which publish-in-sif.sh uses to mint the OIDC JWT. Keep it.
     permissions:
+      contents: read
+      actions: read
       id-token: write
+    env:
+      RELEASE_AUTHORIZED: ${{ needs.runner-admission.outputs.native_authorized }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
+      RELEASE_ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact_digest }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      # Need the repo checked out so .github/ci/exec-in-sif.sh +
-      # publish-in-sif.sh are on disk (the build job uploaded only dist/).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Bind the declared publisher interpreter
+        run: echo "PUBLISH_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ needs.preflight.outputs.commit }}
           path: dist
-      # Manual OIDC trusted publishing INSIDE the SIF — pypa/gh-action-pypi-
-      # publish is a Docker action and the Spartan compute nodes have no Docker.
-      # publish-in-sif.sh: GitHub OIDC JWT (audience=pypi) → PyPI mint-token →
-      # twine upload dist/*. apptainer exec (no --cleanenv) passes the
-      # ACTIONS_ID_TOKEN_REQUEST_* env vars into the SIF. fail-loud at each step.
-      - name: Publish to PyPI via manual OIDC trusted publishing in the SIF
-        run: bash .github/ci/exec-in-sif.sh publish-in-sif.sh 3.12
-
-      # A GREEN `twine upload` IS NOT EVIDENCE THAT THE ARTIFACT EXISTS. It is
-      # evidence that the upload CALL RETURNED. Those are different facts, and
-      # the gap between them is where a GHOST TAG lives: the tag exists, the run
-      # is green, and PyPI serves nothing. Nobody notices, because nothing looks.
-      #
-      # A detector found EIGHT of them in this repo — v0.6.0, v0.17.1, v0.21.6,
-      # v0.21.8, v0.21.10, v0.21.12, v0.21.15, v0.21.16. A THIRD OF THE 0.21 LINE
-      # never shipped, silently, for months. The fleet then spent an entire day
-      # re-diagnosing an already-fixed bug (#658) because the fix was merged,
-      # tagged, and never published, while agents hand-drained a wedged control
-      # plane. The operator's question was 「これ何回目？」 — how many times is this?
-      # The honest answer was: we were not failing to FIX it, we were failing to
-      # SHIP it, and nothing anywhere was built to notice.
-      #
-      # So the publish job now VERIFIES ITS OWN ARTIFACT. A ghost becomes a RED
-      # RELEASE instead of a silent success.
-      #
-      # Query the VERSION-SPECIFIC JSON API. Do NOT use /simple/, and do NOT use
-      # the package-level "latest": both are CDN-cached and will cheerfully
-      # answer 200 for a version that is not really there. Measured on this repo:
-      # our own release chain read the PREVIOUS version for ~34s after publish
-      # had already succeeded. So retry for eventual consistency, and require the
-      # response to actually carry uploaded FILES rather than merely parse.
-      - name: Verify the artifact actually reached PyPI (a tag is not a release)
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          set -uo pipefail
-          PKG=scitex-agent-container
-          # `build.outputs.version` is the TAG on a push ("v0.21.18") and a
-          # user-supplied string on workflow_dispatch (either form). `#v` strips
-          # a leading v and is a no-op on a bare version, so both are handled.
-          V="${VERSION#v}"
-          # An EMPTY version is a workflow CONFIG error, not a ghost. Without
-          # this, the URL becomes ".../scitex-agent-container//json" -> 404 ->
-          # we would report a phantom ghost and block a PERFECTLY GOOD RELEASE.
-          # A false RED here is worse than the ghost it exists to catch, because
-          # its remedy is "don't ship". Name the real fault instead.
-          if [ -z "$V" ]; then
-            echo "::error::version is EMPTY (build.outputs.version resolved to nothing)."
-            echo "::error::This is a workflow configuration fault, NOT a missing artifact."
-            exit 1
-          fi
-          URL="https://pypi.org/pypi/${PKG}/${V}/json"
-          echo "verifying PyPI really serves ${PKG}==${V}"
-          # Pure shell on purpose: an embedded multi-line python heredoc breaks
-          # this block scalar and yields an UNPARSEABLE workflow — i.e. it would
-          # take down every release while trying to protect them. `packagetype`
-          # appears once per uploaded file in the JSON's `urls` array, so a
-          # 200 that contains it proves a real, downloadable artifact.
-          for i in $(seq 1 18); do   # ~90s; PyPI is eventually consistent
-            CODE="$(curl -sS -o pypi.json -w '%{http_code}' --max-time 20 "$URL" || echo 000)"
-            if [ "$CODE" = "200" ] && grep -q '"packagetype"' pypi.json; then
-              N="$(grep -o '"packagetype"' pypi.json | wc -l | tr -d ' ')"
-              echo "OK: PyPI serves ${PKG}==${V} with ${N} file(s)."
-              rm -f pypi.json
-              exit 0
-            fi
-            echo "  attempt ${i}/18: http=${CODE}, no artifact yet; retry in 5s"
-            sleep 5
-          done
-          rm -f pypi.json
-          echo "::error::GHOST TAG: PyPI does NOT serve ${PKG}==${V} after a green publish."
-          echo "::error::The upload call returned, but no artifact is being served."
-          echo "::error::Do NOT cut the GitHub release. Fix publish, then re-tag."
-          exit 1
-
-      # publish-in-sif.sh's scratch, third member of the same leaking family.
-      # LAST, after the ghost-tag verification, and `always()` so it fires even
-      # when that verification reds the release — a failed release is exactly
-      # when a persistent runner most needs its disk back.
-      - name: Remove this job's publish scratch (persistent runner — nothing else reclaims it)
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh publish-in-sif.sh 3.12
+      - name: Publish verified whole artifacts through the existing OIDC publisher
+        run: bash .github/ci/publish-in-sif.sh 3.12
+      - name: Verify the exact wheel and sdist bytes served by PyPI
+        run: python -I .github/ci/release-identity.py verify-index --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --revalidate
 
   release:
-    needs: [build, publish]
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    needs: [runner-admission, preflight, build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
+    env:
+      RELEASE_AUTHORIZED: ${{ needs.runner-admission.outputs.native_authorized }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
+      RELEASE_ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact_digest }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.build.outputs.version }}
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ needs.preflight.outputs.commit }}
           path: dist
-      - name: Extract release notes from CHANGELOG.md
+      - name: Revalidate source and artifact identity before GitHub publication
+        run: python -I .github/ci/release-identity.py verify-proof --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --revalidate
+      - name: Extract release notes from the qualified source
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          VERSION="${VERSION#v}"
-          awk -v v="$VERSION" '
-            $0 ~ "^## \\[" v "\\]" {p=1; next}
-            p && /^## \[/ {exit}
-            p
-          ' CHANGELOG.md > release-notes.md || true
-          if [ ! -s release-notes.md ]; then
-            echo "Release v${VERSION}. See CHANGELOG.md for details." > release-notes.md
-          fi
-      # JS action that talks to the GitHub Releases API directly. The bare
-      # Spartan self-hosted runner has NO `gh` CLI, so the old `gh release
-      # create` failed with `gh: command not found` (exit 127) AFTER publish --
-      # PyPI shipped but no Release page. JS actions run fine on the self-hosted
-      # runner (same class as actions/checkout + upload-artifact), so this is the
-      # fail-loud-safe equivalent: CHANGELOG notes + dist/* assets, no `gh` dep.
-      # Needs the job's `permissions: contents: write` (already set); the action
-      # uses ${{ github.token }} by default.
+          python -I - <<'PY'
+          import os,re
+          from pathlib import Path
+          version=os.environ['RELEASE_TAG'][1:]
+          text=Path('CHANGELOG.md').read_text()
+          match=re.search(r'^## \['+re.escape(version)+r'\].*?\n(.*?)(?=^## \[|\Z)', text, re.M|re.S)
+          Path('release-notes.md').write_text(match[1] if match else 'Release v'+version+'. See CHANGELOG.md for details.\n')
+          PY
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.version }}
-          name: ${{ needs.build.outputs.version }}
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ needs.preflight.outputs.commit }}
+          name: ${{ needs.preflight.outputs.tag }}
           body_path: release-notes.md
           files: dist/*
           fail_on_unmatched_files: true

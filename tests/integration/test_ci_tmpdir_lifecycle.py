@@ -230,7 +230,7 @@ def test_runner_provisioned_node_local_tmp_wins_over_gpfs(runner_local_root_resu
 
 def test_library_has_no_tmp_or_home_fallback():
     # Arrange
-    forbidden = ('${SAC_CI_TMPDIR_ROOT:-/tmp}', '.cache/scitex-ci')
+    forbidden = ("${SAC_CI_TMPDIR_ROOT:-/tmp}", ".cache/scitex-ci")
     # Act
     source = _LIB.read_text(encoding="utf-8")
     # Assert
@@ -832,6 +832,25 @@ def wiring():
                 hit = _tail_invocation(step.get("run") or "", "exec-in-sif.sh")
                 if hit and hit[0] in _SCRATCH_CREATORS:
                     pairs.append((f"{wf.name}:{job_name}", hit, cleans))
+                direct = re.fullmatch(
+                    r"bash \.github/ci/(build-in-sif\.sh|publish-in-sif\.sh) (3\.12)",
+                    str(step.get("run") or "").strip(),
+                )
+                if direct:
+                    # Hosted release packaging owns a distinct exclusive root
+                    # and body group. Its EXIT trap, not the legacy fixed-path
+                    # cleanup table, owns removal after wait/group drainage.
+                    source = (_CI / direct[1]).read_text()
+                    assert "trap cleanup_owned_tmp EXIT" in source
+                    assert "owned child group remains" in source
+                    assert '"$current_id" = "$OWNED_TMP_ID"' in source
+                    pairs.append(
+                        (
+                            f"{wf.name}:{job_name}",
+                            (direct[1], direct[2]),
+                            [(direct[1], direct[2], "always() owned EXIT trap")],
+                        )
+                    )
     return pairs
 
 
@@ -839,7 +858,9 @@ def test_workflow_scan_finds_the_scratch_creating_steps(wiring):
     """Positive control: an empty scan would pass the two tests below
     vacuously — exactly the failure mode this whole fix is about."""
     # Arrange
-    expected_minimum = 4  # 2x pytest-matrix/release test legs, build, publish
+    # One local pytest wrapper plus both self-owned release packaging bodies.
+    # The release test wrapper is now the separately fenced shared callee.
+    expected_minimum = 3
     # Act
     found = len(wiring)
     # Assert
@@ -883,7 +904,9 @@ def _docs_steps() -> list[dict]:
 def test_docs_job_places_cache_temp_and_venv_in_managed_scratch():
     # Arrange
     prepare = next(
-        step for step in _docs_steps() if step.get("name") == "Prepare job-scoped docs scratch"
+        step
+        for step in _docs_steps()
+        if step.get("name") == "Prepare job-scoped docs scratch"
     )
     run = str(prepare.get("run", "")).strip()
     # Act
@@ -895,7 +918,9 @@ def test_docs_job_places_cache_temp_and_venv_in_managed_scratch():
 def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
     # Arrange
     cleanup = next(
-        step for step in _docs_steps() if step.get("name") == "Remove this job's docs scratch"
+        step
+        for step in _docs_steps()
+        if step.get("name") == "Remove this job's docs scratch"
     )
     # Act
     condition = str(cleanup.get("if", ""))
@@ -909,9 +934,7 @@ def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
 
 def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
     # Arrange
-    docs = _mkdir(
-        root, f"docs-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
-    )
+    docs = _mkdir(root, f"docs-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12")
     sibling = _mkdir(root, f"docs-scitex_agent_container-{_RUN_ID}-2-3.12")
     # Act
     result = _run_clean(root, "docs", "3.12")
@@ -935,9 +958,7 @@ def test_import_job_places_cache_temp_and_venv_in_managed_scratch():
     )
     run = str(prepare.get("run", "")).strip()
     # Act
-    expected = (
-        "bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV"
-    )
+    expected = "bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV"
     # Assert
     assert run == expected
 
@@ -961,9 +982,7 @@ def test_import_job_removes_its_exact_scratch_scope_even_after_failure():
 
 def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
     # Arrange
-    current = _mkdir(
-        root, f"import-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
-    )
+    current = _mkdir(root, f"import-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12")
     sibling = _mkdir(root, f"import-scitex_agent_container-{_RUN_ID}-2-3.12")
     # Act
     result = _run_clean(root, "import-smoke", "3.12")
