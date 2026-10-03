@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import json
 
+import pytest
+
 from scitex_agent_container.runtimes import _hermes_tui_context_owner as context_owner
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
@@ -44,12 +46,16 @@ def test_old_owner_cleanup_cannot_remove_new_gateway_projection(tmp_path):
     # Assert: descriptor and ready marker still agree on the live new owner.
     descriptor = json.loads((tmp_path / owner.GATEWAY_FILE).read_text())
     ready = json.loads((tmp_path / owner.READY_FILE).read_text())
-    assert descriptor == ready == {
-        "generation": "new-generation",
-        "owner_pid": descriptor["owner_pid"],
-        "pid": 202,
-        "port": 40789,
-    }
+    assert (
+        descriptor
+        == ready
+        == {
+            "generation": "new-generation",
+            "owner_pid": descriptor["owner_pid"],
+            "pid": 202,
+            "port": 40789,
+        }
+    )
 
 
 def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
@@ -172,6 +178,111 @@ def test_three_day_old_explicit_resume_also_becomes_fresh(tmp_path):
     )
     # Assert
     assert (resolved, seen) == (["hermes", "chat", "--tui"], [("stored-42", "resume")])
+
+
+def test_fenced_resume_preserves_the_exact_fresh_stored_session(tmp_path):
+    # Arrange
+    command = ["hermes", "chat", "--tui", "--resume", "stored-42"]
+    now = 2_000_000.0
+    record = {"started_at": now - 60}
+    # Act
+    resolved = context_owner.apply_session_age_policy(
+        command,
+        state_dir=tmp_path,
+        max_age_minutes=4320,
+        stored_lookup=lambda _state, _identity, _mode: record,
+        now=lambda: now,
+        exact_resume=True,
+    )
+    # Assert
+    assert resolved == command
+
+
+@pytest.mark.parametrize("started_at", [None, "unqualified", 2_000_000.0 - 4320 * 60])
+def test_fenced_resume_refuses_unknown_or_stale_age(tmp_path, started_at):
+    # Arrange
+    command = ["hermes", "chat", "--tui", "--resume", "stored-42"]
+    record = {"started_at": started_at}
+
+    # Act
+    def operation():
+        context_owner.apply_session_age_policy(
+            command,
+            state_dir=tmp_path,
+            max_age_minutes=4320,
+            stored_lookup=lambda _state, _identity, _mode: record,
+            now=lambda: 2_000_000.0,
+            exact_resume=True,
+        )
+
+    # Assert
+    with pytest.raises(RuntimeError, match="^hermes-exact-resume-age-unqualified$"):
+        operation()
+
+
+def test_fenced_resume_refuses_absent_native_record(tmp_path):
+    # Arrange
+    command = ["hermes", "chat", "--tui", "--resume", "stored-42"]
+
+    # Act
+    def operation():
+        context_owner.apply_session_age_policy(
+            command,
+            state_dir=tmp_path,
+            max_age_minutes=4320,
+            stored_lookup=lambda _state, _identity, _mode: None,
+            exact_resume=True,
+        )
+
+    # Assert
+    with pytest.raises(RuntimeError, match="^hermes-exact-resume-record-absent$"):
+        operation()
+
+
+def test_fenced_resume_does_not_reflect_native_lookup_error(tmp_path):
+    # Arrange
+    command = ["hermes", "chat", "--tui", "--resume", "stored-42"]
+
+    def lookup(_state, _identity, _mode):
+        raise RuntimeError("private diagnostic")
+
+    # Act
+    def operation():
+        context_owner.apply_session_age_policy(
+            command,
+            state_dir=tmp_path,
+            max_age_minutes=4320,
+            stored_lookup=lookup,
+            exact_resume=True,
+        )
+
+    # Assert
+    with pytest.raises(RuntimeError, match="^hermes-exact-resume-record-unavailable$"):
+        operation()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["hermes", "chat", "--tui"],
+        ["hermes", "chat", "--tui", "--continue", "title"],
+    ],
+)
+def test_fenced_resume_refuses_a_fresh_or_title_selector(tmp_path, command):
+    # Arrange
+    # Act
+    def operation():
+        context_owner.apply_session_age_policy(
+            command,
+            state_dir=tmp_path,
+            max_age_minutes=4320,
+            stored_lookup=lambda _state, _identity, _mode: None,
+            exact_resume=True,
+        )
+
+    # Assert
+    with pytest.raises(RuntimeError, match="^hermes-exact-resume-selector-required$"):
+        operation()
 
 
 def test_fresh_owner_adopts_its_only_isolated_gateway_session():
@@ -657,7 +768,12 @@ def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):
 
     # Assert
     supervision = (tmp_path / owner.SUPERVISION_FILE).read_text(encoding="utf-8")
-    assert (result, len(spawned), spawned[0].terminated, "identity mismatch" in supervision) == (
+    assert (
+        result,
+        len(spawned),
+        spawned[0].terminated,
+        "identity mismatch" in supervision,
+    ) == (
         70,
         1,
         False,

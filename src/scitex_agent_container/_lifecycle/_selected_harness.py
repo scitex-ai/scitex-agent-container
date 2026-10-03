@@ -36,6 +36,7 @@ class SelectedRuntimeFence:
     process_start_time: int
     process_uid: int
     host_boot_id: str
+    stored_session_id: str = ""
 
 
 def _require_local_boot(expected: SelectedRuntimeFence) -> None:
@@ -82,6 +83,7 @@ def require_selected_runtime(
         raise ValueError("selected-harness-owned-runtime-required")
     _require_local_boot(expected)
     labels = (
+        expected.stored_session_id,
         expected.instance_id,
         expected.session_id,
         expected.boot_id,
@@ -94,6 +96,7 @@ def require_selected_runtime(
         or expected.harness != "hermes"
         or config.subscription_provider
         or any(not isinstance(value, str) or not value.strip() for value in labels)
+        or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", expected.stored_session_id)
         or not isinstance(expected.account, str)
         or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expected.account)
         or type(expected.pid) is not int
@@ -155,3 +158,24 @@ def require_selected_successor_down(config, runtime, *, force, harness_override)
     """A fenced restart may not force-stop a runtime that appeared meanwhile."""
     if harness_override is not None and force and runtime.is_running(config):
         raise RuntimeError("selected-harness-runtime-reappeared-before-start")
+
+
+def selected_restart_session(expected: SelectedRuntimeFence) -> dict[str, str | bool]:
+    """Resume the observed durable Hermes session, never a title or live alias.
+
+    Hermes' live session ID and native stored session key are different
+    identities. A new gateway must receive the owned stored key; a title can
+    select an unrelated historical row and create-if-missing can start fresh.
+    """
+    if (
+        not isinstance(expected, SelectedRuntimeFence)
+        or expected.harness != "hermes"
+        or not isinstance(expected.stored_session_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", expected.stored_session_id)
+    ):
+        raise ValueError("selected-harness-stored-session-required")
+    return {
+        "session_override": "resume",
+        "resume_id_override": expected.stored_session_id,
+        "exact_resume": True,
+    }

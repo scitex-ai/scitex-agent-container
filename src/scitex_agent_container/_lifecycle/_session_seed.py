@@ -29,6 +29,20 @@ from ..config import AgentConfig
 from ..config._session_continuity import SESSION_RESUME
 
 
+def configure_exact_hermes_resume(config: AgentConfig, exact_resume: bool) -> None:
+    """Fence a call-only native resume without changing ordinary age policy."""
+    if not isinstance(exact_resume, bool):
+        raise ValueError("hermes-exact-resume-boolean-required")
+    if exact_resume and (
+        config.harness != "hermes"
+        or config.runtime != "tui"
+        or config.claude.session != SESSION_RESUME
+        or not str(config.claude.resume_id or "").strip()
+    ):
+        raise ValueError("hermes-exact-resume-native-session-required")
+    config.hermes_exact_resume = exact_resume
+
+
 def seed_pinned_session_id(config: AgentConfig, runtime: Any) -> bool:
     """Seed ``<state_dir>/session_id`` from ``spec.claude.resume_id`` if absent.
 
@@ -40,6 +54,15 @@ def seed_pinned_session_id(config: AgentConfig, runtime: Any) -> bool:
 
     Returns True iff a seed was written.
     """
+    # Native Hermes resumes through its own stored key in the real TUI argv.
+    # SDK-marker seeding can neither prove that native identity nor overwrite
+    # legacy ownership evidence. Keep both marker families entirely intact.
+    if (
+        str(getattr(config, "harness", "") or "").lower() == "hermes"
+        and str(getattr(config, "runtime", "") or "").lower() == "tui"
+    ):
+        return False
+
     claude = getattr(config, "claude", None)
     if claude is None:
         return False

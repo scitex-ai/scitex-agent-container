@@ -551,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sac-hermes-tui-owner")
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--max-session-age-minutes", type=int, default=4320)
+    parser.add_argument("--exact-resume", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = list(args.command)
@@ -613,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=state_dir,
             max_age_minutes=args.max_session_age_minutes,
             stored_lookup=stored_session_for_identity,
+            exact_resume=args.exact_resume,
         )
 
         tui, result = _supervise_tui(

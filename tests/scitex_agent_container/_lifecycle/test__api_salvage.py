@@ -493,6 +493,7 @@ def canonical_restart(tmp_path):
         process.start_time,
         process.uid,
         Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "20261002_190909_owned",
     )
     return config, identity, registry, restart, effects, path, fence
 

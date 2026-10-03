@@ -29,6 +29,7 @@ from ._selected_harness import (
     SelectedRuntimeFence,
     require_selected_runtime,
     require_selected_stop_target,
+    selected_restart_session,
 )
 
 logger = slogging.getLogger(__name__)
@@ -542,6 +543,9 @@ def agent_restart(
 
         select_engine_at_start(selected, engine_override, probe=False, log=False)
         require_selected_runtime(selected, expected_runtime, observe_runtime)
+        session_selection = selected_restart_session(expected_runtime)
+    else:
+        session_selection = {"session_override": "continue"}
 
     # PRE-STOP auth pre-flight (INCIDENT
     # incident-agent-self-restart-one-way-20260712). Resolve + PROBE the
@@ -681,7 +685,7 @@ def agent_restart(
         # conversation. Only the CLI's explicit --fresh route may request a
         # new conversation; internal force is teardown mechanics, not consent
         # to erase session_id/session_id_history.
-        session_override="continue",
+        **session_selection,
         engine_override=engine_override,
         probe_engine=probe_engine,
         runtime_factory=runtime_factory,
