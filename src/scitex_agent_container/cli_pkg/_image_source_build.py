@@ -53,7 +53,11 @@ tests never shell a real apptainer.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
 import shutil
+import stat
 import sysconfig
 from importlib import metadata
 from pathlib import Path
@@ -261,6 +265,74 @@ def _locate_bundled_sibling(
         f"ensure the wheel ships {name} under _bundled/ or run "
         "from an editable install."
     )
+
+
+def _source_license_bytes(pkg_root: Path) -> bytes:
+    """Resolve the source LICENSE or the same installed wheel's verified license."""
+    expected_hash = None
+    expected_size = None
+    try:
+        source = _locate_bundled_sibling(pkg_root, "LICENSE")
+    except FileNotFoundError:
+        candidates = [
+            item
+            for item in metadata.distributions(path=[str(pkg_root.parent)])
+            if (item.metadata.get("Name") or "").lower().replace("_", "-")
+            == "scitex-agent-container"
+        ]
+        if len(candidates) != 1:
+            raise FileNotFoundError("source LICENSE has no unique installed SAC owner")
+        distribution = candidates[0]
+        files = distribution.files or ()
+        selected = [
+            item
+            for item in files
+            if len(item.parts) == 3
+            and item.parts[0].endswith(".dist-info")
+            and item.parts[1:] == ("licenses", "LICENSE")
+        ]
+        if (
+            distribution.metadata.get_all("License-File") != ["LICENSE"]
+            or len(selected) != 1
+            or selected[0].hash is None
+            or selected[0].hash.mode != "sha256"
+            or selected[0].size is None
+        ):
+            raise FileNotFoundError(
+                "installed SAC LICENSE lacks exact RECORD ownership"
+            )
+        member = selected[0]
+        source = Path(distribution.locate_file(member))
+        expected_hash = member.hash.value
+        expected_size = member.size
+    for entry in [source, *source.parents]:
+        if stat.S_ISLNK(entry.lstat().st_mode):
+            raise ValueError("source LICENSE traverses a symlink")
+    if not stat.S_ISREG(source.stat().st_mode):
+        raise ValueError("source LICENSE is not a regular file")
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as handle:
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_size > 1_048_576:
+            raise ValueError("source LICENSE exceeds the regular-file budget")
+        raw = handle.read(1_048_577)
+        after = os.fstat(handle.fileno())
+    current = source.lstat()
+    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if len(raw) != opened.st_size or any(
+        getattr(opened, name) != getattr(after, name)
+        or getattr(opened, name) != getattr(current, name)
+        for name in fields
+    ):
+        raise ValueError("source LICENSE changed during its descriptor read")
+    digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b"=").decode()
+    )
+    if expected_hash is not None and (
+        digest != expected_hash or len(raw) != expected_size
+    ):
+        raise ValueError("installed SAC LICENSE differs from its RECORD")
+    return raw
 
 
 def locate_bundled_pyproject(pkg_root: Path) -> Path:
@@ -510,6 +582,8 @@ def stage_build_context(
     pyproject_src = locate_bundled_pyproject(pkg_root)
     readme_src = locate_bundled_readme(pkg_root)
     hatch_build_src = locate_bundled_hatch_build(pkg_root)
+    project = tomllib.loads(pyproject_src.read_text())["project"]
+    license_bytes = _source_license_bytes(pkg_root) if project.get("license") else None
     package_sources = _declared_package_sources(
         pyproject_path=pyproject_src,
         package_root=pkg_root,
@@ -555,6 +629,8 @@ def stage_build_context(
     staged_src.mkdir()
     shutil.copy2(pyproject_src, staged_src / "pyproject.toml")
     shutil.copy2(readme_src, staged_src / "README.md")
+    if license_bytes is not None:
+        (staged_src / "LICENSE").write_bytes(license_bytes)
     (staged_src / "scripts").mkdir()
     shutil.copy2(hatch_build_src, staged_src / "scripts" / "hatch_build.py")
     for relative, source in package_sources:

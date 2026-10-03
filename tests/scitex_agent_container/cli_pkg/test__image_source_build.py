@@ -29,6 +29,8 @@ swap module-level references the same way ``test_image_group`` does.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import shlex
 import subprocess
@@ -1533,3 +1535,98 @@ def test_bundled_pyproject_in_wheel_matches_repo_root(built_wheel: Path):
         "the staged SIF source tree would then build a different package "
         "than the one that shipped the .def."
     )
+
+
+_LICENSE_BYTES = b"Synthetic public license fixture\n"
+
+
+def _license_distribution(package_root):
+    owner = package_root.parent / "scitex_agent_container-0.0.0.dist-info"
+    licenses = owner / "licenses"
+    licenses.mkdir(parents=True)
+    license_path = licenses / "LICENSE"
+    license_path.write_bytes(_LICENSE_BYTES)
+    (owner / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+        "License-File: LICENSE\n\n"
+    )
+    digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(_LICENSE_BYTES).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    (owner / "RECORD").write_text(
+        f"{owner.name}/licenses/LICENSE,sha256={digest},{len(_LICENSE_BYTES)}\n"
+    )
+    return license_path
+
+
+def test_wheel_source_stage_preserves_record_verified_license(
+    fake_pkg_root, fake_def, tmp_path
+):
+    # Arrange
+    _license_distribution(fake_pkg_root)
+    project = fake_pkg_root / "_bundled/pyproject.toml"
+    project.write_text(
+        project.read_text().replace("[project]", "[project]\nlicense = 'MIT'")
+    )
+    destination = tmp_path / "license-context"
+
+    # Act
+    isb.stage_build_context(fake_pkg_root, fake_def, destination)
+    actual = (destination / "scitex-agent-container-src/LICENSE").read_bytes()
+
+    # Assert
+    assert actual == _LICENSE_BYTES
+
+
+def _damage_license(source, tmp_path, fault):
+    if fault == "changed":
+        source.write_bytes(b"Unreviewed replacement")
+    elif fault == "missing":
+        source.unlink()
+    elif fault == "symlink":
+        target = tmp_path / "foreign-license"
+        target.write_bytes(_LICENSE_BYTES)
+        source.unlink()
+        source.symlink_to(target)
+    elif fault == "parent-symlink":
+        directory = source.parent
+        moved = directory.with_name("foreign-licenses")
+        directory.rename(moved)
+        directory.symlink_to(moved)
+    else:
+        record = source.parent.parent / "RECORD"
+        record.write_text(record.read_text().replace("sha256=", "md5="))
+
+
+@pytest.mark.parametrize(
+    "fault", ["changed", "missing", "symlink", "parent-symlink", "record"]
+)
+def test_wheel_license_refuses_changed_missing_or_symlink_source(
+    fake_pkg_root, tmp_path, fault
+):
+    # Arrange
+    source = _license_distribution(fake_pkg_root)
+    _damage_license(source, tmp_path, fault)
+
+    # Act
+    refusal = None
+    try:
+        isb._source_license_bytes(fake_pkg_root)
+    except (FileNotFoundError, ValueError) as error:
+        refusal = error
+
+    # Assert
+    assert isinstance(refusal, (FileNotFoundError, ValueError))
+
+
+def test_real_source_staging_preserves_authored_license(real_staged_src):
+    # Arrange
+    expected = (_REPO_ROOT / "LICENSE").read_bytes()
+
+    # Act
+    actual = (real_staged_src / "LICENSE").read_bytes()
+
+    # Assert
+    assert actual == expected

@@ -9,7 +9,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-CARDS_COMMIT = "d18a977379a245d0d1ce2ffc7a5c4c1af747fb24"
+CARDS_COMMIT = "1a3815aac3b4162cf3adea29344deea280d3aab8"
 CARDS_REPOSITORY = "https://github.com/scitex-ai/scitex-cards.git"
 CARDS_SOURCE_ENV = "SAC_SCITEX_CARDS_SOURCE_DIR"
 STAGED_CARDS_SOURCE = "scitex-cards-src"
