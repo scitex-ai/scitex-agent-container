@@ -84,7 +84,7 @@ permissions:
 
 jobs:
   CLAssistant:
-    uses: scitex-ai/.github/.github/workflows/cla.yml@main
+    uses: scitex-ai/.github/.github/workflows/cla.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
     with:
       # MUST be a JSON ARRAY STRING — the reusable feeds it to fromJSON. A YAML
       # list decodes to something fromJSON rejects, and the resulting label
