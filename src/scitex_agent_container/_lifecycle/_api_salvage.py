@@ -122,18 +122,16 @@ def _restart(
     from ..config._engine_types import apply_engine, select_engine
     from ._stop import agent_restart
 
+    # Historical identity alone is never authority to stop a matching-default
+    # Hermes runtime. The production path requires the complete live observer.
+    require_selected_runtime(config, expected_runtime, observe_runtime)
     registry = registry if registry is not None else Registry()
     entry = registry.get(identity.agent)
     path = entry["config"] if entry is not None else resolve_config(identity.agent)
-    successor = load_config(path)
-    selection = {}
-    if successor.harness != identity.harness:
-        if expected_runtime is None or observe_runtime is None:
-            raise ValueError("salvage-canonical-successor-mismatch")
-        successor = load_config(
-            path, harness_override=identity.harness, engine_override=identity.engine
-        )
-        selection["harness_override"] = identity.harness
+    successor = load_config(
+        path, harness_override=identity.harness, engine_override=identity.engine
+    )
+    selection = {"harness_override": identity.harness}
     engine = select_engine(successor.engines, identity.engine)
     if engine is not None:
         apply_engine(successor, engine)
@@ -143,11 +141,8 @@ def _restart(
         successor
     ) != _selected_identity(config):
         raise ValueError("salvage-canonical-successor-mismatch")
-    if expected_runtime is not None or observe_runtime is not None:
-        require_selected_runtime(successor, expected_runtime, observe_runtime)
-        selection.update(
-            expected_runtime=expected_runtime, observe_runtime=observe_runtime
-        )
+    require_selected_runtime(successor, expected_runtime, observe_runtime)
+    selection.update(expected_runtime=expected_runtime, observe_runtime=observe_runtime)
     restart = restart if restart is not None else agent_restart
     return restart(
         identity.agent,
@@ -239,6 +234,8 @@ def salvage_once(
         )
     ):
         raise ValueError("salvage-owned-route-mismatch")
+    if restart is _restart:
+        require_selected_runtime(config, expected_runtime, observe_runtime)
     declared = config.hermes_failover.accounts.get(config.engine_key, [])
     aliases = [row.account for row in accounts]
     if (

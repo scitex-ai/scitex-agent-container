@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import signal
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 import yaml
@@ -20,9 +21,10 @@ from scitex_agent_container._lifecycle._api_salvage import (
     _restart,
     salvage_once,
 )
+from scitex_agent_container._lifecycle._selected_harness import SelectedRuntimeFence
+from scitex_agent_container._runners._tmux._process_group import _identity
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config
-from scitex_agent_container.config._explicit_validation import explicit_spec_defaults
 from scitex_agent_container.config._hermes_failover import HermesFailoverSpec
 from scitex_agent_container.config._provider_types import ProviderSpec
 
@@ -451,25 +453,12 @@ def test_crashed_controller_retains_attempt_checkpoint(killed_controller):
 
 @pytest.fixture
 def canonical_restart(tmp_path):
-    spec = explicit_spec_defaults("Agent")
-    spec.update(
-        harness="hermes", workdir=str(tmp_path), host="${HOSTNAME}", engine="go-muse"
-    )
-    spec["engines"] = {
-        "go-muse": {
-            "model": "muse-spark-1.3-contributor",
-            "max_context_tokens": 1_048_576,
-            "provider": {"hermes_provider": "opencode-go", "auth_token_env": "GO_ONE"},
-        }
-    }
-    folder = tmp_path / "app"
-    folder.mkdir()
-    path = folder / "spec.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {"apiVersion": "scitex-agent-container/v3", "kind": "Agent", "spec": spec}
-        )
-    )
+    from ..config.test__selected_harness import _write_declaration
+
+    path, raw = _write_declaration(tmp_path)
+    raw["spec"]["harness"] = "hermes"
+    raw["spec"]["engine"] = "go-muse"
+    path.write_text(yaml.safe_dump(raw))
     config = load_config(path)
     registry = Registry(tmp_path / "registry")
     registry.add(config.name, str(path), config.screen_name)
@@ -489,21 +478,46 @@ def canonical_restart(tmp_path):
         "opencode-go",
         config.model,
     )
-    return config, identity, registry, restart, effects, path
+    process = _identity(os.getpid())
+    fence = SelectedRuntimeFence(
+        config.name,
+        identity.instance_id,
+        identity.session_id,
+        identity.boot_id,
+        identity.harness,
+        identity.engine,
+        identity.provider,
+        identity.model,
+        "TEST_GO_ONE",
+        process.pid,
+        process.start_time,
+        process.uid,
+        Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+    )
+    return config, identity, registry, restart, effects, path, fence
 
 
 def test_canonical_successor_reuses_ordinary_restart(canonical_restart):
     # Arrange
-    config, identity, registry, restart, effects, _path = canonical_restart
+    config, identity, registry, restart, effects, _path, fence = canonical_restart
     # Act
-    _restart(config, identity, registry=registry, restart=restart)
+    _restart(
+        config,
+        identity,
+        registry=registry,
+        restart=restart,
+        expected_runtime=fence,
+        observe_runtime=lambda _config: fence,
+    )
     # Assert
-    assert effects[0][2] == {"engine_override": "go-muse", "probe_engine": False}
+    assert effects[0][2]["engine_override"] == "go-muse"
 
 
-def test_canonical_codex_default_is_refused_before_effect(canonical_restart):
+def test_canonical_codex_default_without_owned_fence_is_refused_before_effect(
+    canonical_restart,
+):
     # Arrange
-    config, identity, registry, restart, _effects, path = canonical_restart
+    config, identity, registry, restart, _effects, path, _fence = canonical_restart
     raw = yaml.safe_load(path.read_text())
     raw["spec"]["harness"] = "codex"
     path.write_text(yaml.safe_dump(raw))
@@ -513,19 +527,26 @@ def test_canonical_codex_default_is_refused_before_effect(canonical_restart):
         _restart(config, identity, registry=registry, restart=restart)
 
     # Assert
-    with pytest.raises(ValueError, match="canonical-successor-mismatch"):
+    with pytest.raises(ValueError, match="owned-runtime-required"):
         operation()
 
 
 def test_canonical_refusal_never_calls_restart(canonical_restart):
     # Arrange
-    config, identity, registry, restart, effects, path = canonical_restart
+    config, identity, registry, restart, effects, path, fence = canonical_restart
     raw = yaml.safe_load(path.read_text())
-    raw["spec"]["engines"]["go-muse"]["model"] = "another-model"
+    raw["spec"]["available_engines"]["go-muse"]["model"] = "another-model"
     path.write_text(yaml.safe_dump(raw))
     # Act
     try:
-        _restart(config, identity, registry=registry, restart=restart)
+        _restart(
+            config,
+            identity,
+            registry=registry,
+            restart=restart,
+            expected_runtime=fence,
+            observe_runtime=lambda _config: fence,
+        )
     except ValueError:
         pass
     # Assert

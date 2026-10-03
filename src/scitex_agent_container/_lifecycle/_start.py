@@ -229,8 +229,11 @@ def agent_start(
     uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
-    if harness_override is not None and force and runtime.is_running(config):
-        raise RuntimeError("selected-harness-runtime-reappeared-before-start")
+    from ._selected_harness import require_selected_successor_down
+
+    require_selected_successor_down(
+        config, runtime, force=force, harness_override=harness_override
+    )
 
     if uses_production_runtime and not dry_run:
         from ..runtimes.tui_session import TuiSessionRuntime
