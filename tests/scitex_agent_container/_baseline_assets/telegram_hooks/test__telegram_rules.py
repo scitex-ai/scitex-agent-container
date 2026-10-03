@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,6 +55,95 @@ def _load_rules():
 
 
 _RULES = _load_rules()
+
+
+@pytest.mark.parametrize(("mode", "status"), [("--hook-json", 0), ("--text-stdin", 70)])
+def test_missing_whole_package_is_unknown_or_transport_error(tmp_path, mode, status):
+    # Arrange
+    command = [sys.executable, "-I", "-S", str(_RULES_PATH), mode]
+
+    # Act
+    result = subprocess.run(
+        command,
+        input="#812",
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+
+    # Assert
+    assert (result.returncode, result.stdout, result.stderr.startswith("UNKNOWN")) == (
+        status,
+        "",
+        True,
+    )
+
+
+def test_unsupported_package_capability_cannot_silently_allow_text(tmp_path):
+    # Arrange
+    package = tmp_path / "claude_code_telegrammer"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "_telegram_rules.py").write_text(
+        'HOOK_INPUT_VERSION="unsupported"\ndef main(argv):\n    raise AssertionError("must not dispatch unsupported predicate")\n'
+    )
+
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-S", str(_RULES_PATH), "--text-stdin"],
+        input="#812",
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+        env={
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(tmp_path),
+        },
+    )
+
+    # Assert
+    assert (result.returncode, result.stdout, result.stderr.startswith("UNKNOWN")) == (
+        70,
+        "",
+        True,
+    )
+
+
+def test_partial_predicate_copy_cannot_qualify_whole_package_binding(tmp_path):
+    # Arrange
+    package = tmp_path / "claude_code_telegrammer"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "_telegram_rules.py").write_text(
+        'HOOK_INPUT_VERSION="cct.telegram-hook-input/v1"\ndef main(argv):\n    raise AssertionError("partial predicate must not dispatch")\n'
+    )
+
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-S", str(_RULES_PATH), "--text-stdin"],
+        input="#812",
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+        env={
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(tmp_path),
+        },
+    )
+
+    # Assert
+    assert (result.returncode, result.stdout, result.stderr.startswith("UNKNOWN")) == (
+        70,
+        "",
+        True,
+    )
+
 
 REJECT = False
 ACCEPT = True
