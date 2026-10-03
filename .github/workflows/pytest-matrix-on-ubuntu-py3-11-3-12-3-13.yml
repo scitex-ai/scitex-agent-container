@@ -162,6 +162,14 @@ permissions:
   actions: read
 
 jobs:
+  runner-admission:
+    # Original actor, rerun actor, PR author and same-origin admission are
+    # owned by the published organization gate. No caller secrets are passed.
+    uses: scitex-ai/.github/.github/workflows/runner-admission.yml@main
+    permissions: {}
+    with:
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
+
   test:
     # DO NOT RENAME without updating branch protection in the same change.
     # This exact string is a REQUIRED status check on BOTH `develop` and `main`.
@@ -172,9 +180,11 @@ jobs:
     # is a separate, coordinated change (rename job + update both branch
     # protection rules atomically), NOT a drive-by edit.
     name: pytest-matrix-on-ubuntu-py${{ matrix.python-version }}
-    # Identical expression to the release workflow's `runs-on`, on purpose:
-    # both gates must resolve to the same runner set from the same variable.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    needs: runner-admission
+    # A failed/unknown admission never reaches company hardware. The required
+    # test context still runs the full suite on disposable hosted hardware.
+    if: always()
+    runs-on: ${{ fromJSON(needs.runner-admission.outputs.runs_on || '["ubuntu-latest"]') }}
     # A hung leg used to run to GitHub's 6-HOUR default. This has bitten twice,
     # both times invisibly — nothing failed, a job simply never finished:
     #   * PR #594 burned 1h39m42s before the platform killed it, and the run was
@@ -220,6 +230,8 @@ jobs:
                        || '["3.11","3.12","3.13"]') }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # THE SAME SCRIPT THE RELEASE GATE RUNS. exec-in-sif.sh apptainer-execs
       # the shared read-only ci-cpu.sif (which bakes python 3.11/3.12/3.13 at
@@ -237,7 +249,25 @@ jobs:
       # CLOBBER the live fleet credential every CI run. Creds-gated tests skip
       # cleanly without it, exactly as they already do on the release gate.
       - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
+        if: needs.runner-admission.outputs.native_authorized == 'true'
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        if: needs.runner-admission.outputs.native_authorized != 'true'
+        with:
+          version: "0.11.29"
+          cache-dependency-glob: pyproject.toml
+
+      - name: Install hosted runtime tools
+        if: needs.runner-admission.outputs.native_authorized != 'true'
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null || sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+
+      - name: Run the full suite on hosted hardware without company credentials
+        if: needs.runner-admission.outputs.native_authorized != 'true'
+        run: bash .github/ci/run-on-hosted.sh ${{ matrix.python-version }} matrix
 
       # OIDC avoids a repository upload token while still authenticating every
       # upload. Codecov has not activated this repository yet, so keep its
@@ -272,7 +302,7 @@ jobs:
       # GITHUB_RUN_ID: a cleanup keyed on the run alone would delete the LIVE
       # scratch of the two siblings still running.
       - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
-        if: always()
+        if: always() && needs.runner-admission.outputs.native_authorized == 'true'
         run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
 
   # THE CI FEEDBACK RAIL (ADR-0024). The operator asked for this mechanism by
@@ -328,15 +358,33 @@ jobs:
   # if a second machine is ever given the control plane.
   verdict:
     name: ci-verdict-to-pushing-agent
-    needs: [test]
+    needs: [test, runner-admission]
     # `always()` so RED reports AT ALL — a rail that only fires on green is
     # not a feedback rail, it is a congratulations service. The script skips
     # `cancelled` itself (a superseded push is not a verdict about the code).
     if: always()
-    runs-on: [self-hosted, Linux, X64, sac-control-plane]
+    runs-on: >-
+      ${{ fromJSON(needs.runner-admission.outputs.native_authorized == 'true'
+                   && '{"group":"Organization","labels":["self-hosted","Linux","X64","scitex-org-cpu","sac-control-plane"]}'
+                   || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        if: needs.runner-admission.outputs.native_authorized == 'true'
+        with:
+          # Company credentials execute only the trusted base's feedback rail.
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Report the hosted test verdict without company credentials
+        if: needs.runner-admission.outputs.native_authorized != 'true'
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          set -euo pipefail
+          printf 'Hosted test verdict: %s; company feedback rail not admitted.\n' "$TEST_RESULT"
+          test "$TEST_RESULT" = success
 
       # $SCITEX_STORE_DSN IS PASSED EXPLICITLY, and that is load-bearing too.
       # A `run:` step gets a NON-INTERACTIVE shell which sources no profile.
@@ -351,6 +399,7 @@ jobs:
       # and does NOT include ~/.local/bin, so a bare `uv` is not found here
       # even though it is on the operator's interactive PATH.
       - name: Write the CI verdict to the card and notify the pushing agent
+        if: needs.runner-admission.outputs.native_authorized == 'true'
         env:
           SCITEX_STORE_DSN: postgresql://ywatanabe__scitex-agent-container@scitex-primary:55432/scitex
           TEST_RESULT: ${{ needs.test.result }}

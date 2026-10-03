@@ -797,11 +797,28 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     )
 
 
-def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
+def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(
+    tmp_path, env_save_restore
+):
     # Arrange
     config = AgentConfig(
         name="business", harness="hermes", runtime="tui", workdir="/work"
     )
+    # Supply the real materializer's complete least-role credential using
+    # disposable public fixture data, never the runner's ambient passfile.
+    config.env.update(
+        {
+            "PGUSER": "fixture__business",
+            "SCITEX_STORE_DSN": "postgresql://fixture.invalid:65432/fixture_db",
+        }
+    )
+    passfile = tmp_path / "synthetic.pgpass"
+    passfile.write_text(
+        "fixture.invalid:65432:fixture_db:fixture__business:synthetic-password\n",
+        encoding="utf-8",
+    )
+    passfile.chmod(0o600)
+    env_save_restore.set("PGPASSFILE", str(passfile))
     config.engine_key = "qwen"
     config.model = "qwen-model"
     config.a2a.port = 19007
@@ -855,9 +872,7 @@ def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
         ],
-        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
-            "CCT_BOT_TOKEN"
-        ],
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"]["CCT_BOT_TOKEN"],
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"
         ],

@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 
 import click
+from rich.cells import cell_len
+from rich.text import Text
 
 from .._hostsync import (
     DEFAULT_REPO,
@@ -51,7 +53,10 @@ def _evidence(text: str) -> None:
     and every line here exists to be read back later. ``soft_wrap`` keeps
     long checkout paths and symbol signatures on one line.
     """
-    render_rich(text, __name__)
+    # Evidence paths and signatures must remain one searchable record even
+    # when the receiving terminal is narrower than the observed value.
+    width = max(80, cell_len(Text.from_markup(text).plain))
+    render_rich(text, __name__, width=width)
 
 
 def _print_evidence(result: SyncResult) -> None:
@@ -286,20 +291,28 @@ def host_sync(
         raise SystemExit(status)
 
     mode = "check (read-only)" if check_only else "sync"
-    render_rich(f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n", __name__)
+    render_rich(
+        f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n", __name__
+    )
     for result in results:
         _print_result(result)
 
     # Never silent: say what the verdict MEANS, not just what it was.
     drifted = [r.peer for r in results if r.outcome is Outcome.DRIFTED]
     if check_only and drifted:
-        render_rich(f"[yellow]drift detected on {len(drifted)} peer(s):[/yellow] "
+        render_rich(
+            f"[yellow]drift detected on {len(drifted)} peer(s):[/yellow] "
             f"{', '.join(drifted)}\n"
             "  These peers are NOT running the centre's code. Reconcile with:\n"
-            f"    sac host sync {drifted[0]}", __name__)
+            f"    sac host sync {drifted[0]}",
+            __name__,
+        )
     elif code == 0:
-        render_rich("[green]all peers match the centre[/green] "
-            "[dim](verified by loaded-module path + symbol, not by version string)[/dim]", __name__)
+        render_rich(
+            "[green]all peers match the centre[/green] "
+            "[dim](verified by loaded-module path + symbol, not by version string)[/dim]",
+            __name__,
+        )
     if alarm_outcome is not None:
         render_rich(f"[dim]{alarm_outcome.summary_line()}[/dim]", __name__)
     raise SystemExit(status)

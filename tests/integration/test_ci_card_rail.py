@@ -82,7 +82,11 @@ def verdict_run_script(verdict_job) -> str:
 
 @pytest.fixture(scope="module")
 def verdict_env(verdict_job) -> dict:
-    return next(step["env"] for step in verdict_job["steps"] if "env" in step)
+    return next(
+        step["env"]
+        for step in verdict_job["steps"]
+        if "SCITEX_STORE_DSN" in step.get("env", {})
+    )
 
 
 @pytest.fixture
@@ -305,7 +309,9 @@ def test_superseding_never_closes_the_current_card(rail_cards) -> None:
     current_id = rail_cards.card_id_for("o/sac", "b" * 40)
     store = _FakeStore([_pending(current_id, scope)])
     # Act
-    closed = rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    closed = rail_cards.supersede_older(
+        store, repo="o/sac", branch="feat/x", sha="b" * 40
+    )
     # Assert
     assert closed == []
 
@@ -628,7 +634,9 @@ def test_verdict_job_is_pinned_to_the_control_plane_host(verdict_job) -> None:
     # Arrange
     runs_on = verdict_job["runs-on"]
     # Act
-    labels = set(runs_on) if isinstance(runs_on, list) else set()
+    from scitex_agent_container._hosted_runner_guard import _runner_labels
+
+    labels, _ = _runner_labels({"runs-on": runs_on})
     # Assert
     assert CONTROL_PLANE_LABEL in labels
 
@@ -638,9 +646,9 @@ def test_verdict_job_does_not_inherit_the_shared_runner_pool(verdict_job) -> Non
     # Arrange
     runs_on = verdict_job["runs-on"]
     # Act
-    is_literal_list = isinstance(runs_on, list)
+    declares_fixed_group = '"group":"Organization"' in str(runs_on)
     # Assert
-    assert is_literal_list
+    assert declares_fixed_group and "vars.CI_RUNS_ON" not in str(runs_on)
 
 
 def test_verdict_job_reports_red(verdict_job) -> None:
