@@ -240,8 +240,19 @@ def test_the_apply_names_the_root_it_wrote_into(fleet: Path) -> None:
     _write_spec(fleet, "alpha")
     # Act
     result = _run("--apply", "--no-diff")
-    # Assert — console width wraps the path, so compare without the wrap.
-    assert str(fleet) in result.stdout.replace("\n", "")
+    # Assert — the destination is copyable without reconstructing wrapped text.
+    assert str(fleet) in result.stdout
+
+
+def test_the_apply_keeps_a_long_literal_root_copyable(fleet: Path) -> None:
+    # Arrange — scratch roots exceed console width; brackets are path bytes.
+    root = fleet.parent / ("ci-" + "scratch-" * 20) / "agents[operator-root]"
+    _write_settings(root / "_shared" / "to_home")
+    _write_spec(root, "alpha")
+    # Act
+    result = _run("--apply", "--no-diff", "--root", str(root))
+    # Assert
+    assert str(root) in result.stdout
 
 
 # ---------------------------------------------------------------------------

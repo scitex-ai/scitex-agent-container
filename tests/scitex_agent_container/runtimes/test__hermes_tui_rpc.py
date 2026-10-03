@@ -288,14 +288,22 @@ def test_lost_close_reply_reconciles_old_absent_and_keeps_fresh(tmp_path):
                     raise AssertionError(method)
                 result = {"sessions": [{"id": "fresh-live", "status": "idle"}]}
             elif method == "session.create":
-                result = {"session_id": "fresh-live", "stored_session_id": "fresh-stored"}
+                result = {
+                    "session_id": "fresh-live",
+                    "stored_session_id": "fresh-stored",
+                }
             elif method == "session.events.since":
                 self.replays += 1
                 result = {
                     "events": (
                         []
                         if self.replays == 1
-                        else [{"type": "message.complete", "payload": {"status": "complete"}}]
+                        else [
+                            {
+                                "type": "message.complete",
+                                "payload": {"status": "complete"},
+                            }
+                        ]
                     ),
                     "latest_seq": self.replays,
                     "epoch": "epoch",
@@ -363,7 +371,11 @@ def test_startup_reconciliation_rolls_back_fresh_when_old_is_live(tmp_path):
 
         def recv(self):
             request = self.sent[-1]
-            result = self.listing if request["method"] == "session.active_list" else {"closed": True}
+            result = (
+                self.listing
+                if request["method"] == "session.active_list"
+                else {"closed": True}
+            )
             return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
 
     listing_socket = Socket(
@@ -1095,7 +1107,6 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
         "steer",
         ["session.active_list", "session.steer"],
         {
-            "render_user_message": True,
             "session_id": "live-1",
             "text": "act now",
         },
@@ -1258,7 +1269,6 @@ def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
         "queue",
         ["session.active_list", "prompt.submit"],
         {
-            "render_user_message": True,
             "session_id": "live-1",
             "text": "run this afterward",
             "queued": True,
@@ -1412,7 +1422,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         receipt.status,
         receipt.visibility,
         [request["method"] for request in socket.sent],
-        socket.sent[2]["params"]["render_user_message"],
+        socket.sent[2]["params"],
     ) == (
         "streaming",
         "session.inflight.user",
@@ -1422,7 +1432,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
             "prompt.submit",
             "session.activate",
         ],
-        True,
+        {"session_id": "live-1", "text": text},
     )
 
 
@@ -1454,11 +1464,11 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
     assert (
         receipt.status,
         receipt.visibility,
-        socket.sent[2]["params"]["render_user_message"],
+        socket.sent[2]["params"],
     ) == (
         "steered",
         "session.inflight.corrections",
-        True,
+        {"session_id": "live-1", "text": text},
     )
 
 

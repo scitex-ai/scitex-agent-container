@@ -87,27 +87,43 @@ the harness owns only the turn. Session state persists in the host-side state
 dir so it survives container restarts.
 
 The harness is selected by `spec.harness` (family) plus `spec.runtime` (launch
-mode within that family). Four harnesses are registered; **only the `anthropic`
-ones can be started today.** A registry entry is a declaration, not a working
-launch path, so the table says which is which:
+mode within that family). The registry and lifecycle adapters support these
+combinations:
 
 | `spec.harness` | Registry entry     | Selected by                                       | Process shape                     | `sac agents start`? |
 |----------------|--------------------|---------------------------------------------------|-----------------------------------|---------------------|
 | `anthropic` *(default)* | `claude-code-tui`  | `runtime: tui`, or unset                  | external `claude` binary in a PTY | **yes** |
-| `anthropic`    | `claude-agent-sdk` | `runtime: claude-agent-sdk` (legacy alias `apptainer`) | sac-hosted session runner | **yes** |
+| `anthropic`    | `claude-agent-sdk` | `runtime: headless` (aliases `claude-agent-sdk`, `apptainer`) | sac-hosted session runner | **yes** |
 | `openai`       | `openai-agents`    | the harness axis alone                            | sac-hosted session runner         | **no** — refused |
-| `codex`        | `codex-sdk`        | the harness axis alone                            | sac-hosted session runner         | **no** — refused |
+| `codex`        | `codex-tui`        | `runtime: tui`, or unset                           | external `codex` binary in a PTY   | **yes** |
+| `codex`        | `codex-sdk`        | `runtime: headless`                                | sac-hosted Codex app-server runner | **yes** |
+| `hermes`       | `hermes-tui`       | `runtime: tui`                                     | Hermes gateway with attached TUI   | **yes** |
+| `opencode`     | `opencode-tui`     | `runtime: tui`                                     | OpenCode gateway with attached TUI | **yes** |
 
-`spec.runtime` only discriminates *within* the `anthropic` family; the `openai`
-and `codex` families have one entry each, so the runtime axis selects nothing
-for them.
+The registry lives in `config/_harness_registry.py`; lifecycle dispatch lives
+in `_lifecycle/_runtime_select.py`. A selected adapter still requires its
+image, executable, engine configuration, credentials, and store identity.
+Command Code has no registered harness or lifecycle adapter.
 
-**Honest limit today:** a non-`anthropic` harness loads, validates and resolves
-to its registry entry, but every lifecycle launch path *refuses* it — loudly,
-rather than silently starting a Claude harness under a spec that asked for
-something else. The one working alternative is `spec.a2a.handler:
-openai_session` for the OpenAI SDK; there is no equivalent A2A executor for
-`codex` yet.
+Direct Codex supports native OpenAI subscription engines and configured API
+providers. A native subscription engine declares `harness: codex`, its exact
+`model`, optional `reasoning_effort`, and
+`subscription: {provider: openai, account: "openai:<saved-account>"}`. Headless
+launches preserve these overrides through Apptainer using a base64 transport;
+the runner decodes them before constructing the Codex client. The resident
+runner accepts `POST /v1/turn` and retains its Codex thread for later turns.
+
+Hermes can independently select a native inference provider or a custom API
+endpoint; its harness remains Hermes. Custom endpoints ending in `/responses`
+select the Responses API. Provider authentication and endpoint requirements
+must be verified for the declared engine. The `openai-agents` registry entry
+still lacks a lifecycle adapter; `spec.a2a.handler: openai_session` is its
+separate executor surface.
+
+Lifecycle registration and addressability use PostgreSQL. Redirecting file
+roots alone does not isolate those records: disposable launches must also
+set an explicit owned `SCITEX_STORE_DSN` and, when Cards is used, an explicit
+owned Cards store/notification target.
 
 `spec.claude.session` controls whether to start fresh (`new-session`), continue
 the last session (`continue`), or resume a specific one (`resume <sid>`) for the

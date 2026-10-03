@@ -47,8 +47,13 @@ __all__ = ["create_app", "_urlrequest", "_urlerror"]
 # --- Handlers --------------------------------------------------------------
 
 
-async def health(_request: Request) -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "sac-listen", "v": 1})
+async def health(request: Request) -> JSONResponse:
+    payload = {"ok": True, "service": "sac-listen", "v": 1}
+    if getattr(request.state, "host_bearer_authenticated", False):
+        from .._lifecycle._start_session_wire import start_session_capability
+
+        payload["capabilities"] = {"start_session": start_session_capability()}
+    return JSONResponse(payload)
 
 
 # ``list_agents`` (GET /agents — the peer-discovery route backing the
@@ -80,7 +85,9 @@ def _runtime_liveness(cfg, *, runtime_factory=None) -> tuple[bool, str, dict[str
 
             runtime_factory = _get_runtime
         running = bool(runtime_factory(cfg).is_running(cfg))
-    except Exception as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
         return (
             False,
             "unknown",
@@ -198,9 +205,12 @@ async def agent_status(request: Request) -> JSONResponse:
         control = None
     if control is not None:
         body["runtime_control"] = control
-    from ._activity_projection import activity_projection
+    from ._activity_projection import activity_projection, project_session_id
 
     body["activity"] = activity_projection(sd, runtime_control=control)
+    body["session_id"], body["session_id_source"] = project_session_id(
+        sid, body["activity"], harness=str(body.get("harness") or "")
+    )
     # PR-1 — stillborn surface. If the runtime dir has a
     # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
     # session), echo it so callers don't have to also poll a separate
@@ -385,6 +395,7 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # path keep working unchanged.
 from ..a2a._inbox_ack import inbox_ack_route  # noqa: E402
 from ._agent_delete import agent_delete  # noqa: E402
+from ._agent_handshake import handshake_routes  # noqa: E402
 
 # ``agent_restart`` (POST /agents/<name>/restart) is the container-side
 # mirror of the spawn bypass: an in-SIF agent cannot resolve a peer's
@@ -414,6 +425,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        *handshake_routes(prefix),
         Route(
             f"{prefix}/{{name}}/exchanges/{{exchange_id}}",
             agent_exchange,

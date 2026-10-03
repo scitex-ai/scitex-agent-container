@@ -300,6 +300,10 @@ class ApptainerContainerRuntime(RuntimeBase):
         if is_jailed(config):
             scrub_bind_env(launch_env)
 
+        from ._private_python_gate import assert_private_python_runs
+
+        assert_private_python_runs(config, argv, env=launch_env)
+
         if foreground:
             return subprocess.run(argv, env=launch_env).returncode == 0
 

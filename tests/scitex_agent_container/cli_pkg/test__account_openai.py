@@ -24,6 +24,11 @@ def sandbox_home(tmp_path: Path, env_save_restore) -> Path:
     env_save_restore.set("HOME", str(home))
     env_save_restore.delete("CODEX_HOME")
     env_save_restore.delete("SCITEX_GENAI_CODEX_HOMES")
+    # The inventory legitimately includes every configured API alias. These
+    # exact-identity tests own only their synthetic Claude and Codex accounts.
+    for name in tuple(os.environ):
+        if name.startswith(("COMMANDCODE_API_KEY", "OPENCODE_GO_API_KEY")):
+            env_save_restore.delete(name)
     return home
 
 

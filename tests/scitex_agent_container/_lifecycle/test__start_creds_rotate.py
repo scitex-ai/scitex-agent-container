@@ -272,8 +272,8 @@ def test_pinned_agent_with_absent_store_raises(_isolate_home: Path) -> None:
 # never needed. API-key / openai-harness launches have no OAuth
 # credential to rotate — the same early-out the restart preflight
 # (resolve_successor_credential) and the bind (credentials_file_bind)
-# already carry. Hermes/codex harnesses intentionally keep the rotation:
-# the bind still serves them, so a stale pin must fail here, not later.
+# already carry. Hermes, Codex and OpenCode use their own selected backend
+# auth; an available Claude fallback must not activate its OAuth pool.
 # ---------------------------------------------------------------------------
 
 
@@ -308,3 +308,17 @@ def test_openai_harness_pool_with_no_healthy_snapshot_is_not_blocked(
     _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
     # Assert — pool untouched.
     assert cfg.claude.credentials_file == ""
+
+
+@pytest.mark.parametrize("harness", ["hermes", "codex", "opencode"])
+def test_non_claude_harness_ignores_an_expired_claude_pin(
+    _isolate_home: Path, harness: str,
+) -> None:
+    # Arrange — the selected harness never consumes this Claude snapshot.
+    cfg = _make_config("other-harness", account="stale-acct")
+    cfg.harness = harness
+    _write_snapshot(_isolate_home, "stale-acct", _past_ms())
+    # Act
+    _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
+    # Assert
+    assert cfg.claude.account == "stale-acct"

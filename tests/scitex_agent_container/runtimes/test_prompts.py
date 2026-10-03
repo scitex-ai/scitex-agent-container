@@ -781,20 +781,51 @@ def test_detect_still_matches_live_theme_selection_modal():
     assert name == "theme-selection"
 
 
-def test_hermes_contributor_tier_accepts_training():
-    """Fleet runs the contributor tier deliberately: answer y + Enter."""
-    from scitex_agent_container.runtimes.prompts import (
-        _detect_hermes_contributor_tier,
-        detect_and_respond,
-    )
-
-    content = (
+@pytest.fixture
+def contributor_prompt():
+    return (
         "!!! CONTRIBUTOR TIER \u2014 TRAINS ON YOUR DATA !!!\n"
         "Use this model for this invocation? [y/N]"
     )
-    assert _detect_hermes_contributor_tier(content) is True
-    assert _detect_hermes_contributor_tier("bypass permissions ready") is False
+
+
+def test_hermes_contributor_tier_is_detected(contributor_prompt):
+    # Arrange
+    from scitex_agent_container.runtimes.prompts import (
+        _detect_hermes_contributor_tier,
+    )
+
+    # Act
+    detected = _detect_hermes_contributor_tier(contributor_prompt)
+    # Assert
+    assert detected is True
+
+
+def test_ordinary_readiness_is_not_a_contributor_prompt():
+    # Arrange
+    from scitex_agent_container.runtimes.prompts import (
+        _detect_hermes_contributor_tier,
+    )
+    # Act
+    detected = _detect_hermes_contributor_tier("bypass permissions ready")
+    # Assert
+    assert detected is False
+
+
+def test_hermes_contributor_tier_selects_its_handler(contributor_prompt):
+    # Arrange
     sent: list[str] = []
-    result = detect_and_respond(content, set(), lambda k: sent.append(k))
-    assert result == "hermes-contributor-tier"
+    # Act
+    selected = detect_and_respond(contributor_prompt, set(), lambda k: sent.append(k))
+    # Assert
+    assert selected == "hermes-contributor-tier"
+
+
+def test_hermes_contributor_tier_accepts_training(contributor_prompt):
+    """Fleet runs the contributor tier deliberately: answer y + Enter."""
+    # Arrange
+    sent: list[str] = []
+    # Act
+    detect_and_respond(contributor_prompt, set(), lambda k: sent.append(k))
+    # Assert
     assert sent == ["y", "Enter"]

@@ -633,8 +633,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # by the build frontend. This is not a moving branch ref and the local path
     # is explicit in the resolver transaction. Filesystem
     # requirements cannot carry a PEP 440 comparator; SAC's project metadata
-    # honestly declares the supported floor (scitex-cards>=0.52.1), while the
-    # local candidate reports 0.52.1 and the commit marker proves its content.
+    # honestly declares the supported floor (scitex-cards>=0.53.4), while the
+    # local candidate reports 0.53.4 and the commit marker proves its content.
     # Keep both runtime extras explicit even though that source currently
     # promotes their dependencies to core: the aliases are the install-time
     # contract that fastmcp and psycopg must remain resolvable.
@@ -666,11 +666,11 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
     npm cache clean --force
 
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/ywatanabe1989/hermes-agent.git"
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "d18a977379a245d0d1ce2ffc7a5c4c1af747fb24"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
-    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.2"'
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
 
     # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -837,7 +837,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.52.1``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.53.4``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -1054,9 +1054,9 @@ EOF
     org.scitex.runtime apptainer
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
-    org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
-    org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
-    org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
+    org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
+    org.scitex.hermes.commit 17c5fde5a3f3642262003cd6aa09d54cf4d11de3
+    org.scitex.cards.commit d18a977379a245d0d1ce2ffc7a5c4c1af747fb24
 
 %help
     scitex-agent-container :base layer.

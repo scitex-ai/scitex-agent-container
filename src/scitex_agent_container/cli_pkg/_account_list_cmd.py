@@ -41,10 +41,9 @@ from ._account_list_fleet import fleet_account_options, run_fleet_account_list
     default=False,
     help=(
         "Read ONLY: credential freshness from expiresAt and usage from the "
-        "on-disk cache, never the network. Without it, listing an account whose "
-        "token has expired REFRESHES that token — which rotates a single-use "
-        "credential every other host is still using (INCIDENT 2026-08-09). The "
-        "fleet view sets this for every host, including this one."
+        "on-disk cache. No quota network refresh is performed. Listing never "
+        "renews or rotates credentials, including expired tokens. The fleet "
+        "view sets this for every peer."
     ),
 )
 @click.option(
@@ -147,6 +146,7 @@ def account_list(
         render_stored_table,
     )
     from ._account_openai import format_openai_account_block
+    from ._account_provider_usage import provider_usage, render_provider_usage
     from .status_cmds import _format_claude_account_block
 
     # REFRESH THE QUOTA SNAPSHOT BEFORE READING IT.
@@ -175,14 +175,17 @@ def account_list(
     # revoke every other host still holding it — which is why the fleet path
     # is passive and stays passive. `--no-refresh-quota` opts out for a fast,
     # deliberately-offline read.
-    if refresh_quota:
+    if refresh_quota and not passive:
         # stx-allow: fallback (reason: a usage refetch is best-effort — no
         # network, a 429, or an unreadable store must degrade to the cached
         # view, never delete the operator's credential inventory mid-incident)
         try:
+            from .._account.claude_usage import fetch_usage_for_credentials
             from .._account.quota_cache_refresh import refresh_quota_cache
 
-            refresh_quota_cache()
+            refresh_quota_cache(
+                usage_fetcher=lambda path: fetch_usage_for_credentials(path, allow_refresh=False)
+            )
         except Exception:
             pass
 
@@ -209,6 +212,11 @@ def account_list(
         openai_accounts = []
         openai_error = str(exc)
     openai_meta = openai_accounts[0] if openai_accounts else {}
+    # One local collection only. Peer --passive reads never query API aliases.
+    usage_rows = provider_usage(
+        openai_accounts, passive=passive or not refresh_quota, refresh=refresh,
+        budget=min(4.0, host_timeout),
+    )
 
     if as_json:
         # stx-allow: fallback (reason: malformed credentials JSON tolerated)
@@ -225,6 +233,7 @@ def account_list(
             "openai": openai_meta,
             "openai_accounts": openai_accounts,
             "openai_error": openai_error,
+            "provider_usage": usage_rows,
         }
         if not refresh:
             run_fleet_account_list(
@@ -238,7 +247,7 @@ def account_list(
             return
         stored_json = build_stored_json(accounts, refresh=refresh, passive=passive)
         extras["stored"] = stored_json
-        extras["accounts"] = build_provider_accounts_json(stored_json, openai_accounts)
+        extras["accounts"] = build_provider_accounts_json(stored_json, openai_accounts, usage_rows)
         click.echo(_json.dumps(extras, ensure_ascii=False, indent=2))
         return
 
@@ -267,6 +276,11 @@ def account_list(
         if openai_lines:
             render_rich("", __name__)
 
+    usage_block = render_provider_usage(usage_rows)
+    if usage_block:
+        click.echo(usage_block)
+        click.echo("")
+
     if not refresh:
         # FLEET view: every reachable host's credentials in one table, above
         # the mandatory reachability header. The active-credential and OpenAI
@@ -293,9 +307,8 @@ def account_list(
             "scitex-agent-container account save <name>"
         )
         return
-    render_rich("[dim]--refresh is LOCAL-ONLY: it refetches usage, and a refetch can "
-        "rotate an expired token. Doing that on every host at once is not "
-        "something a listing may do, so the fleet view never carries it.[/dim]", __name__)
+    render_rich("[dim]--refresh is LOCAL-ONLY: it refetches usage without renewing "
+        "credentials. The fleet view reads each peer's cached usage.[/dim]", __name__)
     render_rich(render_stored_table(all_rows), __name__)
     # Operator directive 2026-07-11: the bars own the percentages AND
     # their reset hints; the table above holds only what the bars

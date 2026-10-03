@@ -507,8 +507,10 @@ def agent_restart(
     # check in ``agent_start``'s force branch. Injectable for tests.
     from ._restart_preflight import preflight_from_config_path
 
-    _auth_check = successor_auth_check or preflight_from_config_path
-    _auth_check(config_path)
+    if successor_auth_check is not None:
+        successor_auth_check(config_path)
+    else:
+        preflight_from_config_path(config_path, engine_override=engine_override)
 
     # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
     # reason the credential pre-flight above does. ``agent_start`` refuses
@@ -522,6 +524,15 @@ def agent_restart(
     from ._engine_select import check_engine_before_stop
 
     check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+
+    if runtime_factory is None:
+        from ..runtimes._native_tui_admission import (
+            preflight_native_tui_from_config_path,
+        )
+
+        preflight_native_tui_from_config_path(
+            config_path, engine_override=engine_override
+        )
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for

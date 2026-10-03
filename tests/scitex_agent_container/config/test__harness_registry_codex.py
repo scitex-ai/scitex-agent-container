@@ -23,6 +23,7 @@ restore it on teardown — no ``monkeypatch``, per the ecosystem rule.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 
@@ -404,9 +405,9 @@ def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
     encoded = next(
         value.split("=", 1)[1]
         for value in argv
-        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_JSON=")
+        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_B64=")
     )
-    overrides = json.loads(encoded)
+    overrides = json.loads(base64.b64decode(encoded))
     # Assert
     assert (
         "SAC_CODEX_MODEL=qwen38-27b" in argv,
