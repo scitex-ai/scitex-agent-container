@@ -195,6 +195,7 @@ class TuiSessionRuntime(
         self._inbox_dispatcher_stop = inbox_dispatcher_stop
         self._cct_poller_start = cct_poller_start
         self._cct_poller_stop = cct_poller_stop
+        self._cct_host_python_bind = None
 
     @staticmethod
     def _owns_external_cct_poller(config: AgentConfig) -> bool:
@@ -208,10 +209,12 @@ class TuiSessionRuntime(
 
     def _start_cct_poller(self, config: AgentConfig) -> None:
         start = self._cct_poller_start
-        if start is None:
-            from ._tui_cct_poller import start_cct_poller as start
+        if start is not None:
+            start(config)
+            return
+        from ._tui_cct_poller import start_cct_poller
 
-        start(config)
+        start_cct_poller(config, python_bind=self._cct_host_python_bind)
 
     def _stop_cct_poller(self, config: AgentConfig) -> None:
         stop = self._cct_poller_stop
@@ -369,9 +372,7 @@ class TuiSessionRuntime(
         if not dry_run:
             from ._native_tui_admission import preflight_native_tui
 
-            preflight_native_tui(
-                config, production=self._production_command_builder
-            )
+            preflight_native_tui(config, production=self._production_command_builder)
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)
@@ -420,6 +421,14 @@ class TuiSessionRuntime(
         from ._launch_storage import launch_storage_identity
 
         self._resolved_launch_storage = launch_storage_identity(argv)
+        from ._cct_host_python import capture_cct_host_python_bind
+        from ._tui_cct_poller import cct_requested
+
+        self._cct_host_python_bind = (
+            capture_cct_host_python_bind(config, argv)
+            if cct_requested(config)
+            else None
+        )
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
         # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).

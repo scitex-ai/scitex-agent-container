@@ -526,6 +526,33 @@ def test_codex_tui_owns_one_cct_poller_for_managed_session(
     )
 
 
+def test_codex_cct_receives_bind_from_the_launched_argv(mux, tmp_path):
+    # Arrange
+    from scitex_agent_container.runtimes import _tui_cct_poller as cct
+
+    config = _Config(name="codex-cct-bind", harness="codex")
+    config.claude = SimpleNamespace(channels=["server:claude-code-telegrammer"])
+    root = tmp_path / "selected-private"
+    root.mkdir()
+    calls = []
+    argv = ["apptainer", "exec", "--bind", f"{root}:/uvwork:rw", "img.sif", "codex"]
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=lambda _config: list(argv),
+        turn_bridge_start=lambda _config: None,
+        inbox_dispatcher_start=lambda _config: None,
+    )
+
+    def receive(selected, *, python_bind):
+        calls.append((selected.name, python_bind.agent, python_bind.host_uvwork))
+
+    # Act
+    with _replace_attributes([(cct, "start_cct_poller", receive)]):
+        started = runtime.start(config)
+    # Assert
+    assert (started, calls) == (True, [(config.name, config.name, root)])
+
+
 def test_codex_cct_start_failure_unwinds_managed_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:

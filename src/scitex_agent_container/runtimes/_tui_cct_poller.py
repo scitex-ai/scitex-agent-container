@@ -20,6 +20,11 @@ from typing import Any, Callable
 
 from .._logging import get_logger
 from ..config import AgentConfig
+from ._cct_host_python import (
+    CctHostPythonBind,
+    CctHostPythonError,
+    resolve_cct_host_python,
+)
 from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
@@ -54,7 +59,7 @@ class TuiCctPollerError(RuntimeError):
 
 def cct_requested(config: AgentConfig) -> bool:
     """Whether the harness-neutral CCT channel is selected for this agent."""
-    channels = getattr(config.claude, "channels", None) or ()
+    channels = getattr(getattr(config, "claude", None), "channels", None) or ()
     return _TELEGRAMMER_CHANNEL in {str(value).strip() for value in channels}
 
 
@@ -171,7 +176,11 @@ def _preflight_cct(
 
 
 def _poller_env(
-    config: AgentConfig, *, home: Path, entry: dict[str, Any]
+    config: AgentConfig,
+    *,
+    home: Path,
+    entry: dict[str, Any],
+    python_bind: CctHostPythonBind | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     dotenv = home / ".env"
@@ -191,14 +200,20 @@ def _poller_env(
         if match:
             value = env.get(match.group(1), "")
         env[str(key)] = value
+    try:
+        selected_python = resolve_cct_host_python(
+            config, env.get("_CCT_PYTHON_EXECUTABLE"), python_bind
+        )
+    except CctHostPythonError as exc:
+        raise TuiCctPollerError(str(exc)) from exc
+    if selected_python is not None:
+        env["_CCT_PYTHON_EXECUTABLE"] = selected_python
     token = str(env.get("CCT_BOT_TOKEN", "") or "").strip()
     if not token:
         raise TuiCctPollerError("managed CCT poller has no resolved CCT_BOT_TOKEN")
     port = resolved_a2a_port(config)
     if port is None:
-        raise TuiCctPollerError(
-            "managed CCT poller requires a resolved spec.a2a.port"
-        )
+        raise TuiCctPollerError("managed CCT poller requires a resolved spec.a2a.port")
     turn_url = f"http://127.0.0.1:{port}/v1/turn"
     env["CCT_TURN_URL"] = turn_url
     env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] = turn_url
@@ -316,6 +331,7 @@ def start_cct_poller(
     stop: Callable[..., bool] = stop_cct_poller,
     preflight: Callable[[dict[str, Any], dict[str, str]], None] = _preflight_cct,
     sleep: Callable[[float], None] = time.sleep,
+    python_bind: CctHostPythonBind | None = None,
 ) -> int | None:
     """Start SAC's one managed TUI poller, or no-op when CCT is unselected."""
     if not cct_requested(config):
@@ -324,7 +340,7 @@ def start_cct_poller(
     home = state / "home"
     entry = _mcp_entry(home)
     argv = _poller_argv(entry)
-    env = _poller_env(config, home=home, entry=entry)
+    env = _poller_env(config, home=home, entry=entry, python_bind=python_bind)
     preflight(entry, env)
     state.mkdir(parents=True, exist_ok=True)
     # Idempotent singleton boundary: retire SAC's previous owned process before
