@@ -5,7 +5,7 @@
 #
 # THIS FILE IS AN ADAPTER, NOT A RULE. The rule — every ``#NNN`` needs a
 # parenthetical description — and the refusal wording both live in the
-# sibling module ``_telegram_rules.py``, because the operator asked for
+# package-owned CCT predicate through the sibling ``_telegram_rules.py`` delegate, because the operator asked for
 # exactly one place (2026-08-12):
 #
 #   「mcp も同じですね。同じルールなので、ルールは一つの場所に、
@@ -158,6 +158,9 @@ fi
 # pytest at tests/integration/telegram_hooks/ pins that they ship
 # together, so a missing module is a packaging bug caught in CI, not
 # something to discover here at send time.
-[[ -f "$_RULES" ]] || exit 0
+if [[ ! -f "$_RULES" ]]; then
+    echo "UNKNOWN Telegram hook binding: delegate missing; outbound guard remains required." >&2
+    exit 0
+fi
 
 exec python3 "$_RULES" --hook-json

@@ -54,7 +54,9 @@ The **parenthesis is the required form** — the operator's stipulation,
 > 「mcp も同じですね。同じルールなので、ルールは一つの場所に、shell 用の
 >   hook と mcp のフィルタで同じルールを適用させて ssot に、が良いかと」
 
-The rule and its refusal wording live in **`_telegram_rules.py`**. Two
+The rule and its refusal wording live in the packaged
+**`claude_code_telegrammer._telegram_rules`**. The home `_telegram_rules.py`
+is a thin delegate and retains no reference policy. Two
 consumers, one implementation, both thin adapters:
 
 | Consumer | Adapter | Contract |
@@ -68,11 +70,19 @@ reads on his phone, and two paths that compose their own will drift.
 A rule enforced on one path and absent on the other is exactly how a
 bare `scitex-dev #589` reaches him anyway.
 
-`_telegram_rules.py` is stdlib-only and ships **beside** the hook in
-`pre-tool-use/`, so the `to_home` cascade that materializes the hooks
-materializes the rule with them. The hook FAILS OPEN if the module is
-missing; the pytest pins that they travel together, so a packaging slip
-breaks CI rather than silently disarming the gate.
+The delegate ships **beside** the hook in `pre-tool-use/`. It requires
+the complete CCT package with the `cct.telegram-hook-input/v1` capability
+in the selected interpreter. Package version alone does not establish
+that capability. Match the complete CCT wheel before projecting these
+assets; copying only a predicate file does not qualify the binding.
+
+Missing or incompatible packages report `UNKNOWN` in hook mode and
+allow the tool. The final CCT outbound predicate remains mandatory.
+Text-stdin mode instead exits 70 without a verdict, so a missing owner
+cannot be mistaken for an allowed message. Literal configured MCP
+reply/edit/document, native `functions.exec`/`exec_command`, and Bash
+CLI inputs reach the same predicate; dynamic code remains `UNKNOWN`
+and is never evaluated. Other format hooks retain their current matchers.
 
 Both adapters are driven over one shared case table in
 `tests/integration/telegram_hooks/test_telegram_rule_ssot.py`, which

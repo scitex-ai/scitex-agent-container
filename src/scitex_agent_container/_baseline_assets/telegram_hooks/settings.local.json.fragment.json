@@ -1,5 +1,5 @@
 {
-  "_comment_telegram_format_hooks": "OP-PRIO-FMT (2026-06-09 operator priority) — splice this matcher block into _shared/to_home/.claude/settings.local.json under hooks.PreToolUse. Matcher MUST be the FQ MCP tool name mcp__claude-code-telegrammer__reply (OP-PRIO-2 hard prerequisite). See _baseline_assets/telegram_hooks/README.md for the full deployment recipe.",
+  "_comment_telegram_format_hooks": "Only the no-bare-reference hook includes native literal input rails; it delegates to matched package-owned CCT. Other format matchers retain their existing scope.",
   "PreToolUse": [
     {
       "matcher": "mcp__claude-code-telegrammer__reply",
@@ -7,10 +7,6 @@
         {
           "type": "command",
           "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_numbering.sh"
-        },
-        {
-          "type": "command",
-          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_no_bare_issue.sh"
         },
         {
           "type": "command",
@@ -23,6 +19,15 @@
         {
           "type": "command",
           "command": "$HOME/.claude/hooks/pre-tool-use/encourage_telegram_terse_style.sh"
+        }
+      ]
+    },
+    {
+      "matcher": "^(?:mcp__claude-code-telegrammer__(?:reply|edit_message|send_document)|mcp__claude_code_telegrammer__(?:reply|edit_message|send_document)|functions\\.exec|functions\\.exec_command|exec_command|Bash)$",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_no_bare_issue.sh"
         }
       ]
     }
