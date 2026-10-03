@@ -320,6 +320,21 @@ def test_project_floor_excludes_cards_that_read_the_retired_local_config(
     assert floor is not None and floor >= minimum, project_requirement
 
 
+def test_project_floor_preserves_the_retained_cards_runtime(
+    project_requirement: str,
+) -> None:
+    # Arrange — the retained exact d18a977 source and deployed base both ship
+    # 0.53.4. A fresh dependency resolution must not admit the older 0.52.1
+    # source that was accidentally restored by later source composition.
+    minimum = (0, 53, 4)
+
+    # Act
+    floor = _requirement_floor(project_requirement)
+
+    # Assert
+    assert floor is not None and floor >= minimum, project_requirement
+
+
 def test_scitex_todo_floor_is_at_least_the_wip_gate_capability(
     base_def_text: str, project_requirement: str
 ) -> None:
