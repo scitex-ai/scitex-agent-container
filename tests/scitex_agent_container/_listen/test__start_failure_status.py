@@ -22,8 +22,11 @@ someone to fix a call that was already correct.
 
 from __future__ import annotations
 
+from scitex_agent_container._drift._local import drift_warning_lines
+from scitex_agent_container._drift._status import DriftState, DriftStatus
 from scitex_agent_container._listen._start_failure_status import (
     DECLINED,
+    ISOLATION_FOOTPRINT,
     SERVER_FAULT,
     STALE_SPEC,
     UNREGISTERED,
@@ -79,6 +82,17 @@ def test_the_unregistered_hint_says_retrying_will_not_help():
 def test_a_stale_spec_source_is_a_conflict_not_a_bad_request():
     # Arrange: the agent exists and the call is well-formed; the HOST is behind.
     stderr = _MEASURED_DRIFT_STDERR
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr)
+    # Assert
+    assert result.status == 409
+
+
+def test_a_real_multiline_diverged_source_banner_is_a_conflict():
+    # Arrange
+    status = DriftStatus(state=DriftState.DIVERGED, ahead=1, behind=2,
+                         repo="/synthetic/spec-source", upstream="origin/develop")
+    stderr = "\n".join(drift_warning_lines(status, agent="restricted-child", refusing=True))
     # Act
     result = classify_start_failure(returncode=1, stderr=stderr)
     # Assert
@@ -196,3 +210,48 @@ def test_a_declined_start_is_not_promoted_to_a_client_error_by_a_stray_match():
     result = classify_start_failure(returncode=1, stderr=stderr, declined=True)
     # Assert
     assert result.is_caller_fixable is False
+
+
+def test_stale_poller_output_does_not_imply_a_stale_spec():
+    # Arrange
+    stderr = "cleared stale poller pidfile; forbidden store/quota capability present"
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr)
+    # Assert
+    assert result.kind == SERVER_FAULT
+
+
+def test_drift_warning_without_refusal_does_not_imply_a_stale_spec():
+    # Arrange
+    stderr = "sac-drift: source could not be checked; container mount failed"
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr)
+    # Assert
+    assert result.kind == SERVER_FAULT
+
+
+def test_typed_isolation_refusal_names_the_footprint():
+    # Arrange
+    stderr = "[sac-isolation-footprint] neutralizer-not-empty; stale poller cleared"
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr)
+    # Assert
+    assert result.kind == ISOLATION_FOOTPRINT
+
+
+def test_isolation_hint_does_not_ask_for_a_spec_pull():
+    # Arrange
+    stderr = "[sac-isolation-footprint] neutralizer-missing-or-not-directory"
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr)
+    # Assert
+    assert "empty neutralizer directories" in result.hint
+
+
+def test_decline_keeps_502_despite_typed_isolation_marker():
+    # Arrange
+    stderr = "[sac-isolation-footprint] neutralizer-not-empty"
+    # Act
+    result = classify_start_failure(returncode=1, stderr=stderr, declined=True)
+    # Assert
+    assert result.kind == DECLINED

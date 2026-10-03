@@ -335,6 +335,9 @@ def validate_capability_binds(config: object, spec_binds: Iterable[str]) -> None
 
     Returns ``None`` in the last two cases.
     """
+    from ._isolated_footprint import validate_neutralizer_binds
+
+    validate_neutralizer_binds(config)
     agent = str(getattr(config, "name", "") or "<unnamed agent>")
     spec_path = str(getattr(config, "config_path", "") or "<spec path unknown>")
     for bind_str in spec_binds:

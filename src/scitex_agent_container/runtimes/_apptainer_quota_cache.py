@@ -58,10 +58,25 @@ def _resolve_quota_cache_host_path() -> Path:
     return runtime
 
 
+def quota_cache_bind_flags(config: object, source: Path) -> list[str]:
+    """Add automatic quota visibility only when the spec has not denied it."""
+    from ._isolated_footprint import automatic_store_denied
+
+    if automatic_store_denied(config) or not source.is_file():
+        return []
+    return [
+        "--bind",
+        f"{source}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
+        "--env",
+        f"CCT_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
+    ]
+
+
 __all__ = [
     "QUOTA_CACHE_CONTAINER_PATH",
     "QUOTA_CACHE_HOST_PATH_DEFAULT",
     "QUOTA_CACHE_HOST_PATH_ENV",
     "QUOTA_CACHE_HOST_PATH_LEGACY",
     "_resolve_quota_cache_host_path",
+    "quota_cache_bind_flags",
 ]

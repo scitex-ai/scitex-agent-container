@@ -277,7 +277,9 @@ def default_binds_for_host() -> tuple[str, ...]:
     return tuple(out)
 
 
-def apply_default_binds(spec_binds: Iterable[str]) -> list[str]:
+def apply_default_binds(
+    spec_binds: Iterable[str], *, config: object | None = None
+) -> list[str]:
     """Merge fleet-default binds with the spec's explicit binds.
 
     Returns a list of bind strings (apptainer ``--bind`` ready) with
@@ -291,6 +293,10 @@ def apply_default_binds(spec_binds: Iterable[str]) -> list[str]:
     produces NO bind, NO crash, no surprise mount.
     """
     spec_binds_list = list(spec_binds)
+    from ._isolated_footprint import automatic_store_denied
+
+    if automatic_store_denied(config):
+        return spec_binds_list
     spec_destinations = {_bind_destination(b) for b in spec_binds_list}
     defaults_that_apply = [
         b

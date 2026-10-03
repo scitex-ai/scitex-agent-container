@@ -46,6 +46,7 @@ SERVER_FAULT = "server-fault"
 UNREGISTERED = "unregistered-agent"
 STALE_SPEC = "stale-spec"
 DECLINED = "declined"
+ISOLATION_FOOTPRINT = "isolation-footprint"
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,12 @@ _UNREGISTERED = re.compile(
 # The drift guard refusing a spec source that is behind its remote. The
 # agent exists and the request is well-formed; the HOST needs a pull, so
 # this is a conflict rather than a bad request or a server fault.
-_STALE_SPEC = re.compile(r"(sac-drift|commit\(s\) BEHIND|STALE)", re.IGNORECASE)
+_STALE_SPEC = re.compile(
+    r"(?:sac-drift[^\n]*(?:is STALE|DIVERGED)"
+    r"|sac-drift (?:ERROR|WARNING)[^\n]*:\n[ \t]+the spec source has DIVERGED"
+    r"|commit\(s\) BEHIND)",
+    re.IGNORECASE,
+)
 
 
 def classify_start_failure(
@@ -125,6 +131,17 @@ def classify_start_failure(
             ),
         )
 
+    if "[sac-isolation-footprint]" in blob:
+        return StartFailure(
+            status=502,
+            kind=ISOLATION_FOOTPRINT,
+            hint=(
+                "the declared isolated footprint was refused; verify its "
+                "empty neutralizer directories and exact spec on the target "
+                "host before retrying; do not add shared capabilities"
+            ),
+        )
+
     if _STALE_SPEC.search(blob):
         return StartFailure(
             status=409,
@@ -147,6 +164,7 @@ def classify_start_failure(
 
 __all__ = [
     "DECLINED",
+    "ISOLATION_FOOTPRINT",
     "SERVER_FAULT",
     "STALE_SPEC",
     "UNREGISTERED",

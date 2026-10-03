@@ -35,6 +35,7 @@ from ._apptainer_quota_cache import (
     QUOTA_CACHE_HOST_PATH_DEFAULT,
     QUOTA_CACHE_HOST_PATH_ENV,
     _resolve_quota_cache_host_path,
+    quota_cache_bind_flags,
 )
 
 # ----------------------------------------------------------------------
@@ -206,13 +207,7 @@ def build_run_argv(
     # path to the telegrammer bridge so its default-path lookup hits
     # the bind without any per-agent spec change.
     quota_src = _resolve_quota_cache_host_path()
-    if quota_src.is_file():
-        argv += [
-            "--bind",
-            f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
-            "--env",
-            f"CCT_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
-        ]
+    argv += quota_cache_bind_flags(config, quota_src)
 
     # Host access + working directory are the SOLE responsibility of the
     # explicit ``apptainer.binds`` + ``spec.workdir`` — there is NO
@@ -304,7 +299,7 @@ def build_run_argv(
     from ._apptainer_bind_guard import spec_binds_checked
     from ._p3a_default_binds import apply_default_binds
 
-    for bs in apply_default_binds(spec_binds_checked(config)):
+    for bs in apply_default_binds(spec_binds_checked(config), config=config):
         if ":" in bs:
             _, _, rest = bs.partition(":")
             dst = rest.split(":", 1)[0]

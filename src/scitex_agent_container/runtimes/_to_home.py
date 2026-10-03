@@ -246,6 +246,9 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     runtime never auto-reads host state. No-op when neither the baseline
     nor the per-agent to_home resolves.
     """
+    from ._isolated_footprint import validate_neutralizer_binds
+
+    validate_neutralizer_binds(config)
     layers = materialization_layer_dirs(config)
     contributing_layers = [(name, path) for name, path in layers if path is not None]
     prompt_sources_before = capture_prompt_sources(config)
