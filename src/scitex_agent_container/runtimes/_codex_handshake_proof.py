@@ -23,6 +23,27 @@ class NativeToolProof:
     completed_at: float
 
 
+def _contains_answer(output, answer):
+    """Read text blocks individually, never nested metadata or object reprs.
+
+    Codex native outputs use ``input_text``; MCP text blocks use ``text``.
+    A digest split across blocks is not one observed computation result.
+    """
+    texts = ()
+    if isinstance(output, str):
+        texts = (output,)
+    elif isinstance(output, list):
+        texts = (
+            block["text"]
+            for block in output
+            if isinstance(block, dict)
+            and block.get("type") in ("input_text", "text")
+            and isinstance(block.get("text"), str)
+        )
+    pattern = rf"(?<![0-9A-Fa-f]){answer}(?![0-9A-Fa-f])"
+    return any(re.search(pattern, text) is not None for text in texts)
+
+
 def reduce_codex_tool_proof(
     lines,
     *,
@@ -84,11 +105,14 @@ def reduce_codex_tool_proof(
             call_seq, call_at = calls[identity]
             output = payload.get("output")
             # Read only in memory. Return fixed call IDs/time, never output text.
-            contains_answer = (
-                isinstance(output, str)
-                and re.search(rf"(?<![0-9a-f]){answer}(?![0-9a-f])", output) is not None
-            )
-            if call_seq > cursor and call_at >= issued_at and contains_answer:
+            # Preserve the first eligible proof: a later repeated computation
+            # outside the caller's lease must not erase an earlier timely one.
+            if (
+                proof is None
+                and call_seq > cursor
+                and call_at >= issued_at
+                and _contains_answer(output, answer)
+            ):
                 proof = NativeToolProof(identity, seq, timestamp)
     return proof
 
