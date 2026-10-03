@@ -1,8 +1,8 @@
 """Django app configuration for the SAC Agents dashboard.
 
-``scitex_ui`` is always listed in INSTALLED_APPS alongside this app (the
+``scitex_sdk.ui`` is always listed in INSTALLED_APPS alongside this app (the
 standalone launcher adds it automatically; a mounted host does the same).
-``scitex_ui`` auto-wires its element-inspector middleware on ``ready()``, so
+``scitex_sdk.ui`` auto-wires its element-inspector middleware on ``ready()``, so
 this config needs no body.
 
 Subclasses ``scitex_app._django.ScitexAppConfig`` when scitex-app is

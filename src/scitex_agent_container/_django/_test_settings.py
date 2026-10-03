@@ -14,7 +14,7 @@ USE_TZ = True
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
-    "scitex_ui",
+    "scitex_sdk.ui",
     "scitex_agent_container._django.apps.AgentContainerDashboardConfig",
 ]
 MIDDLEWARE = [
@@ -31,7 +31,7 @@ TEMPLATES = [
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
-                "scitex_ui.context_processors.element_inspector",
+                "scitex_sdk.ui.context_processors.element_inspector",
             ],
         },
     },

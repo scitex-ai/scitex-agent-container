@@ -202,16 +202,16 @@ codex-sdk = [
 ]
 gui = [
     # Browser-facing Agents dashboard (`sac gui`, the `_django` app). The
-    # app renders under the shared scitex-ui shell and boots through
-    # scitex-app's embed launcher, so it depends on all three. OPTIONAL: a
+    # app renders under the shared scitex-sdk/ui shell and boots through
+    # the SDK embed launcher, so it depends on all three. OPTIONAL: a
     # bare install stays server-only — every import in the dashboard is
-    # deferred (the CLI resolves `scitex_app.embed` on first `gui` use and
+    # deferred (the CLI resolves `scitex_sdk.app.embed` on first `gui` use and
     # raises a clear install hint when absent), and the `[gui]` extra is
     # what a deployment adds. The dashboard is a PROJECTION of the host
     # control plane; it adds no state store and no second lifecycle path.
     "django>=4.2",
     "scitex-app>=0.11.0",
-    "scitex-ui>=0.13.0",
+    "scitex-sdk[gui]>=0.3.1",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -451,13 +451,13 @@ dev = [
     "fastmcp>=3.0,<4",
     "mcp>=1.29,<2",
     # PS-210 §2 (dev-extras-incomplete) mirror of `[gui]`: the dashboard's
-    # tests import django / scitex_app / scitex_ui unguarded, so a fresh
+    # tests import django / scitex_app / scitex_sdk unguarded, so a fresh
     # `pip install -e .[dev]` must carry them to run the full suite — exactly
     # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
     "scitex-app>=0.11.0",
-    "scitex-ui>=0.13.0",
+    "scitex-sdk[gui]>=0.3.1",
 ]
 docs = [
     "sphinx>=7.0",
@@ -499,7 +499,7 @@ all = [
     # `gui` is closed under `all` by the SAME PS-221 §3 rule as every other
     # public extra: an extra omitted here silently under-installs for anyone
     # who ran the documented "give me everything" install. It is lightweight
-    # (django + scitex-app + scitex-ui, no native binaries) and its Django
+    # (django + scitex-app + scitex-sdk, no native binaries) and its Django
     # dashboard tests must run under a fresh `[all,dev]` install, so it is a
     # natural member of `all` — not a cost like `codex-sdk`'s 285 MB wheel.
     "scitex-agent-container[gui]",

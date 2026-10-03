@@ -7,7 +7,7 @@ DUAL MODE. The same views render two ways, chosen by the mount prefix (derived
 with scitex-ui's ``mount_prefix`` — the single source of truth):
 
 * **Standalone** (root mount, ``sac gui serve``): extend the full
-  ``scitex_ui/standalone_shell.html`` (``fleet.html`` / ``detail.html``).
+  ``scitex_sdk/ui/standalone_shell.html`` (``fleet.html`` / ``detail.html``).
 * **Mounted in SciTeX Hub** (``/apps/agents/``): extend the Hub's
   ``global_base.html`` (``fleet_hub.html`` / ``detail_hub.html``), which already
   renders the header + nav. This is what makes "no duplicate header, no project
@@ -47,7 +47,7 @@ from ._timeline import (
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
-    """The app's mount prefix for the route currently rendering, via scitex-ui's
+    """The app's mount prefix for the route currently rendering, via the SDK's
     SSOT. ``view_path`` must be the route this view is registered under (relative
     to the app root) — ``mount_prefix`` subtracts it from ``request.path`` to
     recover the prefix, and raises on a mismatch (a wiring bug), so this is
@@ -56,7 +56,7 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
     "/apps/agents")."""
-    from scitex_ui.mount import mount_prefix
+    from scitex_sdk.ui.mount import mount_prefix
 
     try:
         return mount_prefix(request, view_path=view_path)
@@ -66,11 +66,11 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
 def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     """Context for the standalone shell only (mounted mode uses global_base)."""
-    from scitex_ui.branding import shell_context
-    from scitex_ui.mount import mount_context
+    from scitex_sdk.ui.branding import shell_context
+    from scitex_sdk.ui.mount import mount_context
 
     # All three side panes are unused: this is a server-rendered fleet table,
-    # not a file workspace. Declaring them unused is the scitex-ui API.
+    # not a file workspace. Declaring them unused is the SDK branding API.
     panes = {"ai": "unused", "files": "unused", "viewer": "unused"}
     ctx = dict(shell_context(title, accent="agents", panes=panes))
     try:
@@ -80,25 +80,42 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     return ctx
 
 
+def _hub_shell_available() -> bool:
+    """Whether the Hub's ``global_base.html`` resolves: the platform signal.
+
+    A nonempty mount prefix is LOCATION, not platform — a standalone server
+    behind a subpath proxy has one too. The Hub layout owns
+    ``global_base.html``; standalone trees (this package plus the SDK) do
+    not ship it, so resolvability tells which shell owns the header.
+    """
+    from django.template import engines
+
+    try:
+        engines["django"].get_template("global_base.html")
+    except Exception:
+        return False
+    return True
+
+
 def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tuple[dict, bool]:
     """Build the render context and decide mounted (hub) vs standalone.
 
     Returns ``(context, is_standalone)``. ``url_base`` is the app's mount prefix
     (no trailing slash — the templates add it), derived for the route currently
-    rendering. Because the four routes all share the same mount prefix, this is
-    the same value on every view: "" at a root (standalone) mount, e.g.
-    "/apps/agents" when mounted in the Hub. A non-empty base means we are
-    mounted in the Hub, whose ``global_base`` owns the header.
+    rendering. Hub vs standalone is decided by whether the Hub's
+    ``global_base.html`` resolves (see :func:`_hub_shell_available`), never by
+    whether the prefix is empty: a standalone server behind a subpath proxy is
+    still standalone.
     """
     base = _mount_base(request, view_path)
     ctx = dict(data)
     ctx["url_base"] = base
-    if base == "":
-        ctx.update(_shell_context(request, title, view_path))
-        return ctx, True
-    # Mounted in the Hub: global_base owns the header/nav; the package renders
-    # content only, so there is no duplicate header and no project switcher.
-    return ctx, False
+    if _hub_shell_available():
+        # Mounted in the Hub: global_base owns the header/nav; the package renders
+        # content only, so there is no duplicate header and no project switcher.
+        return ctx, False
+    ctx.update(_shell_context(request, title, view_path))
+    return ctx, True
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
