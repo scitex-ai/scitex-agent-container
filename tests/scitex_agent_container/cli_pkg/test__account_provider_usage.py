@@ -1,6 +1,7 @@
 """Pure additive formatting/schema contracts preserve historical providers."""
 
 import json
+import os
 
 import pytest
 import yaml
@@ -135,6 +136,10 @@ def passive_cli_inventory(tmp_path, env_save_restore):
     env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("CODEX_HOME")
     env_save_restore.delete("SCITEX_GENAI_CODEX_HOMES")
+    # Only the aliases declared by this fixture belong in its exact inventory.
+    for name in tuple(os.environ):
+        if name.startswith(("COMMANDCODE_API_KEY", "OPENCODE_GO_API_KEY")):
+            env_save_restore.delete(name)
     env_save_restore.set("COMMANDCODE_API_KEY_01", "synthetic-same")
     env_save_restore.set("COMMANDCODE_API_KEY_ywatanabe", "synthetic-same")
     # Act
