@@ -108,7 +108,17 @@ def _run_clean(root: Path, *args: str):
 def _mkdir(root: Path, name: str, *, age_s: int = 0) -> Path:
     """Create a fake scratch dir with a payload, optionally backdated."""
     d = root / name
-    (d / "site").mkdir(parents=True)
+    parts = name.split("-")
+    managed = "scitex_agent_container" in parts
+    if managed:
+        run, attempt = parts[-3:-1]
+        result = subprocess.run(
+            ["setsid", "bash", "-c", '. "$1"; export SAC_CI_GROUP_PID=$BASHPID; ci_tmpdir_prepare "$2"', "--", str(_LIB), str(d)],
+            env=_env(root, GITHUB_RUN_ID=run, GITHUB_RUN_ATTEMPT=attempt),
+            capture_output=True, text=True, timeout=6,
+        )
+        assert result.returncode == 0, result.stderr
+    (d / "site").mkdir(parents=True, exist_ok=True)
     (d / "site" / "payload.bin").write_bytes(b"x" * 1024)
     if age_s:
         when = time.time() - age_s
@@ -119,6 +129,7 @@ def _mkdir(root: Path, name: str, *, age_s: int = 0) -> Path:
 def _mutated_lib(tmp_path: Path, clause: str) -> Path:
     """A COPY of the library with one prune guard stripped out."""
     src = _LIB.read_text(encoding="utf-8")
+    clause = clause.replace("\\\n", "").strip()
     mutated = src.replace(clause, "")
     if mutated == src:
         raise AssertionError(f"guard clause not found to strip: {clause!r}")

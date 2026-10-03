@@ -24,8 +24,19 @@
 #     also go green by not collecting. Nightly output nobody can interpret is
 #     worse than no nightly.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/sif-runtime-lib.sh"
+ci_test_pg_require
 
 V="${1:?python version arg required (e.g. 3.12)}"
+UV="$(command -v uv)"
+TMPDIR="$(ci_tmpdir_path ci "$V")"
+ci_tmpdir_prepare "$TMPDIR"
+mkdir -m 700 -- "$TMPDIR/home" "$TMPDIR/tmp" "$TMPDIR/uv-cache"
+export HOME="$TMPDIR/home" TMPDIR
+export PATH="$(dirname "$UV"):/usr/local/bin:/usr/bin:/bin"
+ci_driver_environment
+export UV_CACHE_DIR="$TMPDIR/uv-cache" XDG_CACHE_HOME="$TMPDIR/home/.cache"
 
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
@@ -43,7 +54,7 @@ export GIT_CONFIG_VALUE_1=false
 export TZ="Asia/Tokyo"
 
 export MPLBACKEND=Agg
-export MPLCONFIGDIR="${RUNNER_TEMP:-/tmp}/mpl-$V"
+export MPLCONFIGDIR="$TMPDIR/mpl-$V"
 mkdir -p "$MPLCONFIGDIR"
 
 # uv's own managed CPython — actions/setup-python is not used anywhere in this
@@ -51,25 +62,12 @@ mkdir -p "$MPLCONFIGDIR"
 uv venv --python "$V" ".venv-$V"
 PY="$PWD/.venv-$V/bin/python"
 
-# Same fallback chain as the SIF path: [all,dev] -> [dev] -> bare, so one
-# unbuildable optional extra degrades the nightly instead of stranding it.
-uv pip install --python "$PY" -e ".[all,dev]" ||
-    uv pip install --python "$PY" -e ".[dev]" ||
-    uv pip install --python "$PY" -e "."
-uv pip install --python "$PY" tzdata || true
+# Resolve the complete declared closure; a failed install is a failed gate.
+uv pip install --python "$PY" -e ".[all,dev]"
+uv pip install --python "$PY" tzdata
 
-# THE VENV'S bin/ MUST BE ON PATH, because several tests exec the `sac` CONSOLE
-# SCRIPT as a subprocess (the shell-completion install tests, the SDK channel
-# sidecar resolver). Without this the first hosted run reported SIX failures out
-# of 14991 — all of them this one cause, and all of them reading like real bugs:
-#
-#   SacBinaryNotFoundError: Cannot resolve the `sac` console script: not on PATH
-#   ...test_install_writes_bash_cache_file - assert False where False = is_file()
-#
-# run-in-sif.sh has the same requirement and solves it by hand-writing shims,
-# because `pip install --target` does not materialise entry points at all. A
-# venv install DOES create them — they just have to be reachable.
 export PATH="$PWD/.venv-$V/bin:$PATH"
+ci_test_pg_verify "$PY"
 
 # ASSERT THE PLUGIN SET BEFORE TRUSTING A SINGLE PASS/FAIL COUNT.
 # NOT `-q`: quiet suppresses the `plugins:` header this reads, and the first

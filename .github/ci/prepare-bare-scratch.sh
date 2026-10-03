@@ -21,7 +21,7 @@ if [ -z "$PREFIX" ]; then
     exit 1
 fi
 SCRATCH="$(ci_tmpdir_path "$PREFIX" "$VERSION")"
-ci_tmpdir_cleanup "$SCRATCH"
+ci_tmpdir_prepare "$SCRATCH"
 ci_tmpdir_prune
 mkdir -p "$SCRATCH/tmp" "$SCRATCH/uv-cache"
 chmod 700 "$SCRATCH" "$SCRATCH/tmp" "$SCRATCH/uv-cache"
