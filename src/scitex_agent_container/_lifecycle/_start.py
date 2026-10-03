@@ -479,6 +479,31 @@ def agent_start(
 
         raise_start_failure(config)
 
+    _complete_started_runtime(
+        config,
+        runtime,
+        registry=registry,
+        config_path=config_path,
+        hook_env=hook_env,
+        handover_mod=_h,
+        runtime_factory=runtime_factory,
+        thread_factory=thread_factory,
+    )
+    return True
+
+
+def _complete_started_runtime(
+    config: AgentConfig,
+    runtime: Any,
+    *,
+    registry: Registry,
+    config_path: str,
+    hook_env: dict[str, str],
+    handover_mod: Any,
+    runtime_factory: Callable[[AgentConfig], Any] | None = None,
+    thread_factory: Callable[..., Any] = threading.Thread,
+) -> str | None:
+    """Complete the normal postlaunch phases; never launch or replace a runtime."""
     # Register
     registry.add(
         name=config.name,
@@ -493,7 +518,7 @@ def agent_start(
     # and the /v1/turn endpoint was unreachable even though the sidecar
     # was bound. The resolved a2a_port comes from the allocator (set by
     # ``resolve_a2a_port`` above) so /v1/turn routing has the port.
-    _record_local_instance(config, runtime)
+    instance_id = _record_local_instance(config, runtime)
 
     # Post-start hooks
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
@@ -520,8 +545,8 @@ def agent_start(
         config,
         registry=registry,
         runtime_factory=runtime_factory,
-        handover=_h,
+        handover=handover_mod,
         thread_factory=thread_factory,
     )
 
-    return True
+    return instance_id

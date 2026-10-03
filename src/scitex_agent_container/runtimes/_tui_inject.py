@@ -35,8 +35,8 @@ class StartupPromptInjectorMixin:
         Per prompt: drain to input-ready, PASTE the text LITERALLY (``-l``, via
         ``send_text_literal``), then SUBMIT under idle-gated control
         (``_verify_submitted`` → :func:`verify_submit_by_advancement`). Empty
-        list → no-op. Per-prompt failure logged and skipped; total failure does
-        NOT raise so the supervisor restart cycle never oscillates.
+        list → no-op. Codex refuses a failed clear or unproved admission before
+        completing bootstrap. Other harnesses retain their best-effort behavior.
 
         Enter-drop fix (card sac-tui-startup-prompt-enter-drop): the
         interactive TUI can drop or interleave streamed ``send-keys`` (so the
@@ -104,7 +104,14 @@ class StartupPromptInjectorMixin:
             )
             if str(getattr(config, "harness", "") or "").lower() == "codex":
                 raise
-        self._clear_compose_buffer(name)
+        cleared = self._clear_compose_buffer(name)
+        if (
+            str(getattr(config, "harness", "") or "").lower() == "codex"
+            and cleared is not True
+        ):
+            raise RuntimeError(
+                f"Codex startup compose buffer was not cleared for {name}"
+            )
         for index, prompt in enumerate(prompts, start=1):
             if not prompt:
                 continue
