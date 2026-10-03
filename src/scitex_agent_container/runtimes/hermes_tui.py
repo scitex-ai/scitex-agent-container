@@ -194,11 +194,8 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
         stop_recovery_monitor(config)
 
-    @staticmethod
-    def _start_cct(config: AgentConfig) -> None:
-        from ._tui_cct_poller import start_cct_poller
-
-        start_cct_poller(config)
+    def _start_cct(self, config: AgentConfig) -> None:
+        self._start_cct_poller(config)
 
     @staticmethod
     def _stop_cct(config: AgentConfig) -> None:

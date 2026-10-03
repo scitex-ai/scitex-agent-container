@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
+import subprocess
 from pathlib import Path
 
 from scitex_agent_container.config import AgentConfig
@@ -147,9 +148,9 @@ def test_poller_env_preserves_current_cct_names_and_scrubs_retired_names(
     _materialize_cct(tmp_path)
     env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN", "retired")
     env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS", "old")
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     # Act
     env = _poller_env(config, home=tmp_path / "home", entry=entry)
     # Assert
@@ -184,12 +185,95 @@ def test_start_refuses_before_spawn_when_cct_preflight_fails(tmp_path):
     assert (error, spawner.calls) == ("missing project principal", [])
 
 
+def test_host_private_interpreter_runs_at_health_before_predecessor_stop(tmp_path):
+    # Arrange
+    from scitex_agent_container.runtimes._cct_host_python import (
+        capture_cct_host_python_bind,
+    )
+
+    config = _config()
+    _materialize_cct(tmp_path / "state")
+    python = tmp_path / "private/venv-agent/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nprintf 'fixture-interpreter'\n")
+    python.chmod(0o700)
+    binding = capture_cct_host_python_bind(
+        config, ["apptainer", "exec", "--bind", f"{tmp_path / 'private'}:/uvwork:rw"]
+    )
+    path = tmp_path / "state/home/.mcp.json"
+    document = json.loads(path.read_text())
+    document["mcpServers"]["claude-code-telegrammer"]["env"][
+        "_CCT_PYTHON_EXECUTABLE"
+    ] = "/uvwork/venv-agent/bin/python"
+    path.write_text(json.dumps(document))
+    events = []
+    spawner = _Spawner()
+
+    def preflight(_entry, env):
+        result = subprocess.run(
+            [env["_CCT_PYTHON_EXECUTABLE"]], capture_output=True, check=True
+        )
+        events.append(("health", result.stdout))
+
+    def stop(_config, **_kwargs):
+        events.append(("stop", None))
+        return False
+
+    # Act
+    start_cct_poller(
+        config,
+        state_dir=tmp_path / "state",
+        python_bind=binding,
+        preflight=preflight,
+        stop=stop,
+        spawn=spawner,
+        sleep=lambda _s: None,
+    )
+    # Assert
+    assert (events, spawner.calls[0][1]["env"]["_CCT_PYTHON_EXECUTABLE"]) == (
+        [("health", b"fixture-interpreter"), ("stop", None)],
+        str(python),
+    )
+
+
+def test_missing_host_binding_preserves_predecessor_without_health_or_spawn(tmp_path):
+    # Arrange
+    config = _config()
+    _materialize_cct(tmp_path)
+    path = tmp_path / "home/.mcp.json"
+    document = json.loads(path.read_text())
+    document["mcpServers"]["claude-code-telegrammer"]["env"][
+        "_CCT_PYTHON_EXECUTABLE"
+    ] = "/uvwork/venv-agent/bin/python"
+    path.write_text(json.dumps(document))
+    events = []
+    spawner = _Spawner()
+    error = None
+    # Act
+    try:
+        start_cct_poller(
+            config,
+            state_dir=tmp_path,
+            spawn=spawner,
+            preflight=lambda _entry, _env: events.append("health"),
+            stop=lambda _config, **_kwargs: events.append("stop"),
+        )
+    except TuiCctPollerError as exc:
+        error = str(exc)
+    # Assert
+    assert (error, events, spawner.calls) == (
+        "CCT interpreter needs /uvwork from the actual launch",
+        [],
+        [],
+    )
+
+
 def test_preflight_fails_loud_on_unusable_store_identity(tmp_path):
     # Arrange
     bun, _poller = _materialize_cct(tmp_path)
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     report = {
         "checks": [
             {"name": "bot_token_valid", "ok": True},
@@ -225,9 +309,9 @@ def test_preflight_fails_loud_on_unusable_store_identity(tmp_path):
 def test_preflight_accepts_healthy_dependencies_before_poller_exists(tmp_path):
     # Arrange
     _bun, _poller = _materialize_cct(tmp_path)
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     checks = [
         {"name": name, "ok": True}
         for name in (
