@@ -118,7 +118,7 @@ def fresh_lead_creds_path(tmp_path) -> Path:
 def state_store_env(tmp_path):
     saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_host = os.environ.get("SAC_HOST")
-    saved_yaml = os.environ.get("SAC_YAML_DIRS")
+    saved_yaml = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(tmp_path / "state.db")
     os.environ["SAC_HOST"] = "lead-host"
     import yaml
@@ -132,10 +132,10 @@ def state_store_env(tmp_path):
         target = agents / name / "spec.yaml"
         target.parent.mkdir(parents=True)
         doc = _explicit_doc()
-        doc["metadata"]["name"] = name
+        # Agent names come from the parent directory; v3 rejects metadata.name.
         doc["spec"]["host"] = "lead-host"
         target.write_text(yaml.safe_dump(doc))
-    os.environ["SAC_YAML_DIRS"] = str(agents)
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(agents)
     import scitex_agent_container._state.state_store as _state_store_mod
 
     importlib.reload(_state_store_mod)
@@ -151,9 +151,9 @@ def state_store_env(tmp_path):
         else:
             os.environ["SAC_HOST"] = saved_host
         if saved_yaml is None:
-            os.environ.pop("SAC_YAML_DIRS", None)
+            os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
         else:
-            os.environ["SAC_YAML_DIRS"] = saved_yaml
+            os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = saved_yaml
         importlib.reload(_state_store_mod)
 
 
