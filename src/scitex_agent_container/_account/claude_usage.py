@@ -479,6 +479,7 @@ def fetch_usage_for_credentials(
     credentials_path: Path,
     *,
     opener=None,
+    allow_refresh: bool = True,
 ) -> dict[str, Any]:
     """Fetch usage data using the OAuth credentials at ``credentials_path``.
 
@@ -498,6 +499,8 @@ def fetch_usage_for_credentials(
     Args:
         credentials_path: Path to the per-account ``.credentials.json``.
         opener: Optional injection seam for tests.
+        allow_refresh: False for read-only listings; expired/401 credentials
+            return an error without contacting refresh or writing auth.
 
     Returns:
         A dict with the same keys as :func:`fetch_usage` plus an extra
@@ -527,6 +530,8 @@ def fetch_usage_for_credentials(
 
     # --- refresh if expired -------------------------------------------------
     if _is_token_expired(expires_at_ms):
+        if not allow_refresh:
+            return _err("Credential expired; refresh disabled")
         if refresh_token and client_id:
             new_token = _refresh_access_token_at(
                 creds, refresh_token, client_id, opener=opener
@@ -543,7 +548,7 @@ def fetch_usage_for_credentials(
     except (
         urllib.error.HTTPError
     ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
-        if exc.code == 401 and refresh_token and client_id:
+        if allow_refresh and exc.code == 401 and refresh_token and client_id:
             # Try refresh once on 401.
             new_token = _refresh_access_token_at(
                 creds, refresh_token, client_id, opener=opener
@@ -556,7 +561,10 @@ def fetch_usage_for_credentials(
                 except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                     pass
         if payload is None:
-            return _err(f"HTTP {exc.code} from usage API; refresh attempted")
+            return _err(
+                f"HTTP {exc.code} from usage API; "
+                + ("refresh attempted" if allow_refresh else "refresh disabled")
+            )
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return _err(f"Network error: {exc}")
 
