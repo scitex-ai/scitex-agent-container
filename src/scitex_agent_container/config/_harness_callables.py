@@ -194,6 +194,10 @@ def _hermes_tui_inner_argv(
         f"/state/{config.name}",
         "--max-session-age-minutes",
         str(max_age),
+    ]
+    if config.hermes_exact_resume:
+        argv += ["--exact-resume"]
+    argv += [
         "--",
         "hermes",
         "chat",

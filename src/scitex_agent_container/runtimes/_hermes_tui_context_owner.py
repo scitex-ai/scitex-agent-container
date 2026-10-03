@@ -84,23 +84,32 @@ def apply_session_age_policy(
     max_age_minutes: int,
     stored_lookup: Callable[[Path, str, str], dict | None],
     now: Callable[[], float] = time.time,
+    exact_resume: bool = False,
 ) -> list[str]:
-    """Start fresh when a named continuation is at or beyond its age cap."""
+    """Apply ordinary age policy; fenced resumes refuse any fresh replacement."""
     from ._hermes_context_gc import continuation_is_fresh_enough
 
     mode, identity = requested_session(command)
+    if exact_resume and (mode != "resume" or not identity):
+        raise RuntimeError("hermes-exact-resume-selector-required")
     if mode not in {"continue", "resume"} or not identity:
         return command
     try:
         record = stored_lookup(state_dir, identity, mode)
     except Exception:
+        if exact_resume:
+            raise RuntimeError("hermes-exact-resume-record-unavailable") from None
         record = {"started_at": None}
     if record is None:
+        if exact_resume:
+            raise RuntimeError("hermes-exact-resume-record-absent")
         return command
     if continuation_is_fresh_enough(
         record.get("started_at"), now=now(), max_age_minutes=max_age_minutes
     ):
         return command
+    if exact_resume:
+        raise RuntimeError("hermes-exact-resume-age-unqualified")
     return fresh_command(command, preserve_query=True)
 
 
@@ -132,6 +141,7 @@ def make_session_observer(
     state_dir: Path, command: list[str]
 ) -> Callable[[dict], str | None]:
     """Build the owner callback for heartbeat projection and context lifecycle."""
+
     def observe(session: dict) -> str | None:
         try:
             from ._hermes_heartbeat_projection import (

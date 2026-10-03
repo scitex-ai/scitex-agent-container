@@ -104,3 +104,42 @@ def test_seed_noop_when_no_resume_id(tmp_path: Path):
     seeded = seed_pinned_session_id(cfg, _RuntimeStub(tmp_path))
     # Assert
     assert seeded is False
+
+
+def test_native_hermes_resume_does_not_seed_sdk_marker(tmp_path: Path):
+    # Arrange
+    config = _cfg("hermes-owned", session="resume", resume_id="20261002_190909_owned")
+    config.harness = "hermes"
+    config.runtime = "tui"
+    # Act
+    seed_pinned_session_id(config, _RuntimeStub(tmp_path))
+    # Assert
+    assert not (tmp_path / config.name / "session_id").exists()
+
+
+def test_native_hermes_resume_preserves_legacy_owned_projection(tmp_path: Path):
+    # Arrange
+    config = _cfg("hermes-owned", session="resume", resume_id="20261002_190909_owned")
+    config.harness = "hermes"
+    config.runtime = "tui"
+    state = tmp_path / config.name
+    state.mkdir()
+    marker = state / "hermes-owned-session.json"
+    legacy = (
+        b'{"live_session_id":"old-live","stored_session_id":"20261002_190909_owned"}\n'
+    )
+    marker.write_bytes(legacy)
+    # Act
+    seed_pinned_session_id(config, _RuntimeStub(tmp_path))
+    # Assert
+    assert marker.read_bytes() == legacy
+
+
+def test_other_hermes_runtime_retains_existing_sdk_seed(tmp_path: Path):
+    # Arrange
+    config = _cfg("hermes-sdk", session="resume", resume_id=_VALID_UUID)
+    config.harness = "hermes"
+    # Act
+    seed_pinned_session_id(config, _RuntimeStub(tmp_path))
+    # Assert
+    assert read_session_id(tmp_path / config.name) == _VALID_UUID

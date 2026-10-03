@@ -23,6 +23,7 @@ from scitex_agent_container._lifecycle._selected_harness import (
     require_selected_runtime,
     require_selected_stop_target,
     require_selected_successor_down,
+    selected_restart_session,
 )
 from scitex_agent_container._lifecycle._stop import agent_restart, agent_stop
 from scitex_agent_container._lifecycle._stop_escalate import (
@@ -64,6 +65,7 @@ def owned_route(tmp_path):
             process.start_time,
             process.uid,
             Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            "20261002_190909_owned",
         )
         registry = Registry(tmp_path / "registry")
         registry.add(config.name, str(path), config.screen_name)
@@ -172,6 +174,7 @@ def test_missing_canonical_stop_target_refuses(owned_route):
     "field,value",
     [
         ("session_id", "foreign-session"),
+        ("stored_session_id", "20260910_055248_foreign"),
         ("instance_id", "foreign-instance"),
         ("boot_id", "foreign-boot"),
         ("model", "another-model"),
@@ -669,3 +672,148 @@ def test_unfenced_default_force_start_guard_keeps_legacy_behavior(owned_route):
     )
     # Assert
     assert result is None
+
+
+def test_owned_stored_session_is_forwarded_as_explicit_resume(owned_route):
+    # Arrange
+    _path, _config, fence, _registry = owned_route
+    # Act
+    result = selected_restart_session(fence)
+    # Assert
+    assert result == {
+        "session_override": "resume",
+        "resume_id_override": "20261002_190909_owned",
+        "exact_resume": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "stored", ["", "../foreign", "session with spaces", "private\ntext"]
+)
+def test_unproven_stored_session_refuses_before_restart(owned_route, stored):
+    # Arrange
+    _path, config, fence, registry = owned_route
+    unproven = replace(fence, stored_session_id=stored)
+
+    # Act
+    def operation():
+        agent_restart(
+            config.name,
+            registry,
+            expected_runtime=unproven,
+            observe_runtime=lambda _config: unproven,
+            probe_engine=False,
+        )
+
+    # Assert
+    with pytest.raises(ValueError, match="runtime-refused"):
+        operation()
+
+
+def test_explicit_resume_argv_preserves_stored_key_without_title_fallback(owned_route):
+    # Arrange
+    from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
+
+    path, _config, fence, _registry = owned_route
+    selection = selected_restart_session(fence)
+    config = load_config(
+        path,
+        harness_override="hermes",
+        engine_override="go-muse",
+    )
+    config.claude.session = selection["session_override"]
+    config.claude.resume_id = selection["resume_id_override"]
+    from scitex_agent_container._lifecycle._session_seed import (
+        configure_exact_hermes_resume,
+    )
+
+    configure_exact_hermes_resume(config, selection["exact_resume"])
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert argv[argv.index("--resume") + 1] == fence.stored_session_id
+
+
+def test_explicit_resume_argv_cannot_create_an_unrelated_session(owned_route):
+    # Arrange
+    from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
+
+    path, _config, fence, _registry = owned_route
+    config = load_config(path, harness_override="hermes", engine_override="go-muse")
+    config.claude.session = "resume"
+    config.claude.resume_id = fence.stored_session_id
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert set(argv).isdisjoint({"--continue", "--create-if-missing"})
+
+
+def test_exact_resume_flag_belongs_to_owner_not_hermes_cli(owned_route):
+    # Arrange
+    from scitex_agent_container._lifecycle._session_seed import (
+        configure_exact_hermes_resume,
+    )
+    from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
+
+    _path, config, fence, _registry = owned_route
+    config.claude.session = "resume"
+    config.claude.resume_id = fence.stored_session_id
+    configure_exact_hermes_resume(config, True)
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert argv.index("--exact-resume") < argv.index("hermes")
+
+
+def test_ordinary_resume_does_not_enable_exact_age_policy(owned_route):
+    # Arrange
+    from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
+
+    _path, config, fence, _registry = owned_route
+    config.claude.session = "resume"
+    config.claude.resume_id = fence.stored_session_id
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert "--exact-resume" not in argv
+
+
+@pytest.mark.parametrize("field,value", [("harness", "codex"), ("runtime", "sdk")])
+def test_exact_resume_refuses_other_runtime_contract(owned_route, field, value):
+    # Arrange
+    from scitex_agent_container._lifecycle._session_seed import (
+        configure_exact_hermes_resume,
+    )
+
+    _path, config, fence, _registry = owned_route
+    config.claude.session = "resume"
+    config.claude.resume_id = fence.stored_session_id
+    setattr(config, field, value)
+
+    # Act
+    def operation():
+        configure_exact_hermes_resume(config, True)
+
+    # Assert
+    with pytest.raises(ValueError, match="native-session-required"):
+        operation()
+
+
+@pytest.mark.parametrize("mode,identity", [("continue", "stored"), ("resume", "")])
+def test_exact_resume_requires_explicit_stored_selector(owned_route, mode, identity):
+    # Arrange
+    from scitex_agent_container._lifecycle._session_seed import (
+        configure_exact_hermes_resume,
+    )
+
+    _path, config, _fence, _registry = owned_route
+    config.claude.session = mode
+    config.claude.resume_id = identity
+
+    # Act
+    def operation():
+        configure_exact_hermes_resume(config, True)
+
+    # Assert
+    with pytest.raises(ValueError, match="native-session-required"):
+        operation()

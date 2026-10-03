@@ -342,6 +342,8 @@ class AgentConfig:
     hermes_background_review: bool = False
     hermes_failover: HermesFailoverSpec = field(default_factory=HermesFailoverSpec)
     hermes_yolo: bool = False
+    # Call-only recovery fence; never inferred from a declarative default.
+    hermes_exact_resume: bool = False
     hermes_run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec

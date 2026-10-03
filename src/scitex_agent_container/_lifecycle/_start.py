@@ -64,6 +64,7 @@ def agent_start(
     *,
     session_override: str | None = None,
     resume_id_override: str | None = None,
+    exact_resume: bool = False,
     engine_override: str | None = None,
     probe_engine: bool | None = None,
     dry_run: bool = False,
@@ -90,6 +91,7 @@ def agent_start(
         force: Restart even when the agent is already running.
         session_override: Override ``spec.claude.session``.
         resume_id_override: Override ``spec.claude.resume_id``.
+        exact_resume: Refuse a native Hermes resume whose stored age is unproven.
         engine_override: Select a DIFFERENT ``spec.engines`` entry for
             THIS start (the CLI ``--engine <key>``). ``None`` uses the
             spec's declared default engine. An unknown key raises rather
@@ -140,6 +142,8 @@ def agent_start(
     Truthy on success, False on failure; the already-running no-op
     returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
     """
+    if not isinstance(exact_resume, bool):
+        raise ValueError("hermes-exact-resume-boolean-required")
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(
@@ -194,6 +198,8 @@ def agent_start(
             "an explicit --resume ID cannot be carried by this host spawn protocol; "
             "run the exact resume command on the owning host"
         )
+    if exact_resume and not dry_run and is_in_sif():
+        raise RuntimeError("exact Hermes resume requires the owning host protocol")
     if maybe_broker_in_sif_spawn(
         config.name,
         dry_run=dry_run,
@@ -225,6 +231,9 @@ def agent_start(
         one_shot=one_shot,
         dry_run=dry_run,
     )
+    from ._session_seed import configure_exact_hermes_resume
+
+    configure_exact_hermes_resume(config, exact_resume)
 
     uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
