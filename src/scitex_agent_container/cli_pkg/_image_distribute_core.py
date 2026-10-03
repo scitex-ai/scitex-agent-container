@@ -14,6 +14,7 @@ import json
 import shlex
 import subprocess
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
@@ -369,9 +370,45 @@ print(json.dumps(out,sort_keys=True))
 class SshImageTransport:
     """OpenSSH transport using an inline Python receiver on configured peers."""
 
-    def __init__(self, peers: dict[str, PeerSpec], *, timeout: int = 3600):
+    def __init__(
+        self,
+        peers: dict[str, PeerSpec],
+        *,
+        timeout: int = 3600,
+        receiver_python: Mapping[str, str] | None = None,
+    ):
         self.peers = peers
         self.timeout = timeout
+        # Explicit bindings never fall back to the peer's PATH interpreter.
+        self.receiver_python = (
+            None if receiver_python is None else dict(receiver_python)
+        )
+        if self.receiver_python is not None:
+            for host, path in self.receiver_python.items():
+                if host not in peers:
+                    raise ValueError(
+                        f"receiver interpreter host is not configured: {host}"
+                    )
+                if (
+                    type(path) is not str
+                    or not path.startswith("/")
+                    or any(char in path for char in "\x00\n\r")
+                    or ".." in PurePosixPath(path).parts
+                    or str(PurePosixPath(path)) != path
+                    or path == "/"
+                ):
+                    raise ValueError(
+                        f"receiver interpreter must be a canonical absolute path: {host}"
+                    )
+
+    def _receiver_python(self, host: str) -> str:
+        if self.receiver_python is None:
+            return "python3"
+        if host not in self.receiver_python:
+            raise ValueError(
+                f"receiver interpreter is missing for explicitly bound host: {host}"
+            )
+        return self.receiver_python[host]
 
     def _call(
         self,
@@ -389,7 +426,7 @@ class SshImageTransport:
             + "))"
         )
         remote = [
-            "python3",
+            self._receiver_python(host),
             "-c",
             loader,
             op,
