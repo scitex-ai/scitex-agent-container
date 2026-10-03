@@ -105,9 +105,7 @@ def engine_probe_requested(explicit: bool | None = None) -> bool:
     )
 
 
-def refusal_message(
-    agent_name: str, verdict: EngineVerdict, *, explicit: bool
-) -> str:
+def refusal_message(agent_name: str, verdict: EngineVerdict, *, explicit: bool) -> str:
     """The refusal an unhonourable engine produces at start.
 
     Names, in order: the agent, the engine KEY, HOW that engine was
@@ -257,6 +255,7 @@ def check_engine_before_stop(
     probe: bool | None = None,
     timeout_s: float = PROBE_TIMEOUT_S,
     log: bool = True,
+    harness_override: str | None = None,
 ) -> None:
     """Refuse a RESTART before its stop leg when the engine is unhonourable.
 
@@ -294,7 +293,7 @@ def check_engine_before_stop(
     # and both are decidable here, before the stop.
     from ..config import load_config
 
-    config = load_config(config_path)
-    select_engine_at_start(
-        config, requested, probe=probe, timeout_s=timeout_s, log=log
+    config = load_config(
+        config_path, harness_override=harness_override, engine_override=requested
     )
+    select_engine_at_start(config, requested, probe=probe, timeout_s=timeout_s, log=log)

@@ -87,7 +87,13 @@ __all__ = [
 ]
 
 
-def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
+def load_config(
+    path: str | Path,
+    *,
+    advise: bool = False,
+    harness_override: str | None = None,
+    engine_override: str | None = None,
+) -> AgentConfig:
     """Load and validate a YAML config, returning an AgentConfig.
 
     Only ``scitex-agent-container/v3`` is accepted. Older apiVersions
@@ -103,6 +109,11 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
     appears when you did not ask a question about spec style is one the reader
     learns to scroll past -- which also blinds them to the ones that matter.
     Advisories therefore surface where they are actionable: `sac agents check`.
+
+    ``harness_override`` selects an already-declared available harness for this
+    call only. Its matching ``engine_override`` is projected before validation
+    so a stored native default cannot select the API route's auth/options.
+    Canonical file bytes, the cached document and ordinary defaults are retained.
     """
     path = Path(path).resolve()
 
@@ -118,6 +129,14 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
         with open(path) as f:
             raw = yaml.safe_load(f)
         _spec_cache.put(path, raw)
+
+    if harness_override is not None:
+        original_errors = validate_raw(raw, str(path))
+        if original_errors:
+            raise ValueError("selected-harness-canonical-document-invalid")
+        from ._selected_harness import project_declared_harness
+
+        raw = project_declared_harness(raw, harness_override, engine=engine_override)
 
     errors = validate_raw(raw, str(path))
     if errors:

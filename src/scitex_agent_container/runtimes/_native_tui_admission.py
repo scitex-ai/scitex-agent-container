@@ -25,12 +25,17 @@ def preflight_native_tui(config: AgentConfig, *, production: bool) -> None:
 
 
 def preflight_native_tui_from_config_path(
-    config_path: str, *, engine_override: str | None = None,
+    config_path: str,
+    *,
+    engine_override: str | None = None,
+    harness_override: str | None = None,
 ) -> None:
     """Resolve exactly the restart's successor before entering its stop leg."""
     from .._lifecycle._engine_select import select_engine_at_start
     from ..config import load_config
 
-    config = load_config(config_path)
+    config = load_config(
+        config_path, harness_override=harness_override, engine_override=engine_override
+    )
     select_engine_at_start(config, engine_override, probe=False, log=False)
     preflight_native_tui(config, production=True)

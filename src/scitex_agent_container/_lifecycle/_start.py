@@ -80,6 +80,7 @@ def agent_start(
     verdict_override: Any = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
+    harness_override: str | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -141,7 +142,10 @@ def agent_start(
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
-    config = load_config(config_path)
+    config = load_config(
+        config_path, harness_override=harness_override, engine_override=engine_override
+    )
+    selection = {"harness_override": harness_override} if harness_override else {}
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
@@ -169,6 +173,11 @@ def agent_start(
     # of a dropped field rather than a decision. Refuse instead, naming
     # the command that works. (Threading engine through the broker body,
     # the host listen handler and its argv builder is the follow-up.)
+    if harness_override is not None and not dry_run and is_in_sif():
+        raise RuntimeError(
+            "selected harness cannot be carried by this host spawn protocol; "
+            "run the fenced restart on the owning host"
+        )
     if engine_override and not dry_run and is_in_sif():
         raise RuntimeError(
             f"--engine {engine_override!r} cannot be honoured from inside "
@@ -220,6 +229,11 @@ def agent_start(
     uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
+    from ._selected_harness import require_selected_successor_down
+
+    require_selected_successor_down(
+        config, runtime, force=force, harness_override=harness_override
+    )
 
     if uses_production_runtime and not dry_run:
         from ..runtimes.tui_session import TuiSessionRuntime
@@ -300,6 +314,8 @@ def agent_start(
                 force=True,
                 runtime_factory=runtime_factory,
                 handover_mod=handover_mod,
+                **({"engine_override": engine_override} if selection else {}),
+                **selection,
             )
             forced_stop = True
             # Small grace period so the previous container is fully torn
@@ -337,6 +353,8 @@ def agent_start(
             force=True,
             runtime_factory=runtime_factory,
             handover_mod=handover_mod,
+            **({"engine_override": engine_override} if selection else {}),
+            **selection,
         )
         forced_stop = True
 
