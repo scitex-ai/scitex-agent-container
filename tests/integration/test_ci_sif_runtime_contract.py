@@ -210,23 +210,33 @@ def test_owned_pg_admission_sets_required_only_after_identity_and_write(tmp_path
     assert (result.returncode, actual.get('env', {}).get('APPTAINERENV_SAC_TEST_PG_REQUIRED'), select < write < len(rows) - 1) == (0, '1', True), result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("name", ["run-in-sif.sh", "run-on-hosted.sh"])
-def test_failed_full_dependency_install_has_no_reduced_or_pip_retry(tmp_path: Path, name: str):
+@pytest.mark.parametrize(("name", "package", "end"), [
+    ("run-in-sif.sh", ".[all,dev]", "export PYTHONPATH="),
+    ("run-on-hosted.sh", ".[all,dev]", "export PATH="),
+    ("build-in-sif.sh", "build", "export PYTHONPATH="),
+    ("publish-in-sif.sh", "twine", "export PYTHONPATH="),
+])
+def test_failed_full_dependency_install_has_no_reduced_or_pip_retry(
+    tmp_path: Path, name: str, package: str, end: str,
+):
     # Arrange
     source = (_CI / name).read_text()
-    first = source.index("uv pip install", source.index('export PATH=') if name == 'run-in-sif.sh' else 0)
-    last = source.index('export PYTHONPATH=', first) if name == 'run-in-sif.sh' else source.index('export PATH=', first)
+    first = source.index("\nuv pip install") + 1
+    last = source.index(end, first)
     block = source[first:last]
     calls = tmp_path / "uv-args"
     executable = tmp_path / "uv"
     executable.write_text(f'#!/bin/bash\nprintf "%s\\n" "$*" >> {str(calls)!r}\nexit 42\n')
     executable.chmod(0o700)
-    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "VENV": str(tmp_path / 'venv'), "PY": sys.executable, "TMPDIR": str(tmp_path)}
+    forbidden = tmp_path / "raw-python"
+    forbidden.write_text(f'#!/bin/bash\nprintf "raw-python %s\\n" "$*" >> {str(calls)!r}\nexit 43\n')
+    forbidden.chmod(0o700)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "VENV": str(tmp_path / 'venv'), "PY": str(forbidden), "TMPDIR": str(tmp_path)}
     # Act
     result = subprocess.run(['bash', '-c', 'set -euo pipefail\n' + block], env=env, capture_output=True, text=True, timeout=6)
     attempts = calls.read_text().splitlines()
     # Assert
-    assert (result.returncode, len(attempts), '.[all,dev]' in attempts[0]) == (42, 1, True)
+    assert (result.returncode, len(attempts), package in attempts[0]) == (42, 1, True)
 
 
 @pytest.mark.parametrize('name', ['run-in-sif.sh', 'run-on-hosted.sh'])
