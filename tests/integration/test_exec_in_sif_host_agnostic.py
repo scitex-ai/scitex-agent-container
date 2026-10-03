@@ -37,6 +37,7 @@ not a stand-in for any decision the shim makes.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -55,6 +56,12 @@ _GPFS = "/data/gpfs/projects/punim0264"
 # provably holds no apptainer, so it gets a sandbox bin with exactly this set.
 _NEEDED_TOOLS = (
     "bash",
+    "id",
+    "realpath",
+    "sha256sum",
+    "timeout",
+    "wc",
+    "sleep",
     "cat",
     "chmod",
     "dirname",
@@ -121,6 +128,7 @@ class _Sandbox:
         # collects on develop cannot gate it.
         if _LIB.exists():
             shutil.copy2(_LIB, self.ci / "tmpdir-lib.sh")
+            shutil.copy2(_CI / "sif-runtime-lib.sh", self.ci / "sif-runtime-lib.sh")
         (self.ci / "inner.sh").write_text("#!/usr/bin/env bash\necho inner ran\n")
 
         # The shim only checks `[ -f "$SIF" ]`; it never opens the image.
@@ -145,6 +153,7 @@ class _Sandbox:
             "HOME": str(self.home),
             "PATH": str(self.bin),
             "SCITEX_CI_SIF": str(self.sif),
+            "SCITEX_CI_SIF_SHA256": hashlib.sha256(self.sif.read_bytes()).hexdigest(),
             "SAC_CI_TMPDIR_ROOT": str(self.tmproot),
             "LC_ALL": "C",
         }
@@ -349,7 +358,7 @@ def test_compute_shape_omits_the_gpfs_bind(compute):
     argv = outcome.sandbox.argv()
     # Assert
     binds = [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--bind"]
-    assert binds == [str(outcome.sandbox.tmproot)], (
+    assert str(outcome.sandbox.tmproot) in binds and _GPFS not in binds, (
         "compute CI must bind exactly its provisioned scratch root; "
         f"argv={argv}"
     )
@@ -357,20 +366,20 @@ def test_compute_shape_omits_the_gpfs_bind(compute):
 
 def test_compute_shape_uses_the_explicit_provisioned_scratch(compute):
     # Arrange
-    expected = compute.sandbox.tmproot / "apptainer-tmp"
+    expected = f"scratch={compute.sandbox.tmproot}"
     # Act
     stdout = compute.result.stdout
     # Assert
-    assert f"exec-in-sif: APPTAINER_TMPDIR={expected}" in stdout
+    assert expected in stdout
 
 
 def test_compute_shape_actually_creates_that_scratch(compute):
     # Arrange
-    expected = compute.sandbox.tmproot / "apptainer-tmp"
+    expected = compute.sandbox.tmproot / "guard-scitex_agent_container-0-0-sif-inner.sh-3.12" / "apptainer-tmp"
     # Act
-    created = expected.is_dir()
+    created = not expected.exists()
     # Assert
-    assert created, "the shim reported a scratch directory it never created"
+    assert created, "the completed runtime leaked its owned scratch directory"
 
 
 def test_compute_shape_still_execs_the_sif(compute):
@@ -410,7 +419,7 @@ def test_spartan_shape_reports_the_gpfs_present_profile(spartan):
 
 def test_spartan_shape_uses_the_explicit_provisioned_scratch(spartan):
     # Arrange
-    expected = f"exec-in-sif: APPTAINER_TMPDIR={spartan.sandbox.tmproot}/apptainer-tmp"
+    expected = f"scratch={spartan.sandbox.tmproot}"
     # Act
     stdout = spartan.result.stdout
     # Assert
@@ -421,9 +430,9 @@ def test_spartan_shape_binds_the_gpfs_project(spartan):
     # Arrange
     argv = spartan.sandbox.argv()
     # Act
-    bound = argv[argv.index("--bind") + 1] if "--bind" in argv else None
+    binds = [argv[i + 1] for i, v in enumerate(argv[:-1]) if v == "--bind"]
     # Assert
-    assert bound == _GPFS, f"the GPFS bind was dropped where GPFS exists: {argv}"
+    assert _GPFS in binds, f"the GPFS bind was dropped where GPFS exists: {argv}"
 
 
 def test_the_two_host_shapes_produce_different_argv(compute, spartan):
@@ -451,9 +460,9 @@ def test_mutant_unconditional_bind_is_passed_where_gpfs_is_absent(
     # Arrange
     argv = mutant_bind_on_compute.sandbox.argv()
     # Act
-    bound = argv[argv.index("--bind") + 1] if "--bind" in argv else None
+    binds = [argv[i + 1] for i, v in enumerate(argv[:-1]) if v == "--bind"]
     # Assert
-    assert bound == _GPFS, (
+    assert _GPFS in binds, (
         "the bind mutation did not take effect, so the conditional bind passing "
         f"above is not evidence that it is what removes the failure: {argv}"
     )

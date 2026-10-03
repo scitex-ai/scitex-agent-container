@@ -39,11 +39,7 @@ export LC_ALL=C.UTF-8 LANG=C.UTF-8
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path build "$V")"
 export TMPDIR
-# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
-# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
-# name here would delete nothing, fail nothing, and leave the rest of the script
-# addressing paths off the filesystem root. `:?` aborts instead.
-rm -rf "${TMPDIR:?build scratch path came back empty — refusing to rm -rf it}"
+ci_tmpdir_prepare "${TMPDIR:?scratch path required}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
 # The compute-node $HOME is RO inside the container — point every cache the
@@ -57,16 +53,15 @@ export PIP_CACHE_DIR="$TMPDIR/pip-cache"
 # symlink in here; unset it so no tool follows it.
 unset VIRTUAL_ENV || true
 
-export PATH="$VENV/bin:$PATH"
+export PATH="$VENV/bin:/usr/local/bin:/usr/bin:/bin"
 echo "build: py=$("$PY" -V) target=$TMPDIR/site"
 
-# Install the PEP 517 build frontend into the writable target (uv fast path,
-# pip safety net), then build with it. Clean dist/ first so only the freshly
+# Install the PEP 517 build frontend into the writable target with UV. A
+# failed install fails this gate. Clean dist/ first so only the freshly
 # built artifacts are uploaded.
-uv pip install --python "$PY" --target="$TMPDIR/site" build ||
-    "$PY" -m pip install --target="$TMPDIR/site" build
+uv pip install --python "$PY" --target="$TMPDIR/site" build
 
-export PYTHONPATH="$TMPDIR/site${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$TMPDIR/site"
 
 rm -rf dist
 "$PY" -m build --outdir dist

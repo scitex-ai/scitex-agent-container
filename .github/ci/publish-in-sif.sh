@@ -56,17 +56,13 @@ ls -l dist
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path publish "$V")"
 export TMPDIR
-# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
-# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
-# name here would delete nothing, fail nothing, and leave the rest of the script
-# addressing paths off the filesystem root. `:?` aborts instead.
-rm -rf "${TMPDIR:?publish scratch path came back empty — refusing to rm -rf it}"
+ci_tmpdir_prepare "${TMPDIR:?scratch path required}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 export UV_CACHE_DIR="$TMPDIR/uv-cache"
 export XDG_CACHE_HOME="$TMPDIR"
 export PIP_CACHE_DIR="$TMPDIR/pip-cache"
 unset VIRTUAL_ENV || true
-export PATH="$VENV/bin:$PATH"
+export PATH="$VENV/bin:/usr/local/bin:/usr/bin:/bin"
 
 # --- step 1: request the OIDC JWT (audience=pypi) from GitHub ---
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?ACTIONS_ID_TOKEN_REQUEST_TOKEN not set — the publish job needs 'permissions: id-token: write'}"
@@ -107,9 +103,8 @@ echo "PyPI token minted (length=${#MINTED})"
 
 # --- step 3: install twine into the writable target, then upload ---
 echo "=== installing twine (--target) ==="
-uv pip install --python "$PY" --target="$TMPDIR/site" twine ||
-    "$PY" -m pip install --target="$TMPDIR/site" twine
-export PYTHONPATH="$TMPDIR/site${PYTHONPATH:+:$PYTHONPATH}"
+uv pip install --python "$PY" --target="$TMPDIR/site" twine
+export PYTHONPATH="$TMPDIR/site"
 
 echo "=== twine upload dist/* ==="
 TWINE_USERNAME="__token__" TWINE_PASSWORD="$MINTED" \
