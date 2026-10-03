@@ -125,7 +125,10 @@ _ESCAPE_HATCH = re.compile(r"stx-allow:")
 FROZEN_UNNAMED_CLAIMS = frozenset(
     {
         "scitex_agent_container/_account/claude_usage.py:381",
-        "scitex_agent_container/_account/claude_usage.py:540",
+        # The per-credential usage handler LEFT THIS SET 2026-10-03. Its
+        # contract returns result['error']; it does not promise operator
+        # delivery. The account-list caller can discard that error and use
+        # cached data, so claiming a log or stdout sink would be false.
         "scitex_agent_container/_account/interactive_login.py:262",
         "scitex_agent_container/_account/openai_usage.py:333",
         "scitex_agent_container/_account/openai_usage.py:407",

@@ -542,7 +542,7 @@ def fetch_usage_for_credentials(
 
     # --- API call -----------------------------------------------------------
     payload: dict[str, Any] | None = None
-    # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are caught and surfaced as an error dict rather than an unhandled exception)
+    # stx-allow: fallback (reason: network errors or unexpected exceptions from the usage API are returned in result['error'] rather than propagated)
     try:
         payload = _fetch_from_api(access_token, opener=opener)
     except (
