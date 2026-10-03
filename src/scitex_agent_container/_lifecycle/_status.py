@@ -11,7 +11,7 @@ import traceback
 from typing import Any, Callable, Optional
 
 from .._state.registry import Registry
-from ..config import AgentConfig, load_config
+from ..config import AgentConfig, load_config, resolve_config
 from ._runtime_select import _fallback_workdir, _get_runtime
 
 
@@ -422,6 +422,9 @@ def agent_status(
     registry: Registry | None = None,
     *,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+    instance_reader: Callable[[], list[dict]] | None = None,
+    heartbeat_reader: Callable[[], list[dict]] | None = None,
+    process_probe: Callable[[AgentConfig, Any], Any] | None = None,
 ) -> dict:
     """Get detailed status for an agent.
 
@@ -429,20 +432,41 @@ def agent_status(
         name: Agent name.
         registry: Optional registry instance.
         runtime_factory: Real runtime factory (default :func:`_get_runtime`).
+        instance_reader: Active placement reader for unregistered names.
+        heartbeat_reader: Fleet fallback reader when no local spec exists.
+        process_probe: Local process observation for discovered definitions.
     """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
+        # An on-disk definition does not need a launch registration. Resolve
+        # it before foreign placement, and catch only a true discovery miss:
+        # ambiguity and a selected invalid/unreadable spec must stay loud.
+        try:
+            path = resolve_config(name)
+        except FileNotFoundError:
+            path = None
+        if path is not None:
+            from ._status_definition import defined_status
+
+            return defined_status(
+                name, path, load_config(path),
+                runtime_factory=runtime_factory or _get_runtime,
+                instance_reader=instance_reader,
+                process_probe=process_probe,
+            )
         # Cross-host fallback (sac-agent-spawn design, Rule B/F): a
         # remote-dispatched agent has no LOCAL file-registry entry — its
         # row lives in the ``instances`` table written by the cross-host
         # dispatcher. Resolve status from there so ``sac agents status
         # <remote>`` reports host + bound_port + remote + spawned_by
         # instead of raising "not found in registry".
-        remote_status = _remote_instance_status(name)
+        remote_status = _remote_instance_status(
+            name, instance_reader=instance_reader, heartbeat_reader=heartbeat_reader
+        )
         if remote_status is not None:
             return remote_status
-        heartbeat_status = _heartbeat_only_status(name)
+        heartbeat_status = _heartbeat_only_status(name, heartbeat_reader=heartbeat_reader)
         if heartbeat_status is not None:
             return heartbeat_status
         raise RuntimeError(f"Agent '{name}' not found in registry")
