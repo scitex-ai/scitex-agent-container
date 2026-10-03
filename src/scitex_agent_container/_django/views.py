@@ -23,14 +23,24 @@ import re
 from typing import Any
 from urllib.parse import urlencode
 
-from django.http import (
-    HttpRequest,
-    HttpResponseForbidden,
-    HttpResponseRedirect,
-    JsonResponse,
-)
-from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
+try:
+    from django.http import (
+        HttpRequest,
+        HttpResponseForbidden,
+        HttpResponseRedirect,
+        JsonResponse,
+    )
+    from django.shortcuts import render
+    from django.views.decorators.http import (
+        require_GET,
+        require_http_methods,
+        require_POST,
+    )
+except ImportError as exc:
+    raise ImportError(
+        "SAC GUI dependencies are unavailable; install "
+        "scitex-agent-container[gui]."
+    ) from exc
 
 from ._authorization import can_control, fleet_visibility, resolve_identity, scope_rows
 from ._constants import API_URL_ENV
@@ -38,6 +48,7 @@ from ._projection import project_detail, project_row
 from ._remote import RemoteFleet, safe_error_message
 from ._timeline import (
     KINDS,
+    NATIVE_LABELS,
     REFRESH_SECONDS,
     STALE_AFTER_SECONDS,
     build_timeline,
@@ -55,7 +66,13 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
     "/apps/agents")."""
-    from scitex_sdk.ui.mount import mount_prefix
+    try:
+        from scitex_sdk.ui.mount import mount_prefix
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     try:
         return mount_prefix(request, view_path=view_path)
@@ -69,8 +86,14 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     Supplies the shell vars the adapter's UI shell needs (title, panes, mount
     marker). All three side panes are unused: this is a server-rendered fleet
     table, not a file workspace. Declaring them unused is the SDK branding API."""
-    from scitex_sdk.ui.branding import shell_context
-    from scitex_sdk.ui.mount import mount_context
+    try:
+        from scitex_sdk.ui.branding import shell_context
+        from scitex_sdk.ui.mount import mount_context
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     # All three side panes are unused: this is a server-rendered fleet table,
     # not a file workspace. Declaring them unused is the SDK branding API.
@@ -231,7 +254,7 @@ def timeline(request: HttpRequest):
         entries=timeline_rows(entries),
         summary=_timeline_summary(entries),
         agent_names=sorted(names),
-        kinds=KINDS,
+        kinds=[(name, NATIVE_LABELS.get(name, name)) for name in KINDS],
         selected_agent=agent_filter,
         selected_kind=kind_filter,
         refresh_seconds=REFRESH_SECONDS,
@@ -307,7 +330,7 @@ def timeline_api(request: HttpRequest) -> JsonResponse:
             "ok": True,
             "identity": identity,
             "count": len(entries),
-            "entries": [e.as_dict() for e in entries],
+            "entries": timeline_rows(entries),
             "stale_after_seconds": STALE_AFTER_SECONDS,
         }
     )

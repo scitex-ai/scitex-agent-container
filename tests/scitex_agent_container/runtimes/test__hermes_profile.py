@@ -797,11 +797,28 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     )
 
 
-def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
+def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(
+    tmp_path, env_save_restore
+):
     # Arrange
     config = AgentConfig(
         name="business", harness="hermes", runtime="tui", workdir="/work"
     )
+    # Supply the real materializer's complete least-role credential using
+    # disposable public fixture data, never the runner's ambient passfile.
+    config.env.update(
+        {
+            "PGUSER": "fixture__business",
+            "SCITEX_STORE_DSN": "postgresql://fixture.invalid:65432/fixture_db",
+        }
+    )
+    passfile = tmp_path / "synthetic.pgpass"
+    passfile.write_text(
+        "fixture.invalid:65432:fixture_db:fixture__business:synthetic-password\n",
+        encoding="utf-8",
+    )
+    passfile.chmod(0o600)
+    env_save_restore.set("PGPASSFILE", str(passfile))
     config.engine_key = "qwen"
     config.model = "qwen-model"
     config.a2a.port = 19007
@@ -855,9 +872,7 @@ def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
         ],
-        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
-            "CCT_BOT_TOKEN"
-        ],
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"]["CCT_BOT_TOKEN"],
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"
         ],
@@ -982,28 +997,43 @@ def test_tui_profile_disables_harness_approvals_even_without_autonomous_drive(
 
 
 def test_cct_profile_env_mirrors_token_from_home_env(tmp_path: Path):
+    # Arrange
     home = tmp_path / "home"
     home.mkdir()
     (home / ".env").write_text(
         "CCT_AGENT_ID=scitex-apps-lead\nCCT_BOT_TOKEN=abc123\n", encoding="utf-8"
     )
+    # Act
     out = profile._cct_profile_env(home)
+    # Assert
     assert out == {"CCT_BOT_TOKEN": "abc123", "CCT_AGENT_ID": "scitex-apps-lead"}
 
 
 def test_cct_profile_env_empty_without_token(tmp_path: Path):
+    # Arrange
     home = tmp_path / "home"
     home.mkdir()
     (home / ".env").write_text("SOME_OTHER_VAR=x\n", encoding="utf-8")
-    assert profile._cct_profile_env(home) == {}
-    assert profile._cct_profile_env(tmp_path / "missing") == {}
+    # Act
+    environment = profile._cct_profile_env(home)
+    # Assert
+    assert environment == {}
 
 
-def test_launch_plan_native_provider_survives_endpoint_build():
+def test_cct_profile_env_empty_without_home(tmp_path: Path):
+    # Arrange
+    home = tmp_path / "missing"
+    # Act
+    environment = profile._cct_profile_env(home)
+    # Assert
+    assert environment == {}
+
+
+@pytest.fixture
+def native_provider_config():
     # Regression: the shared OpenAI tail once overwrote the native
     # endpoint, materializing custom:sac-* with base_url /v1 and every
     # turn 400ing on the Go relay.
-    # Arrange
     config = AgentConfig(name="lead", harness="hermes", runtime="headless")
     config.engine_key = "scitex-free"
     config.model = "muse-spark-1.3-contributor"
@@ -1016,9 +1046,31 @@ def test_launch_plan_native_provider_survives_endpoint_build():
         auth_token_env="OPENCODE_GO_API_KEY",
         hermes_provider="opencode-go",
     )
+    return config
+
+
+def test_launch_plan_native_provider_survives_endpoint_build(native_provider_config):
+    # Arrange
+    config = native_provider_config
     # Act
     plan = profile._launch_plan(config)
     # Assert
     assert plan.endpoint.protocol == "hermes-native:opencode-go"
+
+
+def test_launch_plan_native_provider_has_no_custom_url(native_provider_config):
+    # Arrange
+    config = native_provider_config
+    # Act
+    plan = profile._launch_plan(config)
+    # Assert
     assert plan.endpoint.url == ""
+
+
+def test_launch_plan_native_provider_retains_auth_env(native_provider_config):
+    # Arrange
+    config = native_provider_config
+    # Act
+    plan = profile._launch_plan(config)
+    # Assert
     assert plan.endpoint.auth_env == "OPENCODE_GO_API_KEY"

@@ -41,6 +41,7 @@ not only of the payload.
 
 from __future__ import annotations
 
+import click
 from rich.markup import escape
 
 from .._logging import render_rich
@@ -360,10 +361,13 @@ def render_apply(result, payload: dict) -> None:
             f"completed one looks like.", __name__)
         return
     if result.applied:
-        render_rich(f"[green]APPLIED[/green] {len(result.written)} spec(s) written and "
-            f"verified under {_lit(payload['root'])} — every one still resolves "
+        # This receipt identifies the paths actually written. Emit their raw
+        # bytes: Rich wrapping plus logger continuation prefixes would split
+        # long roots and make the authoritative destination uncopyable.
+        click.echo(f"APPLIED {len(result.written)} spec(s) written and "
+            f"verified under {payload['root']} — every one still resolves "
             f"the SAME backend.\n"
-            f"  [dim]originals archived at {_lit(result.archive_dir)}[/dim]", __name__)
+            f"  originals archived at {result.archive_dir}")
         if not payload["migration_complete"]:
             render_rich("\n[bold]Still outstanding[/bold] — run again:", __name__)
             _render_unfinished(payload)

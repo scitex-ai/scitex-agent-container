@@ -365,8 +365,8 @@ def _rotate_to_healthy_account(
     test-injection seams ``pick_healthy_account`` exposes; production
     passes ``None``.
 
-    Non-Claude launches skip the rotation entirely: API-key /
-    provider-backed and openai-harness agents never touch Claude OAuth,
+    Non-Claude launches skip the rotation entirely: provider-backed
+    Claude and non-Anthropic harnesses never touch Claude OAuth,
     so there is no credential to rotate and an expired pinned snapshot
     must not block their start
     (sac-harness-credential-gate-ignores-harness-20260928). This is the
@@ -374,16 +374,13 @@ def _rotate_to_healthy_account(
     (:func:`_lifecycle._restart_preflight.resolve_successor_credential`)
     and the bind
     (:func:`runtimes._apptainer_auth_bind.credentials_file_bind`)
-    already carry, and the three must agree. Hermes/codex harnesses
-    intentionally keep the rotation: the bind still serves them.
+    already carry, and the three must agree. Available fallback harnesses
+    do not activate their credentials until selected for a launch.
     """
-    from ..runtimes._apptainer_provider import (
-        openai_harness_active,
-        provider_active,
-    )
+    from ..runtimes._apptainer_provider import anthropic_oauth_active
 
-    # API-key / openai-harness launches have no OAuth credential to rotate.
-    if provider_active(config) or openai_harness_active(config):
+    # Only the selected Claude OAuth launch may inspect or rotate this pool.
+    if not anthropic_oauth_active(config):
         return
 
     claude = getattr(config, "claude", None)

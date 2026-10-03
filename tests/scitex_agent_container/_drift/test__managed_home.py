@@ -58,11 +58,35 @@ def test_managed_home_accepts_clean_no_origin(managed_home):
     _, spec = managed_home
     # Act
     auth = validate_spec_authority(spec)
-    # Assert — third kind, local identity, digest equals the HEAD blob.
+    # Assert
     assert auth.kind == "managed-home"
+
+
+def test_managed_home_uses_local_source_identity(managed_home):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
     assert auth.source_identity == "local-dotscitex"
-    assert len(auth.head) == 40
-    assert len(auth.spec_digest) == 40
+
+
+@pytest.mark.parametrize("field", ["head", "spec_digest"])
+def test_managed_home_reports_full_git_identity(managed_home, field):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
+    assert len(getattr(auth, field)) == 40
+
+
+def test_managed_home_digest_is_distinct_from_commit(managed_home):
+    # Arrange
+    _, spec = managed_home
+    # Act
+    auth = validate_spec_authority(spec)
+    # Assert
     assert auth.spec_digest != auth.head  # blob sha, not the commit sha
 
 
@@ -80,7 +104,8 @@ def test_managed_home_refuses_dirty_spec(managed_home):
     # Arrange — operator edits the spec after the commit.
     _, spec = managed_home
     spec.write_text("apiVersion: scitex-agent-container/v3\ndrift: true\n", encoding="utf-8")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(SpecAuthorityError, match="dirty"):
         validate_spec_authority(spec)
 
@@ -90,7 +115,8 @@ def test_managed_home_refuses_uncommitted_home(tmp_path):
     spec = tmp_path / ".scitex" / "agent-container" / "agents" / "demo" / "spec.yaml"
     spec.parent.mkdir(parents=True)
     spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
-    # Act / Assert — no repo means no proof, fail closed.
+    # Act
+    # Assert — no repo means no proof, fail closed.
     with pytest.raises(SpecAuthorityError):
         validate_spec_authority(spec)
 
@@ -102,7 +128,8 @@ def test_managed_home_refuses_repo_without_commits(tmp_path):
     spec.parent.mkdir(parents=True)
     spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
     _git(root, "init", "-q")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(SpecAuthorityError):
         validate_spec_authority(spec)
 
@@ -111,7 +138,8 @@ def test_origin_repo_never_rides_managed_home(managed_home):
     # Arrange — someone adds an origin to the managed home afterwards.
     root, spec = managed_home
     _git(root, "remote", "add", "origin", "https://example.com/foreign/home.git")
-    # Act / Assert — the local trust path closes; live rules take over
+    # Act
+    # Assert — the local trust path closes; live rules take over
     # and refuse (no develop, no upstream).
     with pytest.raises(SpecAuthorityError):
         validate_spec_authority(spec)
@@ -123,7 +151,8 @@ def test_untracked_spec_file_refuses(managed_home):
     other = root / "agent-container" / "agents" / "rogue" / "spec.yaml"
     other.parent.mkdir(parents=True)
     other.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
-    # Act / Assert — the KNOWN spec also refuses: the repo is not clean.
+    # Act
+    # Assert — the KNOWN spec also refuses: the repo is not clean.
     with pytest.raises(SpecAuthorityError, match="dirty"):
         validate_spec_authority(spec)
 
@@ -162,7 +191,8 @@ def test_home_for_spec_returns_none_outside_any_tree(tmp_path):
     spec = tmp_path / "custom" / "my-agent" / "spec.yaml"
     spec.parent.mkdir(parents=True)
     spec.write_text("v: 1\n", encoding="utf-8")
-    # Act / Assert
+    # Act
+    # Assert
     assert home_for_spec(spec) is None
 
 
@@ -176,5 +206,6 @@ def test_home_for_spec_ignores_bare_dotscitex_name_on_file(tmp_path):
     spec = tmp_path / "datahome" / "agents" / "x" / "spec.yaml"
     spec.parent.mkdir(parents=True)
     spec.write_text("v: 1\n", encoding="utf-8")
-    # Act / Assert
+    # Act
+    # Assert
     assert home_for_spec(spec) is None

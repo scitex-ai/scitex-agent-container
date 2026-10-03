@@ -67,6 +67,19 @@ def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]
         ]
 
     subscription = raw.get("subscription")
+    tier = raw.get("service_tier")
+    if tier is not None:
+        if tier != "fast":
+            errors.append(f"{path}.service_tier must be 'fast' or omitted.")
+        if (
+            not isinstance(subscription, Mapping)
+            or subscription.get("provider") != "openai"
+        ):
+            errors.append(
+                f"{path}.service_tier requires an explicit OpenAI subscription engine."
+            )
+        if harness is not None and harness != "codex":
+            errors.append(f"{path}.service_tier requires the Codex harness.")
     if subscription is not None:
         if not isinstance(subscription, Mapping):
             errors.append(f"{path}.subscription must be a mapping.")

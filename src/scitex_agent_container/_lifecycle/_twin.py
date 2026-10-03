@@ -422,7 +422,8 @@ def seed_twin_from_parent(config: Any, runtime: Any) -> bool:
     if not parent_name:
         return False
 
-    from .._runners._session_state import read_session_id, write_session_id
+    from .._runners._session_state import write_session_id
+    from ._session_identity import read_session_id_for
 
     # First-boot ONLY. Once the twin has its OWN session marker it has already
     # booted and diverged; re-seeding would discard that history (and re-fork
@@ -430,7 +431,7 @@ def seed_twin_from_parent(config: Any, runtime: Any) -> bool:
     # own latest session — and this early-return also lets a persistent twin
     # keep starting even after its parent has stopped.
     twin_state = _resolve_state_dir(config, runtime)
-    if read_session_id(twin_state) is not None:
+    if read_session_id_for(config, runtime, twin_state) is not None:
         return False
 
     from ..config import load_config, resolve_config
@@ -449,7 +450,7 @@ def seed_twin_from_parent(config: Any, runtime: Any) -> bool:
     # the resolver the SDK runner reads its marker from / the TUI home-check
     # uses), so marker and transcript never land under divergent roots.
     parent_state = _resolve_state_dir(parent_config, runtime)
-    parent_uuid = read_session_id(parent_state)
+    parent_uuid = read_session_id_for(parent_config, runtime, parent_state)
     if not parent_uuid:
         raise TwinSeedError(
             f"twin {getattr(config, 'name', '?')!r}: parent {parent_name!r} has "

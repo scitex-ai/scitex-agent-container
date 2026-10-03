@@ -32,7 +32,9 @@ def _policy(kind: Any, *, identity: bool = False, moving: bool = False) -> Any:
         kind=kind,
         role=FieldRole.IDENTITY if identity else FieldRole.DATA,
         required=identity,
-        merge=MergeRule.IMMUTABLE if identity or not moving else MergeRule.LAST_WRITER_WINS,
+        merge=MergeRule.IMMUTABLE
+        if identity or not moving
+        else MergeRule.LAST_WRITER_WINS,
         indexed=False,
     )
 
@@ -121,6 +123,10 @@ def record_agentic_ack(
     owner: str,
     next_checkpoint: str,
     agent: str | None = None,
+    dispatch_lookup=None,
+    feedback_lookup=None,
+    feedback_write=None,
+    dispatch_update=None,
 ) -> dict[str, Any] | None:
     """Persist an intentional ACK only for the exact nonce and expected peer.
 
@@ -130,16 +136,18 @@ def record_agentic_ack(
     understood = _bounded("understood", understood, SUMMARY_LIMIT)
     owner = _bounded("owner", owner, OWNER_LIMIT)
     next_checkpoint = _bounded("next_checkpoint", next_checkpoint, SUMMARY_LIMIT)
-    dispatch = get_dispatch(dispatch_id, agent=agent)
+    dispatch = (dispatch_lookup or get_dispatch)(dispatch_id, agent=agent)
     if dispatch is None or dispatch.get("to_agent") != from_agent:
         return None
     owning_agent = _owner(dispatch)
-    existing = _feedback(dispatch_id, owning_agent)
+    existing = (feedback_lookup or _feedback)(dispatch_id, owning_agent)
     if existing is not None:
         if not _same_ack(existing, understood, owner, next_checkpoint):
             return None
         if dispatch.get("status") in _PRE_AGENTIC:
-            update_dispatch_status(dispatch_id, STATUS_AGENTIC_ACKED, agent=owning_agent)
+            (dispatch_update or update_dispatch_status)(
+                dispatch_id, STATUS_AGENTIC_ACKED, agent=owning_agent
+            )
         return existing
     values = {
         "agent": owning_agent,
@@ -154,9 +162,11 @@ def record_agentic_ack(
         "blocker": None,
         "progress_at": None,
     }
-    saved = _put(values, new=True)
+    saved = (feedback_write or _put)(values, new=True)
     if dispatch.get("status") in _PRE_AGENTIC:
-        update_dispatch_status(dispatch_id, STATUS_AGENTIC_ACKED, agent=owning_agent)
+        (dispatch_update or update_dispatch_status)(
+            dispatch_id, STATUS_AGENTIC_ACKED, agent=owning_agent
+        )
     return saved
 
 

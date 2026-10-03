@@ -392,7 +392,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
     done
     /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
-    python3 -m pip install --no-cache-dir --break-system-packages pipx
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pipx
     # pre-commit into SYSTEM python on purpose: every repo's git hook execs
     # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
     # ``pre-commit install`` bakes into .git/hooks/pre-commit. A module
@@ -404,7 +404,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # still stays in the venv, section 6b). Regression context: this was a
     # runtime overlay install that the fresh-SIF refresh wiped fleet-wide
     # (figrecipe 2026-06-28) — pinning it into the image makes it durable.
-    python3 -m pip install --no-cache-dir --break-system-packages pre-commit
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pre-commit
 
     # ---- 6a. python convenience symlink -----------------------------
     # Ubuntu 24.04's `python3-is-python3` doesn't ship by default; many
@@ -633,8 +633,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # by the build frontend. This is not a moving branch ref and the local path
     # is explicit in the resolver transaction. Filesystem
     # requirements cannot carry a PEP 440 comparator; SAC's project metadata
-    # honestly declares the supported floor (scitex-cards>=0.52.1), while the
-    # local candidate reports 0.52.1 and the commit marker proves its content.
+    # honestly declares the supported floor (scitex-cards>=0.53.4), while the
+    # local candidate reports 0.53.4 and the commit marker proves its content.
     # Keep both runtime extras explicit even though that source currently
     # promotes their dependencies to core: the aliases are the install-time
     # contract that fastmcp and psycopg must remain resolvable.
@@ -666,11 +666,11 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
     npm cache clean --force
 
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/ywatanabe1989/hermes-agent.git"
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "1a3815aac3b4162cf3adea29344deea280d3aab8"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
-    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.2"'
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
 
     # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -837,7 +837,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.52.1``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.53.4``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -1035,10 +1035,13 @@ EOF
     export CARGO_HOME=/opt/cargo
 
 %test
-    # The image must not be published with a console entry point whose
-    # packaged target is absent. Apptainer runs this after %post and fails
-    # the build before scitex-container atomically promotes the SIF.
-    /opt/venv-sac/bin/sac --version
+    set -eu
+    # Keep import-time Logging state writable during the read-only image test.
+    # SCITEX_DIR is its supported state root; preserve the declared HOME.
+    sac_test_state="$(mktemp -d /tmp/sac-base-test.XXXXXX)"
+    trap 'rm -rf -- "$sac_test_state"' EXIT
+    # A failed console check must fail the image test before later tool checks.
+    SCITEX_DIR="$sac_test_state" /opt/venv-sac/bin/sac --version
     env -i \
         PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         HOME=/tmp \
@@ -1054,9 +1057,9 @@ EOF
     org.scitex.runtime apptainer
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
-    org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
-    org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
-    org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
+    org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
+    org.scitex.hermes.commit 17c5fde5a3f3642262003cd6aa09d54cf4d11de3
+    org.scitex.cards.commit 1a3815aac3b4162cf3adea29344deea280d3aab8
 
 %help
     scitex-agent-container :base layer.

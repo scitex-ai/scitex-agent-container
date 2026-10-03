@@ -764,6 +764,45 @@ def test_agent_message_items_normalize_to_text_deltas():
     assert event.kind == "text_delta"
 
 
+def test_installed_sdk_wrapped_agent_message_reaches_the_transcript():
+    # Arrange — the real app-server SDK uses RootModel and camelCase,
+    # which the old direct snake_case fixture did not exercise.
+    sdk = pytest.importorskip("openai_codex.generated.v2_all")
+    item = sdk.ThreadItem(
+        root=sdk.AgentMessageThreadItem(
+            id="owned-sdk-message",
+            type="agentMessage",
+            text="owned reply",
+            delivery=None,
+            memory_citation=None,
+            phase=None,
+            questions=None,
+        )
+    )
+    # Act
+    event = normalize_thread_item(item)
+    # Assert
+    assert (event.kind, event.text) == ("text_delta", "owned reply")
+
+
+@pytest.mark.parametrize(
+    "itype", ["commandExecution", "fileChange", "mcpToolCall", "webSearch"]
+)
+def test_wrapped_app_server_tool_items_keep_their_normalized_names(itype):
+    # Arrange — wrapper/discriminator contract from the installed SDK.
+    names = {
+        "commandExecution": "command_execution",
+        "fileChange": "file_change",
+        "mcpToolCall": "mcp_tool_call",
+        "webSearch": "web_search",
+    }
+    item = SimpleNamespace(root=SimpleNamespace(type=itype, command="true"))
+    # Act
+    event = normalize_thread_item(item)
+    # Assert
+    assert (event.kind, event.tool_name) == ("tool_call", names[itype])
+
+
 def test_reasoning_items_normalize_to_reasoning_events():
     # Arrange
     item = SimpleNamespace(type="reasoning", text="thinking")
@@ -828,3 +867,28 @@ def test_missing_usage_degrades_to_an_empty_dict():
     flattened = usage_as_dict(usage)
     # Assert
     assert flattened == {}
+
+
+def test_installed_sdk_usage_uses_latest_breakdown_not_thread_total():
+    # Arrange — two completed turns must not recount the thread total.
+    sdk = pytest.importorskip("openai_codex.generated.v2_all")
+
+    def breakdown(input_tokens, output_tokens):
+        return sdk.TokenUsageBreakdown(
+            input_tokens=input_tokens,
+            cached_input_tokens=0,
+            output_tokens=output_tokens,
+            reasoning_output_tokens=0,
+            total_tokens=input_tokens + output_tokens,
+        )
+    usage = sdk.ThreadTokenUsage(last=breakdown(11, 7), total=breakdown(110, 70))
+    # Act
+    flattened = usage_as_dict(usage)
+    # Assert
+    assert flattened == {
+        "input_tokens": 11,
+        "cached_input_tokens": 0,
+        "output_tokens": 7,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 18,
+    }

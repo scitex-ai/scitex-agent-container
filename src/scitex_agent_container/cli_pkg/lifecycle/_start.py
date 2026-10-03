@@ -407,6 +407,7 @@ def start(
         bulk_yamls=bulk_yamls_from_dirs,
         no_redispatch=no_redispatch,
         broker_self=broker_self,
+        engine_override=engine,
     )
 
     # Serialized multi-start queue (sac-multi-start-queue-oauth, Half-A):

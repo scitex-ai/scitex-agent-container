@@ -23,10 +23,16 @@ def _entry(**fields: object) -> dict[str, object]:
 
 
 def test_xhigh_is_accepted() -> None:
+    # Arrange
+    # Act
+    # Assert
     assert validate_engine_entry("scitex-free", _entry(reasoning_effort="xhigh"), namespace="spec.engines") == []
 
 
 def test_known_levels_still_accepted() -> None:
+    # Arrange
+    # Act
+    # Assert
     for level in ("none", "low", "medium", "high"):
         assert validate_engine_entry("e", _entry(reasoning_effort=level), namespace="spec.engines") == []
 
@@ -34,10 +40,16 @@ def test_known_levels_still_accepted() -> None:
 def test_ultra_accepted_as_harness_level() -> None:
     # The harness itself accepts through ultra (hermes chat --help),
     # so validation must not refuse it even with no spec using it yet.
+    # Arrange
+    # Act
+    # Assert
     assert validate_engine_entry("e", _entry(reasoning_effort="ultra"), namespace="spec.engines") == []
 
 
 def test_garbage_still_rejected() -> None:
+    # Arrange
+    # Act
+    # Assert
     for level in ("extreme", "banana"):
         errors = validate_engine_entry("e", _entry(reasoning_effort=level), namespace="spec.engines")
         assert any("reasoning_effort" in e for e in errors), level

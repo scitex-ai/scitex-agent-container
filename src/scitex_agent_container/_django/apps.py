@@ -18,7 +18,13 @@ from __future__ import annotations
 try:
     from scitex_sdk.app.embed import ScitexAppConfig
 except ImportError:  # scitex-sdk not installed — standalone still works
-    from django.apps import AppConfig as ScitexAppConfig
+    try:
+        from django.apps import AppConfig as ScitexAppConfig
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
 
 class AgentContainerDashboardConfig(ScitexAppConfig):

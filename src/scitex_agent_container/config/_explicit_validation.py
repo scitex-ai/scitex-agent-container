@@ -36,6 +36,11 @@ from typing import Any
 import yaml
 
 from ._explicit_fields import RequiredField, required_fields_for_kind
+from ._harness_types import (
+    DEFAULT_AGENT_HARNESS,
+    HarnessKeyConflictError,
+    resolve_spec_harness,
+)
 
 __all__ = [
     "ExplicitSpecError",
@@ -89,9 +94,15 @@ def _missing_fields(doc: dict) -> list[RequiredField]:
         # diagnostic; nothing to walk here.
         return []
     kind = doc.get("kind")
+    try:
+        harness = resolve_spec_harness(spec)
+    except HarnessKeyConflictError:
+        # validate_raw owns the disagreement diagnostic. Keep the default
+        # requirements while collecting errors rather than choosing a side.
+        harness = DEFAULT_AGENT_HARNESS
     return [
         field
-        for field in required_fields_for_kind(kind)
+        for field in required_fields_for_kind(kind, harness=harness)
         if not _satisfied(spec, field)
     ]
 

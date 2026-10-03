@@ -55,6 +55,9 @@ from scitex_agent_container.cli_pkg._send_broker import (
     resolve_send_endpoint_via_host,
     should_broker_peer_lookup,
 )
+from scitex_agent_container.cli_pkg._send_dispatch_nonblocking import (
+    dispatch_nonblocking,
+)
 
 _LOCAL_HOST = "test-host"
 
@@ -97,14 +100,16 @@ def fake_host_listen(env_save_restore, tmp_path):
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             captured.append(self.path)
-            status, body = (
-                responses.pop(0) if responses else (200, _status_body())
-            )
+            status, body = responses.pop(0) if responses else (200, _status_body())
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.do_GET()
 
         def log_message(self, *args, **kw):  # noqa: ARG002
             return
@@ -118,9 +123,7 @@ def fake_host_listen(env_save_restore, tmp_path):
     env_save_restore.set("SAC_LISTEN_BEARER", "test-bearer")
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set("SAC_HOST", _LOCAL_HOST)
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db"))
 
     class _Ctl:
         # The server's own port is guaranteed BOUND — hand it out as a live
@@ -147,9 +150,7 @@ def fresh_lead_creds_path(tmp_path) -> Path:
     """Fresh OAuth creds so ``preflight_send_creds`` passes deterministically."""
     creds = tmp_path / ".credentials.json"
     creds.write_text(
-        json.dumps(
-            {"claudeAiOauth": {"expiresAt": int((time.time() + 3600) * 1000)}}
-        )
+        json.dumps({"claudeAiOauth": {"expiresAt": int((time.time() + 3600) * 1000)}})
     )
     return creds
 
@@ -198,9 +199,7 @@ def test_lookup_returns_the_port_the_host_reports(fake_host_listen):
     # Arrange — the host knows this agent holds port 19037 (scholar's real one).
     fake_host_listen.enqueue(
         200,
-        _status_body(
-            a2a_port=19037, turn_url="http://ywata-note-win:19037/v1/turn"
-        ),
+        _status_body(a2a_port=19037, turn_url="http://ywata-note-win:19037/v1/turn"),
     )
     # Act
     peer = lookup_peer_via_host("scitex-scholar")
@@ -262,12 +261,8 @@ def test_unreachable_broker_raises_rather_than_reporting_stopped(
 ):
     # Arrange — in a SIF, but the host listen is down.
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
-    env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", dead_port.url("")
-    )
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-    )
+    env_save_restore.set("SAC_LISTEN_BASE_URL", dead_port.url(""))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db"))
 
     # Act
     def _lookup():
@@ -340,44 +335,44 @@ def test_resolved_endpoint_carries_the_peers_host(fake_host_listen):
     assert endpoint.host == "peer-host"
 
 
+def diagnose_brokered_port(fake_host_listen):
+    """Exercise the retained read/transport boundary without a host write."""
+    endpoint, brokered = resolve_send_endpoint_via_host(
+        "peer", current_host=_LOCAL_HOST
+    )
+    return dispatch_nonblocking(
+        "peer",
+        "hello",
+        a2a_port=endpoint.a2a_port,
+        peer_host=_LOCAL_HOST,
+        current_host=_LOCAL_HOST,
+        url=f"http://127.0.0.1:{endpoint.a2a_port}/v1/turn",
+        metadata_extras={},
+        brokered=brokered,
+    )
+
+
 # ---------------------------------------------------------------------------
 # send_to_agent — the regression, driven end to end through the real function
 # ---------------------------------------------------------------------------
 
 
-def test_live_peer_is_reachable_from_inside_a_container(
-    fake_host_listen, fresh_lead_creds_path
-):
-    # Arrange — the host reports a live agent on a port that IS bound.
-    # Before the fix this returned: error "agent 'peer' not running".
-    port = fake_host_listen.live_port
-    fake_host_listen.enqueue(
-        200,
-        _status_body(a2a_port=port, turn_url=f"http://{_LOCAL_HOST}:{port}/v1/turn"),
-    )
+def test_live_peer_is_reachable_from_inside_a_container(fake_host_listen):
+    # Arrange — the host owns the selected spec and dispatches its live runner.
+    fake_host_listen.enqueue(200, b'{"reply":"synthetic accepted response"}')
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
-    # Assert — the fleet can talk to itself again.
-    assert result["status"] == "dispatched"
+    result = send_to_agent("peer", "hello", wait=False)
+    # Assert
+    assert result["response_text"] == "synthetic accepted response"
 
 
-def test_dispatch_targets_the_port_the_host_reported(
-    fake_host_listen, fresh_lead_creds_path
-):
+def test_dispatch_targets_the_authenticated_host_send_route(fake_host_listen):
     # Arrange
-    port = fake_host_listen.live_port
-    fake_host_listen.enqueue(
-        200,
-        _status_body(a2a_port=port, turn_url=f"http://{_LOCAL_HOST}:{port}/v1/turn"),
-    )
+    fake_host_listen.enqueue(200, b'{"reply":"synthetic accepted response"}')
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
-    # Assert — the endpoint came from the fleet registry, not the empty local DB.
-    assert result["a2a_port"] == port
+    send_to_agent("peer", "hello", wait=False)
+    # Assert
+    assert fake_host_listen.captured == ["/agents/peer/send"]
 
 
 def test_unreachable_broker_never_reports_the_peer_stopped(
@@ -386,12 +381,8 @@ def test_unreachable_broker_never_reports_the_peer_stopped(
     # Arrange — in a SIF; the host listen is down, so we cannot check.
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set("SAC_HOST", _LOCAL_HOST)
-    env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", dead_port.url("")
-    )
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-    )
+    env_save_restore.set("SAC_LISTEN_BASE_URL", dead_port.url(""))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db"))
     # Act
     result = send_to_agent(
         "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
@@ -407,18 +398,14 @@ def test_unreachable_broker_names_the_broker_as_the_failure(
     # Arrange
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set("SAC_HOST", _LOCAL_HOST)
-    env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", dead_port.url("")
-    )
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
-    )
+    env_save_restore.set("SAC_LISTEN_BASE_URL", dead_port.url(""))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db"))
     # Act
     result = send_to_agent(
         "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
     )
     # Assert — fail honestly: the BROKER is what is unreachable, not the agent.
-    assert "broker is unreachable" in result["error"]
+    assert "host listen" in result["error"]
 
 
 def test_unbound_turn_port_still_reports_the_agent_running(
@@ -435,9 +422,7 @@ def test_unbound_turn_port_still_reports_the_agent_running(
         ),
     )
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
+    result = diagnose_brokered_port(fake_host_listen)
     # Assert — an unbound port is a TRANSPORT fact, not a death certificate.
     assert result["diagnosis"]["registry_status"] == "running"
 
@@ -454,9 +439,7 @@ def test_unbound_turn_port_does_not_fabricate_a_dead_pid(
         ),
     )
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
+    result = diagnose_brokered_port(fake_host_listen)
     # Assert — UNKNOWN (None), never False. A False here trips the caller's
     # pid_alive death gate and condemns a healthy agent.
     assert result["diagnosis"]["pid_alive"] is None
@@ -474,9 +457,7 @@ def test_unbound_turn_port_does_not_fabricate_a_failed_boot(
         ),
     )
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
+    result = diagnose_brokered_port(fake_host_listen)
     # Assert — the host route carries no heartbeat, so boot state is UNKNOWN.
     assert result["diagnosis"]["boot_complete"] is None
 
@@ -493,9 +474,7 @@ def test_unbound_turn_port_error_does_not_claim_the_agent_crashed(
         ),
     )
     # Act
-    result = send_to_agent(
-        "peer", "hello", wait=False, lead_creds_path=fresh_lead_creds_path
-    )
+    result = diagnose_brokered_port(fake_host_listen)
     # Assert — the old wording ("it is not booted or the sidecar crashed") was
     # a death verdict whose remedy destroys a working agent.
     assert "crashed" not in result["error"]

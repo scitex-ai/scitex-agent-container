@@ -53,14 +53,18 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         self._token = token
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        got = _extract_bearer(request)
+        authenticated = got is not None and hmac.compare_digest(got, self._token)
+        # Public health stays public. Only verified host-bearer requests may
+        # discover typed mutation capabilities through that same health route.
+        request.state.host_bearer_authenticated = authenticated
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
-        got = _extract_bearer(request)
         if got is None:
             return JSONResponse({"error": "missing bearer token"}, status_code=401)
         # Host-wide token — administrative / cross-host caller. The only
         # bearer there is; a second branch resolving ``node_tokens`` was
         # removed 2026-08-28 (never minted, never resolved).
-        if hmac.compare_digest(got, self._token):
+        if authenticated:
             return await call_next(request)
         return JSONResponse({"error": "invalid bearer token"}, status_code=403)

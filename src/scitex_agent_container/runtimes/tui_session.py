@@ -187,6 +187,7 @@ class TuiSessionRuntime(
         # (None → resolve the real launcher lazily to avoid an import cycle).
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
+        self._production_command_builder = command_builder is None
         self._command_builder = command_builder or self._default_argv
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
@@ -365,10 +366,12 @@ class TuiSessionRuntime(
             )
             if not dry_run:
                 return True
-        if not dry_run and self._owns_external_cct_poller(config):
-            from ._apptainer_codex_env import preflight_subscription
+        if not dry_run:
+            from ._native_tui_admission import preflight_native_tui
 
-            preflight_subscription(config, state_dir_for_config(config))
+            preflight_native_tui(
+                config, production=self._production_command_builder
+            )
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)

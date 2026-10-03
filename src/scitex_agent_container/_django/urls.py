@@ -7,7 +7,13 @@ uses ``../`` so both layouts work.
 
 from __future__ import annotations
 
-from django.urls import path
+try:
+    from django.urls import path
+except ImportError as exc:
+    raise ImportError(
+        "SAC GUI dependencies are unavailable; install "
+        "scitex-agent-container[gui]."
+    ) from exc
 
 from . import views
 

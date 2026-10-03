@@ -19,12 +19,12 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
       <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
       <h1><i class="fas fa-wave-square"></i> Activity timeline</h1>
       <span class="agents-sub">
-        Live signals from the SAC control plane — {{ listener }}
+        Published signals from the SAC control plane — {{ listener }}
         {% if identity %} · acting as <strong>{{ identity }}</strong>{% endif %}
       </span>
     </div>
     <div class="agents-summary">
-      <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">entries</span></div>
+      <div class="sum-card"><span class="sum-num" data-count="total">{{ summary.total }}</span><span class="sum-label">entries</span></div>
       <div class="sum-card good"><span class="sum-num" data-count="observed">{{ summary.observed }}</span><span class="sum-label">observed</span></div>
       <div class="sum-card warn"><span class="sum-num" data-count="stale">{{ summary.stale }}</span><span class="sum-label">stale</span></div>
       <div class="sum-card"><span class="sum-num" data-count="unreachable">{{ summary.unreachable }}</span><span class="sum-label">unreachable</span></div>
@@ -47,8 +47,8 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
     <label class="visually-hidden" for="tl-kind">Signal</label>
     <select id="tl-kind" name="kind">
       <option value="">All signals</option>
-      {% for kind in kinds %}
-      <option value="{{ kind }}"{% if kind == selected_kind %} selected{% endif %}>{{ kind }}</option>
+      {% for kind, label in kinds %}
+      <option value="{{ kind }}"{% if kind == selected_kind %} selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
     <button type="submit" class="btn">Apply</button>
@@ -68,12 +68,12 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
   {% else %}
   <ol class="timeline" data-role="timeline">
     {% for e in entries %}
-    <li class="tl-entry tl-{{ e.state }}" data-key="{{ e.key }}">
+    <li class="tl-entry tl-{{ e.state }}" data-key="{{ e.key }}"{% if e.event_key %} data-event-key="{{ e.event_key }}" data-observed-at="{{ e.at }}" data-age-seconds="{{ e.age_seconds }}"{% endif %}{% if e.snapshot %} data-snapshot-key="{{ e.snapshot_key }}" data-native-agent="{{ e.agent }}" data-native-session="{{ e.native_session }}"{% if e.native_session_at is not None %} data-native-session-at="{{ e.native_session_at }}"{% endif %}{% if e.at is not None %} data-observed-at="{{ e.at }}"{% endif %}{% endif %}>
       <span class="tl-dot {{ e.state }}" aria-hidden="true"></span>
-      <time class="tl-when" datetime="{{ e.iso }}">{{ e.relative }}</time>
+      {% if e.iso %}<time class="tl-when" datetime="{{ e.iso }}">{{ e.relative }}</time>{% else %}<span class="tl-when">{{ e.relative }}</span>{% endif %}
       <span class="tl-agent"><a href="{{ url_base }}/{{ e.agent }}/">{{ e.agent }}</a></span>
-      <span class="tl-kind">{{ e.kind }}</span>
-      <span class="tl-value">{% if e.value is not None %}{{ e.value }}{% else %}<span class="dim">—</span>{% endif %}</span>
+      <span class="tl-kind">{{ e.kind_label }}</span>
+      <span class="tl-value">{% if e.display_value is not None %}{{ e.display_value }}{% else %}<span class="dim">—</span>{% endif %}{% if e.reason %}<small class="tl-reason dim">{{ e.reason }}</small>{% endif %}{% if e.note %}<small class="tl-reason dim">{{ e.note }}</small>{% endif %}</span>
       <span class="tl-state tl-state-{{ e.state }}">{{ e.state_label }}</span>
       {% if e.source %}<span class="tl-source dim">{{ e.source }}</span>{% endif %}
     </li>
@@ -81,11 +81,16 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
   </ol>
   <p class="dim timeline-note">
     Only runner-published state is shown. <strong>Unknown</strong> means SAC
-    published no signal; <strong>stale</strong> means the last real observation
+    published no signal or its age is unknown; <strong>stale</strong> means the last real observation
     has aged past {{ stale_after_seconds|floatformat:0 }}s;
     <strong>unreachable</strong> means the listener could not be asked, which is
     an outage rather than silence. Entries are deduped, so a refresh does not
     replay a row that has not changed.
+    Counts describe the displayed rows for these filters, including retained
+    history. Unknown rows are included in entries.
+    Native counters are static snapshots. Completed tool lifecycles do not
+    establish tool success or count nested tools. Capacity is shown only as
+    Unknown until an authoritative measurement contract is available.
   </p>
   {% endif %}
 

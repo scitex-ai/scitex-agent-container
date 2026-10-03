@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,27 @@ from .._runners._session_state import read_heartbeat
 
 _UNKNOWN = "No authoritative runtime evidence is published."
 _RUNTIME_SIGNALS = ("queue", "inference", "tool", "wait")
+_FENCED_WRITERS = {"hermes-session-events", "codex-rollout-events"}
+_COUNTERS = (
+    "turns_accepted",
+    "turns_completed",
+    "tools_started",
+    "tools_completed",
+    "tools_inflight",
+)
+_EVENT_TYPES = {
+    "function_call",
+    "function_call_output",
+    "custom_tool_call",
+    "custom_tool_call_output",
+    "task_started",
+    "task_complete",
+    "turn_aborted",
+    "message.start",
+    "message.complete",
+    "tool.start",
+    "tool.complete",
+}
 
 
 def _unknown(reason: str = _UNKNOWN) -> dict[str, Any]:
@@ -22,7 +44,11 @@ def _observed(value: Any, source: str) -> dict[str, Any]:
 
 
 def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
         return None
     return float(value)
 
@@ -34,6 +60,90 @@ def _runtime_signal(control: dict[str, Any], name: str) -> dict[str, Any]:
     return _observed(value, f"runtime_control.{name}")
 
 
+def _fenced_heartbeat(heartbeat: dict, now: float) -> dict | None:
+    writer = heartbeat.get("writer")
+    if not isinstance(writer, str) or writer not in _FENCED_WRITERS:
+        return None
+    resident = heartbeat.get("authoritative_heartbeat")
+    if not isinstance(resident, dict):
+        return None
+    from .._state.authoritative_heartbeat import (
+        AuthoritativeHeartbeatError,
+        validate_heartbeat,
+    )
+
+    try:
+        validated = validate_heartbeat(
+            resident,
+            expected_agent=str(resident.get("agent_id") or ""),
+            expected_host=str(resident.get("host") or ""),
+            now=now,
+        )
+    except AuthoritativeHeartbeatError:
+        return None
+    if now > validated["lease_expires_at"]:
+        return None
+    if (
+        any(
+            heartbeat.get(key) != validated[key]
+            for key in (
+                "agent_id",
+                "spec_id",
+                "host",
+                "runtime",
+                "harness",
+                "engine",
+                "model",
+                "session_id",
+                "boot_id",
+            )
+        )
+        or heartbeat.get("ts") != validated["observed_at"]
+    ):
+        return None
+    return validated
+
+
+def _typed_activity(heartbeat: dict, resident: dict | None) -> dict[str, Any]:
+    keys = (
+        *_COUNTERS,
+        "last_event_type",
+        "last_turn_status",
+        "last_error_code",
+        "capacity",
+    )
+    result = {key: _unknown() for key in keys}
+    if resident is None:
+        return result
+    values = [heartbeat.get(key) for key in _COUNTERS]
+    if all(type(value) is int and value >= 0 for value in values):
+        accepted, completed, started, finished, inflight = values
+        if (
+            completed <= accepted
+            and finished <= started
+            and inflight <= started - finished
+        ):
+            result.update(
+                {
+                    key: _observed(value, f"heartbeat.{key}")
+                    for key, value in zip(_COUNTERS, values)
+                }
+            )
+    status = heartbeat.get("last_turn_status")
+    if isinstance(status, str) and status in {"complete", "error", "interrupted"}:
+        result["last_turn_status"] = _observed(status, "heartbeat.last_turn_status")
+    event_type = heartbeat.get("last_event_type")
+    if isinstance(event_type, str) and event_type in _EVENT_TYPES:
+        result["last_event_type"] = _observed(event_type, "heartbeat.last_event_type")
+    if heartbeat.get("last_error_code") == "turn_error":
+        result["last_error_code"] = _observed("turn_error", "heartbeat.last_error_code")
+    # Generic CAPPED sidecars/text are not provider-capacity instruments.
+    result["capacity"] = _unknown(
+        "No authoritative provider capacity measurement is published."
+    )
+    return result
+
+
 def activity_projection(
     state_dir: Path,
     *,
@@ -42,8 +152,20 @@ def activity_projection(
 ) -> dict[str, Any]:
     """Project current activity without interpreting logs or private prompts."""
     heartbeat = read_heartbeat(state_dir) or {}
+    if not isinstance(heartbeat, dict):
+        heartbeat = {}
+    current_time = now if now is not None else time.time()
+    resident = _fenced_heartbeat(heartbeat, current_time)
     control = runtime_control if isinstance(runtime_control, dict) else {}
     projected = {name: _runtime_signal(control, name) for name in _RUNTIME_SIGNALS}
+    projected.update(_typed_activity(heartbeat, resident))
+    projected["session_id"] = (
+        _observed(
+            resident["session_id"], "heartbeat.authoritative_heartbeat.session_id"
+        )
+        if resident
+        else _unknown("No fenced native session identity is published.")
+    )
 
     phase = heartbeat.get("current_phase")
     projected["phase"] = (
@@ -55,7 +177,8 @@ def activity_projection(
     operation = heartbeat.get("state")
     projected["operation"] = (
         _observed(operation, "heartbeat.state")
-        if operation in {"starting", "idle", "working", "ready", "busy", "stopping"}
+        if isinstance(operation, str)
+        and operation in {"starting", "idle", "working", "ready", "busy", "stopping"}
         else _unknown("No current runner operation was observed.")
     )
 
@@ -77,19 +200,38 @@ def activity_projection(
             turn_source,
         )
 
-    try:
-        progress_at = (state_dir / "session.jsonl").stat().st_mtime
-    except OSError:
+    progress_at = _number(resident.get("progress_at")) if resident else None
+    if progress_at is not None and (progress_at <= 0 or resident["progress_seq"] == 0):
         progress_at = None
     projected["last_progress"] = (
         _observed(
             datetime.fromtimestamp(progress_at, tz=timezone.utc).isoformat(),
-            "session.jsonl.mtime",
+            "heartbeat.authoritative_heartbeat.progress_at",
         )
         if progress_at is not None
-        else _unknown("No runtime transcript progress has been observed.")
+        else _unknown("No fenced native event progress has been observed.")
     )
+    writer = heartbeat.get("writer")
+    if isinstance(writer, str) and writer in _FENCED_WRITERS and resident is None:
+        projected["phase"] = _unknown(
+            "The native heartbeat lease or identity is not current."
+        )
+        projected["operation"] = _unknown(
+            "The native heartbeat lease or identity is not current."
+        )
     return projected
 
 
-__all__ = ["activity_projection"]
+def project_session_id(
+    legacy_session_id: str | None, activity: dict, *, harness: str
+) -> tuple[str | None, str]:
+    """Choose the fenced runtime session; stale markers cannot name Codex threads."""
+    observed = activity.get("session_id")
+    if isinstance(observed, dict) and observed.get("state") == "observed":
+        return observed.get("value"), str(observed.get("source") or "")
+    if harness == "codex":
+        return None, "unknown"
+    return legacy_session_id, "session_id_marker"
+
+
+__all__ = ["activity_projection", "project_session_id"]

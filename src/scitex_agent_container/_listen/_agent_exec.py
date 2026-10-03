@@ -147,6 +147,14 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "'force' must be a boolean if present"},
             status_code=400,
         )
+    from .._lifecycle._start_session_wire import start_session_cli_args
+
+    try:
+        session_args = start_session_cli_args(body.get("session"))
+    except ValueError as exc:
+        return JSONResponse(
+            {"error": str(exc), "kind": "spec_invalid"}, status_code=400
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -246,6 +254,7 @@ async def agents_start(request: Request) -> JSONResponse:
     # silently degraded into an idempotent no-op that still reported SUCC.
     if force:
         inner_argv.append("--force")
+    inner_argv.extend(session_args)
     inner_argv.append(name)
     # Single-flight the OAuth-refresh boot window (card
     # sac-multi-start-queue-oauth): concurrent brokered background spawns share

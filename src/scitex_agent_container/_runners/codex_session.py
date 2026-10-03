@@ -154,7 +154,17 @@ def normalize_thread_item(item: Any) -> NormalizedEvent | None:
     attribute exercise every branch. See the module docstring for the
     full vocabulary mapping.
     """
+    # The app-server SDK wraps its camelCase item models in ThreadItem,
+    # a Pydantic RootModel. Keep the older unwrapped exec vocabulary too.
+    item = getattr(item, "root", item)
     itype = str(getattr(item, "type", "") or "")
+    itype = {
+        "agentMessage": "agent_message",
+        "commandExecution": "command_execution",
+        "fileChange": "file_change",
+        "mcpToolCall": "mcp_tool_call",
+        "webSearch": "web_search",
+    }.get(itype, itype)
 
     if itype == "agent_message":
         return NormalizedEvent(kind="text_delta", text=_item_text(item), raw=item)
@@ -182,6 +192,13 @@ def usage_as_dict(usage: Any) -> dict[str, Any]:
     """
     if usage is None:
         return {}
+    # ThreadTokenUsage.total is cumulative across the resident thread;
+    # use its latest breakdown rather than counting that total every turn.
+    latest = (
+        usage.get("last") if isinstance(usage, Mapping) else getattr(usage, "last", None)
+    )
+    if latest is not None:
+        usage = latest
     if isinstance(usage, Mapping):
         source: Mapping[str, Any] = usage
         return {k: v for k, v in source.items() if isinstance(v, int)}

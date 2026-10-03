@@ -50,9 +50,6 @@ def _setup_mcp_from_servers(
     block, so the values must be durable there (P1, card
     sac-env-injection-lost-on-mcp-reconnect-20260721).
     """
-    if not servers:
-        return
-
     mcp_path = Path(workdir) / ".mcp.json"
 
     existing: dict = {}
@@ -69,6 +66,10 @@ def _setup_mcp_from_servers(
         existing = {}
 
     mcp_servers = existing.setdefault("mcpServers", {})
+    # A baseline-only CCT entry needs the same durable identity as an
+    # explicitly declared entry. Other baseline-only profiles stay untouched.
+    if not servers and "claude-code-telegrammer" not in mcp_servers:
+        return
 
     for name, entry in servers.items():
         # Resolve ${VAR} env references from os.environ at write time
@@ -91,7 +92,7 @@ def _setup_mcp_from_servers(
     # an unexpanded ``${VAR}`` fails here, at build time, not in a child.
     from ._mcp_spec_env import bake_spec_env_values
 
-    if spec_env:
+    if spec_env and servers:
         from ._board_identity_env import assert_expanded
 
         resolved_spec_env: dict[str, str] = {}
@@ -101,11 +102,24 @@ def _setup_mcp_from_servers(
             resolved_spec_env[str(key)] = sval
         bake_spec_env_values(mcp_servers, resolved_spec_env)
 
+    # SAC's owned poller pins this same full agent name. The login shell can
+    # reload a project's .envrc after the generated .env was injected, so a
+    # forwarded ${CCT_AGENT_ID} can otherwise send the MCP to a different
+    # PostgreSQL namespace. Keep the identity literal in the generated MCP
+    # entry; token resolution and the existing bot assignment are unchanged.
+    cct = mcp_servers.get("claude-code-telegrammer")
+    if isinstance(cct, dict) and cct.get("command") and not cct.get("url"):
+        cct_env = cct.setdefault("env", {})
+        if not isinstance(cct_env, dict):
+            raise ValueError("claude-code-telegrammer MCP env must be an object")
+        cct_env["CCT_AGENT_ID"] = agent_name
+
     # Cold-start race fix (fleet incident 2026-07-06): force blocking startup for
     # the critical stdio MCP servers (see ``_mcp_reliability``). Idempotent.
     from ._mcp_reliability import inject_always_load
 
-    inject_always_load(existing)
+    if servers:
+        inject_always_load(existing)
 
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
@@ -129,13 +143,11 @@ def _setup_mcp_from_servers(
 def setup_mcp_config(config: AgentConfig, workdir: str) -> None:
     """Write ``spec.mcp_servers`` to ``<workdir>/.mcp.json`` (merging).
 
-    No-op if the agent has no ``mcp_servers`` entries. Merges with an
-    existing ``.mcp.json`` so other MCP servers are preserved. ``spec.env``
+    No-op when neither declared entries nor a baseline CCT entry exist. Merges with
+    an existing ``.mcp.json`` so other MCP servers are preserved. ``spec.env``
     is baked into each stdio entry's ``env`` block (durable across MCP
     reconnect respawns — see :func:`_setup_mcp_from_servers`).
     """
-    if not config.mcp_servers:
-        return
     _setup_mcp_from_servers(
         config.mcp_servers,
         workdir,

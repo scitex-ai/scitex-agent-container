@@ -291,10 +291,12 @@ def _detect_codex_dir_trust(content: str) -> bool:
     2. No, quit / Press enter to continue" — the cursor already sits on
     option 1, so Enter alone accepts.
     """
-    return (
+    legacy = (
         "Do you trust the contents of this directory" in content
         and "1. Yes, continue" in content
     )
+    current = "Trust this folder?" in content and "1. Trust and continue" in content
+    return legacy or current
 
 
 def _detect_codex_hooks_review(content: str) -> bool:
@@ -312,11 +314,67 @@ def _detect_codex_hooks_review(content: str) -> bool:
 #: banner has scrolled away: ``› Use /skills to list available skills`` over
 #: ``qwen38-27b default · /home/ywatanabe/proj/local-coder``. The footer's
 #: second word is the reasoning effort Codex is running with.
-_CODEX_COMPOSER_MARKER = "\u203a"
+_CODEX_COMPOSER_MARKERS = ("\u203a", "\u00bb")
 _CODEX_FOOTER = re.compile(
-    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh) \u00b7 /", re.M
+    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh|max|ultra)"
+    r"(?: (?:fast|ultrafast))? \u00b7 /",
+    re.M,
 )
 _CODEX_TAIL_ROWS = 8
+
+
+def codex_blocking_modal(content: str) -> str | None:
+    """Recognize native review/login/limit panes without accepting their keys.
+
+    Tall hook lists exceed the ordinary modal tail. A fresh bottom composer
+    and model footer exclude a dismissed heading still visible in history.
+    """
+    rows = (content or "").splitlines()
+    composer = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if any(marker in rows[index] for marker in _CODEX_COMPOSER_MARKERS)
+        ),
+        None,
+    )
+    controls = (
+        "trust all and continue",
+        "continue without trusting",
+        "press enter to confirm",
+        "enter continue · esc",
+        "1. trust and continue",
+        "1. yes, continue",
+    )
+    if composer is not None and _CODEX_FOOTER.search("\n".join(rows[composer:])):
+        live = "\n".join(rows[composer:]).lower()
+        if not any(control in live for control in controls):
+            return None
+    headings = {
+        "codex-hooks-review": ("hooks need review",),
+        "codex-dir-trust": (
+            "trust this folder?",
+            "do you trust the contents of this directory",
+        ),
+        "codex-auth-required": (
+            "sign in to codex",
+            "log in to codex",
+            "authentication required",
+            "continue with chatgpt",
+        ),
+        "codex-rate-limit": (
+            "you've hit your usage limit",
+            "usage limit reached",
+            "rate limit exceeded",
+            "too many requests",
+        ),
+    }
+    for row in rows:
+        heading = row.strip(" \t│┃╭╮╰╯┌┐└┘─⚠!•").lower()
+        for name, prefixes in headings.items():
+            if any(heading.startswith(prefix) for prefix in prefixes):
+                return name
+    return None
 
 
 def _detect_codex_done(content: str) -> bool:
@@ -330,12 +388,20 @@ def _detect_codex_done(content: str) -> bool:
     Codex agent after its first turn was refused as "a modal is blocking the
     input" — measured on handyman-01, which had been idle at its composer.
     """
-    if "Press enter to continue" in content or "Press enter to confirm" in content:
+    if codex_blocking_modal(content):
+        return False
+    live = _recent_tail(content)
+    if _detect_codex_dir_trust(live) or _detect_codex_hooks_review(live):
+        return False
+    if "Press enter to continue" in live or "Press enter to confirm" in live:
         return False
     if "OpenAI Codex (v" in content and "permissions:" in content:
         return True
     tail = "\n".join(content.rstrip().splitlines()[-_CODEX_TAIL_ROWS:])
-    return _CODEX_COMPOSER_MARKER in tail and _CODEX_FOOTER.search(tail) is not None
+    return (
+        any(marker in tail for marker in _CODEX_COMPOSER_MARKERS)
+        and _CODEX_FOOTER.search(tail) is not None
+    )
 
 
 def _detect_hermes_contributor_tier(content: str) -> bool:
@@ -360,6 +426,8 @@ def _detect_done(content: str) -> bool:
     Claude's status bar shows "bypass permissions" when ready; Codex has its
     own banner (:func:`_detect_codex_done`).
     """
+    if codex_blocking_modal(content):
+        return False
     if "bypass permissions" in content and "Enter to confirm" not in content:
         return True
     return _detect_codex_done(content)
@@ -378,13 +446,13 @@ PROMPT_HANDLERS: list[PromptHandler] = [
     PromptHandler(
         name="codex-dir-trust",
         detect=_detect_codex_dir_trust,
-        keys=["Enter"],  # cursor already on "1. Yes, continue"
+        keys=[],  # reviewed project trust is configured before native launch
         priority=1,
     ),
     PromptHandler(
         name="codex-hooks-review",
         detect=_detect_codex_hooks_review,
-        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
+        keys=[],  # unknown or changed hooks require reviewed authority
         priority=1,
     ),
     PromptHandler(
@@ -528,6 +596,12 @@ def detect_and_respond(
     Returns:
         Name of the matched prompt, or None if no match.
     """
+    blocked = codex_blocking_modal(content)
+    if blocked:
+        logger.warning(
+            "Native prompt %s requires reviewed authority; no keys sent", blocked
+        )
+        return blocked
     tail = _recent_tail(content)
     for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
         if handler.name in accepted:
@@ -554,6 +628,9 @@ def detect(content: str) -> str | None:
     ``content`` — see its docstring for the stray-boot-submit false
     positive this prevents.
     """
+    blocked = codex_blocking_modal(content)
+    if blocked:
+        return blocked
     tail = _recent_tail(content)
     for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
         if handler.detect(tail):
@@ -569,6 +646,13 @@ def respond_modal(name: str, send_keys_fn: Callable[..., None]) -> bool:
     :func:`detect`) and resend on the render race — a single send is not
     guaranteed to land.
     """
+    if name in {
+        "codex-hooks-review",
+        "codex-dir-trust",
+        "codex-auth-required",
+        "codex-rate-limit",
+    }:
+        return False
     for handler in PROMPT_HANDLERS:
         if handler.name == name:
             for key in handler.keys:
