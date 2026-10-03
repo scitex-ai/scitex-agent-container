@@ -6,7 +6,7 @@ no ``*_hub.html``, no direct standalone-shell extends): a host maps the
 content block into its own chrome by shadowing the adapter with a project
 DIRS template; standalone serving uses the SDK-owned shell through the same
 adapter. These tests pin that contract from source plus one live render each
-way (SDK shell, host shadow).
+way (SDK shell, host shadow), all against the controlled loopback listener.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+from scitex_agent_container._django._constants import IDENTITY_ENV
 
 TEMPLATES = (
     Path(__file__).resolve().parents[3]
@@ -60,14 +62,16 @@ def test_app_config_uses_the_public_sdk_contract():
     assert "scitex_app" not in apps_py
 
 
-def test_fleet_renders_through_the_sdk_shell(client):
+def test_fleet_renders_through_the_sdk_shell(client, loopback, env_save_restore):
     """Standalone: the adapter delegates to the SDK-owned UI shell."""
+    env_save_restore.set(IDENTITY_ENV, "alice")
     html = client.get("/").content.decode()
     assert 'name="stx-mount"' in html
     assert "agents-app" in html  # the leaf content block rendered
+    assert "agents.css" in html  # the leaf extra_css slot survived the adapter
 
 
-def test_host_shadow_maps_the_content_block_into_host_chrome(client, tmp_path):
+def test_host_shadow_maps_the_content_block_into_host_chrome(client, loopback, env_save_restore, tmp_path):
     """Host: shadowing the adapter re-chromes the SAME leaf content.
 
     A project DIRS template named ``scitex_sdk/app/app_shell.html`` wins over
@@ -76,10 +80,13 @@ def test_host_shadow_maps_the_content_block_into_host_chrome(client, tmp_path):
     """
     from django.test import override_settings
 
+    env_save_restore.set(IDENTITY_ENV, "alice")
     shadow_dir = tmp_path / "host_templates" / "scitex_sdk" / "app"
     shadow_dir.mkdir(parents=True)
     (shadow_dir / "app_shell.html").write_text(
-        "<html><body data-host-chrome='1'>"
+        "<html><head>{% block extra_css %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}</head>"
+        "<body data-host-chrome='1'>"
         "{% block scitex_app_content %}{% endblock %}"
         "</body></html>",
         encoding="utf-8",
@@ -90,4 +97,5 @@ def test_host_shadow_maps_the_content_block_into_host_chrome(client, tmp_path):
         html = client.get("/").content.decode()
     assert "data-host-chrome='1'" in html
     assert "agents-app" in html  # leaf content survived the re-chrome
+    assert "agents.css" in html  # the leaf extra_css slot survived the re-chrome
     assert 'name="stx-mount"' not in html  # host owns the shell now

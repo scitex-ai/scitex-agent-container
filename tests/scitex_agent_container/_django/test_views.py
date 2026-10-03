@@ -388,6 +388,16 @@ def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
     assert "agents-app" in html
+    assert "agents.css" in html
+
+
+def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = hub_client.get("/apps/agents/timeline/").content.decode()
+    # Assert
+    assert 'id="hub-global-header"' in html and "timeline.js" in html
 
 
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):

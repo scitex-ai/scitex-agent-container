@@ -167,6 +167,7 @@ def test_mounted_create_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
     assert "agents-app" in html
+    assert "agents.css" in html
 
 
 # ── shared backend: the GUI scaffolds through the CLI's own core ───────────
