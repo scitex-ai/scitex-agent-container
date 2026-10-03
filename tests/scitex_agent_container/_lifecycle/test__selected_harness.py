@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +22,7 @@ from scitex_agent_container._lifecycle._selected_harness import (
     SelectedRuntimeFence,
     require_selected_runtime,
     require_selected_stop_target,
+    require_selected_successor_down,
 )
 from scitex_agent_container._lifecycle._stop import agent_restart, agent_stop
 from scitex_agent_container._lifecycle._stop_escalate import (
@@ -61,6 +63,7 @@ def owned_route(tmp_path):
             process.pid,
             process.start_time,
             process.uid,
+            Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         )
         registry = Registry(tmp_path / "registry")
         registry.add(config.name, str(path), config.screen_name)
@@ -79,6 +82,34 @@ def test_owned_observed_hermes_route_is_admitted(owned_route):
     result = require_selected_runtime(config, fence, lambda _config: fence)
     # Assert
     assert result is None
+
+
+def test_matching_observer_from_another_host_boot_refuses(owned_route):
+    # Arrange
+    _path, config, fence, _registry = owned_route
+    previous_host = replace(fence, host_boot_id="00000000-0000-0000-0000-000000000000")
+
+    # Act
+    def operation():
+        require_selected_runtime(config, previous_host, lambda _config: previous_host)
+
+    # Assert
+    with pytest.raises(ValueError, match="host-boot-mismatch"):
+        operation()
+
+
+def test_canonical_row_cannot_override_a_foreign_host_boot(owned_route):
+    # Arrange
+    _path, _config, fence, _registry = owned_route
+    previous_host = replace(fence, host_boot_id="00000000-0000-0000-0000-000000000000")
+
+    # Act
+    def operation():
+        require_selected_stop_target(previous_host, _canonical_instance(previous_host))
+
+    # Assert
+    with pytest.raises(ValueError, match="host-boot-mismatch"):
+        operation()
 
 
 def _canonical_instance(fence):
@@ -455,3 +486,186 @@ def test_salvage_uses_normal_fenced_override_without_spec_rewrite(owned_route):
     )
     # Assert
     assert calls[0]["harness_override"] == "hermes"
+
+
+@pytest.fixture
+def matching_default_route(owned_route):
+    import yaml
+
+    path, _config, fence, registry = owned_route
+    raw = yaml.safe_load(path.read_text())
+    raw["spec"]["harness"] = "hermes"
+    raw["spec"]["engine"] = "go-other"
+    raw["spec"]["available_engines"]["go-other"] = {
+        **raw["spec"]["available_engines"]["go-muse"],
+        "provider": {
+            "hermes_provider": "opencode-go",
+            "auth_token_env": "TEST_GO_OTHER",
+        },
+    }
+    path.write_text(yaml.safe_dump(raw))
+    config = load_config(path, harness_override="hermes", engine_override="go-muse")
+    return path, config, fence, registry
+
+
+def test_matching_hermes_default_still_uses_observed_engine_before_stop(
+    matching_default_route,
+):
+    # Arrange
+    _path, config, fence, registry = matching_default_route
+    projections = []
+
+    def changed_after_preflights(selected):
+        projections.append(selected.engine_key)
+        return fence if len(projections) == 1 else replace(fence, account="TEST_GO_TWO")
+
+    # Act
+    try:
+        agent_restart(
+            config.name,
+            registry,
+            expected_runtime=fence,
+            observe_runtime=changed_after_preflights,
+        )
+    except ValueError:
+        pass
+    # Assert
+    assert projections == ["go-muse", "go-muse"]
+
+
+def test_matching_default_salvage_passes_observed_projection_to_restart(
+    matching_default_route,
+):
+    # Arrange
+    _path, config, fence, registry = matching_default_route
+    identity = SalvageIdentity(
+        fence.agent,
+        fence.instance_id,
+        fence.session_id,
+        fence.boot_id,
+        fence.harness,
+        fence.engine,
+        fence.provider,
+        fence.model,
+    )
+    calls = []
+
+    def restart(_name, _registry, **kwargs):
+        calls.append(kwargs)
+        return True
+
+    # Act
+    _restart(
+        config,
+        identity,
+        registry=registry,
+        restart=restart,
+        expected_runtime=fence,
+        observe_runtime=lambda _config: fence,
+    )
+    # Assert
+    assert calls[0]["harness_override"] == "hermes"
+
+
+def test_matching_default_salvage_passes_observed_engine_to_restart(
+    matching_default_route,
+):
+    # Arrange
+    _path, config, fence, registry = matching_default_route
+    identity = SalvageIdentity(
+        fence.agent,
+        fence.instance_id,
+        fence.session_id,
+        fence.boot_id,
+        fence.harness,
+        fence.engine,
+        fence.provider,
+        fence.model,
+    )
+    calls = []
+
+    def restart(_name, _registry, **kwargs):
+        calls.append(kwargs)
+        return True
+
+    # Act
+    _restart(
+        config,
+        identity,
+        registry=registry,
+        restart=restart,
+        expected_runtime=fence,
+        observe_runtime=lambda _config: fence,
+    )
+    # Assert
+    assert calls[0]["engine_override"] == "go-muse"
+
+
+def test_matching_default_salvage_without_real_observer_refuses(matching_default_route):
+    # Arrange
+    _path, config, fence, registry = matching_default_route
+    identity = SalvageIdentity(
+        fence.agent,
+        fence.instance_id,
+        fence.session_id,
+        fence.boot_id,
+        fence.harness,
+        fence.engine,
+        fence.provider,
+        fence.model,
+    )
+
+    # Act
+    def operation():
+        _restart(config, identity, registry=registry)
+
+    # Assert
+    with pytest.raises(ValueError, match="owned-runtime-required"):
+        operation()
+
+
+def test_fenced_matching_default_restart_cannot_skip_stop_gate(matching_default_route):
+    # Arrange
+    _path, config, fence, registry = matching_default_route
+
+    # Act
+    def operation():
+        agent_restart(
+            config.name,
+            registry,
+            expected_runtime=fence,
+            observe_runtime=lambda _config: fence,
+            wait_for_stop_timeout_s=0,
+        )
+
+    # Assert
+    with pytest.raises(ValueError, match="stop-verification-required"):
+        operation()
+
+
+def test_reappearing_owned_runtime_refuses_selected_force_start(owned_route):
+    # Arrange
+    _path, config, fence, _registry = owned_route
+    runtime = HermesTuiSessionRuntime(multiplexer=_OwnedProcessMux(fence.pid))
+
+    # Act
+    def operation():
+        require_selected_successor_down(
+            config, runtime, force=True, harness_override="hermes"
+        )
+
+    # Assert
+    with pytest.raises(RuntimeError, match="runtime-reappeared-before-start"):
+        operation()
+
+
+def test_unfenced_default_force_start_guard_keeps_legacy_behavior(owned_route):
+    # Arrange
+    _path, config, fence, _registry = owned_route
+    runtime = HermesTuiSessionRuntime(multiplexer=_OwnedProcessMux(fence.pid))
+    # Act
+    result = require_selected_successor_down(
+        config, runtime, force=True, harness_override=None
+    )
+    # Assert
+    assert result is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from .._runners._tmux._process_group import _identity
@@ -34,6 +35,20 @@ class SelectedRuntimeFence:
     pid: int
     process_start_time: int
     process_uid: int
+    host_boot_id: str
+
+
+def _require_local_boot(expected: SelectedRuntimeFence) -> None:
+    """Keep the Hermes engine incarnation distinct from the OS boot fence."""
+    try:
+        actual = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        raise ValueError("selected-harness-host-boot-unobservable") from None
+    if (
+        not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", actual)
+        or expected.host_boot_id != actual
+    ):
+        raise ValueError("selected-harness-host-boot-mismatch")
 
 
 def require_selected_stop_target(
@@ -42,6 +57,7 @@ def require_selected_stop_target(
     """The routine stop's canonical row must be the observed owned runtime."""
     if not isinstance(expected, SelectedRuntimeFence) or not isinstance(instance, dict):
         raise ValueError("selected-harness-stop-target-unknown")
+    _require_local_boot(expected)
     if (
         instance.get("id") != expected.instance_id
         or instance.get("name") != expected.agent
@@ -64,6 +80,7 @@ def require_selected_runtime(
     """
     if not isinstance(expected, SelectedRuntimeFence) or observe is None:
         raise ValueError("selected-harness-owned-runtime-required")
+    _require_local_boot(expected)
     labels = (
         expected.instance_id,
         expected.session_id,
@@ -132,3 +149,9 @@ def require_selected_runtime(
         )
     ):
         raise ValueError("selected-harness-runtime-fence-changed")
+
+
+def require_selected_successor_down(config, runtime, *, force, harness_override):
+    """A fenced restart may not force-stop a runtime that appeared meanwhile."""
+    if harness_override is not None and force and runtime.is_running(config):
+        raise RuntimeError("selected-harness-runtime-reappeared-before-start")
