@@ -253,6 +253,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         if getattr(config, "to_home_layers", None) is not None:
             dest = Path(workspace_home)
             dest.mkdir(parents=True, exist_ok=True)
+            # An explicit empty recipe also replaces the prior managed MCP
+            # projection. Otherwise a removed layer keeps its old capabilities.
+            for merge_name in _MCP_MERGE_BASENAMES:
+                stale = dest / merge_name
+                if stale.is_file() or stale.is_symlink():
+                    stale.unlink()
             write_prompt_projection_manifest(config, dest, prompt_sources_before)
         return
     # Credential-leak guard runs BEFORE any deploy (both layers).

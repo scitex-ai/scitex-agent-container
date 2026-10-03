@@ -38,6 +38,92 @@ START_MARKER_RE = re.compile(
 )
 
 
+class TestExplicitMissingHomeLayers:
+    def test_per_agent_only_missing_layer_removes_old_runtime_mcp(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="restricted-child")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        cfg.to_home_layers = ["per-agent"]
+        home = tmp_path / "runtime-home"
+        home.mkdir()
+        mcp = home / ".mcp.json"
+        mcp.write_text('{"mcpServers":{"scitex-cards":{"command":"fixture"}}}')
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert not mcp.exists()
+
+    def test_empty_recipe_removes_old_overlay_mcp(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="restricted-child")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        cfg.to_home_layers = []
+        home = tmp_path / "overlay" / "upper" / "home" / "agent"
+        home.mkdir(parents=True)
+        mcp = home / ".mcp.json"
+        mcp.write_text('{"mcpServers":{"scitex-cards":{"command":"fixture"}}}')
+        # Act: the overlay wrapper uses this same canonical writer.
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert not mcp.exists()
+
+    def test_undeclared_missing_recipe_keeps_legacy_noop(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="legacy-agent")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        home = tmp_path / "home"
+        home.mkdir()
+        mcp = home / ".mcp.json"
+        mcp.write_text("legacy operator content")
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert mcp.read_text() == "legacy operator content"
+
+    def test_empty_recipe_does_not_modify_unrelated_history(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="restricted-child")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        cfg.to_home_layers = []
+        home = tmp_path / "home"
+        home.mkdir()
+        history = home / "retained-history.jsonl"
+        history.write_text("retained")
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert history.read_text() == "retained"
+
+    def test_empty_recipe_unlinks_mcp_without_writing_host_target(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="restricted-child")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        cfg.to_home_layers = []
+        host = tmp_path / "host-mcp.json"
+        host.write_text("host source unchanged")
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".mcp.json").symlink_to(host)
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert host.read_text() == "host source unchanged"
+
+    def test_empty_recipe_removes_a_dangling_mcp_link(self, tmp_path):
+        # Arrange
+        cfg = AgentConfig(name="restricted-child")
+        cfg.config_path = str(tmp_path / "agent" / "spec.yaml")
+        cfg.to_home_layers = []
+        home = tmp_path / "home"
+        home.mkdir()
+        mcp = home / ".mcp.json"
+        mcp.symlink_to(tmp_path / "gone")
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert not mcp.is_symlink()
+
+
 # ---------------------------------------------------------------------------
 # Real-AgentConfig builders.
 # ---------------------------------------------------------------------------
