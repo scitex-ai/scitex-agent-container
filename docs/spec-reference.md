@@ -217,6 +217,20 @@ the existing start preflight checks that exact stored-account preference and
 the auth bind resolves its snapshot. `account` is rejected on other harness
 entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
 
+### `spec.available_harnesses.hermes.failover`
+
+`accounts` maps engine keys to explicit credential environment-name lists.
+`engines` is the explicit ordered backup-engine list; omit it or use `[]` to
+refuse rather than changing model or provider. A configured slot or a usage
+balance is not proof that the selected model is admitted.
+
+`strategy` defaults to `fill_first`. Set `round_robin` to balance a declared
+account pool using Hermes' existing selector. It requires `accounts`, refuses
+unknown values, and does not discover additional accounts. Aliases of the same
+credential retain one pool member. Profile refresh preserves account cooldowns;
+exhausted pools retain the normal bounded refusal instead of unpooled fallback.
+No strategy change restarts a session or crosses an existing engine/account pin.
+
 ### `spec.available_harnesses.<key>.compression` — Hermes only
 
 Hermes context compaction is configured beside the Hermes harness that owns
