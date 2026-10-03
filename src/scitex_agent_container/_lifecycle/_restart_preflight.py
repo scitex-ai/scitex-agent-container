@@ -335,7 +335,11 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
 
 
 def preflight_from_config_path(
-    config_path: str, *, opener: Any = None, engine_override: str | None = None,
+    config_path: str,
+    *,
+    opener: Any = None,
+    engine_override: str | None = None,
+    harness_override: str | None = None,
 ) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
@@ -357,7 +361,9 @@ def preflight_from_config_path(
     from ._engine_select import select_engine_at_start
     from ._start_preflight import _rotate_to_healthy_account
 
-    config = load_config(config_path)
+    config = load_config(
+        config_path, harness_override=harness_override, engine_override=engine_override
+    )
     # The successor's requested engine owns auth, not the stored default.
     # The caller's separate engine check retains any requested live probe.
     select_engine_at_start(config, engine_override, probe=False, log=False)
