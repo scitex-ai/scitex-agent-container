@@ -25,6 +25,9 @@ def detail_lines(row, level):
             + terminal_safe(json.dumps(activity["counters"], sort_keys=True))
         )
     if level >= 1:
+        stored_credential = row.get("stored_credential") or row.get("account")
+        if stored_credential:
+            lines.append("  Stored credential: " + terminal_safe(stored_credential))
         selection = observation.get("selection") or {}
         lines.extend(
             [
