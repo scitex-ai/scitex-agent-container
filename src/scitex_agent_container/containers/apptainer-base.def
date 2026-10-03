@@ -1035,10 +1035,13 @@ EOF
     export CARGO_HOME=/opt/cargo
 
 %test
-    # The image must not be published with a console entry point whose
-    # packaged target is absent. Apptainer runs this after %post and fails
-    # the build before scitex-container atomically promotes the SIF.
-    /opt/venv-sac/bin/sac --version
+    set -eu
+    # Keep import-time Logging state writable during the read-only image test.
+    # SCITEX_DIR is its supported state root; preserve the declared HOME.
+    sac_test_state="$(mktemp -d /tmp/sac-base-test.XXXXXX)"
+    trap 'rm -rf -- "$sac_test_state"' EXIT
+    # A failed console check must fail the image test before later tool checks.
+    SCITEX_DIR="$sac_test_state" /opt/venv-sac/bin/sac --version
     env -i \
         PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         HOME=/tmp \
