@@ -250,6 +250,7 @@ class ReleaseFixtures(unittest.TestCase):
             "src/scitex_agent_container/_provenance/_hash.py",
             "LICENSE",
             "CHANGELOG.md",
+            ".github/ci/release-identity.py",
         }
         for name in paths:
             path = cls.root / name
@@ -386,6 +387,26 @@ class ReleaseFixtures(unittest.TestCase):
         )
         # Assert
         assert (result["wheel_public_members"]) > (1300)
+
+    def test_sdist_omitted_tracked_nonpackage_helper_refuses(self):
+        # Arrange
+        sdist = dict(self.sdist)
+        del sdist[".github/ci/release-identity.py"]
+        # Act
+        with refuses(ValueError, "sdist public source membership") as observation:
+            self.payload(sdist=sdist)
+        # Assert
+        assert observation["reason"] == "sdist public source membership differs"
+
+    def test_sdist_extra_untracked_nonpackage_helper_refuses(self):
+        # Arrange
+        sdist = dict(self.sdist)
+        sdist[".github/ci/injected-release.py"] = b"print('unreviewed')\n"
+        # Act
+        with refuses(ValueError, "undeclared public payload") as observation:
+            self.payload(sdist=sdist)
+        # Assert
+        assert observation["reason"] == "sdist contains undeclared public payload"
 
     def test_actual_two_package_source_and_force_include_payload_runtime_requirements(
         self,
