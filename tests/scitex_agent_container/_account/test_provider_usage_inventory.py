@@ -32,6 +32,22 @@ def refusing_fetch(target, deadline):
     return {"error": "http-403"}
 
 
+def recording_fetch(target, deadline):
+    """Make any network-producer invocation visible in a private fixture."""
+    target.auth_path.write_text("provider-invoked")
+    return known_fetch(target, deadline)
+
+
+def cache_path(home, account):
+    return home / ".scitex/cache/account-usage" / (account.provider + "-" + account.name + ".json")
+
+
+def blocked_fifo_writer(path, snapshot):
+    """An actual blocking filesystem boundary, without a FIFO reader."""
+    with path.open("w") as stream:
+        stream.write(json.dumps(snapshot))
+
+
 def parallel_fetch(target, deadline):
     """Require another worker to publish before returning, proving concurrency."""
     directory = target.auth_path
@@ -186,3 +202,143 @@ def test_cache_reader_whitelists_private_injected_fields(tmp_path):
     rows = collect([account], home=tmp_path, passive=True)
     # Assert
     assert "private" not in json.dumps(rows)
+
+
+def test_passive_fifo_cache_is_bounded(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    started = time.monotonic()
+    # Act
+    collect([account], home=tmp_path, passive=True, budget=1)
+    elapsed = time.monotonic() - started
+    # Assert
+    assert elapsed < 1.5
+
+
+def test_passive_fifo_cache_retains_its_alias(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    # Assert
+    assert rows[0]["aliases"] == account.aliases
+
+
+def test_passive_fifo_cache_performs_no_provider_request(tmp_path):
+    # Arrange
+    account = targets()[1]
+    account.auth_path = tmp_path / "provider-invocation"
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    collect([account], home=tmp_path, passive=True, budget=2, fetcher=recording_fetch)
+    # Assert
+    assert not account.auth_path.exists()
+
+
+def test_fifo_does_not_hide_another_current_cache(tmp_path):
+    # Arrange
+    accounts = targets()
+    path = cache_path(tmp_path, accounts[0])
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    cache_path(tmp_path, accounts[1]).write_text(json.dumps(known_fetch(accounts[1], 0)))
+    # Act
+    rows = collect(accounts, home=tmp_path, passive=True, budget=2)
+    # Assert
+    assert rows[1]["usage_state"] == "known"
+
+
+def test_valid_oversized_cache_is_not_trusted(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(known_fetch(account, 0)) + " " * 65536)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    # Assert
+    assert rows[0]["usage_state"] == "unknown"
+
+
+def test_malformed_oversized_cache_stays_row_local(tmp_path):
+    # Arrange
+    accounts = targets()
+    path = cache_path(tmp_path, accounts[0])
+    path.parent.mkdir(parents=True)
+    path.write_text("{" + "x" * 131072)
+    cache_path(tmp_path, accounts[1]).write_text(json.dumps(known_fetch(accounts[1], 0)))
+    # Act
+    rows = collect(accounts, home=tmp_path, passive=True, budget=2)
+    # Assert
+    assert rows[1]["usage_state"] == "known"
+
+
+def test_cache_symlink_is_not_followed(tmp_path):
+    # Arrange
+    account = targets()[1]
+    sentinel = tmp_path / "outside-cache"
+    sentinel.write_text(json.dumps(known_fetch(account, 0)))
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    path.symlink_to(sentinel)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    # Assert
+    assert rows[0]["usage_state"] == "unknown"
+
+
+def test_zero_budget_retains_every_unstarted_account(tmp_path):
+    # Arrange
+    accounts = targets()
+    # Act
+    rows = collect(accounts, home=tmp_path, budget=0)
+    # Assert
+    assert [row["qualified_id"] for row in rows] == ["opencode-go:" + account.name for account in accounts]
+
+
+def test_blocking_cache_write_is_bounded(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    started = time.monotonic()
+    # Act
+    collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    elapsed = time.monotonic() - started
+    # Assert
+    assert elapsed < 1.5
+
+
+def test_blocking_cache_write_does_not_hide_observed_metrics(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    rows = collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    # Assert
+    assert rows[0]["usage_state"] == "known"
+
+
+def test_blocking_cache_write_leaves_no_owned_child(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    before = {process.pid for process in multiprocessing.active_children()}
+    # Act
+    collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    new_pids = {process.pid for process in multiprocessing.active_children()} - before
+    # Assert
+    assert new_pids == set()
