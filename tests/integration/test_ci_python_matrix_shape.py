@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -24,7 +25,30 @@ def _load(path: Path) -> dict:
 
 
 def _matrix_raw(path: Path, job: str = "test") -> object:
-    return _load(path)["jobs"][job]["strategy"]["matrix"]["python-version"]
+    definition = _load(path)["jobs"][job]
+    if path == RELEASE_WORKFLOW and "uses" in definition:
+        # The shared matrix owns execution; the release proof independently
+        # requires completed current-run jobs for every literal supported minor.
+        assert definition["uses"] == (
+            "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main"
+        )
+        assert definition["with"]["suite"] == "matrix"
+        source = ast.parse((REPO_ROOT / ".github/ci/release-identity.py").read_text())
+        witness = next(
+            node
+            for node in source.body
+            if isinstance(node, ast.FunctionDef) and node.name == "run_witness"
+        )
+        versions = [
+            ast.literal_eval(node.iter)
+            for node in ast.walk(witness)
+            if isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "version"
+        ]
+        assert len(versions) == 1
+        return list(versions[0])
+    return definition["strategy"]["matrix"]["python-version"]
 
 
 def _key(version: str) -> tuple[int, ...]:
@@ -116,8 +140,11 @@ def test_release_runs_the_full_supported_set():
 
 
 def test_release_matrix_carries_no_event_condition():
-    """The release must not be able to inherit a narrowed list by reference or
-    by condition -- the half-applied shape this fleet keeps getting caught by."""
+    """Every release must admit all three genuine current-run job witnesses.
+
+    Execution moved to the fixed shared matrix; its PR narrowing cannot reduce
+    the tag-push/dispatch release proof's unconditional three-minor requirement.
+    """
     # Arrange
     raw = _matrix_raw(RELEASE_WORKFLOW)
 
