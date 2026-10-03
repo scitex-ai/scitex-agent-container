@@ -219,6 +219,7 @@ async def _push_channel_event(
     try:
         from mcp.shared.message import SessionMessage
         from mcp.types import JSONRPCMessage, JSONRPCNotification
+        from pydantic import TypeAdapter
     except ImportError as exc:
         raise ImportError(
             "SAC MCP dependencies are unavailable; install "
@@ -262,7 +263,9 @@ async def _push_channel_event(
         params = _build_notification(event)
         content = params.get("content", "")
         if isinstance(content, str) and content.strip():
-            msg = JSONRPCMessage(
+            # SDK 1.x declares a RootModel; SDK 2.x declares a union.
+            # Validate the declared wire type without calling a union.
+            msg = TypeAdapter(JSONRPCMessage).validate_python(
                 JSONRPCNotification(
                     jsonrpc="2.0",
                     method="notifications/claude/channel",
