@@ -1,9 +1,8 @@
 {% comment %}
-Shared Agents fleet content. Included by:
-  * fleet.html        (standalone: inside scitex_ui/standalone_shell.html)
-  * fleet_hub.html    (Hub: inside global_base.html — no second header)
+Shared Agents fleet content. Included by fleet.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 `url_base` is the app's mount prefix ("" at root, "/apps/agents" when
-mounted) so the per-row links are correct in both modes.
+mounted) so the per-row links are correct at any mount.
 {% endcomment %}
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}">
   <header class="agents-head">
