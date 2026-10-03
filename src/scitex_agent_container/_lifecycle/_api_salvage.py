@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from .._reconcile._budget import Budget, read_history, save_history
+from ._selected_harness import SelectedRuntimeFence, require_selected_runtime
 
 RECOVERY_NOTICE = (
     "You were restarted after an API account failure. Ephemeral subagents may "
@@ -102,7 +103,15 @@ def _selected_identity(config):
     )
 
 
-def _restart(config, identity: SalvageIdentity, *, registry=None, restart=None):
+def _restart(
+    config,
+    identity: SalvageIdentity,
+    *,
+    registry=None,
+    restart=None,
+    expected_runtime: SelectedRuntimeFence | None = None,
+    observe_runtime: Callable[[object], SelectedRuntimeFence] | None = None,
+):
     """Resolve the real successor before entering the ordinary restart seam.
 
     The optional registry and restart callable are the same owned filesystem
@@ -117,18 +126,35 @@ def _restart(config, identity: SalvageIdentity, *, registry=None, restart=None):
     entry = registry.get(identity.agent)
     path = entry["config"] if entry is not None else resolve_config(identity.agent)
     successor = load_config(path)
+    selection = {}
+    if successor.harness != identity.harness:
+        if expected_runtime is None or observe_runtime is None:
+            raise ValueError("salvage-canonical-successor-mismatch")
+        successor = load_config(
+            path, harness_override=identity.harness, engine_override=identity.engine
+        )
+        selection["harness_override"] = identity.harness
     engine = select_engine(successor.engines, identity.engine)
     if engine is not None:
         apply_engine(successor, engine)
-    # A caller's in-memory Hermes override is not the declaration the ordinary
-    # restart reopens. Refuse its stale default before that path can stop anyone.
+    # A per-call projection requires a real owned observation. A mere in-memory
+    # override still cannot stop the canonical native runtime.
     if successor.harness != "hermes" or _selected_identity(
         successor
     ) != _selected_identity(config):
         raise ValueError("salvage-canonical-successor-mismatch")
+    if expected_runtime is not None or observe_runtime is not None:
+        require_selected_runtime(successor, expected_runtime, observe_runtime)
+        selection.update(
+            expected_runtime=expected_runtime, observe_runtime=observe_runtime
+        )
     restart = restart if restart is not None else agent_restart
     return restart(
-        identity.agent, registry, engine_override=identity.engine, probe_engine=False
+        identity.agent,
+        registry,
+        engine_override=identity.engine,
+        probe_engine=False,
+        **selection,
     )
 
 
@@ -146,13 +172,17 @@ def salvage_once(
     history: Path | None = None,
     restart: Callable[[object, SalvageIdentity], object] = _restart,
     now: float | None = None,
+    expected_runtime: SelectedRuntimeFence | None = None,
+    observe_runtime: Callable[[object], SelectedRuntimeFence] | None = None,
 ) -> dict:
     """Restart at most once, then require a real fenced tool/nonce observation.
 
-    The selected canonical declaration must already match the live API harness
-    and engine; an old default-Codex spec is not an implicit Hermes override.
+    The selected declaration must match the live API harness and engine. A
+    default-Codex spec requires the owning controller's complete runtime fence
+    and observer for an explicit, already-declared Hermes projection.
     ``verify`` delivers RECOVERY_NOTICE through the existing owned route and
-    observes one server-issued challenge. Its failure is WAIT, never a retry.
+    observes one real Hermes RPC and Cards/tool nonce checkpoint. Its failure
+    is WAIT, never a retry; Codex rollout capture cannot prove a Hermes turn.
     The normal restart still owns provider admission, teardown, bot/session
     preservation, native pool selection, and the target namespace Python gate.
     """
@@ -183,6 +213,32 @@ def salvage_once(
         or not identity.boot_id
     ):
         raise ValueError("salvage-selected-runtime-mismatch")
+    if expected_runtime is not None and (
+        not isinstance(expected_runtime, SelectedRuntimeFence)
+        or (
+            expected_runtime.agent,
+            expected_runtime.instance_id,
+            expected_runtime.session_id,
+            expected_runtime.boot_id,
+            expected_runtime.harness,
+            expected_runtime.engine,
+            expected_runtime.provider,
+            expected_runtime.model,
+            expected_runtime.account,
+        )
+        != (
+            identity.agent,
+            identity.instance_id,
+            identity.session_id,
+            identity.boot_id,
+            identity.harness,
+            identity.engine,
+            identity.provider,
+            identity.model,
+            failed_account,
+        )
+    ):
+        raise ValueError("salvage-owned-route-mismatch")
     declared = config.hermes_failover.accounts.get(config.engine_key, [])
     aliases = [row.account for row in accounts]
     if (
@@ -260,7 +316,15 @@ def salvage_once(
         # fixed WAIT checkpoint at runtime/<agent>/api-salvage.json; private
         # exception text is never persisted and the spent budget is retained)
         try:
-            restarted = restart(config, identity)
+            if restart is _restart:
+                restarted = _restart(
+                    config,
+                    identity,
+                    expected_runtime=expected_runtime,
+                    observe_runtime=observe_runtime,
+                )
+            else:
+                restarted = restart(config, identity)
         except Exception:
             result["reason"] = "restart-failed"
             _write_checkpoint(checkpoint, result)
