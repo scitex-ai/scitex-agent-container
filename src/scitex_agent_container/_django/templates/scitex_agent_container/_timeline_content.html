@@ -1,6 +1,7 @@
 {% comment %}
-Shared activity-timeline content. Included by timeline.html (standalone) and
-timeline_hub.html (Hub), so the surface works in both mounts.
+Shared activity-timeline content. Included by timeline.html, which extends the
+SDK adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content,
+so the surface works at any mount.
 
 The timeline is a PROJECTION of signals SAC already published. Nothing here
 invents activity: an agent the control plane cannot be asked about renders as

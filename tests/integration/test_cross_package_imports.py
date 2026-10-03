@@ -41,7 +41,6 @@ import pytest
 
 # ===== AUTO-GENERATED: cross-package imports =====
 CROSS_PACKAGE_IMPORTS = [
-    'scitex_app._django',
     'scitex_cards',
     'scitex_cards._mirror_rows',
     'scitex_cards._throughput',

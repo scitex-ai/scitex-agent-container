@@ -379,7 +379,7 @@ def test_fleet_labels_action_column(client, loopback, env_save_restore):
     CACHE.clear()
 
 
-# ── dual-mode: mounted in the Hub shell (global_base) not the standalone shell ─
+# ── host mount: the host shadows the SDK adapter, the leaf serves content only ─
 def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
@@ -387,6 +387,7 @@ def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     html = hub_client.get("/apps/agents/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
+    assert "agents-app" in html
 
 
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):

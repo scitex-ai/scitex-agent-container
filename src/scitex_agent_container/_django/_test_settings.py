@@ -1,7 +1,7 @@
 """Django settings for the Agents GUI test suite.
 
 Used only when the GUI tests are run (``DJANGO_SETTINGS_MODULE`` is pointed at
-this module). It mirrors what ``scitex_app._standalone.run_standalone`` builds
+this module). It mirrors what ``scitex_sdk.app.embed.run_standalone`` builds
 for the live server, so tests exercise the same app, not a divergent config.
 """
 
@@ -14,6 +14,7 @@ USE_TZ = True
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
+    "scitex_sdk.app",
     "scitex_sdk.ui",
     "scitex_agent_container._django.apps.AgentContainerDashboardConfig",
 ]

@@ -6,7 +6,7 @@
   "icon": "fas fa-robot",
   "subtitle": "Scoped fleet status for SciTeX agents",
   "about": "A browser projection of the scitex-agent-container host control plane. Ordinary identities see and control only their own node's agents; cross-host fleet access requires explicit, separately-listed operator authorization and is recorded in an audit trail.",
-  "description": "SciTeX Agents renders the SAC host control plane (sac listen) as a server-rendered fleet dashboard under the shared scitex-ui shell. It is a projection, not a second state store: every read and lifecycle mutation goes through the committed public listener surface, and the view scopes each row to the acting identity before rendering.",
+  "description": "SciTeX Agents renders the SAC host control plane (sac listen) as a server-rendered fleet dashboard under the shared scitex-sdk shell. It is a projection, not a second state store: every read and lifecycle mutation goes through the committed public listener surface, and the view scopes each row to the acting identity before rendering.",
   "author": "ywatanabe",
   "license": "AGPL-3.0-only",
   "capabilities": [
@@ -24,7 +24,6 @@
     "python": [
       "scitex-agent-container",
       "django",
-      "scitex-app",
       "scitex-sdk"
     ]
   },
