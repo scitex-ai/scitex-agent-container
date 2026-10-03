@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 import traceback
@@ -24,6 +25,11 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
 from ._instances import resolve_local_stop_instance
 from ._runtime_select import _get_runtime
+from ._selected_harness import (
+    SelectedRuntimeFence,
+    require_selected_runtime,
+    require_selected_stop_target,
+)
 
 logger = slogging.getLogger(__name__)
 
@@ -73,6 +79,9 @@ def agent_stop(
     drain_timeout_s: float = 0.0,
     allow_active_turn_kill: bool | None = None,
     managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
+    harness_override: str | None = None,
+    engine_override: str | None = None,
+    expected_runtime: SelectedRuntimeFence | None = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -124,8 +133,14 @@ def agent_stop(
 
     # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
-        config = load_config(entry["config"])
+        config = load_config(
+            entry["config"],
+            harness_override=harness_override,
+            engine_override=engine_override,
+        )
     except Exception as validation_error:  # stx-allow: fallback (reason: an upgraded validator must not strand an already-running process)
+        if harness_override is not None:
+            raise
         try:
             config = _load_config_for_teardown(entry["config"], name)
         except Exception:  # stx-allow: fallback (reason: an absent/unparseable spec leaves no safe runtime target; force may release only the stale registry row)
@@ -147,6 +162,8 @@ def agent_stop(
     is_tui_runtime = isinstance(runtime, TuiSessionRuntime)
     instance_resolver = stop_instance_resolver or resolve_local_stop_instance
     stop_instance = instance_resolver(config, runtime) if is_tui_runtime else None
+    if expected_runtime is not None:
+        require_selected_stop_target(expected_runtime, stop_instance)
     if is_tui_runtime:
         from ._stop_outcome import (
             has_complete_scope_ownership,
@@ -364,6 +381,9 @@ def agent_restart(
     probe_engine: bool | None = None,
     drain_timeout_s: float = 0.0,
     managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
+    harness_override: str | None = None,
+    expected_runtime: SelectedRuntimeFence | None = None,
+    observe_runtime: Callable[[AgentConfig], SelectedRuntimeFence] | None = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -489,6 +509,27 @@ def agent_restart(
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
+    selection = {"harness_override": harness_override} if harness_override else {}
+    if harness_override is not None and (
+        not math.isfinite(wait_for_stop_timeout_s) or wait_for_stop_timeout_s <= 0
+    ):
+        raise ValueError("selected-harness-stop-verification-required")
+    fenced = (
+        harness_override is not None
+        or expected_runtime is not None
+        or observe_runtime is not None
+    )
+    if fenced:
+        selected = load_config(
+            config_path,
+            harness_override=harness_override,
+            engine_override=engine_override,
+        )
+        from ._engine_select import select_engine_at_start
+
+        select_engine_at_start(selected, engine_override, probe=False, log=False)
+        require_selected_runtime(selected, expected_runtime, observe_runtime)
+
     # PRE-STOP auth pre-flight (INCIDENT
     # incident-agent-self-restart-one-way-20260712). Resolve + PROBE the
     # credential the SUCCESSOR container will launch on BEFORE stopping. A
@@ -510,7 +551,9 @@ def agent_restart(
     if successor_auth_check is not None:
         successor_auth_check(config_path)
     else:
-        preflight_from_config_path(config_path, engine_override=engine_override)
+        preflight_from_config_path(
+            config_path, engine_override=engine_override, **selection
+        )
 
     # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
     # reason the credential pre-flight above does. ``agent_start`` refuses
@@ -523,7 +566,9 @@ def agent_restart(
     # one-way-trip guard this stands beside.
     from ._engine_select import check_engine_before_stop
 
-    check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+    check_engine_before_stop(
+        config_path, engine_override, probe=probe_engine, **selection
+    )
 
     if runtime_factory is None:
         from ..runtimes._native_tui_admission import (
@@ -531,8 +576,17 @@ def agent_restart(
         )
 
         preflight_native_tui_from_config_path(
-            config_path, engine_override=engine_override
+            config_path, engine_override=engine_override, **selection
         )
+
+    if fenced:
+        selected = load_config(
+            config_path,
+            harness_override=harness_override,
+            engine_override=engine_override,
+        )
+        select_engine_at_start(selected, engine_override, probe=False, log=False)
+        require_selected_runtime(selected, expected_runtime, observe_runtime)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
@@ -548,6 +602,9 @@ def agent_restart(
         # state; it is NOT operator consent to kill an active model turn.
         allow_active_turn_kill=False,
         managed_turn_probe=managed_turn_probe,
+        **({"expected_runtime": expected_runtime} if fenced else {}),
+        **({"engine_override": engine_override} if selection else {}),
+        **selection,
     )
     # Escalate (SIGKILL) or RAISE — never "proceed to start anyway" into a
     # collision this gate already knows is coming. See ._stop_escalate.
@@ -559,6 +616,8 @@ def agent_restart(
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         timeout_s=wait_for_stop_timeout_s,
+        **({"engine_override": engine_override} if selection else {}),
+        **selection,
     )
     # ``assume_yes=True`` — a restart is an ALREADY-authorized action: the
     # ``sac agents restart`` CLI refuses without ``-y`` (see
@@ -621,4 +680,5 @@ def agent_restart(
         # test_lifecycle.py each leaked a monitor that fired ~90 s later
         # into an unrelated test's caplog (develop red, 2026-08-24).
         thread_factory=thread_factory,
+        **selection,
     )

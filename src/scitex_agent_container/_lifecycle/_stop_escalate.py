@@ -159,9 +159,7 @@ def _send_sigkill(pid: int, *, kill_fn: Callable[[int, int], None]) -> bool:
         )
         return False
     except OSError:
-        logger.error(
-            "stop-escalation: SIGKILL of pid %s failed", pid, exc_info=True
-        )
+        logger.error("stop-escalation: SIGKILL of pid %s failed", pid, exc_info=True)
         return False
 
 
@@ -258,6 +256,8 @@ def ensure_previous_runtime_down(
     timeout_s: float,
     settle_s: float = _DEFAULT_SIGKILL_SETTLE_S,
     kill_fn: Callable[[int, int], None] = os.kill,
+    harness_override: str | None = None,
+    engine_override: str | None = None,
 ) -> None:
     """Guarantee the previous runtime is DOWN, or raise.
 
@@ -278,13 +278,21 @@ def ensure_previous_runtime_down(
     the new container surfaces the real parse error when it boots.
     """
     if timeout_s <= 0:
+        if harness_override is not None:
+            raise ValueError("selected-harness-stop-verification-required")
         sleep_fn(2)
         return
     # Load once: the config is stable across the gate, and re-loading per
     # poll would multiply YAML parsing on a busy host.
     try:
-        config = load_config(config_path)
+        config = load_config(
+            config_path,
+            harness_override=harness_override,
+            engine_override=engine_override,
+        )
     except Exception:  # stx-allow: fallback (reason: YAML may have been edited mid-restart; fall back to the legacy fixed sleep instead of blocking the restart on a transient parse error — the new container surfaces the real error when it boots)
+        if harness_override is not None:
+            raise
         sleep_fn(2)
         return
     factory = runtime_factory or _get_runtime
