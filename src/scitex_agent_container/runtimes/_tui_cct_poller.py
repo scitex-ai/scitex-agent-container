@@ -196,9 +196,7 @@ def _poller_env(
         raise TuiCctPollerError("managed CCT poller has no resolved CCT_BOT_TOKEN")
     port = resolved_a2a_port(config)
     if port is None:
-        raise TuiCctPollerError(
-            "managed CCT poller requires a resolved spec.a2a.port"
-        )
+        raise TuiCctPollerError("managed CCT poller requires a resolved spec.a2a.port")
     turn_url = f"http://127.0.0.1:{port}/v1/turn"
     env["CCT_TURN_URL"] = turn_url
     env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] = turn_url
@@ -316,11 +314,16 @@ def start_cct_poller(
     stop: Callable[..., bool] = stop_cct_poller,
     preflight: Callable[[dict[str, Any], dict[str, str]], None] = _preflight_cct,
     sleep: Callable[[float], None] = time.sleep,
+    replace_existing: bool = True,
 ) -> int | None:
     """Start SAC's one managed TUI poller, or no-op when CCT is unselected."""
     if not cct_requested(config):
         return None
     state = state_dir or state_dir_for_config(config)
+    if not replace_existing:
+        from ._tui_recovery_guard import refuse_existing_helper
+
+        refuse_existing_helper(state / PID_FILENAME, "CCT poller")
     home = state / "home"
     entry = _mcp_entry(home)
     argv = _poller_argv(entry)
@@ -330,7 +333,8 @@ def start_cct_poller(
     # Idempotent singleton boundary: retire SAC's previous owned process before
     # creating its successor. CCT's token pidfile independently resolves a race
     # with an MCP-spawned predecessor using its newest-wins takeover protocol.
-    stop(config, state_dir=state)
+    if replace_existing:
+        stop(config, state_dir=state)
     log_handle = open(state / LOG_FILENAME, "ab")
     try:
         process = spawn(

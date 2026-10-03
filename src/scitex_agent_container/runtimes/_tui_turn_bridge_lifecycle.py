@@ -114,6 +114,7 @@ def start_turn_bridge(
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], float] = time.monotonic,
     port_free_fn: Callable[[str, int], bool] = port_is_free,
+    replace_existing: bool = True,
 ) -> int | None:
     """Spawn the detached turn bridge for ``config``; return its PID or None.
 
@@ -121,8 +122,9 @@ def start_turn_bridge(
     Best-effort spawn: a failure is logged + swallowed (a dead bridge must
     not block agent start); the ``spawn`` seam lets tests assert the argv.
 
-    We ALWAYS :func:`stop_turn_bridge` first (one-bridge-per-agent invariant)
-    AND then POLL until the a2a port is bindable before spawning. On the
+    Normal start stops its prior bridge first and then polls until the a2a
+    port is bindable. ``replace_existing=False`` instead refuses any retained
+    helper claim and never stops it (same-process bootstrap completion). On the
     2026-07-09 restart port-collision incident the old holder still owned the
     port when the new child bound it → ``EADDRINUSE`` crash → agent stranded.
     If the port cannot be freed within ``port_free_timeout_s`` we FAIL LOUD
@@ -140,6 +142,10 @@ def start_turn_bridge(
         return None
     if host is None:
         host = resolved_a2a_host(config)
+    if not replace_existing:
+        from ._tui_recovery_guard import refuse_existing_helper
+
+        refuse_existing_helper(_pid_path(config), "turn bridge")
     # Tear down any prior bridge for THIS agent, now also WAITING for it to
     # release the port. ``force_free_survivors=False`` — at START the port's
     # holder is UNKNOWN (could be a foreign service that grabbed the configured
@@ -147,14 +153,15 @@ def start_turn_bridge(
     # ``ensure_port_free_or_raise`` gate below is the deliberate REFUSE-and-warn
     # for that case. Auto-killing the own-port holder is safe only on the
     # genuine STOP path (see ``force_free_own_port``'s safety invariant).
-    stop_turn_bridge(
-        config,
-        host=host,
-        sleep_fn=sleep_fn,
-        now_fn=now_fn,
-        port_free_fn=port_free_fn,
-        force_free_survivors=False,
-    )
+    if replace_existing:
+        stop_turn_bridge(
+            config,
+            host=host,
+            sleep_fn=sleep_fn,
+            now_fn=now_fn,
+            port_free_fn=port_free_fn,
+            force_free_survivors=False,
+        )
     # Bounded wait for the port to be bindable BEFORE we spawn — covers the
     # async shutdown tail AND an untracked/orphaned holder. Fails loud instead
     # of spawning a child into an EADDRINUSE crash.

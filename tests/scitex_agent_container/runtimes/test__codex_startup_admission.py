@@ -314,3 +314,68 @@ def test_default_runtime_requires_launch_identity_before_pasting_to_ready_input(
     # Assert
     with pytest.raises(CodexActivityError, match="allocated launch UUID"):
         runtime._inject_startup_prompts(config)
+
+
+class _StuckComposeMux:
+    """A real captured composer which never clears despite synthetic Esc keys."""
+
+    def __init__(self):
+        self.pastes = []
+
+    def exists(self, _name):
+        return True
+
+    def capture_content(self, _name):
+        return "❯ retained old mission\n? for shortcuts\n"
+
+    def send_keys(self, *_args):
+        return None
+
+    def send_text_literal(self, _name, text):
+        self.pastes.append(text)
+
+
+class _FastRealClearRuntime(TuiSessionRuntime):
+    def _clear_compose_buffer(self, name, **_kwargs):
+        from scitex_agent_container.runtimes._tui_compose import clear_compose_buffer
+
+        return clear_compose_buffer(
+            name,
+            capture_fn=self._mux.capture_content,
+            send_keys_fn=lambda key: self._mux.send_keys(name, key),
+            max_attempts=1,
+            poll_s=0,
+            sleep_fn=lambda _seconds: None,
+        )
+
+    def _verify_submitted(self, *_args, **_kwargs):
+        return False
+
+
+def test_real_failed_compose_clear_refuses_before_any_native_mission_paste():
+    # Arrange
+    mux = _StuckComposeMux()
+    runtime = _FastRealClearRuntime(multiplexer=mux, command_builder=lambda _config: [])
+    config = AgentConfig(
+        name=AGENT, harness="codex", runtime="tui", startup_prompts=[MISSION]
+    )
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="compose buffer was not cleared"):
+        runtime._inject_startup_prompts(config)
+
+
+def test_real_failed_compose_clear_refuses_before_any_native_mission_paste_preserves_state():
+    # Arrange
+    mux = _StuckComposeMux()
+    runtime = _FastRealClearRuntime(multiplexer=mux, command_builder=lambda _config: [])
+    config = AgentConfig(
+        name=AGENT, harness="codex", runtime="tui", startup_prompts=[MISSION]
+    )
+    # Act
+    try:
+        runtime._inject_startup_prompts(config)
+    except RuntimeError:
+        pass
+    # Assert
+    assert mux.pastes == []

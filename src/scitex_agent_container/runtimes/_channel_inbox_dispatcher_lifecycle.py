@@ -264,6 +264,7 @@ def start_inbox_dispatcher(
     state_dir: Path | None = None,
     stop: Callable[..., bool] = stop_inbox_dispatcher,
     sleep: Callable[[float], None] = time.sleep,
+    replace_existing: bool = True,
 ) -> int:
     """Start one explicit-ack consumer after its declared rails are reachable."""
     channels = declared_durable_channels(config)
@@ -275,6 +276,13 @@ def start_inbox_dispatcher(
         raise RuntimeError("channel inbox delivery requires a resolved spec.a2a.port")
     if not config_path:
         raise RuntimeError("channel inbox delivery requires config.config_path")
+    if not replace_existing:
+        from ._tui_recovery_guard import refuse_existing_helper
+
+        refuse_existing_helper(
+            (state_dir or state_dir_for_config(config)) / PID_FILENAME,
+            "inbox dispatcher",
+        )
     bearer = bearer or _read_listen_bearer()
     if not bearer:
         raise RuntimeError(
@@ -289,7 +297,8 @@ def start_inbox_dispatcher(
     if "server:scitex-cards" in channels:
         cards_env, cards_store = effective_cards_store(config)
         cards_preflight(config.name, cards_store, cards_env)
-    stop(config)
+    if replace_existing:
+        stop(config)
     base_url = (base_url or listen_base_url()).rstrip("/")
     stream_url = f"{base_url}/agents/{config.name}/inbox/stream?ack=explicit"
     preflight(stream_url, bearer)

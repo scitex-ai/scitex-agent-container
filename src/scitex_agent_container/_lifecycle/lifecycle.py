@@ -40,6 +40,7 @@ from __future__ import annotations
 
 # Re-export the hooks symbol tests patch via ``lc.run_hook``.
 from ..hooks import run_hook
+from ._bootstrap_complete import complete_native_bootstrap
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._runtime_select import _fallback_workdir, _get_runtime
@@ -50,6 +51,7 @@ from ._stop import agent_restart, agent_stop, agent_stop_all
 
 __all__ = [
     "agent_start",
+    "complete_native_bootstrap",
     "agent_stop",
     "agent_stop_all",
     "agent_restart",
