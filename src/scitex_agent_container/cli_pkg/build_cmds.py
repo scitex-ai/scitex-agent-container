@@ -7,6 +7,8 @@ import subprocess
 import sys
 
 import click
+from rich.cells import cell_len
+from rich.text import Text
 
 from .._logging import render_rich
 from ..config import load_config, resolve_config, validate_config
@@ -286,7 +288,10 @@ def _check_host_route(config) -> bool:
         return False
 
     where = "this machine" if route.kind == "local" else f"peer {route.peer}"
-    render_rich(f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]", __name__)
+    # Keep the resolved host and its route verdict in one searchable record.
+    # At 80 columns even a valid 31-byte hostname splits "this machine".
+    line = f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]"
+    render_rich(line, __name__, width=max(80, cell_len(Text.from_markup(line).plain)))
     return True
 
 
