@@ -11,6 +11,7 @@ import json
 import multiprocessing
 import os
 import re
+import stat
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from .provider_usage_http import fetch
 from .provider_usage_projection import safe_snapshot
 
 _ALIASES = re.compile(r"^(COMMANDCODE_API_KEY(?:_[A-Za-z0-9]+)?|OPENCODE_GO_API_KEY(?:_[A-Za-z0-9]+)?)$")
+_CACHE_BYTES = 65536
 
 
 @dataclass
@@ -69,8 +71,17 @@ def _cache_path(home, target):
 
 
 def _cached(path, now):
+    """Read a bounded regular cache file, refusing links, FIFOs and devices."""
     try:
-        return safe_snapshot(json.loads(path.read_text()), now)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _CACHE_BYTES:
+                return None
+            data = stream.read(_CACHE_BYTES + 1)
+            if len(data) > _CACHE_BYTES:
+                return None
+        return safe_snapshot(json.loads(data), now)
     except (OSError, ValueError, TypeError):
         return None
 
@@ -89,12 +100,27 @@ def _save(path, snapshot):
             Path(temporary).unlink(missing_ok=True)
 
 
-def _worker(send, target, deadline, fetcher):
+def _worker(send, target, deadline, fetcher, path, passive, refresh, observed, cache_writer):
+    """Own all potentially blocking cache and network I/O within one budget."""
+    row = _row(target, error="metadata-not-observed")
     try:
-        send.send(fetcher(target, deadline))
+        cached = _cached(path, observed)
+        row = _row(target, cached, "metadata-not-observed" if cached is None else None)
+        send.send((False, row))
+        needs_fetch = not passive and (refresh or cached is None or cached["usage_state"] != "known")
+        if needs_fetch:
+            if time.monotonic() >= deadline:
+                row["error"] = "metadata-deadline"
+            else:
+                row = _result_row(target, row, fetcher(target, deadline))
+        # Publish usable metrics before best-effort cache writes. A stalled
+        # mount may be killed without hiding an already-observed provider row.
+        send.send((True, row))
+        if needs_fetch and row["usage_state"] == "known" and row["fetchedAt"] is not None:
+            cache_writer(path, safe_snapshot(row, datetime.now(timezone.utc)))
     # stx-allow: fallback (reason: untrusted provider failure must only affect its row; never stringify private exception data)
     except Exception:
-        send.send({"error": "metadata-worker-failed"})
+        send.send((True, _result_row(target, row, {"error": "metadata-worker-failed"})))
     finally:
         send.close()
 
@@ -115,23 +141,45 @@ def _row(target, snapshot=None, error=None):
     }
 
 
+def _result_row(target, previous, result):
+    """Merge only allowlisted observations, retaining older failed-refresh data."""
+    safe = safe_snapshot(result, datetime.now(timezone.utc))
+    error = result.get("error") if isinstance(result, dict) else None
+    if error not in {None, "metadata-worker-failed", "metadata-deadline",
+                     "metadata-unavailable", "authentication-refused",
+                     "subscription-auth-unavailable", "subscription-auth-unreadable",
+                     "credential-expired-refresh-not-performed"} and not (
+        isinstance(error, str) and re.fullmatch(r"http-[0-9]{3}", error)
+    ):
+        error = "metadata-unavailable"
+    if safe is not None and safe["usage_state"] == "known":
+        return _row(target, safe, error)
+    row = previous
+    if safe is not None and row["fetchedAt"] is None:
+        row = _row(target, safe, error or "metadata-not-observed")
+    row["error"] = error or "metadata-not-observed"
+    if row["usage_state"] == "known":
+        row["usage_state"] = "stale"
+        for item in row["windows"]:
+            if item["state"] == "known":
+                item["state"] = "stale"
+    return row
+
+
 def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
-            fetcher=fetch, now=None):
-    """Keep each account visible, cache-only when passive, hard-stop owned probes."""
+            fetcher=fetch, now=None, cache_writer=_save):
+    """Bound provider collection only, including cache I/O; not the whole CLI."""
     root = Path(home) if home is not None else Path.home()
     observed = now or datetime.now(timezone.utc)
     # Reserve bounded worker cleanup inside the requested overall budget.
     deadline = time.monotonic() + max(0, min(4.0, budget) - 0.25)
-    rows, pending = [], []
-    for target in targets:
-        cached = _cached(_cache_path(root, target), observed)
-        rows.append(_row(target, cached, "metadata-not-observed" if cached is None else None))
-        if not passive and (refresh or cached is None or cached["usage_state"] != "known"):
-            pending.append((len(rows) - 1, target))
+    rows = [_row(target, error="metadata-not-observed") for target in targets]
+    pending = list(enumerate(targets))
     if not pending:
         return rows
     context = multiprocessing.get_context("spawn")
     active = {}
+    completed = set()
     try:
         while pending or active:
             if time.monotonic() >= deadline:
@@ -139,7 +187,10 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             while pending and len(active) < 4 and time.monotonic() < deadline:
                 index, target = pending.pop(0)
                 receive, send = context.Pipe(duplex=False)
-                process = context.Process(target=_worker, args=(send, target, deadline, fetcher), daemon=True)
+                process = context.Process(target=_worker, args=(
+                    send, target, deadline, fetcher, _cache_path(root, target),
+                    passive, refresh, observed, cache_writer,
+                ), daemon=True)
                 try:
                     process.start()
                 except (OSError, RuntimeError):
@@ -152,38 +203,29 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             for index, (process, receive, target) in list(active.items()):
                 if receive.poll():
                     try:
-                        result = receive.recv()
+                        final, result = receive.recv()
                     except (EOFError, OSError):
-                        result = {"error": "metadata-worker-failed"}
-                    safe = safe_snapshot(result, now or datetime.now(timezone.utc))
-                    error = result.get("error") if isinstance(result, dict) else None
-                    if error not in {None, "metadata-worker-failed", "metadata-deadline",
-                                     "metadata-unavailable", "authentication-refused",
-                                     "subscription-auth-unavailable", "subscription-auth-unreadable",
-                                     "credential-expired-refresh-not-performed"} and not (
-                        isinstance(error, str) and re.fullmatch(r"http-[0-9]{3}", error)
-                    ):
-                        error = "metadata-unavailable"
-                    if safe is not None and safe["usage_state"] == "known":
-                        rows[index] = _row(target, safe, error)
-                        _save(_cache_path(root, target), safe)
-                    else:
-                        if safe is not None and rows[index]["fetchedAt"] is None:
-                            rows[index] = _row(target, safe, error or "metadata-not-observed")
-                        rows[index]["error"] = error or "metadata-not-observed"
-                        if rows[index]["usage_state"] == "known":
-                            rows[index]["usage_state"] = "stale"
-                            for item in rows[index]["windows"]:
-                                if item["state"] == "known":
-                                    item["state"] = "stale"
-                    receive.close()
-                    process.join(timeout=0.02)
-                    if process.is_alive():
-                        process.terminate()
-                        process.join(timeout=0.05)
-                    del active[index]
+                        if index not in completed:
+                            rows[index]["error"] = "metadata-worker-failed"
+                        receive.close()
+                        process.join(timeout=0.02)
+                        if process.is_alive():
+                            process.terminate()
+                            process.join(timeout=0.02)
+                        if process.is_alive():
+                            process.kill()
+                            process.join(timeout=0.02)
+                        del active[index]
+                        continue
+                    if result.get("qualified_id") is not None:
+                        rows[index] = result
+                    elif index not in completed:
+                        rows[index]["error"] = "metadata-worker-failed"
+                    if final:
+                        completed.add(index)
                 elif not process.is_alive():
-                    rows[index]["error"] = "metadata-worker-failed"
+                    if index not in completed:
+                        rows[index]["error"] = "metadata-worker-failed"
                     receive.close()
                     process.join(timeout=0.02)
                     del active[index]
@@ -193,9 +235,13 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                 time.sleep(0.01)
     finally:
         for index, (process, receive, _) in active.items():
-            rows[index]["error"] = "metadata-deadline"
-            if rows[index]["fetchedAt"] is not None:
-                rows[index]["usage_state"] = "stale"
+            if index not in completed:
+                rows[index]["error"] = "metadata-deadline"
+                if rows[index]["fetchedAt"] is not None:
+                    rows[index]["usage_state"] = "stale"
+                    for item in rows[index]["windows"]:
+                        if item["state"] == "known":
+                            item["state"] = "stale"
             receive.close()
             if process.is_alive():
                 process.terminate()
