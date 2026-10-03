@@ -263,11 +263,16 @@ def annotate_observation_rows(
     result = []
     for row in rows:
         name = row.get("name")
-        authority = captured.get(name)
+        local_row = row.get("host") in (None, "", local_host)
+        authority = captured.get(name) if local_row else None
         if authority is None:
             handshake = HandshakeSnapshot(
                 state="unknown",
-                reason=reasons.get(name, "authority_unknown"),
+                reason=(
+                    reasons.get(name, "authority_unknown")
+                    if local_row
+                    else "authority_unknown"
+                ),
                 page=page,
             )
         elif not valid_clock:
