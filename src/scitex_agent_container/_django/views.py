@@ -83,18 +83,13 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
 def _hub_shell_available() -> bool:
     """Whether the Hub's ``global_base.html`` resolves: the platform signal.
 
-    A nonempty mount prefix is LOCATION, not platform — a standalone server
-    behind a subpath proxy has one too. The Hub layout owns
-    ``global_base.html``; standalone trees (this package plus the SDK) do
-    not ship it, so resolvability tells which shell owns the header.
+    Delegates to the generic SDK contract (``scitex_sdk.ui.mount.is_hub_hosted``)
+    rather than hand-rolling Hub detection: a nonempty mount prefix is LOCATION,
+    not platform — a standalone server behind a subpath proxy has one too.
     """
-    from django.template import engines
+    from scitex_sdk.ui.mount import is_hub_hosted
 
-    try:
-        engines["django"].get_template("global_base.html")
-    except Exception:
-        return False
-    return True
+    return is_hub_hosted()
 
 
 def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tuple[dict, bool]:

@@ -421,7 +421,7 @@ def test_standalone_uses_standalone_shell(client, loopback, env_save_restore):
 
 
 # ── polish: real scitex-ui tokens + action-column styling (file-based) ─────────
-def test_css_uses_real_scitex_ui_tokens():
+def test_css_uses_real_scitex_sdk_tokens():
     # Arrange
     css = (Path(__file__).resolve().parents[3] / "src" / "scitex_agent_container" / "_django" / "static" / "scitex_agent_container" / "agents.css").read_text(encoding="utf-8")
     # Act
