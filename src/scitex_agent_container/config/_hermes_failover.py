@@ -14,6 +14,7 @@ from ._harness_types import resolve_spec_harness
 class HermesFailoverSpec:
     accounts: dict[str, list[str]] = field(default_factory=dict)
     engines: list[str] = field(default_factory=list)
+    strategy: str = "fill_first"
 
 
 def parse_selected_hermes_failover(spec: Mapping) -> HermesFailoverSpec:
@@ -31,10 +32,17 @@ def parse_selected_hermes_failover(spec: Mapping) -> HermesFailoverSpec:
         {},
     )
     raw = entry.get("failover", {})
-    if not isinstance(raw, Mapping) or set(raw) - {"accounts", "engines"}:
-        raise ValueError("Hermes failover must be a mapping with accounts and engines")
+    if not isinstance(raw, Mapping) or set(raw) - {"accounts", "engines", "strategy"}:
+        raise ValueError(
+            "Hermes failover must be a mapping with accounts, engines and strategy"
+        )
     accounts = raw.get("accounts", {})
     engines = raw.get("engines", [])
+    strategy = raw.get("strategy", "fill_first")
+    if strategy not in ("fill_first", "round_robin"):
+        raise ValueError("Hermes failover.strategy must be fill_first or round_robin")
+    if strategy != "fill_first" and not accounts:
+        raise ValueError("Hermes balanced selection requires declared account pools")
     if not isinstance(accounts, Mapping):
         raise ValueError(
             "Hermes failover.accounts must map engine keys to env-name lists"
@@ -62,10 +70,13 @@ def parse_selected_hermes_failover(spec: Mapping) -> HermesFailoverSpec:
             for n in names
         ):
             raise ValueError(
-                "Hermes failover accounts must name environment variables, never key values"
+                "Hermes failover accounts must name environment variables, "
+                "never key values"
             )
         if len(set(names)) != len(names):
             raise ValueError(f"Hermes failover.accounts.{key} repeats an env name")
     return HermesFailoverSpec(
-        accounts={k: list(v) for k, v in accounts.items()}, engines=list(engines)
+        accounts={k: list(v) for k, v in accounts.items()},
+        engines=list(engines),
+        strategy=strategy,
     )

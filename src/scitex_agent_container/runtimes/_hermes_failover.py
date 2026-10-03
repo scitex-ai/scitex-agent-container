@@ -33,7 +33,7 @@ def resolve_primary_key(config, resolver):
 
 
 def configure_failover(
-    config, rendered: dict
+    config, rendered: dict, *, credential_resolver=resolve_provider_api_key
 ) -> tuple[dict[str, str], dict[str, DeclaredPool]]:
     """Compile only declared routes; unresolved routes fail before profile writes."""
     policy = config.hermes_failover
@@ -83,7 +83,7 @@ def configure_failover(
         for name in names:
             credential_config = deepcopy(route)
             credential_config.claude.provider.auth_token_env = name
-            token = resolve_provider_api_key(credential_config).strip()
+            token = credential_resolver(credential_config).strip()
             if not token or any(c in token for c in "\r\n"):
                 raise ValueError(
                     f"Hermes failover credential {name} is empty or contains a newline"
@@ -111,7 +111,8 @@ def configure_failover(
             rows.append(row)
         if provider in pools:
             raise ValueError(
-                f"Hermes failover repeats provider pool {provider!r}; use one account list"
+                f"Hermes failover repeats provider pool {provider!r}; "
+                "use one account list"
             )
         auth_env = route.claude.provider.auth_token_env
         seeded_envs = {
@@ -131,7 +132,7 @@ def configure_failover(
         if compiled["providers"]:
             env[route.claude.provider.auth_token_env] = rows[0]["access_token"]
     rendered["credential_pool_strategies"] = {
-        provider: "fill_first" for provider in pools
+        provider: policy.strategy for provider in pools
     }
     logger.info(
         "Hermes failover configured: %s; account labels: %s",
