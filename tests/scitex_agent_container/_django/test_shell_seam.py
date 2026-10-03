@@ -84,10 +84,10 @@ def test_host_shadow_maps_the_content_block_into_host_chrome(client, loopback, e
     shadow_dir = tmp_path / "host_templates" / "scitex_sdk" / "app"
     shadow_dir.mkdir(parents=True)
     (shadow_dir / "app_shell.html").write_text(
-        "<html><head>{% block extra_css %}{% endblock %}"
-        "{% block extra_js %}{% endblock %}</head>"
+        "<html><head>{% block extra_css %}{% endblock %}</head>"
         "<body data-host-chrome='1'>"
         "{% block scitex_app_content %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}"
         "</body></html>",
         encoding="utf-8",
     )

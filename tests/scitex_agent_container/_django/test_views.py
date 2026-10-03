@@ -398,6 +398,7 @@ def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, en
     html = hub_client.get("/apps/agents/timeline/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "timeline.js" in html
+    assert html.index("timeline.js") > html.index('data-page="timeline"')
 
 
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):

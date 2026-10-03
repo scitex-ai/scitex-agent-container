@@ -251,10 +251,10 @@ def hub_client(tmp_path, env_save_restore):
     templates_dir = tmp_path / "hub_templates" / "scitex_sdk" / "app"
     templates_dir.mkdir(parents=True)
     (templates_dir / "app_shell.html").write_text(
-        '<html><head>{% block extra_css %}{% endblock %}'
-        "{% block extra_js %}{% endblock %}</head>"
+        '<html><head>{% block extra_css %}{% endblock %}</head>'
         '<body><div id="hub-global-header">HUB-SHELL</div>'
-        "{% block scitex_app_content %}{% endblock %}</body></html>",
+        "{% block scitex_app_content %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}</body></html>",
         encoding="utf-8",
     )
     test_urls = tmp_path / "hub_test_urls.py"
