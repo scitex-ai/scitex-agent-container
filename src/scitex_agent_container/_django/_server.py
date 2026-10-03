@@ -1,7 +1,7 @@
 """Standalone server adapter for the Agents dashboard.
 
 Boots the SAME Django app a host mounts (``scitex_agent_container._django``)
-via ``scitex_app.embed``. The guarded launcher (``serve_gui``) records runtime
+via ``scitex_sdk.app.embed``. The guarded launcher (``serve_gui``) records runtime
 state so ``gui status`` / ``gui stop`` and ``--force`` work.
 """
 
@@ -23,7 +23,7 @@ def _run_server(
     hot_reload: bool = False,
 ) -> None:
     try:
-        from scitex_app.embed import run_standalone
+        from scitex_sdk.app.embed import run_standalone
     except ImportError as exc:
         raise ImportError(
             "SAC GUI dependencies are unavailable; install "
@@ -58,7 +58,7 @@ def run_server(
     host: str = "127.0.0.1",
     hot_reload: bool = False,
 ) -> Callable[[], None]:
-    """A zero-arg blocking callable for :func:`scitex_app.embed.serve_gui`."""
+    """A zero-arg blocking callable for :func:`scitex_sdk.app.embed.serve_gui`."""
     return partial(
         _run_server, port=port, host=host, open_browser=False, hot_reload=hot_reload
     )
@@ -75,7 +75,7 @@ def serve(
 ) -> int:
     """Launch the guarded standalone server. Returns an exit code."""
     try:
-        from scitex_app.embed import serve_gui
+        from scitex_sdk.app.embed import serve_gui
     except ImportError as exc:
         raise ImportError(
             "SAC GUI dependencies are unavailable; install "

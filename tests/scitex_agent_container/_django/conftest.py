@@ -243,15 +243,18 @@ def audit_log(env_save_restore, tmp_path):
 @pytest.fixture
 def hub_client(tmp_path, env_save_restore):
     """A client whose urlconf mounts the app under /apps/agents/ and whose
-    global_base.html is a minimal stub proving content lands in the Hub shell
-    (not the standalone shell). Uses override_settings + a tmp test urlconf —
-    no monkeypatch."""
-    templates_dir = tmp_path / "hub_templates"
-    templates_dir.mkdir()
-    (templates_dir / "global_base.html").write_text(
-        '<html><head>{% block head_extra %}{% endblock %}{% block extra_css %}{% endblock %}'
-        '</head><body><div id="hub-global-header">HUB-SHELL</div>'
-        '{% block content %}{% endblock %}</body></html>',
+    host shadows the documented SDK adapter (``scitex_sdk/app/app_shell.html``)
+    with a project-DIRS template mapping ``scitex_app_content`` into host
+    chrome — proving content lands in the host shell (not the standalone
+    shell) with no leaf change and no host-named template in the package.
+    Uses override_settings + a tmp test urlconf — no monkeypatch."""
+    templates_dir = tmp_path / "hub_templates" / "scitex_sdk" / "app"
+    templates_dir.mkdir(parents=True)
+    (templates_dir / "app_shell.html").write_text(
+        '<html><head>{% block extra_css %}{% endblock %}</head>'
+        '<body><div id="hub-global-header">HUB-SHELL</div>'
+        "{% block scitex_app_content %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}</body></html>",
         encoding="utf-8",
     )
     test_urls = tmp_path / "hub_test_urls.py"
@@ -265,7 +268,7 @@ def hub_client(tmp_path, env_save_restore):
         with override_settings(
             TEMPLATES=[{
                 "BACKEND": "django.template.backends.django.DjangoTemplates",
-                "DIRS": [str(templates_dir)],
+                "DIRS": [str(tmp_path / "hub_templates")],
                 "APP_DIRS": True,
                 "OPTIONS": {"context_processors": ["django.template.context_processors.request"]},
             }],

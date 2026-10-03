@@ -3,18 +3,17 @@
 Read-only by default. A view never invents state: it asks the listener, scopes
 the result to the caller, and projects it. Control is a separate, gated path.
 
-DUAL MODE. The same views render two ways, chosen by the mount prefix (derived
-with scitex-ui's ``mount_prefix`` — the single source of truth):
+ONE TEMPLATE PER PAGE. Every page template extends the documented SDK adapter
+``scitex_sdk/app/app_shell.html`` and fills its ``scitex_app_content`` block
+(the adapter delegates to the SDK-owned UI shell). This package names no host
+shell: a host maps the content block into its own chrome by shadowing
+``scitex_sdk/app/app_shell.html`` with a project-DIRS template (project DIRS
+win); standalone serving (``sac gui serve``) uses the SDK-owned shell through
+the same adapter. The mount prefix (via the SDK's ``mount_prefix`` SSOT) is
+LOCATION for content links and the lifecycle redirect, never a platform signal.
 
-* **Standalone** (root mount, ``sac gui serve``): extend the full
-  ``scitex_ui/standalone_shell.html`` (``fleet.html`` / ``detail.html``).
-* **Mounted in SciTeX Hub** (``/apps/agents/``): extend the Hub's
-  ``global_base.html`` (``fleet_hub.html`` / ``detail_hub.html``), which already
-  renders the header + nav. This is what makes "no duplicate header, no project
-  switcher" true: the package supplies content only, the Hub supplies the shell.
-
-Per-row links and the lifecycle redirect use ``url_base`` so they are correct in
-both modes.
+Per-row links and the lifecycle redirect use ``url_base`` so they are correct
+at any mount.
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ from ._timeline import (
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
-    """The app's mount prefix for the route currently rendering, via scitex-ui's
+    """The app's mount prefix for the route currently rendering, via the SDK's
     SSOT. ``view_path`` must be the route this view is registered under (relative
     to the app root) — ``mount_prefix`` subtracts it from ``request.path`` to
     recover the prefix, and raises on a mismatch (a wiring bug), so this is
@@ -68,7 +67,7 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
     are correct whether the app is standalone (base "") or mounted (base
     "/apps/agents")."""
     try:
-        from scitex_ui.mount import mount_prefix
+        from scitex_sdk.ui.mount import mount_prefix
     except ImportError as exc:
         raise ImportError(
             "SAC GUI dependencies are unavailable; install "
@@ -82,10 +81,14 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
 
 def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
-    """Context for the standalone shell only (mounted mode uses global_base)."""
+    """Context for the SDK app-shell adapter (both standalone and host-shadowed).
+
+    Supplies the shell vars the adapter's UI shell needs (title, panes, mount
+    marker). All three side panes are unused: this is a server-rendered fleet
+    table, not a file workspace. Declaring them unused is the SDK branding API."""
     try:
-        from scitex_ui.branding import shell_context
-        from scitex_ui.mount import mount_context
+        from scitex_sdk.ui.branding import shell_context
+        from scitex_sdk.ui.mount import mount_context
     except ImportError as exc:
         raise ImportError(
             "SAC GUI dependencies are unavailable; install "
@@ -93,7 +96,7 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
         ) from exc
 
     # All three side panes are unused: this is a server-rendered fleet table,
-    # not a file workspace. Declaring them unused is the scitex-ui API.
+    # not a file workspace. Declaring them unused is the SDK branding API.
     panes = {"ai": "unused", "files": "unused", "viewer": "unused"}
     ctx = dict(shell_context(title, accent="agents", panes=panes))
     try:
@@ -103,25 +106,24 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     return ctx
 
 
-def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tuple[dict, bool]:
-    """Build the render context and decide mounted (hub) vs standalone.
+def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> dict:
+    """Build the render context for the documented SDK app-shell adapter.
 
-    Returns ``(context, is_standalone)``. ``url_base`` is the app's mount prefix
-    (no trailing slash — the templates add it), derived for the route currently
-    rendering. Because the four routes all share the same mount prefix, this is
-    the same value on every view: "" at a root (standalone) mount, e.g.
-    "/apps/agents" when mounted in the Hub. A non-empty base means we are
-    mounted in the Hub, whose ``global_base`` owns the header.
+    Every page renders the SAME leaf template, which extends
+    ``scitex_sdk/app/app_shell.html`` and fills ``scitex_app_content``. There
+    is no Hub-vs-standalone branch in this package: a host maps the content
+    block into its own chrome by shadowing ``scitex_sdk/app/app_shell.html``
+    with a project-DIRS template (project DIRS win); standalone serving uses
+    the SDK-owned shell through the same adapter. ``url_base`` is the app's
+    mount prefix (no trailing slash — the templates add it), derived for the
+    route currently rendering; it is LOCATION for content links, never a
+    platform signal.
     """
     base = _mount_base(request, view_path)
     ctx = dict(data)
     ctx["url_base"] = base
-    if base == "":
-        ctx.update(_shell_context(request, title, view_path))
-        return ctx, True
-    # Mounted in the Hub: global_base owns the header/nav; the package renders
-    # content only, so there is no duplicate header and no project switcher.
-    return ctx, False
+    ctx.update(_shell_context(request, title, view_path))
+    return ctx
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
@@ -196,7 +198,7 @@ def index(request: HttpRequest):
         on_error=_record_failure,
     )
 
-    context, is_standalone = _app_context(
+    context = _app_context(
         request,
         "Agents",
         view_path="",
@@ -216,7 +218,7 @@ def index(request: HttpRequest):
         fleet_state=fleet_state,
         diagnostic_reason="the control plane did not answer" if fleet_state == "unavailable" else "",
     )
-    template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
+    template = "scitex_agent_container/fleet.html"
     return render(request, template, context)
 
 
@@ -245,7 +247,7 @@ def timeline(request: HttpRequest):
         agent=agent_filter if isinstance(agent_filter, str) and agent_filter else None,
         kind=kind_filter if isinstance(kind_filter, str) and kind_filter else None,
     )
-    context, is_standalone = _app_context(
+    context = _app_context(
         request,
         "Agents · Activity",
         view_path="timeline/",
@@ -262,11 +264,7 @@ def timeline(request: HttpRequest):
         comm_error=comm_error,
         page="timeline",
     )
-    template = (
-        "scitex_agent_container/timeline.html"
-        if is_standalone
-        else "scitex_agent_container/timeline_hub.html"
-    )
+    template = "scitex_agent_container/timeline.html"
     return render(request, template, context)
 
 
@@ -382,11 +380,11 @@ def detail(request: HttpRequest, name: str):
     if row is None:
         # Not own-scope (hidden) or genuinely absent. We do not reveal which —
         # an ordinary caller simply does not see cross-host agents.
-        context, is_standalone = _app_context(
+        context = _app_context(
             request, f"Agent · {name}", view_path=f"{name}/",
             agent=None, identity=identity, list_error=list_error, not_found=True, page="detail",
         )
-        template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+        template = "scitex_agent_container/detail.html"
         return render(request, template, context)
     try:
         status = fleet.read_status(name)
@@ -397,7 +395,7 @@ def detail(request: HttpRequest, name: str):
     agent.update(_detail_extras(fleet, name, status))
     from ._control import CONTROL_KEYS, new_dispatch_id
 
-    context, is_standalone = _app_context(
+    context = _app_context(
         request, f"Agent · {name}", view_path=f"{name}/",
         agent=agent,
         identity=identity,
@@ -409,7 +407,7 @@ def detail(request: HttpRequest, name: str):
         list_error=list_error,
         page="detail",
     )
-    template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+    template = "scitex_agent_container/detail.html"
     return render(request, template, context)
 
 
@@ -611,7 +609,7 @@ def launch(request: HttpRequest):
     identity = resolve_identity(request)
     allowed = can_control(identity, cross_host=False, request=request)
     if request.method == "GET":
-        context, is_standalone = _app_context(
+        context = _app_context(
             request,
             "Agents · Launch",
             view_path="launch/",
@@ -619,7 +617,7 @@ def launch(request: HttpRequest):
             can_launch=allowed,
             page="launch",
         )
-        template = "scitex_agent_container/launch.html" if is_standalone else "scitex_agent_container/launch_hub.html"
+        template = "scitex_agent_container/launch.html"
         return render(request, template, context)
 
     value = request.POST.get("name", "")
@@ -891,7 +889,7 @@ def create_agent(request: HttpRequest):
     allowed = can_control(fleet_identity, cross_host=False, request=request)
     if request.method == "GET":
         inline, dir_templates, templates_error = _create_template_choices()
-        context, is_standalone = _app_context(
+        context = _app_context(
             request,
             "Agents · Create",
             view_path="create/",
@@ -902,7 +900,7 @@ def create_agent(request: HttpRequest):
             templates_error=templates_error,
             page="create",
         )
-        template = "scitex_agent_container/create.html" if is_standalone else "scitex_agent_container/create_hub.html"
+        template = "scitex_agent_container/create.html"
         return render(request, template, context)
 
     # POST — scaffold through the CLI's own backend.
@@ -1063,7 +1061,7 @@ def a2a_panel(request: HttpRequest):
     except Exception:  # stx-allow: fallback (reason: per-agent reachability degrades to unknown)
         statuses = {}
     grants, grants_error = _read_grants()
-    context, is_standalone = _app_context(
+    context = _app_context(
         request,
         "Agents · A2A",
         view_path="a2a/",
@@ -1077,7 +1075,7 @@ def a2a_panel(request: HttpRequest):
         comm_error=comm_error,
         page="a2a",
     )
-    template = "scitex_agent_container/a2a.html" if is_standalone else "scitex_agent_container/a2a_hub.html"
+    template = "scitex_agent_container/a2a.html"
     return render(request, template, context)
 
 

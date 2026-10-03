@@ -1,7 +1,8 @@
 {% comment %}
-Shared Agents launch content. Included by launch.html (standalone shell) and
-launch_hub.html (Hub global_base). `url_base` is the app mount prefix so the
-back link and the form action are correct in both modes.
+Shared Agents launch content. Included by launch.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
+`url_base` is the app mount prefix so the
+back link and the form action are correct at any mount.
 
 CREATE in the lifecycle sense: start a PRE-REGISTERED spec by name on this
 node. The form carries a name only — never an inline spec (a spec written
