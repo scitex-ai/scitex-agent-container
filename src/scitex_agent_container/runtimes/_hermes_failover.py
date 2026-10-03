@@ -32,6 +32,21 @@ def resolve_primary_key(config, resolver):
     return resolver(credential_config)
 
 
+def spread_declared_accounts(agent: str, provider: str, rows: list[dict]) -> list[dict]:
+    """Spread the initial native pool position using public identity only.
+
+    Hermes owns subsequent rotation and model-scoped cooldowns. A restart must
+    not clear those states or seed every fleet member at the same first key.
+    """
+    if len(rows) < 2:
+        return rows
+    offset = int.from_bytes(
+        hashlib.sha256((agent + "\0" + provider).encode()).digest()[:8], "big"
+    ) % len(rows)
+    ordered = rows[offset:] + rows[:offset]
+    return [{**row, "priority": priority} for priority, row in enumerate(ordered)]
+
+
 def configure_failover(
     config, rendered: dict
 ) -> tuple[dict[str, str], dict[str, DeclaredPool]]:
@@ -125,13 +140,16 @@ def configure_failover(
                 "config:" + p["name"] for p in compiled["providers"].values()
             )
             suppressed.append("model_config")
-        pools[provider] = DeclaredPool(rows, suppressed)
+        pools[provider] = DeclaredPool(
+            spread_declared_accounts(config.name, provider, rows), suppressed
+        )
         # Custom routes resolve their key_env before attaching the pool. Native
         # routes use the pool directly; keep their unpooled base alias absent.
         if compiled["providers"]:
             env[route.claude.provider.auth_token_env] = rows[0]["access_token"]
     rendered["credential_pool_strategies"] = {
-        provider: "fill_first" for provider in pools
+        provider: "round_robin" if len(pool.credentials) > 1 else "fill_first"
+        for provider, pool in pools.items()
     }
     logger.info(
         "Hermes failover configured: %s; account labels: %s",
