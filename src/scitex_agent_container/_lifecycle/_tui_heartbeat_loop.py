@@ -296,6 +296,14 @@ def _beat_one(
             state=_TUI_HEARTBEAT_STATE,
             ts=float(activity),
             writer="listen-tui-observer",
+            authoritative_fields={
+                "work_state": "unknown",
+                "work_source": "typed-runtime-events-unavailable",
+                "pane_activity_at": float(activity),
+                "capacity_status": "unknown",
+                "capped": None,
+                "current_phase": "",
+            },
         )
         return True
     except Exception as exc:  # stx-allow: fallback (per-agent best-effort: one failure must not abort the tick — logged to stderr, skipped)

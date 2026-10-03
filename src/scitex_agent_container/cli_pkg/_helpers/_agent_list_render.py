@@ -166,23 +166,32 @@ def _print_auth_footer(data: list[dict]) -> None:
     failed = [r for r in live if r.get("auth_failed")]
     hint = "run `sac agents auth-status` (or put it on a timer)"
     if not ages:
-        render_rich(Text(
+        render_rich(
+            Text(
                 "auth: never checked — a green agent is NOT verified "
-                f"working, only tmux-alive; {hint}",
+                f"working; process and work observations are separate; {hint}",
                 style="yellow",
-            ), __name__)
+            ),
+            __name__,
+        )
         return
     freshest = min(ages)
     if freshest > STALE_AFTER_S:
-        render_rich(Text(
+        render_rich(
+            Text(
                 f"auth: last checked {_fmt_age(freshest)} ago (STALE) — "
                 f"green is no longer verified; {hint}",
                 style="yellow",
-            ), __name__)
+            ),
+            __name__,
+        )
     else:
         unchecked = len(live) - len(ages)
         extra = f", {unchecked} unchecked" if unchecked else ""
-        render_rich(Text(f"auth: checked {_fmt_age(freshest)} ago{extra}", style="dim"), __name__)
+        render_rich(
+            Text(f"auth: checked {_fmt_age(freshest)} ago{extra}", style="dim"),
+            __name__,
+        )
     if failed:
         detail = ", ".join(
             f"{terminal_safe(r['name'])} "
@@ -190,10 +199,13 @@ def _print_auth_footer(data: list[dict]) -> None:
             f"{terminal_safe(r.get('auth_remedy') or 'restart')})"
             for r in failed
         )
-        render_rich(Text(
+        render_rich(
+            Text(
                 f"{len(failed)} agent(s) cannot authenticate: {detail}",
                 style="bold red",
-            ), __name__)
+            ),
+            __name__,
+        )
 
 
 def print_agent_list_json(
@@ -228,10 +240,19 @@ def _is_ghost_row(row: dict) -> bool:
     also stays visible so the operator can see and fix it.
     """
     host = row.get("host") or "local"
+    if (row.get("observation") or {}).get("process") == "alive":
+        return False
     if host not in ("local", ""):
         return False
     errors = row.get("validation_errors") or []
     return any("File not found" in str(e) for e in errors)
+
+
+def _compact_visible(row: dict) -> bool:
+    """Keep current canonical UNKNOWN visible without claiming it is alive."""
+    return is_live_status(row.get("status")) or (
+        (row.get("observation") or {}).get("canonical_instance_present") is True
+    )
 
 
 def _print_hidden_footer(
@@ -274,6 +295,8 @@ def _print_hidden_footer(
         render_rich(Text(message, style="dim"), __name__)
     else:
         render_rich(Text(f"({summary} hidden — -v for all)", style="dim"), __name__)
+
+
 def print_agent_list(
     registry: Registry | None,
     capability: str | None = None,
@@ -332,7 +355,7 @@ def print_agent_list(
         hidden_ghosts = len(data) - len(kept)
         data = kept
 
-    # DEFAULT view shows ONLY LIVE agents; `-v`/`--all` show the full roster.
+    # Default includes current canonical UNKNOWN; -v/--all show the full roster.
     # Tally the hidden non-live rows by status for the footer.
     #
     # ``is_live_status`` — NOT ``== "running"``. An ``auth-failed`` agent IS
@@ -341,16 +364,19 @@ def print_agent_list(
     show_full = verbose or show_all
     status_hidden: dict[str, int] = {}
     if not show_full:
-        live = [r for r in data if is_live_status(r.get("status"))]
+        live = [r for r in data if _compact_visible(r)]
         for r in data:
             st = r.get("status") or "unknown"
-            if not is_live_status(st):
+            if not _compact_visible(r):
                 status_hidden[st] = status_hidden.get(st, 0) + 1
         data = live
 
     if not data:
         if show_full:
-            render_rich("[dim]No active agents (all hidden as stale; --all to show).[/dim]", __name__)
+            render_rich(
+                "[dim]No active agents (all hidden as stale; --all to show).[/dim]",
+                __name__,
+            )
         else:
             _print_hidden_footer(status_hidden, hidden_ghosts, none_running=True)
         return
@@ -370,6 +396,7 @@ def print_agent_list(
     # Provenance is part of the compact claim: without it a spec declaration
     # and a launch-bound selection look identical.
     table.add_column("Identity source", overflow="fold")
+    table.add_column("Work", overflow="fold")
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
     # the cell rather than stealing width from the name column.
     # Account folds the long ``<name> (<email>)`` label to ~5 lines; show the
@@ -431,6 +458,9 @@ def print_agent_list(
             ),
             Text(terminal_safe(row.get("runtime_identity_source") or "unknown")),
         ]
+        from ._agent_observation_render import work_cell
+
+        cells.append(Text(work_cell(row)))
         if verbose:
             cells.append(Text(account_cell))
         if verbose:
@@ -441,6 +471,13 @@ def print_agent_list(
         table.add_row(*cells)
 
     render_rich(table, __name__, width=console.width)
+
+    from ._agent_observation_render import detail_lines
+
+    for row in data:
+        if verbose:
+            for line in detail_lines(row, min(3, int(verbose))):
+                click.echo(line)
 
     # Thirteen verbose columns collapse to unreadable one-character cells on a
     # narrow terminal.  Preserve every operator-facing identity/start value in
@@ -475,7 +512,9 @@ def print_agent_list(
                 heading = f"✗ {terminal_safe(row['name'])} validation errors:"
                 render_rich(Text(heading, style="bold red"), __name__)
                 for err in row["validation_errors"]:
-                    render_rich(Text(f"    - {terminal_safe(err)}", style="red"), __name__)
+                    render_rich(
+                        Text(f"    - {terminal_safe(err)}", style="red"), __name__
+                    )
 
 
 def _extract_damaged_fields(errors: list[str]) -> list[str]:
