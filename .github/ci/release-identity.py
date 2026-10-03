@@ -645,13 +645,11 @@ def source_payload_identity(wheel_raw, sdist_raw, commit, source_root=Path("."))
     ):
         raise ValueError("reviewed SAC package mapping changed")
     expected = {}
-    source_paths = set(force)
     stamp_path = "src/scitex_agent_container/_provenance/_build_info.py"
     for path, (mode, oid) in entries.items():
         if mode not in {"100644", "100755"}:
             raise ValueError("unsupported public source member")
         if any(path.startswith(package + "/") for package in packages):
-            source_paths.add(path)
             if path != stamp_path:
                 expected[path.removeprefix("src/")] = bodies[oid]
     for source, destination in force.items():
@@ -744,18 +742,11 @@ def source_payload_identity(wheel_raw, sdist_raw, commit, source_root=Path("."))
             elif sdist.extractfile(item).read() != bodies[entries[relative][1]]:
                 raise ValueError("sdist public source bytes differ")
             actual.add(relative)
-        if not (
-            source_paths
-            | {
-                "README.md",
-                "CHANGELOG.md",
-                "LICENSE",
-                "pyproject.toml",
-                "scripts/hatch_build.py",
-                stamp_path,
-            }
-        ).issubset(actual):
-            raise ValueError("sdist public source membership is incomplete")
+        # The reviewed default Hatch selection includes every tracked regular
+        # source member. Its only extra payload is the normal generated stamp;
+        # PKG-INFO has already been independently bound to public metadata.
+        if actual != set(entries) | {stamp_path}:
+            raise ValueError("sdist public source membership differs")
     manifest = [
         {"path": name, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
         for name, body in sorted(expected.items())
