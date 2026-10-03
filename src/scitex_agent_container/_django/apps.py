@@ -18,6 +18,8 @@ from __future__ import annotations
 try:
     from scitex_sdk.app.embed import ScitexAppConfig
 except ImportError:  # scitex-sdk not installed — standalone still works
+    ScitexAppConfig = None
+if ScitexAppConfig is None:  # also None when scitex-sdk's own Django import is unavailable
     try:
         from django.apps import AppConfig as ScitexAppConfig
     except ImportError as exc:

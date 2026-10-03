@@ -97,12 +97,12 @@ sys.meta_path.insert(0, MissingDependencyFinder())
             "mcp",
         ),
         (
-            "scitex_app",
+            "scitex_sdk",
             "importlib.import_module('scitex_agent_container._django._server')._run_server()",
             "gui",
         ),
         (
-            "scitex_app",
+            "scitex_sdk",
             "importlib.import_module('scitex_agent_container._django._server').serve(package='synthetic', project_dir='/synthetic', port=0, host='127.0.0.1')",
             "gui",
         ),
@@ -122,12 +122,12 @@ sys.meta_path.insert(0, MissingDependencyFinder())
             "gui",
         ),
         (
-            "scitex_ui",
+            "scitex_sdk",
             "importlib.import_module('scitex_agent_container._django.views')._mount_base(None, '')",
             "gui",
         ),
         (
-            "scitex_ui",
+            "scitex_sdk",
             "importlib.import_module('scitex_agent_container._django.views')._shell_context(None, 'synthetic', '')",
             "gui",
         ),
@@ -153,7 +153,7 @@ def test_missing_optional_peer_raises_its_declared_extra_before_side_effects(
 
 def test_core_and_cli_groups_import_without_gui_or_mcp_peers():
     # Arrange
-    blocked = ("django", "scitex_app", "scitex_ui", "mcp", "fastmcp")
+    blocked = ("django", "scitex_sdk", "mcp", "fastmcp")
     body = "import scitex_agent_container\nimport scitex_agent_container.cli_pkg.gui_group\nimport scitex_agent_container.cli_pkg.mcp_group\nprint('core imports passed')\n"
     # Act
     result = _probe(body, blocked)
@@ -176,12 +176,12 @@ def test_real_mcp_tool_classes_are_used_when_peer_is_installed():
     assert tools and all(type(tool) is Tool for tool in tools)
 
 
-def test_real_django_app_config_survives_scitex_app_absence():
+def test_real_django_app_config_survives_scitex_sdk_absence():
     # Arrange
     pytest.importorskip("django")
     body = "from django.apps import AppConfig\nfrom scitex_agent_container._django.apps import AgentContainerDashboardConfig\nprint(issubclass(AgentContainerDashboardConfig, AppConfig))\n"
     # Act
-    result = _probe(body, ("scitex_app",))
+    result = _probe(body, ("scitex_sdk",))
     # Assert
     assert (result.returncode, result.stdout) == (0, "True\n"), result.stderr
 

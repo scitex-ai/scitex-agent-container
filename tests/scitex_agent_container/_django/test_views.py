@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from django.template.loader import render_to_string
 
 from scitex_agent_container import __path__ as _package_paths
@@ -386,9 +387,7 @@ def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Act
     html = hub_client.get("/apps/agents/").content.decode()
     # Assert
-    assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
-    assert "agents-app" in html
-    assert "agents.css" in html
+    assert 'id="hub-global-header"' in html and "workspace-three-col" not in html and "agents-app" in html and "agents.css" in html
 
 
 def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
@@ -397,8 +396,7 @@ def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, en
     # Act
     html = hub_client.get("/apps/agents/timeline/").content.decode()
     # Assert
-    assert 'id="hub-global-header"' in html and "timeline.js" in html
-    assert html.index("timeline.js") > html.index('data-page="timeline"')
+    assert 'id="hub-global-header"' in html and "timeline.js" in html and html.index("timeline.js") > html.index('data-page="timeline"')
 
 
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):
@@ -764,3 +762,95 @@ def test_mounted_launch_uses_hub_shell(hub_client, loopback, env_save_restore):
     html = hub_client.get("/apps/agents/launch/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
+
+
+# ── SDK app-shell seam: one template per page, no host branch ────────────────
+# Every leaf page extends scitex_sdk/app/app_shell.html and fills
+# scitex_app_content; a host re-chromes by shadowing the adapter.
+
+_SEAM_TEMPLATES = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "scitex_agent_container"
+    / "_django"
+    / "templates"
+    / "scitex_agent_container"
+)
+_SEAM_PAGES = ["fleet", "timeline", "detail", "launch", "create", "a2a"]
+_SEAM_ADAPTER = "scitex_sdk/app/app_shell.html"
+
+
+def test_no_template_names_a_host_shell():
+    # Arrange
+    bodies = [p.read_text(encoding="utf-8") for p in _SEAM_TEMPLATES.glob("*.html")]
+    # Act
+    offenders = [b for b in bodies if "global_base" in b]
+    # Assert
+    assert offenders == []
+
+
+def test_no_hub_templates_remain():
+    # Arrange
+    leftovers = list(_SEAM_TEMPLATES.glob("*_hub.html"))
+    # Act
+    pass
+    # Assert
+    assert leftovers == []
+
+
+@pytest.mark.parametrize("page", _SEAM_PAGES)
+def test_page_extends_the_sdk_adapter_and_fills_its_content_block(page):
+    # Arrange
+    body = (_SEAM_TEMPLATES / f"{page}.html").read_text(encoding="utf-8")
+    # Act
+    pass
+    # Assert
+    assert f'{{% extends "{_SEAM_ADAPTER}" %}}' in body and "{% block scitex_app_content %}" in body
+
+
+def test_app_config_uses_the_public_sdk_contract():
+    # Arrange
+    apps_py = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "scitex_agent_container"
+        / "_django"
+        / "apps.py"
+    ).read_text(encoding="utf-8")
+    # Act
+    pass
+    # Assert
+    assert "from scitex_sdk.app.embed import ScitexAppConfig" in apps_py and "scitex_app" not in apps_py
+
+
+def test_fleet_renders_through_the_sdk_shell(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert
+    assert 'name="stx-mount"' in html and "agents-app" in html and "agents.css" in html
+
+
+def test_host_shadow_maps_the_content_block_into_host_chrome(client, loopback, env_save_restore, tmp_path):
+    # Arrange
+    from django.test import override_settings
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    shadow_dir = tmp_path / "host_templates" / "scitex_sdk" / "app"
+    shadow_dir.mkdir(parents=True)
+    (shadow_dir / "app_shell.html").write_text(
+        "<html><head>{% block extra_css %}{% endblock %}</head>"
+        "<body data-host-chrome='1'>"
+        "{% block scitex_app_content %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    base_templates = list(__import__("django").conf.settings.TEMPLATES)
+    shadowed = [dict(base_templates[0], DIRS=[str(tmp_path / "host_templates")])]
+    # Act
+    with override_settings(TEMPLATES=shadowed):
+        html = client.get("/").content.decode()
+    # Assert
+    assert "data-host-chrome='1'" in html and "agents-app" in html and "agents.css" in html and 'name="stx-mount"' not in html
