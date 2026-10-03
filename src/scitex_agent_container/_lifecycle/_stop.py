@@ -509,16 +509,29 @@ def agent_restart(
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
-    selection = {"harness_override": harness_override} if harness_override else {}
-    if harness_override is not None and (
-        not math.isfinite(wait_for_stop_timeout_s) or wait_for_stop_timeout_s <= 0
-    ):
-        raise ValueError("selected-harness-stop-verification-required")
     fenced = (
         harness_override is not None
         or expected_runtime is not None
         or observe_runtime is not None
     )
+    if fenced:
+        if (
+            not isinstance(expected_runtime, SelectedRuntimeFence)
+            or observe_runtime is None
+        ):
+            raise ValueError("selected-harness-owned-runtime-required")
+        if not math.isfinite(wait_for_stop_timeout_s) or wait_for_stop_timeout_s <= 0:
+            raise ValueError("selected-harness-stop-verification-required")
+        # Matching-default Hermes still needs the same observed projection on
+        # stop/settle/start. It cannot drop the engine or the reappearance guard.
+        harness_override = (
+            expected_runtime.harness if harness_override is None else harness_override
+        )
+        engine_override = (
+            expected_runtime.engine if engine_override is None else engine_override
+        )
+
+    selection = {"harness_override": harness_override} if harness_override else {}
     if fenced:
         selected = load_config(
             config_path,
