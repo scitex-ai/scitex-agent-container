@@ -1,0 +1,16 @@
+name: member compute smoke
+
+on:
+  push:
+    branches:
+      - ci-runner-smoke-20261004
+
+permissions:
+  contents: read
+
+jobs:
+  member-compute:
+    uses: scitex-ai/.github/.github/workflows/organization-job.yml@refs/heads/main
+    with:
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
+      command: 'printf "runner_environment=%s\n" "$RUNNER_ENVIRONMENT"; hostname'
