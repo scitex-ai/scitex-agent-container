@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._loaders &mdash; scitex-agent-container v0.29.5</title>
+  <title>scitex_agent_container.config._claude_spec &mdash; scitex-agent-container v0.29.5</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -483,7 +483,7 @@
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
           <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
-      <li class="breadcrumb-item active">scitex_agent_container.config._loaders</li>
+      <li class="breadcrumb-item active">scitex_agent_container.config._claude_spec</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -492,482 +492,137 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>Source code for scitex_agent_container.config._loaders</h1><div class="highlight"><pre>
-<span></span><span class="sd">"""Config loader for scitex-agent-container/v3 YAML."""</span>
+  <h1>Source code for scitex_agent_container.config._claude_spec</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""``ClaudeSpec`` — the SINGLE-BACKEND ``spec.claude`` block.</span>
+
+<span class="sd">Extracted from ``_types.py`` under the project's 512-line per-file cap,</span>
+<span class="sd">exactly as ``_apptainer_spec`` / ``_proxy_types`` / ``_provider_types`` /</span>
+<span class="sd">``_acl_types`` were before it. ``_types`` re-exports the name, so every</span>
+<span class="sd">existing ``from ...config._types import ClaudeSpec`` keeps resolving.</span>
+
+<span class="sd">This is the block a spec writes when it runs ONE backend. The</span>
+<span class="sd">MULTI-backend surface is ``spec.engines`` (``config._engine_types``);</span>
+<span class="sd">the two compose — the selected engine is folded ONTO the fields below</span>
+<span class="sd">before the runtime is built, so every reader downstream of the loader</span>
+<span class="sd">sees one resolved backend and needs to know nothing about engines.</span>
+<span class="sd">"""</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">._engine_library</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_engine_namespace</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._engine_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_default_engine</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._explicit_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate</span> <span class="k">as</span> <span class="n">_validate_explicit_fields</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._harness_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_spec_harness</span><span class="p">,</span> <span class="n">uses_legacy_harness_key</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_background_review</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_background_review</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_compression</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_failover</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_failover</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_run_budget</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_run_budget</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_yolo</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_yolo</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">contains_hostname_placeholder</span><span class="p">,</span>
-    <span class="n">resolve_hostname</span><span class="p">,</span>
-    <span class="n">substitute_hostnames</span><span class="p">,</span>
-<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>
 
-<span class="c1"># The guarded direnv-allow startup command ``load_v3`` injects into every agent</span>
-<span class="c1"># lives in the</span>
-<span class="c1"># sibling ``_loader_startup_defaults`` module (extracted when this</span>
-<span class="c1"># orchestrator hit the per-file line cap). Re-imported here so every</span>
-<span class="c1"># existing consumer keeps its ``config._loaders`` import path.</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._loader_startup_defaults</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">DEFAULT_DIRENV_ALLOW_COMMAND</span><span class="p">,</span>  <span class="c1"># noqa: F401 (re-export)</span>
-    <span class="n">_with_default_direnv_allow</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_approval</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_opencode_approval_policy</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_run_budget</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_opencode_run_budget</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_serve</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_opencode_serve_port</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._parsers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">MODEL_ENV_KEY</span><span class="p">,</span>
-    <span class="n">interpolate_mcp_servers</span><span class="p">,</span>
-    <span class="n">parse_a2a</span><span class="p">,</span>
-    <span class="n">parse_apptainer</span><span class="p">,</span>
-    <span class="n">parse_autonomous</span><span class="p">,</span>
-    <span class="n">parse_claude</span><span class="p">,</span>
-    <span class="n">parse_comms</span><span class="p">,</span>
-    <span class="n">parse_container</span><span class="p">,</span>
-    <span class="n">parse_delegation</span><span class="p">,</span>
-    <span class="n">parse_extensions</span><span class="p">,</span>
-    <span class="n">parse_health</span><span class="p">,</span>
-    <span class="n">parse_hooks</span><span class="p">,</span>
-    <span class="n">parse_hosts_spec</span><span class="p">,</span>
-    <span class="n">parse_lineage</span><span class="p">,</span>
-    <span class="n">parse_listen</span><span class="p">,</span>
-    <span class="n">parse_proxy</span><span class="p">,</span>
-    <span class="n">parse_restart</span><span class="p">,</span>
-    <span class="n">parse_skills</span><span class="p">,</span>
-    <span class="n">parse_startup_commands</span><span class="p">,</span>
-    <span class="n">parse_watchdog</span><span class="p">,</span>
-    <span class="n">resolve_model_surface</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._python_venv</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_python_venv</span> <span class="k">as</span> <span class="n">_resolve_python_venv</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._residency_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_spec_residency</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">HostsSpec</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._workdir_hook</span><span class="w"> </span><span class="kn">import</span> <span class="n">mapped_workdir_mkdir_hook</span>
-
-<span class="c1"># Default workdir layout: sac's own state root. Per-agent runtime state</span>
-<span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
-<span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;effective-id&gt;/``. External</span>
-<span class="c1"># orchestrators that want a different layout can override via ``spec.workdir``.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">"~/.scitex/agent-container/runtime/agents/</span><span class="si">{name}</span><span class="s2">"</span>
-
-<span class="c1"># Host-aware fallback chain for `venv: auto` resolution.</span>
-<span class="c1"># Tried in order; first existing path wins. Empty string means no venv</span>
-<span class="c1"># activation (raw shell). The chain is intentionally short and biased</span>
-<span class="c1"># toward the conventions actually in use across the fleet (NAS/WSL =</span>
-<span class="c1"># ~/.venv-3.11, MBA = ~/.venv). Adding a new host with a different</span>
-<span class="c1"># convention requires extending this list.</span>
-<span class="c1">#</span>
-<span class="c1"># Filed via scitex-agent-container#40 (head-mba 2026-04-16) after the</span>
-<span class="c1"># fleet-lead.yaml `venv: auto` shell-source-fail incident on NAS</span>
-<span class="c1"># (head-nas msg#12877; head-mba msg#12879 root cause).</span>
-<span class="n">_VENV_AUTO_FALLBACK_CHAIN</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"~/.venv-3.11"</span><span class="p">,</span> <span class="s2">"~/.venv"</span><span class="p">)</span>
-
-<span class="c1"># Default workdir for an agent when ``spec.workdir`` is unset. Lives</span>
-<span class="c1"># under sac's own user-state tree (per the local-state-directories spec):</span>
-<span class="c1"># ``~/.scitex/agent-container/runtime/workspaces/&lt;name&gt;/`` holds the</span>
-<span class="c1"># materialized CLAUDE.md, .mcp.json, .claude/ for that agent.</span>
-<span class="n">_DEFAULT_WORKDIR_RUNTIME</span> <span class="o">=</span> <span class="s2">"~/.scitex/agent-container/runtime/agents/</span><span class="si">{name}</span><span class="s2">"</span>
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"ClaudeSpec"</span><span class="p">]</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_venv</span><span class="p">(</span><span class="n">venv</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Resolve `venv: auto` to the first existing virtualenv on this host.</span>
-
-<span class="sd">    Returns the original value unchanged unless it equals "auto" (case</span>
-<span class="sd">    insensitive). For "auto", probes ~/.venv-3.11 then ~/.venv and</span>
-<span class="sd">    returns the first one whose `bin/activate` exists. If none exist,</span>
-<span class="sd">    returns empty string (runtime treats as "no venv activation"), which</span>
-<span class="sd">    is still safer than letting the shell try to source a missing path.</span>
-<span class="sd">    """</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">venv</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">venv</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"auto"</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">venv</span>
-    <span class="k">for</span> <span class="n">candidate</span> <span class="ow">in</span> <span class="n">_VENV_AUTO_FALLBACK_CHAIN</span><span class="p">:</span>
-        <span class="k">if</span> <span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">()</span> <span class="o">/</span> <span class="s2">"bin"</span> <span class="o">/</span> <span class="s2">"activate"</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-            <span class="k">return</span> <span class="n">candidate</span>
-    <span class="k">return</span> <span class="s2">""</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_name_from_path</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Derive the agent name from the YAML path.</span>
-
-<span class="sd">    Convention: each agent lives in its own directory</span>
-<span class="sd">    ``&lt;name&gt;/spec.yaml``. The directory name IS the agent identifier —</span>
-<span class="sd">    single source of truth. YAMLs do not carry a redundant</span>
-<span class="sd">    ``metadata.name`` field, and the file is always named ``spec.yaml``.</span>
-<span class="sd">    """</span>
-    <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">name</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_parse_env_files</span><span class="p">(</span><span class="n">spec</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""Parse ``spec.env-file`` into a normalised list of path strings.</span>
-
-<span class="sd">    Accepts a string (single file) or a list of strings. Paths are</span>
-<span class="sd">    stored verbatim; relative paths are resolved at start time relative</span>
-<span class="sd">    to the workspace dir on the target host.</span>
-<span class="sd">    """</span>
-    <span class="n">raw</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"env-file"</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">raw</span><span class="p">:</span>
-        <span class="k">return</span> <span class="p">[]</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">raw</span><span class="p">]</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">raw</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"env-file list must contain strings, got: </span><span class="si">{</span><span class="n">raw</span><span class="si">!r}</span><span class="s2">"</span><span class="p">)</span>
-        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">"env-file must be a string or list of strings, got "</span>
-        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">raw</span><span class="si">!r}</span><span class="s2">"</span>
-    <span class="p">)</span>
-
-
-<div class="viewcode-block" id="compose_effective_name">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">compose_effective_name</span><span class="p">(</span>
-    <span class="n">raw_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hosts_spec</span><span class="p">:</span> <span class="n">HostsSpec</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Return the effective agent id given dir-derived name + host/hosts + host.</span>
-
-<span class="sd">    Rules:</span>
-<span class="sd">      * If ``hosts:`` is set (multi-instance), append ``-&lt;hostname&gt;`` so</span>
-<span class="sd">        each host's instance has a unique id. Idempotent — names that</span>
-<span class="sd">        already end with ``-&lt;hostname&gt;`` are not double-suffixed.</span>
-<span class="sd">      * Otherwise (``host:`` set, or both empty = local singleton): keep</span>
-<span class="sd">        the bare ``raw_name``. Singleton id stays stable across hosts.</span>
-<span class="sd">    """</span>
-    <span class="n">is_multi</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">hosts_spec</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="s2">""</span> <span class="ow">and</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="p">[]</span>
-    <span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">is_multi</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">raw_name</span>
-    <span class="n">suffix</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"-</span><span class="si">{</span><span class="n">hostname</span><span class="si">}</span><span class="s2">"</span>
-    <span class="k">if</span> <span class="n">raw_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span> <span class="ow">or</span> <span class="n">raw_name</span> <span class="o">==</span> <span class="n">hostname</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">raw_name</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">raw_name</span><span class="si">}{</span><span class="n">suffix</span><span class="si">}</span><span class="s2">"</span></div>
-
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">load_v3</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AgentConfig</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Load a scitex-agent-container/v3 config with auto-derived defaults.</span>
-
-<span class="sd">    v3 changes from v2:</span>
-<span class="sd">      * ``metadata.name`` rejected (dir-as-SSoT — name from parent dir)</span>
-<span class="sd">      * ``spec.scheduling`` block dropped; ``spec.host`` / ``spec.hosts``</span>
-<span class="sd">        used directly</span>
-<span class="sd">      * ``spec.python-venv`` (was ``spec.venv``); takes string or list</span>
-<span class="sd">      * ``spec.health.method: multiplexer-alive`` (was ``screen-alive``)</span>
-
-<span class="sd">    No backward compatibility — old apiVersions raise loud validation</span>
-<span class="sd">    errors at config-load time.</span>
-<span class="sd">    """</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">._schema_compat</span><span class="w"> </span><span class="kn">import</span> <span class="n">normalize_document</span>
-
-    <span class="n">raw</span> <span class="o">=</span> <span class="n">normalize_document</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
-
-    <span class="c1"># Red-start explicit-fields gate (operator ruling 2026-07-21): every</span>
-    <span class="c1"># spec field must be WRITTEN — an omitted field is a load error with</span>
-    <span class="c1"># a complete, paste-ready hint. Runs BEFORE any parsing so an</span>
-    <span class="c1"># under-specified spec fails with the full field list, not a parser</span>
-    <span class="c1"># TypeError. No bypass, no migration phase.</span>
-    <span class="n">_validate_explicit_fields</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
-
-    <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"spec"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="n">hosts_spec</span> <span class="o">=</span> <span class="n">parse_hosts_spec</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-
-    <span class="c1"># Whole-document ${HOSTNAME} substitution stays multi-host-only</span>
-    <span class="c1"># (``hosts:`` templates) — env values / command strings in singleton</span>
-    <span class="c1"># specs may deliberately carry the placeholder for a runtime shell.</span>
-    <span class="c1"># SINGLETON PLACEMENT is the one exception: ``host: ${HOSTNAME}`` is</span>
-    <span class="c1"># the portable spelling of "this machine, resolved concretely at load</span>
-    <span class="c1"># time" (the replacement for the banned ``host: local``; operator</span>
-    <span class="c1"># directive 2026-07-10), so the placement field alone is substituted.</span>
-    <span class="n">is_multi</span> <span class="o">=</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="s2">""</span> <span class="ow">and</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="p">[]</span>
-    <span class="n">singleton_placement_token</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">is_multi</span> <span class="ow">and</span> <span class="n">contains_hostname_placeholder</span><span class="p">(</span>
-        <span class="n">hosts_spec</span><span class="o">.</span><span class="n">host</span>
-    <span class="p">)</span>
-    <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span> <span class="k">if</span> <span class="p">(</span><span class="n">is_multi</span> <span class="ow">or</span> <span class="n">singleton_placement_token</span><span class="p">)</span> <span class="k">else</span> <span class="s2">""</span>
-    <span class="k">if</span> <span class="n">is_multi</span><span class="p">:</span>
-        <span class="n">raw</span> <span class="o">=</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-        <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"spec"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="k">elif</span> <span class="n">singleton_placement_token</span><span class="p">:</span>
-        <span class="n">hosts_spec</span> <span class="o">=</span> <span class="n">HostsSpec</span><span class="p">(</span>
-            <span class="n">host</span><span class="o">=</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">hosts_spec</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="n">hostname</span><span class="p">),</span> <span class="n">hosts</span><span class="o">=</span><span class="s2">""</span>
-        <span class="p">)</span>
-
-    <span class="n">metadata</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"metadata"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="n">raw_name</span> <span class="o">=</span> <span class="n">_name_from_path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-    <span class="n">labels</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"labels"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-
-    <span class="n">name</span> <span class="o">=</span> <span class="n">compose_effective_name</span><span class="p">(</span><span class="n">raw_name</span><span class="p">,</span> <span class="n">hosts_spec</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
-
-    <span class="c1"># Auto-derive workdir (user can override).</span>
-    <span class="c1"># Default lives under runtime/workspaces/ (2026-04-17 layout).</span>
-    <span class="n">workdir</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"workdir"</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">workdir</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">workdir</span> <span class="o">=</span> <span class="n">_DEFAULT_WORKDIR_RUNTIME</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
-
-    <span class="c1"># Auto-derive screen_name: {name} (not cld-{name})</span>
-    <span class="n">screen_raw</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"screen"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-    <span class="n">screen_name</span> <span class="o">=</span> <span class="n">screen_raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"name"</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
-
-    <span class="c1"># Auto-derive env: user values override auto-derived.</span>
-    <span class="c1"># Only sac's own namespace is injected. External consumers</span>
-    <span class="c1"># declare their own env vars explicitly in agent YAML's ``spec.env`` if</span>
-    <span class="c1"># they want them set.</span>
-    <span class="n">auto_env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">"CLAUDE_AGENT_ID"</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
-        <span class="s2">"SCITEX_AGENT_CONTAINER_AGENT"</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
-    <span class="p">}</span>
-    <span class="k">if</span> <span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"role"</span><span class="p">):</span>
-        <span class="n">auto_env</span><span class="p">[</span><span class="s2">"CLAUDE_AGENT_ROLE"</span><span class="p">]</span> <span class="o">=</span> <span class="n">labels</span><span class="p">[</span><span class="s2">"role"</span><span class="p">]</span>
-    <span class="c1"># v3-realign: model + env + image + mounts live under engine blocks</span>
-    <span class="c1"># (spec.claude.model, spec.apptainer.{image,binds,env}). The validator</span>
-    <span class="c1"># rejects the top-level forms; the parsers read the new homes. The</span>
-    <span class="c1"># top-level AgentConfig.image/model/env/mounts fields are kept for</span>
-    <span class="c1"># back-compat consumers and populated from the new homes.</span>
-    <span class="n">claude_spec</span> <span class="o">=</span> <span class="n">parse_claude</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">apptainer_spec</span> <span class="o">=</span> <span class="n">parse_apptainer</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="c1"># Session-continuity default for an OMITTED ``session:`` — ``continue``,</span>
-    <span class="c1"># unconditionally (operator 2026-08-18: 「スペックは全てレジュームで」).</span>
+<div class="viewcode-block" id="ClaudeSpec">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ClaudeSpec</span><span class="p">:</span>
+    <span class="c1"># v3-realign: model lives under spec.claude.model (promoted from</span>
+    <span class="c1"># top-level spec.model — §3). Empty = runtime default.</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">channels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">flags</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="c1"># v3 escape hatch (§1 invariant): splat ``**raw_options`` into</span>
+    <span class="c1"># ``ClaudeAgentOptions`` so power users can reach any SDK option</span>
+    <span class="c1"># sac doesn't model. Merged on top of curated keys; raw_options wins.</span>
+    <span class="n">raw_options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="c1"># Session continuity strategy. One of:</span>
+    <span class="c1">#   fresh        never pass ``-c``/``--continue`` — every launch is an</span>
+    <span class="c1">#                independent session (DEFAULT). This is the right</span>
+    <span class="c1">#                behaviour for experiment trials, where each capsule</span>
+    <span class="c1">#                run must be hermetic and must not inherit the prior</span>
+    <span class="c1">#                conversation.</span>
+    <span class="c1">#   continue     resume the latest session for this cwd (TUI: ``claude</span>
+    <span class="c1">#                -c``; SDK: auto-resume the persisted session_id). The</span>
+    <span class="c1">#                right behaviour for LONG-LIVED coordinator agents</span>
+    <span class="c1">#                (lead/head/worker/telegrammer/project-maintainer/...)</span>
+    <span class="c1">#                that must keep their working memory across restarts.</span>
+    <span class="c1">#   resume       pass --resume &lt;resume_id&gt; (explicit session ID).</span>
+    <span class="c1"># Aliases accepted at load time (parse_claude):</span>
+    <span class="c1">#   new-session, new  -&gt; fresh   (back-compat: the pre-2026-06 names)</span>
+    <span class="c1">#   continue-or-new   -&gt; continue</span>
+    <span class="c1"># NOTE the default flipped from ``continue`` to ``fresh`` (2026-06-22,</span>
+    <span class="c1"># "fresh by default, opt-in continue"): a spec that omits ``session``</span>
+    <span class="c1"># now starts fresh. Coordinator/long-lived roles are mapped back to</span>
+    <span class="c1"># ``continue`` BY ROLE so omitting the field keeps those agents</span>
+    <span class="c1"># continuous WITHOUT editing every deployed spec, while experiment</span>
+    <span class="c1"># capsules (non-coordinator roles) get fresh. See</span>
+    <span class="c1"># ``config/_session_continuity.py`` (``role_wants_continuity`` /</span>
+    <span class="c1"># ``default_session_for_role`` / ``_CONTINUITY_ROLES``) for the</span>
+    <span class="c1"># role-default, applied in ``config/_loaders.py`` after ``parse_claude``;</span>
+    <span class="c1"># and ``runtimes/_apptainer_inner_argv._tui_runner_argv`` for where the</span>
+    <span class="c1"># resolved mode becomes ``claude -c`` (continue) or no flag (fresh).</span>
+    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"fresh"</span>
+    <span class="c1"># Only resume if the most recent session jsonl is newer than this many minutes.</span>
+    <span class="c1"># None = no age check (always resume if session exists).</span>
+    <span class="n">continue_max_age_minutes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="c1"># Explicit session ID to pass to --resume. Only used when session="resume".</span>
+    <span class="n">resume_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">auto_accept</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="c1"># Saved-account name (from ``sac account list``) whose credential</span>
+    <span class="c1"># snapshot this agent runs on. ``""`` = the host's live</span>
+    <span class="c1"># ``~/.claude/.credentials.json`` (current default).</span>
     <span class="c1">#</span>
-    <span class="c1"># THIS USED TO BE ROLE-BASED and defaulted to ``fresh``; the polarity was</span>
-    <span class="c1"># inverted deliberately, so do not read the role lookup below as a gate.</span>
-    <span class="c1"># The old rule was an ALLOWLIST — a role had to be enumerated to keep its</span>
-    <span class="c1"># memory — and scitex-hub's ``product-lead-orchestrator`` matched neither</span>
-    <span class="c1"># the set nor any prefix, so it silently resolved to ``fresh`` and lost a</span>
-    <span class="c1"># day of working memory on restart. 91 of 117 live specs omit the field,</span>
-    <span class="c1"># so a default nobody chose was deciding the fleet's memory.</span>
+    <span class="c1"># When set, the runtime COPIES that account's ``.credentials.json``</span>
+    <span class="c1"># into the agent's own state dir at start (frozen boot-copy, not a</span>
+    <span class="c1"># live bind), so two agents pinned to two accounts never fight one</span>
+    <span class="c1"># mount. The copy is bound RW so in-container ~1h token refresh keeps</span>
+    <span class="c1"># working on the agent's private copy.</span>
     <span class="c1">#</span>
-    <span class="c1"># ``_role`` is still resolved and still passed, because this is the one</span>
-    <span class="c1"># place that sees both ``metadata.labels.role`` and the env-injected fleet</span>
-    <span class="c1"># role, and ``default_session_for_role`` keeps the parameter for callers</span>
-    <span class="c1"># that ask the role question directly — but it no longer DECIDES.</span>
+    <span class="c1"># Takes effect on next start/restart — a host ``/login`` does NOT</span>
+    <span class="c1"># move a pinned agent (that is the point of pinning), and changing</span>
+    <span class="c1"># this field requires ``sac agent restart`` to re-copy the snapshot.</span>
+    <span class="n">account</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="c1"># Explicit credentials-file designation (host path to a</span>
+    <span class="c1"># ``.credentials.json``). When set, the runtime BIND-MOUNTS that</span>
+    <span class="c1"># exact file WRITABLE at the in-container</span>
+    <span class="c1"># ``$HOME/.claude/.credentials.json`` — single source of truth, no</span>
+    <span class="c1"># copy. The in-container ``claude`` reads/refreshes that file</span>
+    <span class="c1"># directly, so an OAuth refresh persists straight back to the</span>
+    <span class="c1"># designated file and never desyncs from / corrupts a shared</span>
+    <span class="c1"># ``~/.claude/.credentials.json``. Designating different files for</span>
+    <span class="c1"># different agents is how multiple accounts run side by side</span>
+    <span class="c1"># (rotate by pointing agents at different credential files).</span>
     <span class="c1">#</span>
-    <span class="c1"># An EXPLICIT ``session:`` (top-level or nested) is authored intent and is</span>
-    <span class="c1"># left untouched (so ``session: fresh`` on a coordinator stays fresh); a</span>
-    <span class="c1"># later CLI ``--continue`` / ``--fresh`` still wins by mutating</span>
-    <span class="c1"># ``config.claude.session`` after load — that per-start override is the</span>
-    <span class="c1"># sanctioned escape hatch, and a failed start now says so (see</span>
-    <span class="c1"># ``_lifecycle/_start_failure_diag.fresh_retry_hint``).</span>
-    <span class="n">_session_authored</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"session"</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-        <span class="ow">or</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"claude"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"session"</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-    <span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">_session_authored</span><span class="p">:</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">._session_continuity</span><span class="w"> </span><span class="kn">import</span> <span class="n">default_session_for_role</span>
-
-        <span class="n">_role</span> <span class="o">=</span> <span class="p">(</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">env</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-            <span class="s2">"SCITEX_AGENT_CONTAINER_ROLE"</span>
-        <span class="p">)</span> <span class="ow">or</span> <span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"role"</span><span class="p">)</span>
-        <span class="n">claude_spec</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">default_session_for_role</span><span class="p">(</span><span class="n">_role</span><span class="p">)</span>
-    <span class="c1"># The LEGACY reading of the model. A spec declaring ``spec.engines``</span>
-    <span class="c1"># states nothing here on purpose (the engines carry the models), so this</span>
-    <span class="c1"># pair is provisional: ``apply_default_engine`` below folds the default</span>
-    <span class="c1"># engine's model over both halves. Computing it here anyway keeps a spec</span>
-    <span class="c1"># with no engines block on exactly the path it has always had.</span>
-    <span class="n">model</span><span class="p">,</span> <span class="n">display_model</span> <span class="o">=</span> <span class="n">resolve_model_surface</span><span class="p">(</span><span class="n">claude_spec</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
-    <span class="n">auto_env</span><span class="p">[</span><span class="n">MODEL_ENV_KEY</span><span class="p">]</span> <span class="o">=</span> <span class="n">display_model</span>
-
-    <span class="c1"># CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.</span>
-    <span class="c1"># Propagate the per-agent account dir-name (e.g. "alpha-example-com")</span>
-    <span class="c1"># into the container so:</span>
-    <span class="c1">#   - claude-code-telegrammer enriches its outbound signature with</span>
-    <span class="c1">#     the live quota for THIS account (PR-A reads this env);</span>
-    <span class="c1">#   - `sac account quota` keys its quota-cache.json lookup by the</span>
-    <span class="c1">#     `short` field == this env's first dash-segment;</span>
-    <span class="c1">#   - the a2a metadata enricher tags every outbound message with</span>
-    <span class="c1">#     the sender's account + quota for peer back-pressure decisions.</span>
-    <span class="c1"># Empty string is filtered out so an unpinned (host-shared-OAuth)</span>
-    <span class="c1"># agent doesn't advertise a misleading account label.</span>
-    <span class="n">account_name</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">claude_spec</span><span class="p">,</span> <span class="s2">"account"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">account_name</span><span class="p">:</span>
-        <span class="n">auto_env</span><span class="p">[</span><span class="s2">"CLAUDE_AGENT_ACCOUNT"</span><span class="p">]</span> <span class="o">=</span> <span class="n">account_name</span>
-
-    <span class="n">merged_env</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">auto_env</span><span class="p">,</span> <span class="o">**</span><span class="p">(</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">env</span> <span class="ow">or</span> <span class="p">{})}</span>
-
-    <span class="c1"># Auto-derive hooks: the lifecycle runs these on the HOST, whereas</span>
-    <span class="c1"># spec.workdir is an IN-CONTAINER path.  Resolve it only through the</span>
-    <span class="c1"># explicit writable bind that supplies the container path.</span>
-    <span class="n">hooks</span> <span class="o">=</span> <span class="n">parse_hooks</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">expanded</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">workdir</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>
-    <span class="n">mkdir_cmd</span> <span class="o">=</span> <span class="n">mapped_workdir_mkdir_hook</span><span class="p">(</span><span class="n">expanded</span><span class="p">,</span> <span class="n">apptainer_spec</span><span class="o">.</span><span class="n">binds</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">mkdir_cmd</span> <span class="ow">and</span> <span class="n">mkdir_cmd</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">hooks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pre_start"</span><span class="p">,</span> <span class="p">[]):</span>
-        <span class="n">hooks</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"pre_start"</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">mkdir_cmd</span><span class="p">)</span>
-
-    <span class="c1"># Parse mcp_servers with metadata interpolation (uses effective name)</span>
-    <span class="n">mcp_metadata</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">metadata</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">:</span> <span class="n">name</span><span class="p">}</span>
-    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="n">interpolate_mcp_servers</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mcp_servers"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">mcp_metadata</span><span class="p">)</span>
-
-    <span class="n">startup_prompts_raw</span> <span class="o">=</span> <span class="n">spec</span><span class="p">[</span><span class="s2">"startup_prompts"</span><span class="p">]</span>
-    <span class="n">startup_prompts</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">startup_prompts_raw</span> <span class="k">if</span> <span class="n">p</span><span class="p">]</span>
-    <span class="n">exclude_hooks</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">h</span><span class="p">)</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"exclude_hooks"</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[])</span> <span class="k">if</span> <span class="n">h</span><span class="p">]</span>
-    <span class="n">exclude_skills</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"exclude_skills"</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[])</span> <span class="k">if</span> <span class="n">s</span><span class="p">]</span>
-
-    <span class="n">kind</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"kind"</span><span class="p">,</span> <span class="s2">"Agent"</span><span class="p">))</span>
-    <span class="n">proxy_spec</span> <span class="o">=</span> <span class="n">parse_proxy</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="n">kind</span><span class="p">)</span>
-
-    <span class="c1"># Phase-3 capsule-isolation policy (ADR-0010 Step 2). The</span>
-    <span class="c1"># ``spec.comms.a2a.listen: false`` toggle is an operator-friendly</span>
-    <span class="c1"># alias for ``spec.a2a.port: null`` — translate it here so the</span>
-    <span class="c1"># existing sidecar-disable path (A2ASpec.is_disabled) carries</span>
-    <span class="c1"># both surfaces without a second code branch downstream.</span>
-    <span class="n">comms_spec</span> <span class="o">=</span> <span class="n">parse_comms</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">comms_spec</span><span class="o">.</span><span class="n">channels</span> <span class="ow">and</span> <span class="n">claude_spec</span><span class="o">.</span><span class="n">channels</span><span class="p">:</span>
-        <span class="c1"># Migration window for the deployed v3 corpus. Canonical specs with</span>
-        <span class="c1"># available_harnesses are validated to use spec.comms.channels.</span>
-        <span class="n">comms_spec</span><span class="o">.</span><span class="n">channels</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">claude_spec</span><span class="o">.</span><span class="n">channels</span><span class="p">)</span>
-    <span class="n">lineage_spec</span> <span class="o">=</span> <span class="n">parse_lineage</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">delegation_spec</span> <span class="o">=</span> <span class="n">parse_delegation</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">a2a_spec</span> <span class="o">=</span> <span class="n">parse_a2a</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">comms_spec</span><span class="o">.</span><span class="n">a2a</span><span class="o">.</span><span class="n">listen</span><span class="p">:</span>
-        <span class="n">a2a_spec</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">a2a_spec</span><span class="p">)(</span><span class="n">host</span><span class="o">=</span><span class="n">a2a_spec</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-
-    <span class="c1"># Builtin sac control plane (operator directive 2026-06-16): EVERY agent</span>
-    <span class="c1"># gets the sac MCP tools server + the ``server:sac`` push channel so it can</span>
-    <span class="c1"># communicate (a2a / lineage). Without both, agents can't talk to each other</span>
-    <span class="c1"># or the lead. Injected by default; opt out per agent with the label</span>
-    <span class="c1"># ``sac-builtin: "off"``. Idempotent: skips if already declared (the spec's</span>
-    <span class="c1"># own entry/channel wins). Real wiring still happens downstream — apply_channels</span>
-    <span class="c1"># (SDK) / tui_channel_config (TUI) for the channel; the .mcp.json / options</span>
-    <span class="c1"># merge for the tools server.</span>
-    <span class="n">_sac_optout</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"sac-builtin"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">_sac_optout</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"off"</span><span class="p">,</span> <span class="s2">"false"</span><span class="p">,</span> <span class="s2">"0"</span><span class="p">,</span> <span class="s2">"no"</span><span class="p">):</span>
-        <span class="k">if</span> <span class="s2">"server:sac"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="n">c</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">comms_spec</span><span class="o">.</span><span class="n">channels</span><span class="p">}:</span>
-            <span class="n">comms_spec</span><span class="o">.</span><span class="n">channels</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"server:sac"</span><span class="p">)</span>
-        <span class="k">if</span> <span class="s2">"scitex-agent-container"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">mcp_servers</span><span class="p">:</span>
-            <span class="n">mcp_servers</span><span class="p">[</span><span class="s2">"scitex-agent-container"</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-                <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"stdio"</span><span class="p">,</span>
-                <span class="s2">"command"</span><span class="p">:</span> <span class="s2">"/opt/venv-sac/bin/sac"</span><span class="p">,</span>
-                <span class="s2">"args"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"mcp"</span><span class="p">,</span> <span class="s2">"start"</span><span class="p">],</span>
-            <span class="p">}</span>
-    <span class="c1"># Runtime adapters still consume the resolved ClaudeSpec while the v4</span>
-    <span class="c1"># layering refactor proceeds. Project the one neutral declaration into</span>
-    <span class="c1"># that internal carrier; no harness owns the configuration surface.</span>
-    <span class="n">claude_spec</span><span class="o">.</span><span class="n">channels</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">comms_spec</span><span class="o">.</span><span class="n">channels</span><span class="p">)</span>
-
-    <span class="c1"># The engine NAMESPACE this spec can name: the fleet engine library</span>
-    <span class="c1"># UNION the spec's own ``engines:`` block, spec-local winning a</span>
-    <span class="c1"># collision. Merged here so ``--engine &lt;key&gt;`` can select a fleet</span>
-    <span class="c1"># engine without the spec having to copy it first.</span>
-    <span class="n">engines</span> <span class="o">=</span> <span class="n">resolve_engine_namespace</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">AgentConfig</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-        <span class="n">runtime</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"runtime"</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"tui"</span><span class="p">),</span>
-        <span class="n">engines</span><span class="o">=</span><span class="n">engines</span><span class="p">,</span>
-        <span class="c1"># HARNESS — which agent SDK runs the session. NOT</span>
-        <span class="c1"># spec.claude.provider (the inference backend). ``spec.harness``</span>
-        <span class="c1"># is canonical; ``spec.provider`` is the deprecated alias, and a</span>
-        <span class="c1"># STATED disagreement between the two raises rather than picking</span>
-        <span class="c1"># one silently (config._harness_types).</span>
-        <span class="n">harness</span><span class="o">=</span><span class="n">resolve_spec_harness</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">harness_key_is_legacy</span><span class="o">=</span><span class="n">uses_legacy_harness_key</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="c1"># RESIDENCY — does the daemon outlive its work? Absent/null</span>
-        <span class="c1"># defaults to "resident" (the fleet posture; v4 step 6 —</span>
-        <span class="c1"># config._residency_types explains why this NEW axis is</span>
-        <span class="c1"># defaulted while the red-start map exists).</span>
-        <span class="n">residency</span><span class="o">=</span><span class="n">resolve_spec_residency</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="c1"># spec.access REMOVED 2026-06-23 — host access + cwd are declared</span>
-        <span class="c1"># explicitly via apptainer.binds + spec.workdir (SSoT). A spec still</span>
-        <span class="c1"># carrying `access:` is rejected loud in _validation.validate_raw.</span>
-        <span class="n">image</span><span class="o">=</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">image</span><span class="p">,</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
-        <span class="n">workdir</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span>
-        <span class="n">python_venv</span><span class="o">=</span><span class="n">_resolve_python_venv</span><span class="p">(</span>
-            <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"python-venv"</span><span class="p">,</span> <span class="s2">""</span><span class="p">),</span>
-            <span class="n">container_namespace</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"runtime"</span><span class="p">,</span> <span class="s2">"tui"</span><span class="p">)</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"tui"</span><span class="p">,</span> <span class="s2">"apptainer"</span><span class="p">},</span>
-        <span class="p">),</span>
-        <span class="n">env</span><span class="o">=</span><span class="n">merged_env</span><span class="p">,</span>
-        <span class="n">env_files</span><span class="o">=</span><span class="n">_parse_env_files</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">screen_name</span><span class="o">=</span><span class="n">screen_name</span><span class="p">,</span>
-        <span class="n">labels</span><span class="o">=</span><span class="n">labels</span><span class="p">,</span>
-        <span class="n">container</span><span class="o">=</span><span class="n">parse_container</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">claude</span><span class="o">=</span><span class="n">claude_spec</span><span class="p">,</span>
-        <span class="n">health</span><span class="o">=</span><span class="n">parse_health</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">watchdog</span><span class="o">=</span><span class="n">parse_watchdog</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">restart</span><span class="o">=</span><span class="n">parse_restart</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">autonomous</span><span class="o">=</span><span class="n">parse_autonomous</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hermes_background_review</span><span class="o">=</span><span class="n">parse_selected_hermes_background_review</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hermes_failover</span><span class="o">=</span><span class="n">parse_selected_hermes_failover</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hermes_yolo</span><span class="o">=</span><span class="n">parse_selected_hermes_yolo</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hermes_run_budget_seconds</span><span class="o">=</span><span class="n">parse_selected_hermes_run_budget</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">hermes_compression</span><span class="o">=</span><span class="n">parse_selected_hermes_compression</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">opencode_approval_policy</span><span class="o">=</span><span class="n">parse_selected_opencode_approval_policy</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">opencode_run_budget_seconds</span><span class="o">=</span><span class="n">parse_selected_opencode_run_budget</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">opencode_serve_port</span><span class="o">=</span><span class="n">parse_selected_opencode_serve_port</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">apptainer</span><span class="o">=</span><span class="n">apptainer_spec</span><span class="p">,</span>
-        <span class="n">hooks</span><span class="o">=</span><span class="n">hooks</span><span class="p">,</span>
-        <span class="n">skills</span><span class="o">=</span><span class="n">parse_skills</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">startup_commands</span><span class="o">=</span><span class="n">_with_default_direnv_allow</span><span class="p">(</span><span class="n">parse_startup_commands</span><span class="p">(</span><span class="n">spec</span><span class="p">)),</span>
-        <span class="n">startup_prompts</span><span class="o">=</span><span class="n">startup_prompts</span><span class="p">,</span>
-        <span class="n">exclude_hooks</span><span class="o">=</span><span class="n">exclude_hooks</span><span class="p">,</span>
-        <span class="n">exclude_skills</span><span class="o">=</span><span class="n">exclude_skills</span><span class="p">,</span>
-        <span class="n">listen</span><span class="o">=</span><span class="n">parse_listen</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">extensions</span><span class="o">=</span><span class="n">parse_extensions</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">mcp_servers</span><span class="o">=</span><span class="n">mcp_servers</span><span class="p">,</span>
-        <span class="n">multiplexer</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"multiplexer"</span><span class="p">,</span> <span class="s2">"tmux"</span><span class="p">),</span>
-        <span class="n">hosts_spec</span><span class="o">=</span><span class="n">hosts_spec</span><span class="p">,</span>
-        <span class="n">config_path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span>
-        <span class="n">user</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"user"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)),</span>
-        <span class="n">a2a</span><span class="o">=</span><span class="n">a2a_spec</span><span class="p">,</span>
-        <span class="n">comms</span><span class="o">=</span><span class="n">comms_spec</span><span class="p">,</span>
-        <span class="n">lineage</span><span class="o">=</span><span class="n">lineage_spec</span><span class="p">,</span>
-        <span class="n">delegation</span><span class="o">=</span><span class="n">delegation_spec</span><span class="p">,</span>
-        <span class="n">kind</span><span class="o">=</span><span class="n">kind</span><span class="p">,</span>
-        <span class="n">proxy</span><span class="o">=</span><span class="n">proxy_spec</span><span class="p">,</span>
-        <span class="c1"># ADR-0006: default to ``./to_home`` when the key is absent so a</span>
-        <span class="c1"># ``to_home/`` dir next to spec.yaml auto-discovers. An empty</span>
-        <span class="c1"># string in YAML keeps the same default behaviour.</span>
-        <span class="n">to_home</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"to_home"</span><span class="p">,</span> <span class="s2">"./to_home"</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"./to_home"</span><span class="p">),</span>
-        <span class="c1"># ABSENT key -&gt; None ("inherit whatever is on disk", today's implicit</span>
-        <span class="c1"># cascade). An explicit empty list is NOT the same thing and must not</span>
-        <span class="c1"># collapse into it: that is a spec saying "inherit NOTHING", which is a</span>
-        <span class="c1"># legitimate thing for a sandboxed agent to declare. Only `is None`</span>
-        <span class="c1"># distinguishes them, so the default here cannot be `[]`.</span>
-        <span class="n">to_home_layers</span><span class="o">=</span><span class="n">_parse_to_home_layers</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"to_home_layers"</span><span class="p">)),</span>
-    <span class="p">)</span>
-
-    <span class="c1"># ``spec.engines`` — fold the DEFAULT engine onto the resolved</span>
-    <span class="c1"># backend fields so every read surface downstream sees the backend</span>
-    <span class="c1"># this agent starts on. PURE: no warning, no probe, no network (see</span>
-    <span class="c1"># ``_engine_types.apply_default_engine`` for why those belong on the</span>
-    <span class="c1"># START path instead).</span>
-    <span class="n">apply_default_engine</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">engines</span><span class="p">,</span> <span class="n">spec</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">config</span>
+    <span class="c1"># Precedence: when set, this file-mount REPLACES the account /</span>
+    <span class="c1"># host dir-bind auth path (no ``CLAUDE_CONFIG_DIR`` redirect) — the</span>
+    <span class="c1"># designated file IS the agent's credentials. Mutually exclusive</span>
+    <span class="c1"># with ``provider`` (an API-key backend needs no OAuth file).</span>
+    <span class="c1">#</span>
+    <span class="c1"># Caveat (documented in ``_apptainer_auth``): a single-file bind is</span>
+    <span class="c1"># on the file's inode; a host-side atomic tmp+rename on the source</span>
+    <span class="c1"># orphans the bind. In-container ``claude`` refresh that writes</span>
+    <span class="c1"># in-place is safe; designate a path NOT concurrently atomic-renamed</span>
+    <span class="c1"># by host-side ``sac accounts``/watch-live tooling.</span>
+    <span class="n">credentials_file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="c1"># Account POOL: a list of host paths to ``.credentials.json`` files</span>
+    <span class="c1"># (one per saved account). When non-empty, the start pre-flight picks</span>
+    <span class="c1"># ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked</span>
+    <span class="c1"># and 7d-near-capped accounts, load-balanced across the fleet per</span>
+    <span class="c1"># agent name (see ``_creds.pick_healthy_account`` +</span>
+    <span class="c1"># ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and</span>
+    <span class="c1"># binds the PICKED file exactly as if it had been named in the singular</span>
+    <span class="c1"># ``credentials_file`` field. Each entry's ACCOUNT SLUG is its parent</span>
+    <span class="c1"># directory name (the fleet layout is</span>
+    <span class="c1"># ``~/.scitex/agent-container/accounts/&lt;slug&gt;/.credentials.json``), and</span>
+    <span class="c1"># that slug is the account name the quota-aware picker keys off. The</span>
+    <span class="c1"># singular ``credentials_file`` remains supported and is treated as a</span>
+    <span class="c1"># 1-element pool (pick returns it) for back-compat. Fail-loud: when NO</span>
+    <span class="c1"># listed entry has a usable (non-expired) snapshot the start aborts with</span>
+    <span class="c1"># ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``</span>
+    <span class="c1"># (an API-key backend needs no OAuth).</span>
+    <span class="n">credentials_files</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="c1"># Vendor-agnostic backend override (see :class:`ProviderSpec`).</span>
+    <span class="c1"># When set, the SDK session runs against an Anthropic-SDK-compatible</span>
+    <span class="c1"># backend (DeepSeek, a gateway, ...) on an API key instead of</span>
+    <span class="c1"># Anthropic OAuth. ``None`` = default Anthropic backend. Mutually</span>
+    <span class="c1"># exclusive with ``account`` (an API-key backend needs no OAuth).</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="n">ProviderSpec</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_parse_to_home_layers</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"list[str] | None"</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Normalise ``spec.to_home_layers`` to a list of names, or ``None``.</span>
-
-<span class="sd">    ``None``/absent keeps the implicit cascade. A string is accepted as a</span>
-<span class="sd">    one-element list, because a single-layer declaration is the common case and</span>
-<span class="sd">    writing it as a bare scalar in YAML is the obvious thing to do.</span>
-
-<span class="sd">    Any other type RAISES. Returning ``None`` for, say, a mapping would make an</span>
-<span class="sd">    unusable declaration indistinguishable from an absent one — the spec would</span>
-<span class="sd">    silently fall back to inheriting everything while its author believed it had</span>
-<span class="sd">    restricted the cascade. That is the exact class of surprise this field</span>
-<span class="sd">    exists to remove, so it cannot be how the field itself fails.</span>
-<span class="sd">    """</span>
-    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">return</span> <span class="kc">None</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span> <span class="k">if</span> <span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">else</span> <span class="p">[]</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="p">(</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">item</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">value</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">item</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
-    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">"spec.to_home_layers must be a list of layer names (or a single name), "</span>
-        <span class="sa">f</span><span class="s2">"got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">value</span><span class="si">!r}</span><span class="s2">. Valid names: "</span>
-        <span class="sa">f</span><span class="s2">"user-shared, project-shared, per-agent. Omit the key entirely to "</span>
-        <span class="sa">f</span><span class="s2">"inherit the implicit cascade."</span>
-    <span class="p">)</span>
 </pre></div>
 
            </div>
