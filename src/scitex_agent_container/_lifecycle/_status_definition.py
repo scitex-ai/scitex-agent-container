@@ -51,22 +51,45 @@ def defined_status(
     runtime_factory: Callable[[AgentConfig], Any],
     instance_reader: Callable[[], list[dict]] | None = None,
     process_probe: Callable[[AgentConfig, Any], Signal] | None = None,
+    remote_process_probe: Callable[[AgentConfig, str], Signal] | None = None,
 ) -> dict:
     """Observe the local runtime without creating a registry/birth/session claim.
 
-    The spec describes intent. The local runtime probe describes local process
-    presence. Same-name instances remain separate, unbound placement evidence;
-    local absence neither declares those owners dead nor imports their identity.
+    The spec describes intent; the latest active instances row describes where
+    this incarnation was launched. Probe that owner when it is remote. A local
+    process probe is valid only when placement resolves to this host; if remote
+    placement cannot be resolved, report UNKNOWN rather than local absence.
     """
+    placement = _placements(name, instance_reader)
+    records = placement.get("records", [])
+    placement_host = (records[0].get("host") if records else "") or ""
+    target_host = placement_host or config.hosts_spec.host
+    observation_scope = "local"
+    observation_host = resolve_hostname()
     try:
-        from ._verdict_resolve import process_signal
+        if target_host:
+            from ._verdict_remote import _remote_peer_for_host
 
-        runtime = runtime_factory(config)
-        signal = (process_probe or process_signal)(config, runtime)
-    except Exception as exc:  # stx-allow: fallback (an unavailable local runtime observation must remain unknown)
+            peer = _remote_peer_for_host(target_host)
+        else:
+            peer = None
+        if peer:
+            from ._verdict_remote import remote_process_signal
+
+            signal = (remote_process_probe or remote_process_signal)(config, peer)
+            observation_scope = "remote"
+            observation_host = peer
+        else:
+            from ._verdict_resolve import process_signal
+
+            runtime = runtime_factory(config)
+            signal = (process_probe or process_signal)(config, runtime)
+    except Exception as exc:  # stx-allow: fallback (an unavailable placement/process observation must remain unknown)
+        observation_scope = "unknown"
+        observation_host = ""
         signal = Signal(
             SOURCE_PROCESS, UNKNOWN,
-            f"local runtime observation unavailable ({type(exc).__name__})",
+            f"process observation unavailable ({type(exc).__name__})",
             INSTRUMENT_NO_OBSERVATION,
         )
     result = {
@@ -78,7 +101,8 @@ def defined_status(
         "configured_host": config.hosts_spec.host,
         "screen": "",
         "started_at": "",
-        "process_observation_scope": "local",
+        "process_observation_scope": observation_scope,
+        "process_observation_host": observation_host,
         "stored_credential": "unknown",
         "account": "unknown",
         "a2a": {
@@ -88,7 +112,7 @@ def defined_status(
             "resolution_source": "none",
         },
         "liveness": decide(name, [signal]).to_dict(),
-        "placement_evidence": _placements(name, instance_reader),
+        "placement_evidence": placement,
         **resolve_runtime_identity(config, running=False, birth_record=None),
     }
     observation = build_agent_observation(result, definition_state=DefinitionState.VALID)
