@@ -19,5 +19,3 @@ jobs:
     uses: scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main
     with:
       suite: matrix
-      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
-      ci_xdist_workers: ${{ vars.CI_XDIST_WORKERS }}
