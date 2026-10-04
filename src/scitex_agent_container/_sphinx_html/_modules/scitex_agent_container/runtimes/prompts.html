@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.runtimes.prompts &mdash; scitex-agent-container v0.24.19</title>
+  <title>scitex_agent_container.runtimes.prompts &mdash; scitex-agent-container v0.29.5</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
+      <script src="../../../_static/documentation_options.js?v=a4b8ebc0"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -71,7 +71,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#harness-session">Harness session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
 </ul>
@@ -87,7 +87,12 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-claude-code-account"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-key-compression-hermes-only"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-background-review"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-run-budget-seconds"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-comms-harness-neutral-communication"><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../spec-reference.html#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
 </ul>
 </li>
@@ -171,6 +176,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#builtin-layers">Builtin layers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#build">Build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#distributing-one-verified-artifact-to-a-fleet">Distributing one verified artifact to a fleet</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
 </ul>
 </li>
@@ -182,7 +188,18 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engines"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engines</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engine_key"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engine_key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">AgentConfig.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.service_tier"><code class="docutils literal notranslate"><span class="pre">AgentConfig.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">AgentConfig.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -197,12 +214,19 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
@@ -217,9 +241,11 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.delegation"><code class="docutils literal notranslate"><span class="pre">AgentConfig.delegation</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home_layers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home_layers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
@@ -241,7 +267,6 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
@@ -249,14 +274,30 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec"><code class="docutils literal notranslate"><span class="pre">DelegationSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.max_concurrent_children"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.max_concurrent_children</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.worktree_isolation"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.worktree_isolation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.__init__"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError"><code class="docutils literal notranslate"><span class="pre">EngineDefaultError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineError"><code class="docutils literal notranslate"><span class="pre">EngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec"><code class="docutils literal notranslate"><span class="pre">EngineSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.key"><code class="docutils literal notranslate"><span class="pre">EngineSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.harness"><code class="docutils literal notranslate"><span class="pre">EngineSpec.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.model"><code class="docutils literal notranslate"><span class="pre">EngineSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider_declared"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider_declared</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_account"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">EngineSpec.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.service_tier"><code class="docutils literal notranslate"><span class="pre">EngineSpec.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">EngineSpec.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.env"><code class="docutils literal notranslate"><span class="pre">EngineSpec.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.is_default"><code class="docutils literal notranslate"><span class="pre">EngineSpec.is_default</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.__init__"><code class="docutils literal notranslate"><span class="pre">EngineSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
@@ -279,6 +320,24 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.target_ratio"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.target_ratio</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.tail_mode"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.tail_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.in_place"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.in_place</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetBudgetError"><code class="docutils literal notranslate"><span class="pre">HermesFleetBudgetError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.usable_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.usable_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.reserved_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.reserved_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.agent_count"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.agent_count</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.__init__"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.__init__()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
@@ -296,9 +355,11 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.extra_headers"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.extra_headers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.hermes_provider"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.hermes_provider</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -341,6 +402,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError"><code class="docutils literal notranslate"><span class="pre">UnknownEngineError</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
@@ -350,10 +412,13 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.select_engine"><code class="docutils literal notranslate"><span class="pre">select_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
 </ul>
@@ -381,6 +446,13 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust"><code class="docutils literal notranslate"><span class="pre">_detect_codex_dir_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review"><code class="docutils literal notranslate"><span class="pre">_detect_codex_hooks_review()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._CODEX_COMPOSER_MARKERS"><code class="docutils literal notranslate"><span class="pre">_CODEX_COMPOSER_MARKERS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane"><code class="docutils literal notranslate"><span class="pre">_codex_usage_limit_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal"><code class="docutils literal notranslate"><span class="pre">codex_blocking_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done"><code class="docutils literal notranslate"><span class="pre">_detect_codex_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier"><code class="docutils literal notranslate"><span class="pre">_detect_hermes_contributor_tier()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
@@ -420,7 +492,7 @@
            <div itemprop="articleBody">
              
   <h1>Source code for scitex_agent_container.runtimes.prompts</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Modular TUI prompt detection and response for Claude Code.</span>
+<span></span><span class="sd">"""Modular TUI prompt detection and response for Claude Code.</span>
 
 <span class="sd">Each prompt handler defines:</span>
 <span class="sd">- name: identifier for logging</span>
@@ -429,22 +501,24 @@
 <span class="sd">- priority: lower = checked first (default 10)</span>
 
 <span class="sd">Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
 
-<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scitex_logging</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">slogging</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">slogging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="PromptHandler">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">PromptHandler</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;A single TUI prompt detector and responder.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""A single TUI prompt detector and responder."""</span>
 
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">detect</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]</span>
@@ -456,18 +530,18 @@
 <div class="viewcode-block" id="_detect_bypass_permissions">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_bypass_permissions</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bypass Permissions mode prompt with radio selector.</span>
+<span class="w">    </span><span class="sd">"""Bypass Permissions mode prompt with radio selector.</span>
 
 <span class="sd">    Matches:</span>
-<span class="sd">      &quot;1. No, exit&quot;</span>
-<span class="sd">      &quot;2. Yes, I accept&quot;</span>
-<span class="sd">      &quot;Bypass Permissions&quot;</span>
-<span class="sd">      &quot;Enter to confirm&quot;</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">      "1. No, exit"</span>
+<span class="sd">      "2. Yes, I accept"</span>
+<span class="sd">      "Bypass Permissions"</span>
+<span class="sd">      "Enter to confirm"</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;Bypass Permissions&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;2. Yes, I accept&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"Bypass Permissions"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"2. Yes, I accept"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -475,17 +549,17 @@
 <div class="viewcode-block" id="_detect_dev_channels">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_dev_channels</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Development channels loading confirmation.</span>
+<span class="w">    </span><span class="sd">"""Development channels loading confirmation.</span>
 
 <span class="sd">    Matches:</span>
-<span class="sd">      &quot;1. I am using this for local development&quot;</span>
-<span class="sd">      &quot;2. Exit&quot;</span>
-<span class="sd">      &quot;development channels&quot; or &quot;dangerously-load-development-channels&quot;</span>
-<span class="sd">      &quot;Enter to confirm&quot;</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">      "1. I am using this for local development"</span>
+<span class="sd">      "2. Exit"</span>
+<span class="sd">      "development channels" or "dangerously-load-development-channels"</span>
+<span class="sd">      "Enter to confirm"</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;1. I am using this for local development&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"1. I am using this for local development"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -493,19 +567,19 @@
 <div class="viewcode-block" id="has_esc_cancel_modal">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">has_esc_cancel_modal</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;True iff an on-screen modal treats **Esc as CANCEL / EXIT**.</span>
+<span class="w">    </span><span class="sd">"""True iff an on-screen modal treats **Esc as CANCEL / EXIT**.</span>
 
 <span class="sd">    The fatal boot bug (card</span>
 <span class="sd">    ``sac-boot-automation-devchannels-modal-continue-compose-buffer``): the</span>
 <span class="sd">    stale-compose clear sends ``Escape``, but while the ``--dangerously-load-</span>
-<span class="sd">    development-channels`` confirmation is up (&quot;❯ 1. I am using this for local</span>
-<span class="sd">    development … Enter to confirm · **Esc to cancel**&quot;) an ``Escape`` CANCELS</span>
+<span class="sd">    development-channels`` confirmation is up ("❯ 1. I am using this for local</span>
+<span class="sd">    development … Enter to confirm · **Esc to cancel**") an ``Escape`` CANCELS</span>
 <span class="sd">    the launch → claude exits → the tmux session DIES mid-boot. Any drain step</span>
 <span class="sd">    that would send ``Escape`` (the compose-buffer clear) MUST first verify no</span>
 <span class="sd">    such cancelable modal is on screen.</span>
 
 <span class="sd">    Detection is deliberately BROAD — a keystroke that kills the session is far</span>
-<span class="sd">    costlier than a spurious &quot;don&#39;t-Esc&quot; skip:</span>
+<span class="sd">    costlier than a spurious "don't-Esc" skip:</span>
 
 <span class="sd">      * the explicit ``Esc to cancel`` footer any confirm-modal renders, OR</span>
 <span class="sd">      * the dev-channels modal specifically (its footer wording has varied</span>
@@ -514,9 +588,9 @@
 
 <span class="sd">    Pure + string-only so the drain-ordering guard is unit-testable without a</span>
 <span class="sd">    live TUI.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="n">lowered</span> <span class="o">=</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-    <span class="k">if</span> <span class="s2">&quot;esc to cancel&quot;</span> <span class="ow">in</span> <span class="n">lowered</span> <span class="ow">or</span> <span class="s2">&quot;escape to cancel&quot;</span> <span class="ow">in</span> <span class="n">lowered</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s2">"esc to cancel"</span> <span class="ow">in</span> <span class="n">lowered</span> <span class="ow">or</span> <span class="s2">"escape to cancel"</span> <span class="ow">in</span> <span class="n">lowered</span><span class="p">:</span>
         <span class="k">return</span> <span class="kc">True</span>
     <span class="k">return</span> <span class="n">_detect_dev_channels</span><span class="p">(</span><span class="n">content</span><span class="p">)</span></div>
 
@@ -525,17 +599,17 @@
 <div class="viewcode-block" id="_detect_thinking_effort">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_thinking_effort</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Thinking effort level selector.</span>
+<span class="w">    </span><span class="sd">"""Thinking effort level selector.</span>
 
 <span class="sd">    Matches:</span>
-<span class="sd">      &quot;1. * Medium (recommended)&quot; or similar</span>
-<span class="sd">      &quot;thinking&quot; in various casings</span>
-<span class="sd">      &quot;Enter to confirm&quot;</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">      "1. * Medium (recommended)" or similar</span>
+<span class="sd">      "thinking" in various casings</span>
+<span class="sd">      "Enter to confirm"</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;Medium&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="p">(</span><span class="s2">&quot;thinking&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;effort&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"Medium"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="p">(</span><span class="s2">"thinking"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">"effort"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -543,14 +617,14 @@
 <div class="viewcode-block" id="_detect_skip_permissions_yn">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_skip_permissions_yn</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Legacy y/n text prompt for skip-permissions (older Claude Code).</span>
+<span class="w">    </span><span class="sd">"""Legacy y/n text prompt for skip-permissions (older Claude Code).</span>
 
 <span class="sd">    Matches text-based y/n prompts without radio selector.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="p">(</span><span class="s2">&quot;skip-permissions&quot;</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">&quot;Trust&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="p">)</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="p">(</span><span class="s2">&quot;y/n&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;type&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+        <span class="p">(</span><span class="s2">"skip-permissions"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">"Trust"</span> <span class="ow">in</span> <span class="n">content</span><span class="p">)</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="p">(</span><span class="s2">"y/n"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">"type"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
     <span class="p">)</span></div>
 
 
@@ -558,14 +632,14 @@
 <div class="viewcode-block" id="_detect_mcp_json_edit">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_mcp_json_edit</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Permission prompt when Claude tries to edit .mcp.json (runtime).</span>
+<span class="w">    </span><span class="sd">"""Permission prompt when Claude tries to edit .mcp.json (runtime).</span>
 
-<span class="sd">    Matches &quot;1. Yes&quot; / &quot;1. Proceed&quot; / &quot;1. Allow&quot; + &quot;.mcp.json&quot; + &quot;Enter to confirm&quot;.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    Matches "1. Yes" / "1. Proceed" / "1. Allow" + ".mcp.json" + "Enter to confirm".</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;.mcp.json&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="p">(</span><span class="s2">&quot;1. Yes&quot;</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">&quot;1. Proceed&quot;</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">&quot;1. Allow&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="p">)</span>
+        <span class="s2">".mcp.json"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="p">(</span><span class="s2">"1. Yes"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">"1. Proceed"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">or</span> <span class="s2">"1. Allow"</span> <span class="ow">in</span> <span class="n">content</span><span class="p">)</span>
     <span class="p">)</span></div>
 
 
@@ -573,21 +647,21 @@
 <div class="viewcode-block" id="_detect_press_enter_continue">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_press_enter_continue">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_press_enter_continue</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generic &#39;Press Enter to continue&#39; runtime pause (context-window warning, etc).</span>
+<span class="w">    </span><span class="sd">"""Generic 'Press Enter to continue' runtime pause (context-window warning, etc).</span>
 
 <span class="sd">    Uses a strict last-5-lines window to avoid scrollback false positives</span>
 <span class="sd">    (per pane-state-patterns.md: classify against last 5 visible lines only).</span>
 <span class="sd">    Excluded: active tool calls and numbered radio selectors.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
-    <span class="n">last</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="o">-</span><span class="mi">5</span><span class="p">:])</span> <span class="k">if</span> <span class="n">lines</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">last</span> <span class="o">=</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="o">-</span><span class="mi">5</span><span class="p">:])</span> <span class="k">if</span> <span class="n">lines</span> <span class="k">else</span> <span class="s2">""</span>
     <span class="n">has_enter_cue</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="s2">&quot;Press Enter to continue&quot;</span> <span class="ow">in</span> <span class="n">last</span>
-        <span class="ow">or</span> <span class="s2">&quot;press Enter&quot;</span> <span class="ow">in</span> <span class="n">last</span>
-        <span class="ow">or</span> <span class="s2">&quot;Hit Enter&quot;</span> <span class="ow">in</span> <span class="n">last</span>
+        <span class="s2">"Press Enter to continue"</span> <span class="ow">in</span> <span class="n">last</span>
+        <span class="ow">or</span> <span class="s2">"press Enter"</span> <span class="ow">in</span> <span class="n">last</span>
+        <span class="ow">or</span> <span class="s2">"Hit Enter"</span> <span class="ow">in</span> <span class="n">last</span>
     <span class="p">)</span>
-    <span class="n">is_active</span> <span class="o">=</span> <span class="s2">&quot;Working</span><span class="se">\u2026</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">last</span> <span class="ow">or</span> <span class="s2">&quot;Ruminating</span><span class="se">\u2026</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">last</span>
-    <span class="n">has_radio</span> <span class="o">=</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">last</span> <span class="ow">or</span> <span class="s2">&quot;1. &quot;</span> <span class="ow">in</span> <span class="n">last</span>
+    <span class="n">is_active</span> <span class="o">=</span> <span class="s2">"Working</span><span class="se">\u2026</span><span class="s2">"</span> <span class="ow">in</span> <span class="n">last</span> <span class="ow">or</span> <span class="s2">"Ruminating</span><span class="se">\u2026</span><span class="s2">"</span> <span class="ow">in</span> <span class="n">last</span>
+    <span class="n">has_radio</span> <span class="o">=</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">last</span> <span class="ow">or</span> <span class="s2">"1. "</span> <span class="ow">in</span> <span class="n">last</span>
     <span class="k">return</span> <span class="n">has_enter_cue</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">is_active</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">has_radio</span></div>
 
 
@@ -595,17 +669,17 @@
 <div class="viewcode-block" id="_detect_file_trust">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_file_trust</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;&#39;Do you trust the files in this folder?&#39; prompt (first-run or new cwd).</span>
+<span class="w">    </span><span class="sd">"""'Do you trust the files in this folder?' prompt (first-run or new cwd).</span>
 
 <span class="sd">    May appear when --dangerously-skip-permissions was not propagated to a subshell.</span>
 <span class="sd">    Matches the LEGACY y/n text variant; the new radio-selector variant</span>
 <span class="sd">    is handled by :func:`_detect_file_trust_radio`.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;trust&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-        <span class="ow">and</span> <span class="s2">&quot;folder&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-        <span class="ow">and</span> <span class="p">(</span><span class="s2">&quot;y/n&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;yes&quot;</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"trust"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="ow">and</span> <span class="s2">"folder"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="ow">and</span> <span class="p">(</span><span class="s2">"y/n"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">"yes"</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -613,20 +687,20 @@
 <div class="viewcode-block" id="_detect_file_trust_radio">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust_radio">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_file_trust_radio</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Radio-selector variant of the file-trust prompt.</span>
+<span class="w">    </span><span class="sd">"""Radio-selector variant of the file-trust prompt.</span>
 
-<span class="sd">    Claude Code (&gt;= ~2.1.x) asks &quot;Is this a project you created or one</span>
-<span class="sd">    you trust?&quot; with numbered options instead of the legacy y/n text</span>
+<span class="sd">    Claude Code (&gt;= ~2.1.x) asks "Is this a project you created or one</span>
+<span class="sd">    you trust?" with numbered options instead of the legacy y/n text</span>
 <span class="sd">    prompt. Appears on the first launch in any un-trusted workdir —</span>
 <span class="sd">    including every throwaway tempdir the Haiku integration test uses.</span>
 
 <span class="sd">    Matches the exact option strings to avoid firing on the</span>
-<span class="sd">    bypass-permissions dialog (which also says &quot;Enter to confirm&quot;).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    bypass-permissions dialog (which also says "Enter to confirm").</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;1. Yes, I trust this folder&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;2. No, exit&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"1. Yes, I trust this folder"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"2. No, exit"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -634,23 +708,23 @@
 <div class="viewcode-block" id="_detect_external_imports">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_external_imports">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_external_imports</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;External CLAUDE.md file imports prompt.</span>
+<span class="w">    </span><span class="sd">"""External CLAUDE.md file imports prompt.</span>
 
 <span class="sd">    Appears when ``CLAUDE.md`` (or ``.claude/CLAUDE.md``) contains</span>
-<span class="sd">    ``@&lt;absolute-path&gt;`` imports pointing OUTSIDE the agent&#39;s</span>
+<span class="sd">    ``@&lt;absolute-path&gt;`` imports pointing OUTSIDE the agent's</span>
 <span class="sd">    workdir. Triggered by the at-import skill-injection mode (sac</span>
 <span class="sd">    PR #74) when skills live in ``~/.claude/skills/`` or the</span>
 <span class="sd">    package source trees rather than the workspace itself.</span>
 
 <span class="sd">    Matches:</span>
-<span class="sd">      &quot;Allow external CLAUDE.md file imports?&quot;</span>
-<span class="sd">      &quot;1. Yes, allow external imports&quot;</span>
-<span class="sd">      &quot;Enter to confirm&quot;</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">      "Allow external CLAUDE.md file imports?"</span>
+<span class="sd">      "1. Yes, allow external imports"</span>
+<span class="sd">      "Enter to confirm"</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;Allow external CLAUDE.md file imports&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;1. Yes, allow external imports&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"Allow external CLAUDE.md file imports"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"1. Yes, allow external imports"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -658,20 +732,20 @@
 <div class="viewcode-block" id="_detect_login_method">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_login_method</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-run login-method picker on a fresh HOME.</span>
+<span class="w">    </span><span class="sd">"""First-run login-method picker on a fresh HOME.</span>
 
-<span class="sd">    Appears when Claude Code can&#39;t find OAuth credentials at</span>
+<span class="sd">    Appears when Claude Code can't find OAuth credentials at</span>
 <span class="sd">    ``~/.claude/.credentials.json``. Even with ``ANTHROPIC_API_KEY``</span>
 <span class="sd">    set in env, the 2.1.x CLI still asks which auth mode to use</span>
 <span class="sd">    before it checks the env var. Blocks startup until dismissed.</span>
 
 <span class="sd">    Matches the exact option strings to avoid false positives on any</span>
-<span class="sd">    user message that happens to say &quot;login method&quot;.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    user message that happens to say "login method".</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;Select login method:&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Claude account with subscription&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Anthropic Console account&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"Select login method:"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Claude account with subscription"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Anthropic Console account"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -679,24 +753,24 @@
 <div class="viewcode-block" id="_detect_theme_selection">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_theme_selection</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-run theme selection prompt.</span>
+<span class="w">    </span><span class="sd">"""First-run theme selection prompt.</span>
 
 <span class="sd">    Appears only on a fresh HOME (no ``~/.claude/`` saved theme). On</span>
 <span class="sd">    dev machines it never shows, but in CI (a clean ubuntu VM) this is</span>
 <span class="sd">    the first thing Claude Code asks. Blocks every downstream startup</span>
 <span class="sd">    prompt until acknowledged.</span>
 
-<span class="sd">    Matches the radio variant: &quot;Choose the text style...&quot; + numbered</span>
-<span class="sd">    options starting with &quot;1. Auto (match terminal)&quot;.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="s2">&quot;Choose the text style&quot;</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">&quot;1. Auto (match terminal)&quot;</span> <span class="ow">in</span> <span class="n">content</span></div>
+<span class="sd">    Matches the radio variant: "Choose the text style..." + numbered</span>
+<span class="sd">    options starting with "1. Auto (match terminal)".</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="s2">"Choose the text style"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">"1. Auto (match terminal)"</span> <span class="ow">in</span> <span class="n">content</span></div>
 
 
 
 <div class="viewcode-block" id="_detect_compose_pending_unsent">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_compose_pending_unsent</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect unsent text sitting in the Claude Code compose buffer.</span>
+<span class="w">    </span><span class="sd">"""Detect unsent text sitting in the Claude Code compose buffer.</span>
 
 <span class="sd">    The classifier in ``agent_meta._classify_pane_state`` matches</span>
 <span class="sd">    ``❯[ \\t\\xa0]+\\S`` (non-whitespace after the prompt marker on the same</span>
@@ -704,7 +778,7 @@
 <span class="sd">    We mirror that pattern here so the prompts system can submit it via</span>
 <span class="sd">    a plain Enter keystroke.</span>
 
-<span class="sd">    The gap MUST include U+00A0 NO-BREAK SPACE: Claude Code&#39;s Ink TUI renders</span>
+<span class="sd">    The gap MUST include U+00A0 NO-BREAK SPACE: Claude Code's Ink TUI renders</span>
 <span class="sd">    the prompt as ``❯\\xa0[Pasted text …]`` (an NBSP, not an ASCII space). The</span>
 <span class="sd">    earlier ``❯[ \\t]+`` pattern silently missed it, so a multi-line</span>
 <span class="sd">    startup_prompt paste was never detected as pending and the boot-drain /</span>
@@ -713,17 +787,17 @@
 
 <span class="sd">    Excluded: lines that are just the decorative separator below an empty</span>
 <span class="sd">    prompt — those contain only whitespace after ``❯``.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 
-    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;❯[ \t\xa0]+\S&quot;</span><span class="p">,</span> <span class="n">content</span><span class="p">))</span></div>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">"❯[ \t\xa0]+\S"</span><span class="p">,</span> <span class="n">content</span><span class="p">))</span></div>
 
 
 
 <div class="viewcode-block" id="_detect_resume_session">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_resume_session</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Long-session resume picker shown by ``claude --continue`` / ``--resume``.</span>
+<span class="w">    </span><span class="sd">"""Long-session resume picker shown by ``claude --continue`` / ``--resume``.</span>
 
 <span class="sd">    When the session being resumed is large, Claude Code interposes a</span>
 <span class="sd">    three-way picker before the REPL opens::</span>
@@ -732,19 +806,228 @@
 <span class="sd">        Resuming the full session will consume a substantial portion ...</span>
 <span class="sd">        ❯ 1. Resume from summary (recommended)</span>
 <span class="sd">          2. Resume full session as-is</span>
-<span class="sd">          3. Don&#39;t ask me again</span>
+<span class="sd">          3. Don't ask me again</span>
 
 <span class="sd">    The sac TUI boot uses ``--continue`` precisely to resume the FULL prior</span>
-<span class="sd">    context, so we always pick option 2 (&quot;Resume full session as-is&quot;). Left</span>
+<span class="sd">    context, so we always pick option 2 ("Resume full session as-is"). Left</span>
 <span class="sd">    unhandled this modal BLOCKS boot: the startup_prompt paste lands inside</span>
 <span class="sd">    the picker and the boot-drain hangs (lead-retirement, 2026-06-25). Must</span>
-<span class="sd">    out-rank ``compose-pending-unsent`` — the modal&#39;s ``❯ 1.`` line also</span>
+<span class="sd">    out-rank ``compose-pending-unsent`` — the modal's ``❯ 1.`` line also</span>
 <span class="sd">    matches that detector — hence priority 1.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="k">return</span> <span class="p">(</span>
-        <span class="s2">&quot;Resume full session as-is&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Resume from summary&quot;</span> <span class="ow">in</span> <span class="n">content</span>
-        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="s2">"Resume full session as-is"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Resume from summary"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">in</span> <span class="n">content</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="_detect_codex_dir_trust">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_codex_dir_trust</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Codex's first-boot directory-trust picker (harness codex, 2026-09-05).</span>
+
+<span class="sd">    "Do you trust the contents of this directory? ... 1. Yes, continue /</span>
+<span class="sd">    2. No, quit / Press enter to continue" — the cursor already sits on</span>
+<span class="sd">    option 1, so Enter alone accepts.</span>
+<span class="sd">    """</span>
+    <span class="n">legacy</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"Do you trust the contents of this directory"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"1. Yes, continue"</span> <span class="ow">in</span> <span class="n">content</span>
+    <span class="p">)</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="s2">"Trust this folder?"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">"1. Trust and continue"</span> <span class="ow">in</span> <span class="n">content</span>
+    <span class="k">return</span> <span class="n">legacy</span> <span class="ow">or</span> <span class="n">current</span></div>
+
+
+
+<div class="viewcode-block" id="_detect_codex_hooks_review">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_codex_hooks_review</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Codex's "Hooks need review" picker (harness codex, 2026-09-05).</span>
+
+<span class="sd">    Shown once sac has copied the fleet's hooks into CODEX_HOME/hooks.json,</span>
+<span class="sd">    and again whenever one of them changes. The hooks ARE the fleet's own</span>
+<span class="sd">    (~/.claude/hooks, the same files the Claude pane runs), so option 2 is</span>
+<span class="sd">    the correct answer; option 3 would run the agent without them, silently.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="s2">"Hooks need review"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">"2. Trust all and continue"</span> <span class="ow">in</span> <span class="n">content</span></div>
+
+
+
+<span class="c1">#: The Codex composer row and the footer under it, as they look once the boot</span>
+<span class="c1">#: banner has scrolled away: ``› Use /skills to list available skills`` over</span>
+<span class="c1">#: ``qwen38-27b default · /home/ywatanabe/proj/local-coder``. The footer's</span>
+<span class="c1">#: second word is the reasoning effort Codex is running with.</span>
+<span class="n">_CODEX_COMPOSER_MARKERS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"</span><span class="se">\u203a</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"</span><span class="se">\u00bb</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">_CODEX_FOOTER</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="sa">r</span><span class="s2">"^\s*\S+ (?:default|minimal|low|medium|high|xhigh|max|ultra)"</span>
+    <span class="sa">r</span><span class="s2">"(?: (?:fast|ultrafast))? \u00b7 /"</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">M</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_CODEX_TAIL_ROWS</span> <span class="o">=</span> <span class="mi">8</span>
+
+
+<span class="c1"># Anchored native remote-compact hard-cap prefix (normalized: curly</span>
+<span class="c1"># apostrophe folded, lowercase). The native error row begins DIRECTLY</span>
+<span class="c1"># with this text, followed by the wrapped dashboard line. This is an</span>
+<span class="c1"># anchored prefix match on the exact reported wording — not an arbitrary</span>
+<span class="c1"># substring grant: prose merely mentioning compacting elsewhere never</span>
+<span class="c1"># matches, and quoted/fenced/input rows are excluded by the caller loop.</span>
+<span class="n">_REMOTE_COMPACT_HARDCAP_PREFIX</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">"error running remote compact task: you've hit your usage limit. visit https://"</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="_codex_usage_limit_pane">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_codex_usage_limit_pane</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Recognize the latest rendered native hard-cap message, not prose.</span>
+
+<span class="sd">    A composer remains visible after a failed turn and does not establish</span>
+<span class="sd">    recovery. This is a UI observation only: persistent incident admission</span>
+<span class="sd">    still needs its fenced session/turn evidence and explicit recovery API.</span>
+<span class="sd">    """</span>
+    <span class="n">fenced</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">input_indent</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">blocked</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="p">(</span><span class="n">content</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">text</span><span class="o">.</span><span class="n">startswith</span><span class="p">((</span><span class="s2">"```"</span><span class="p">,</span> <span class="s2">"~~~"</span><span class="p">)):</span>
+            <span class="n">marker</span> <span class="o">=</span> <span class="n">text</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">fenced</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">fenced</span> <span class="o">=</span> <span class="n">marker</span>
+            <span class="k">elif</span> <span class="n">marker</span> <span class="o">==</span> <span class="n">fenced</span><span class="p">:</span>
+                <span class="n">fenced</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">fenced</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">text</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">"&gt;"</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="n">indent</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">row</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">" </span><span class="se">\t</span><span class="s2">"</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">text</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">_CODEX_COMPOSER_MARKERS</span><span class="p">):</span>
+            <span class="n">input_indent</span> <span class="o">=</span> <span class="n">indent</span>
+            <span class="k">continue</span>
+        <span class="c1"># Multiline user input is indented under its composer. Its quoted</span>
+        <span class="c1"># native glyph does not become a new native message.</span>
+        <span class="k">if</span> <span class="n">input_indent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">indent</span> <span class="o">&gt;</span> <span class="n">input_indent</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">text</span><span class="o">.</span><span class="n">startswith</span><span class="p">((</span><span class="s2">"■ "</span><span class="p">,</span> <span class="s2">"• "</span><span class="p">)):</span>
+            <span class="n">native</span> <span class="o">=</span> <span class="n">text</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">heading</span> <span class="o">=</span> <span class="n">text</span><span class="p">[</span><span class="mi">2</span><span class="p">:]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"’"</span><span class="p">,</span> <span class="s2">"'"</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="n">blocked</span> <span class="o">=</span> <span class="n">native</span> <span class="o">==</span> <span class="s2">"■"</span> <span class="ow">and</span> <span class="p">(</span>
+                <span class="n">heading</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">"you've hit your usage limit"</span><span class="p">)</span>
+                <span class="ow">or</span> <span class="n">heading</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">_REMOTE_COMPACT_HARDCAP_PREFIX</span><span class="p">)</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">heading</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">"│┃╭╮╰╯┌┐└┘─⚠! "</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"’"</span><span class="p">,</span> <span class="s2">"'"</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">heading</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">"you've hit your usage limit"</span><span class="p">):</span>
+                <span class="n">blocked</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">blocked</span></div>
+
+
+
+<div class="viewcode-block" id="codex_blocking_modal">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">codex_blocking_modal</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Recognize native review/login/limit panes without accepting their keys.</span>
+
+<span class="sd">    Tall hook lists exceed the ordinary modal tail. A fresh bottom composer</span>
+<span class="sd">    and model footer exclude a dismissed heading still visible in history.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">_codex_usage_limit_pane</span><span class="p">(</span><span class="n">content</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">"codex-usage-limit"</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">(</span><span class="n">content</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+    <span class="n">composer</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+        <span class="p">(</span>
+            <span class="n">index</span>
+            <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">marker</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="k">for</span> <span class="n">marker</span> <span class="ow">in</span> <span class="n">_CODEX_COMPOSER_MARKERS</span><span class="p">)</span>
+        <span class="p">),</span>
+        <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">controls</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"trust all and continue"</span><span class="p">,</span>
+        <span class="s2">"continue without trusting"</span><span class="p">,</span>
+        <span class="s2">"press enter to confirm"</span><span class="p">,</span>
+        <span class="s2">"enter continue · esc"</span><span class="p">,</span>
+        <span class="s2">"1. trust and continue"</span><span class="p">,</span>
+        <span class="s2">"1. yes, continue"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">composer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">_CODEX_FOOTER</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rows</span><span class="p">[</span><span class="n">composer</span><span class="p">:])):</span>
+        <span class="n">live</span> <span class="o">=</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rows</span><span class="p">[</span><span class="n">composer</span><span class="p">:])</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span><span class="n">control</span> <span class="ow">in</span> <span class="n">live</span> <span class="k">for</span> <span class="n">control</span> <span class="ow">in</span> <span class="n">controls</span><span class="p">):</span>
+            <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">headings</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"codex-hooks-review"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"hooks need review"</span><span class="p">,),</span>
+        <span class="s2">"codex-dir-trust"</span><span class="p">:</span> <span class="p">(</span>
+            <span class="s2">"trust this folder?"</span><span class="p">,</span>
+            <span class="s2">"do you trust the contents of this directory"</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="s2">"codex-auth-required"</span><span class="p">:</span> <span class="p">(</span>
+            <span class="s2">"sign in to codex"</span><span class="p">,</span>
+            <span class="s2">"log in to codex"</span><span class="p">,</span>
+            <span class="s2">"authentication required"</span><span class="p">,</span>
+            <span class="s2">"continue with chatgpt"</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="s2">"codex-rate-limit"</span><span class="p">:</span> <span class="p">(</span>
+            <span class="s2">"usage limit reached"</span><span class="p">,</span>
+            <span class="s2">"rate limit exceeded"</span><span class="p">,</span>
+            <span class="s2">"too many requests"</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">}</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+        <span class="n">heading</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">" </span><span class="se">\t</span><span class="s2">│┃╭╮╰╯┌┐└┘─⚠!•"</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">prefixes</span> <span class="ow">in</span> <span class="n">headings</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">heading</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="k">for</span> <span class="n">prefix</span> <span class="ow">in</span> <span class="n">prefixes</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">name</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="_detect_codex_done">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_codex_done</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Codex is at its input prompt and no picker remains.</span>
+
+<span class="sd">    Two shapes, both measured. At boot the "OpenAI Codex (vX)" box with a</span>
+<span class="sd">    permissions row ("YOLO mode" when sac turns the sandbox off) is on screen.</span>
+<span class="sd">    After the first turn that box has scrolled away for good, and the idle</span>
+<span class="sd">    screen is the composer row (``›``) with the model/effort/cwd footer under</span>
+<span class="sd">    it. Until 2026-09-05 only the first shape counted, so every dispatch to a</span>
+<span class="sd">    Codex agent after its first turn was refused as "a modal is blocking the</span>
+<span class="sd">    input" — measured on handyman-01, which had been idle at its composer.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">codex_blocking_modal</span><span class="p">(</span><span class="n">content</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">live</span> <span class="o">=</span> <span class="n">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">_detect_codex_dir_trust</span><span class="p">(</span><span class="n">live</span><span class="p">)</span> <span class="ow">or</span> <span class="n">_detect_codex_hooks_review</span><span class="p">(</span><span class="n">live</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">if</span> <span class="s2">"Press enter to continue"</span> <span class="ow">in</span> <span class="n">live</span> <span class="ow">or</span> <span class="s2">"Press enter to confirm"</span> <span class="ow">in</span> <span class="n">live</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">if</span> <span class="s2">"OpenAI Codex (v"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">"permissions:"</span> <span class="ow">in</span> <span class="n">content</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="n">tail</span> <span class="o">=</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">content</span><span class="o">.</span><span class="n">rstrip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="o">-</span><span class="n">_CODEX_TAIL_ROWS</span><span class="p">:])</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="nb">any</span><span class="p">(</span><span class="n">marker</span> <span class="ow">in</span> <span class="n">tail</span> <span class="k">for</span> <span class="n">marker</span> <span class="ow">in</span> <span class="n">_CODEX_COMPOSER_MARKERS</span><span class="p">)</span>
+        <span class="ow">and</span> <span class="n">_CODEX_FOOTER</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">tail</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="_detect_hermes_contributor_tier">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_hermes_contributor_tier</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Hermes' Meta contributor-tier data-training confirmation (2026-09-23).</span>
+
+<span class="sd">    "CONTRIBUTOR TIER — TRAINS ON YOUR DATA ... Use this model for this</span>
+<span class="sd">    invocation? [y/N]" — Hermes asks this at TUI boot when the resolved</span>
+<span class="sd">    model is a Meta contributor tier. The fleet runs the contributor tier</span>
+<span class="sd">    deliberately (free, full authority, training accepted), so the</span>
+<span class="sd">    correct answer is always "y". Must out-rank everything except the</span>
+<span class="sd">    resume picker — it blocks boot the same way.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="s2">"CONTRIBUTOR TIER"</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">"Use this model for this invocation? [y/N]"</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
 
 
@@ -752,11 +1035,16 @@
 <div class="viewcode-block" id="_detect_done">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_detect_done</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check if claude is at the main input prompt (all TUI prompts done).</span>
+<span class="w">    </span><span class="sd">"""Check if the TUI is at its main input prompt (all prompts done).</span>
 
-<span class="sd">    The status bar shows &quot;bypass permissions&quot; when ready.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="s2">&quot;bypass permissions&quot;</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span></div>
+<span class="sd">    Claude's status bar shows "bypass permissions" when ready; Codex has its</span>
+<span class="sd">    own banner (:func:`_detect_codex_done`).</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">codex_blocking_modal</span><span class="p">(</span><span class="n">content</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">if</span> <span class="s2">"bypass permissions"</span> <span class="ow">in</span> <span class="n">content</span> <span class="ow">and</span> <span class="s2">"Enter to confirm"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">content</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">_detect_codex_done</span><span class="p">(</span><span class="n">content</span><span class="p">)</span></div>
 
 
 
@@ -765,84 +1053,102 @@
 <span class="c1"># To add a new prompt, append a PromptHandler or call register_prompt().</span>
 <span class="n">PROMPT_HANDLERS</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PromptHandler</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;bypass-permissions&quot;</span><span class="p">,</span>
-        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_bypass_permissions</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;2&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;2. Yes, I accept&quot;</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"hermes-contributor-tier"</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_hermes_contributor_tier</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"y"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># fleet runs the contributor tier deliberately</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;resume-session&quot;</span><span class="p">,</span>
-        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_resume_session</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span>
-            <span class="s2">&quot;2&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;Enter&quot;</span><span class="p">,</span>
-        <span class="p">],</span>  <span class="c1"># &quot;2. Resume full session as-is&quot; (--continue wants full context)</span>
-        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># before compose-pending-unsent: the modal&#39;s &quot;❯ 1.&quot; matches that too</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"codex-dir-trust"</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_codex_dir_trust</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[],</span>  <span class="c1"># reviewed project trust is configured before native launch</span>
+        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dev-channels&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"codex-hooks-review"</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_codex_hooks_review</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[],</span>  <span class="c1"># unknown or changed hooks require reviewed authority</span>
+        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">PromptHandler</span><span class="p">(</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"bypass-permissions"</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_bypass_permissions</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"2"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "2. Yes, I accept"</span>
+        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">PromptHandler</span><span class="p">(</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"resume-session"</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_resume_session</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span>
+            <span class="s2">"2"</span><span class="p">,</span>
+            <span class="s2">"Enter"</span><span class="p">,</span>
+        <span class="p">],</span>  <span class="c1"># "2. Resume full session as-is" (--continue wants full context)</span>
+        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># before compose-pending-unsent: the modal's "❯ 1." matches that too</span>
+    <span class="p">),</span>
+    <span class="n">PromptHandler</span><span class="p">(</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"dev-channels"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_dev_channels</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. I am using this for local development&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. I am using this for local development"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;thinking-effort&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"thinking-effort"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_thinking_effort</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. Medium (recommended)&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. Medium (recommended)"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;mcp-json-edit&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"mcp-json-edit"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_mcp_json_edit</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. Yes, proceed&quot; — .mcp.json edit dialog</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. Yes, proceed" — .mcp.json edit dialog</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;skip-permissions-yn&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"skip-permissions-yn"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_skip_permissions_yn</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># Legacy y/n text prompt</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"y"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># Legacy y/n text prompt</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;press-enter-continue&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"press-enter-continue"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_press_enter_continue</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># Dismiss informational banners / context-window warnings</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># Dismiss informational banners / context-window warnings</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;file-trust&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"file-trust"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_file_trust</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;Do you trust the files in this folder?&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"y"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "Do you trust the files in this folder?"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;file-trust-radio&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"file-trust-radio"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_file_trust_radio</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. Yes, I trust this folder&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. Yes, I trust this folder"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;theme-selection&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"theme-selection"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_theme_selection</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. Auto (match terminal)&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. Auto (match terminal)"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">9</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;login-method&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"login-method"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_login_method</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;2&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;2. Anthropic Console account · API usage billing&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"2"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "2. Anthropic Console account · API usage billing"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;compose-pending-unsent&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"compose-pending-unsent"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_compose_pending_unsent</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># submit unsent compose buffer</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># submit unsent compose buffer</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">11</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;external-imports&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"external-imports"</span><span class="p">,</span>
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_external_imports</span><span class="p">,</span>
-        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;1. Yes, allow external imports&quot;</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"1"</span><span class="p">,</span> <span class="s2">"Enter"</span><span class="p">],</span>  <span class="c1"># "1. Yes, allow external imports"</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span>
     <span class="p">),</span>
 <span class="p">]</span>
@@ -851,7 +1157,7 @@
 <div class="viewcode-block" id="register_prompt">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">register_prompt</span><span class="p">(</span><span class="n">handler</span><span class="p">:</span> <span class="n">PromptHandler</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Add a custom prompt handler to the registry.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Add a custom prompt handler to the registry."""</span>
     <span class="n">PROMPT_HANDLERS</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
     <span class="n">PROMPT_HANDLERS</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">h</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">priority</span><span class="p">)</span></div>
 
@@ -867,32 +1173,32 @@
 <div class="viewcode-block" id="_recent_tail">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">lines</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">_LIVE_WINDOW_LINES</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the last ``lines`` non-empty rows of ``content``.</span>
+<span class="w">    </span><span class="sd">"""Return the last ``lines`` non-empty rows of ``content``.</span>
 
 <span class="sd">    Scopes modal detection to the LIVE region of a captured pane instead of</span>
 <span class="sd">    the entire accumulated snapshot ``tmux capture-pane -p`` (no ``-S``)</span>
 <span class="sd">    returns the whole VISIBLE viewport, not just the freshest output. Once</span>
-<span class="sd">    Claude Code&#39;s Ink TUI has moved a first-run modal&#39;s rendered text</span>
+<span class="sd">    Claude Code's Ink TUI has moved a first-run modal's rendered text</span>
 <span class="sd">    further up the screen — dismissed, but not yet scrolled past the</span>
 <span class="sd">    viewport — an unscoped substring match can still fire on it long after</span>
 <span class="sd">    the modal is gone, sending its registered digit+``Enter`` into what is</span>
 <span class="sd">    now the plain, empty compose box: card</span>
-<span class="sd">    ``sac-tui-stray-1-submitted-on-boot`` — a spurious ``&quot;1&quot;`` gets typed</span>
+<span class="sd">    ``sac-tui-stray-1-submitted-on-boot`` — a spurious ``"1"`` gets typed</span>
 <span class="sd">    and submitted as a user message during boot (observed with the</span>
 <span class="sd">    ``thinking-effort`` / ``file-trust-radio`` / ``theme-selection``</span>
 <span class="sd">    handlers, none of which scoped their match to the live screen).</span>
 
 <span class="sd">    ``_LIVE_WINDOW_LINES`` comfortably covers the tallest verified real</span>
 <span class="sd">    modal capture with headroom, while still excluding an EARLIER,</span>
-<span class="sd">    already-dismissed modal&#39;s text once enough new output has rendered</span>
-<span class="sd">    below it. Mirrors :func:`_detect_press_enter_continue`&#39;s existing</span>
+<span class="sd">    already-dismissed modal's text once enough new output has rendered</span>
+<span class="sd">    below it. Mirrors :func:`_detect_press_enter_continue`'s existing</span>
 <span class="sd">    last-N-lines window (same fix shape, wider here because these handlers</span>
 <span class="sd">    need a whole title+options+footer block, not one banner line) and</span>
-<span class="sd">    :func:`_tui_compose._compose_pending_live`&#39;s bottom-anchored scoping for</span>
+<span class="sd">    :func:`_tui_compose._compose_pending_live`'s bottom-anchored scoping for</span>
 <span class="sd">    the analogous Enter-drop bug (``sac-tui-enter-drop-on-boot``).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="n">rows</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">row</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
-    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rows</span><span class="p">[</span><span class="o">-</span><span class="n">lines</span><span class="p">:])</span></div>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rows</span><span class="p">[</span><span class="o">-</span><span class="n">lines</span><span class="p">:])</span></div>
 
 
 
@@ -903,7 +1209,7 @@
     <span class="n">accepted</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
     <span class="n">send_keys_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check content against all handlers, respond to the first match.</span>
+<span class="w">    </span><span class="sd">"""Check content against all handlers, respond to the first match.</span>
 
 <span class="sd">    Args:</span>
 <span class="sd">        content: Captured pane content.</span>
@@ -912,7 +1218,13 @@
 
 <span class="sd">    Returns:</span>
 <span class="sd">        Name of the matched prompt, or None if no match.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
+    <span class="n">blocked</span> <span class="o">=</span> <span class="n">codex_blocking_modal</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">blocked</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">"Native prompt </span><span class="si">%s</span><span class="s2"> requires reviewed authority; no keys sent"</span><span class="p">,</span> <span class="n">blocked</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">blocked</span>
     <span class="n">tail</span> <span class="o">=</span> <span class="n">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">PROMPT_HANDLERS</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">h</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">priority</span><span class="p">):</span>
         <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">accepted</span><span class="p">:</span>
@@ -920,7 +1232,7 @@
         <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">detect</span><span class="p">(</span><span class="n">tail</span><span class="p">):</span>
             <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">:</span>
                 <span class="n">send_keys_fn</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Auto-accepted prompt: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Auto-accepted prompt: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span>
     <span class="k">return</span> <span class="kc">None</span></div>
 
@@ -929,19 +1241,22 @@
 <div class="viewcode-block" id="detect">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">detect</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the NAME of the first matching prompt handler (by priority), or</span>
+<span class="w">    </span><span class="sd">"""Return the NAME of the first matching prompt handler (by priority), or</span>
 <span class="sd">    None when no known modal is on screen. Detect-only — sends nothing.</span>
 
 <span class="sd">    Pairs with :func:`respond_modal` so a drain loop can RESPOND, settle, then</span>
 <span class="sd">    re-detect to VERIFY the modal actually cleared — instead of firing</span>
-<span class="sd">    keystrokes once and assuming success. Claude&#39;s Ink TUI drops keys sent</span>
+<span class="sd">    keystrokes once and assuming success. Claude's Ink TUI drops keys sent</span>
 <span class="sd">    mid-render, so a fire-and-forget send silently leaves the modal up; the</span>
 <span class="sd">    detect/respond/verify cycle is the no-silent-fallback fix.</span>
 
 <span class="sd">    Matches against :func:`_recent_tail` (the LIVE region), not the raw</span>
 <span class="sd">    ``content`` — see its docstring for the stray-boot-submit false</span>
 <span class="sd">    positive this prevents.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
+    <span class="n">blocked</span> <span class="o">=</span> <span class="n">codex_blocking_modal</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">blocked</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">blocked</span>
     <span class="n">tail</span> <span class="o">=</span> <span class="n">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">PROMPT_HANDLERS</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">h</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">priority</span><span class="p">):</span>
         <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">detect</span><span class="p">(</span><span class="n">tail</span><span class="p">):</span>
@@ -953,18 +1268,26 @@
 <div class="viewcode-block" id="respond_modal">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">respond_modal</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">send_keys_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Send the registered keystrokes for the handler named ``name``.</span>
+<span class="w">    </span><span class="sd">"""Send the registered keystrokes for the handler named ``name``.</span>
 
 <span class="sd">    Returns True iff a handler with that name exists (its keys were sent),</span>
 <span class="sd">    False otherwise. The caller MUST verify the modal cleared (re-capture +</span>
 <span class="sd">    :func:`detect`) and resend on the render race — a single send is not</span>
 <span class="sd">    guaranteed to land.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">{</span>
+        <span class="s2">"codex-hooks-review"</span><span class="p">,</span>
+        <span class="s2">"codex-dir-trust"</span><span class="p">,</span>
+        <span class="s2">"codex-auth-required"</span><span class="p">,</span>
+        <span class="s2">"codex-usage-limit"</span><span class="p">,</span>
+        <span class="s2">"codex-rate-limit"</span><span class="p">,</span>
+    <span class="p">}:</span>
+        <span class="k">return</span> <span class="kc">False</span>
     <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">PROMPT_HANDLERS</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">:</span>
                 <span class="n">send_keys_fn</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Responded to prompt </span><span class="si">%s</span><span class="s2"> (keys=</span><span class="si">%s</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Responded to prompt </span><span class="si">%s</span><span class="s2"> (keys=</span><span class="si">%s</span><span class="s2">)"</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>
             <span class="k">return</span> <span class="kc">True</span>
     <span class="k">return</span> <span class="kc">False</span></div>
 
@@ -973,7 +1296,7 @@
 <div class="viewcode-block" id="is_ready">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">is_ready</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check if claude is at the main input prompt (all TUI prompts done).&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Check if claude is at the main input prompt (all TUI prompts done)."""</span>
     <span class="k">return</span> <span class="n">_detect_done</span><span class="p">(</span><span class="n">content</span><span class="p">)</span></div>
 
 </pre></div>
