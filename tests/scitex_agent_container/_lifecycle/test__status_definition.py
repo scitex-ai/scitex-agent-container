@@ -222,6 +222,7 @@ def test_latest_instance_host_owns_remote_process_probe(scope):
     config.hosts_spec.host = "current-node"  # stale spec intent loses to launch row
     resolved_hosts = []
     remote_peers = []
+    local_probes = []
 
     def resolve_host(host):
         resolved_hosts.append(host)
@@ -234,10 +235,14 @@ def test_latest_instance_host_owns_remote_process_probe(scope):
             INSTRUMENT_HOST_TMUX,
         )
 
+    def local_probe(_config):
+        local_probes.append(True)
+        raise RuntimeError("local process probe should not run")
+
     # Act
     result = defined_status(
         "paper", str(path), config,
-        runtime_factory=lambda _config: pytest.fail("local runtime must not be probed"),
+        runtime_factory=local_probe,
         instance_reader=foreign_rows,
         remote_process_probe=remote_probe,
         remote_host_resolver=resolve_host,
@@ -246,12 +251,13 @@ def test_latest_instance_host_owns_remote_process_probe(scope):
     assert (
         resolved_hosts,
         remote_peers,
+        local_probes,
         result["host"],
         result["process_observation_scope"],
         result["process_observation_host"],
         result["liveness"]["verdict"],
         result["status"],
-    ) == (["windows-peer"], ["windows-peer"], "current-node", "remote",
+    ) == (["windows-peer"], ["windows-peer"], [], "current-node", "remote",
           "windows-peer", ALIVE, "running")
 
 
@@ -264,16 +270,24 @@ def test_unresolvable_instance_host_is_unknown_without_local_probe(scope):
     def unresolved(_host):
         raise RuntimeError("peer mapping unavailable")
 
+    local_probes = []
+
+    def local_probe(_config):
+        local_probes.append(True)
+        raise RuntimeError("local process probe should not run")
+
     # Act
     result = defined_status(
         "paper", str(path), config,
-        runtime_factory=lambda _config: pytest.fail("must not probe locally"),
+        runtime_factory=local_probe,
         instance_reader=foreign_rows,
         remote_host_resolver=unresolved,
     )
     # Assert
-    assert (result["process_observation_scope"], result["liveness"]["verdict"],
-            result["status"]) == ("unknown", UNKNOWN, "unknown")
+    assert (local_probes, result["process_observation_scope"],
+            result["liveness"]["verdict"], result["status"]) == (
+                [], "unknown", UNKNOWN, "unknown"
+            )
 
 
 def test_foreign_row_cannot_replace_current_local_host(stopped_definition):
