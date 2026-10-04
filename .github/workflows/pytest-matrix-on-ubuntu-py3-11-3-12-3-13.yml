@@ -9,6 +9,10 @@ on:
     - cron: "0 17 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: true
+
 permissions:
   actions: read
   contents: read
