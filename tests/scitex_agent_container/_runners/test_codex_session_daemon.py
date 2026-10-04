@@ -586,6 +586,49 @@ def test_codex_session_preserves_structured_usage_limit_error_from_failed_turn()
     assert events[0].raw.codex_error_info == "usageLimitExceeded"
 
 
+def test_codex_session_preserves_schema_error_notification_for_failed_turn():
+    # Schema-faithful ServerNotification shape from the installed native
+    # Codex app-server definitions: {method: "error", params: {turnId,
+    # error: {codexErrorInfo, message}, willRetry}} followed by the terminal
+    # turn/completed notification. This is not a captured vendor wire event.
+    error = SimpleNamespace(
+        message="You’ve hit your usage limit.",
+        codex_error_info="usageLimitExceeded",
+    )
+
+    async def _scenario() -> list[NormalizedEvent]:
+        handle = _NativeTurnHandle()
+
+        async def _failed_stream():
+            yield SimpleNamespace(
+                method="error",
+                params=SimpleNamespace(
+                    turn_id=handle.id,
+                    error=error,
+                    will_retry=False,
+                ),
+            )
+            yield SimpleNamespace(
+                method="turn/completed",
+                params=SimpleNamespace(
+                    turn=SimpleNamespace(id=handle.id, status="failed", error=None)
+                ),
+            )
+
+        handle.stream = _failed_stream
+        session = CodexSession("ag-cx-quota-notification")
+        session._started = True
+        session._thread = _NativeThread(handle)
+        return [event async for event in session.send(SimpleNamespace(content="work"))]
+
+    events = asyncio.run(_scenario())
+
+    assert len(events) == 1
+    assert events[0].kind == "error"
+    assert events[0].error == error.message
+    assert events[0].raw.codex_error_info == "usageLimitExceeded"
+
+
 @pytest.mark.parametrize(
     ("error_code", "expected_cause", "expected_kind"),
     [

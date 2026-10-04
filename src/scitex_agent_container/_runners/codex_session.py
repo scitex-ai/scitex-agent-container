@@ -385,9 +385,18 @@ class CodexSession:
             items: list[Any] = []
             usage: Any = None
             completed: Any = None
+            terminal_errors: list[Any] = []
             async for notification in stream:
                 method = str(getattr(notification, "method", "") or "")
-                payload = getattr(notification, "payload", None)
+                # The installed native app-server schema declares
+                # ServerNotification as {method, params}; SDK versions may
+                # expose the same decoded body as ``payload``. Read both
+                # spellings while preserving the typed notification body.
+                payload = getattr(notification, "params", None)
+                if payload is None:
+                    payload = getattr(notification, "payload", None)
+                if method == "error" and getattr(payload, "turn_id", None) == turn.id:
+                    terminal_errors.append(payload)
                 if method == "item/completed" and getattr(payload, "turn_id", None) == turn.id:
                     items.append(getattr(payload, "item", None))
                 elif method == "thread/tokenUsage/updated" and getattr(payload, "turn_id", None) == turn.id:
@@ -399,6 +408,18 @@ class CodexSession:
             if completed is None:
                 raise RuntimeError("Codex app-server ended the turn stream without turn/completed")
             failed_error = getattr(completed, "error", None)
+            if failed_error is None:
+                # ErrorNotification is a real app-server notification and
+                # carries the same TurnError shape. Use only a matching turn's
+                # error when its terminal turn/completed record failed.
+                failed_error = next(
+                    (
+                        getattr(event, "error", None)
+                        for event in reversed(terminal_errors)
+                        if getattr(event, "error", None) is not None
+                    ),
+                    None,
+                )
             status = getattr(completed, "status", "")
             status = getattr(status, "value", status)
             if failed_error is not None or status == "failed":
