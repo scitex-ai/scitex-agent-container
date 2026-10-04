@@ -23,7 +23,6 @@ REQUIRED_GATES = (
     "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml",
     "lint.yml",
     "import-smoke-on-ubuntu-py3-12.yml",
-    "no-hosted-runners-guard-on-self-hosted.yml",
 )
 
 # `quality-audit-on-ubuntu-latest.yml` USED TO BE IN THIS LIST and was removed

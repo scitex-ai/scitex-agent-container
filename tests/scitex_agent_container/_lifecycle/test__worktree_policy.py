@@ -180,6 +180,103 @@ def test_explicit_linked_reuse_keeps_retained_owner_bytes(
     assert owner.read_bytes() == before
 
 
+@pytest.fixture
+def primary_owned_explicit_context(tmp_path, runtime_dir, real_policy_cli):
+    repo = _authority(tmp_path / "primary-owned-repo")
+    original = _config(repo)
+    enforce_task_worktree_policy(original, cli_path=real_policy_cli)
+    linked = Path(original._worktree_plan.resolved_workdir)
+    owner = Path(original._worktree_plan.owner_file)
+    (linked / "tracked.txt").write_text("retained dirty work\n", encoding="utf-8")
+    (linked / "untracked.txt").write_text("retained new work\n", encoding="utf-8")
+    return repo, linked, owner, owner.read_bytes()
+
+
+def test_primary_owned_explicit_dirty_reuse_preserves_owner_bytes(
+    primary_owned_explicit_context, real_policy_cli
+):
+    # Arrange
+    _, linked, owner, before = primary_owned_explicit_context
+    config = _config(linked)
+    # Act
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    # Assert
+    assert owner.read_bytes() == before
+
+
+def test_primary_owned_explicit_dirty_reuse_preserves_checkout_bytes(
+    primary_owned_explicit_context, real_policy_cli
+):
+    # Arrange
+    _, linked, _, _ = primary_owned_explicit_context
+    paths = [linked / "tracked.txt", linked / "untracked.txt"]
+    before = [path.read_bytes() for path in paths]
+    # Act
+    enforce_task_worktree_policy(_config(linked), cli_path=real_policy_cli)
+    # Assert
+    assert [path.read_bytes() for path in paths] == before
+
+
+def test_primary_owned_explicit_reuse_keeps_neutral_checkout_root(
+    primary_owned_explicit_context, real_policy_cli
+):
+    # Arrange
+    _, linked, _, _ = primary_owned_explicit_context
+    config = _config(linked)
+    # Act
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    # Assert
+    assert config._worktree_plan.repo_root == str(linked)
+
+
+def test_primary_owned_explicit_refresh_preserves_owner_root(
+    primary_owned_explicit_context, real_policy_cli
+):
+    # Arrange
+    repo, linked, owner, _ = primary_owned_explicit_context
+    config = _config(linked)
+    enforce_task_worktree_policy(config, cli_path=real_policy_cli)
+    config.env["SAC_INSTANCE_UUID"] = "explicit-retained-owner-incarnation"
+    # Act
+    refresh_task_worktree_owner(config)
+    # Assert
+    assert json.loads(owner.read_text())["repo_root"] == str(repo)
+
+
+@pytest.mark.parametrize("key", ["agent", "repo_root", "worktree", "branch"])
+def test_primary_owned_explicit_reuse_refuses_foreign_owner_fields(
+    primary_owned_explicit_context, real_policy_cli, key
+):
+    # Arrange
+    _, linked, owner, _ = primary_owned_explicit_context
+    record = json.loads(owner.read_text())
+    record[key] = "foreign-" + record[key]
+    owner.write_text(json.dumps(record), encoding="utf-8")
+    # Act
+    error = _captured_policy_error(
+        lambda: enforce_task_worktree_policy(_config(linked), cli_path=real_policy_cli)
+    )
+    # Assert
+    assert "worktree ownership conflict" in error
+
+
+def test_primary_owned_explicit_refusal_preserves_foreign_owner_bytes(
+    primary_owned_explicit_context, real_policy_cli
+):
+    # Arrange
+    _, linked, owner, _ = primary_owned_explicit_context
+    record = json.loads(owner.read_text())
+    record["repo_root"] = str(linked.parent / "foreign-root")
+    owner.write_text(json.dumps(record), encoding="utf-8")
+    before = owner.read_bytes()
+    # Act
+    _captured_policy_error(
+        lambda: enforce_task_worktree_policy(_config(linked), cli_path=real_policy_cli)
+    )
+    # Assert
+    assert owner.read_bytes() == before
+
+
 @pytest.fixture(params=["repo_root", "git_common_dir"])
 def conflicting_linked_metadata(
     explicit_linked_context, tmp_path, real_policy_cli, request

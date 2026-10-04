@@ -586,7 +586,15 @@ def test_shell_only_signal_reaps_owned_grandchild_before_scratch_removal(
         # Act: signal the wrapper PID only, never its process group.
         started = time.monotonic()
         os.kill(wrapper.pid, signum)
-        stdout, stderr = wrapper.communicate(timeout=6)
+        # Keep the behavioral assertion below (<5s) authoritative while
+        # allowing the harness to collect teardown evidence on slower hosts.
+        try:
+            stdout, stderr = wrapper.communicate(timeout=10)
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                "wrapper did not finish its owned process and scratch teardown; "
+                f"stdout={exc.stdout!r}; stderr={exc.stderr!r}"
+            ) from exc
         # Assert: terminal status, bounded completion and independently reaped
         # ordinary descendants precede deletion; foreign processes survive.
         elapsed = time.monotonic() - started

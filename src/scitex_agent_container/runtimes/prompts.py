@@ -323,12 +323,68 @@ _CODEX_FOOTER = re.compile(
 _CODEX_TAIL_ROWS = 8
 
 
+# Anchored native remote-compact hard-cap prefix (normalized: curly
+# apostrophe folded, lowercase). The native error row begins DIRECTLY
+# with this text, followed by the wrapped dashboard line. This is an
+# anchored prefix match on the exact reported wording — not an arbitrary
+# substring grant: prose merely mentioning compacting elsewhere never
+# matches, and quoted/fenced/input rows are excluded by the caller loop.
+_REMOTE_COMPACT_HARDCAP_PREFIX = (
+    "error running remote compact task: you've hit your usage limit. visit https://"
+)
+
+
+def _codex_usage_limit_pane(content: str) -> bool:
+    """Recognize the latest rendered native hard-cap message, not prose.
+
+    A composer remains visible after a failed turn and does not establish
+    recovery. This is a UI observation only: persistent incident admission
+    still needs its fenced session/turn evidence and explicit recovery API.
+    """
+    fenced = None
+    input_indent = None
+    blocked = False
+    for row in (content or "").splitlines():
+        text = row.strip()
+        if text.startswith(("```", "~~~")):
+            marker = text[:3]
+            if fenced is None:
+                fenced = marker
+            elif marker == fenced:
+                fenced = None
+            continue
+        if fenced is not None or text.startswith(">"):
+            continue
+        indent = len(row) - len(row.lstrip(" \t"))
+        if text.startswith(_CODEX_COMPOSER_MARKERS):
+            input_indent = indent
+            continue
+        # Multiline user input is indented under its composer. Its quoted
+        # native glyph does not become a new native message.
+        if input_indent is not None and indent > input_indent:
+            continue
+        if text.startswith(("■ ", "• ")):
+            native = text[0]
+            heading = text[2:].replace("’", "'").lower()
+            blocked = native == "■" and (
+                heading.startswith("you've hit your usage limit")
+                or heading.startswith(_REMOTE_COMPACT_HARDCAP_PREFIX)
+            )
+        else:
+            heading = text.strip("│┃╭╮╰╯┌┐└┘─⚠! ").replace("’", "'").lower()
+            if heading.startswith("you've hit your usage limit"):
+                blocked = True
+    return blocked
+
+
 def codex_blocking_modal(content: str) -> str | None:
     """Recognize native review/login/limit panes without accepting their keys.
 
     Tall hook lists exceed the ordinary modal tail. A fresh bottom composer
     and model footer exclude a dismissed heading still visible in history.
     """
+    if _codex_usage_limit_pane(content):
+        return "codex-usage-limit"
     rows = (content or "").splitlines()
     composer = next(
         (
@@ -363,7 +419,6 @@ def codex_blocking_modal(content: str) -> str | None:
             "continue with chatgpt",
         ),
         "codex-rate-limit": (
-            "you've hit your usage limit",
             "usage limit reached",
             "rate limit exceeded",
             "too many requests",
@@ -650,6 +705,7 @@ def respond_modal(name: str, send_keys_fn: Callable[..., None]) -> bool:
         "codex-hooks-review",
         "codex-dir-trust",
         "codex-auth-required",
+        "codex-usage-limit",
         "codex-rate-limit",
     }:
         return False

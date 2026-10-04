@@ -13,13 +13,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
 HOSTED = ROOT / ".github/ci/run-on-hosted.sh"
-NATIVE = "needs.runner-admission.outputs.native_authorized == 'true'"
-HOSTED_ONLY = "needs.runner-admission.outputs.native_authorized != 'true'"
 
 
 @pytest.fixture
-def jobs() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text())["jobs"]
+def workflow_doc() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text())
 
 
 @pytest.mark.parametrize("hook_id", ["no-hosted-runners", "no-hardcoded-runner-pool"])
@@ -149,144 +147,17 @@ def test_hook_guard_failure_is_preserved_without_fallback(workflow_hook_process)
     assert result.returncode == 17
 
 
-def test_admission_uses_the_published_gate_without_secret_inheritance(jobs):
+def test_leaf_ci_is_only_a_central_reusable_workflow_call(workflow_doc):
+    """Execution policy belongs to the organization workflow, not this leaf."""
     # Arrange
-    admission = jobs["runner-admission"]
+    job = workflow_doc["jobs"]["tests"]
     # Act
-    contract = {
-        "uses": admission["uses"],
-        "labels": json.loads(admission["with"]["runs_on"]),
-        "permissions": admission["permissions"],
-        "secrets": admission.get("secrets"),
-    }
+    matches_central_contract = job == {
+        "uses": "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main",
+        "with": {"suite": "matrix"},
+    } and set(workflow_doc["jobs"]) == {"tests"}
     # Assert
-    assert contract == {
-        "uses": "scitex-ai/.github/.github/workflows/runner-admission.yml@main",
-        "labels": ["self-hosted", "Linux", "X64", "scitex-org-cpu"],
-        "permissions": {},
-        "secrets": None,
-    }
-
-
-def test_required_test_and_verdict_contexts_remain_terminal(jobs):
-    # Arrange
-    test, verdict = jobs["test"], jobs["verdict"]
-    # Act
-    actual = (
-        test["name"],
-        test["needs"],
-        test["if"],
-        verdict["name"],
-        set(verdict["needs"]),
-        verdict["if"],
-    )
-    # Assert
-    assert actual == (
-        "pytest-matrix-on-ubuntu-py${{ matrix.python-version }}",
-        "runner-admission",
-        "always()",
-        "ci-verdict-to-pushing-agent",
-        {"test", "runner-admission"},
-        "always()",
-    )
-
-
-def test_unknown_admission_has_a_literal_hosted_destination(jobs):
-    # Arrange
-    test = jobs["test"]
-    # Act
-    expression = test["runs-on"]
-    # Assert
-    assert expression == (
-        "${{ fromJSON(needs.runner-admission.outputs.runs_on "
-        "|| '[\"ubuntu-latest\"]') }}"
-    )
-
-
-@pytest.mark.parametrize(
-    "script,condition",
-    [
-        (
-            "bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}",
-            NATIVE,
-        ),
-        (
-            "bash .github/ci/run-on-hosted.sh ${{ matrix.python-version }} matrix",
-            HOSTED_ONLY,
-        ),
-    ],
-)
-def test_native_and_hosted_test_bodies_are_exclusive(jobs, script, condition):
-    # Arrange
-    steps = jobs["test"]["steps"]
-    # Act
-    actual = next(s.get("if") for s in steps if s.get("run") == script)
-    # Assert
-    assert actual == condition
-
-
-def test_native_feedback_uses_trusted_base_and_exact_control_plane(jobs):
-    # Arrange
-    verdict = jobs["verdict"]
-    checkout = next(s for s in verdict["steps"] if "uses" in s)
-    write = next(s for s in verdict["steps"] if "SCITEX_STORE_DSN" in s.get("env", {}))
-    # Act
-    actual = (checkout["if"], checkout["with"], write["if"])
-    # Assert
-    assert actual == (
-        NATIVE,
-        {
-            "repository": "${{ github.repository }}",
-            "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
-            "persist-credentials": False,
-        },
-        NATIVE,
-    )
-
-
-def test_native_verdict_route_names_the_organization_control_plane(jobs):
-    # Arrange
-    import re
-
-    expression = jobs["verdict"]["runs-on"]
-    # Act
-    route = json.loads(re.search(r"&& '([^']+)'", expression).group(1))
-    # Assert
-    assert route == {
-        "group": "Organization",
-        "labels": [
-            "self-hosted",
-            "Linux",
-            "X64",
-            "scitex-org-cpu",
-            "sac-control-plane",
-        ],
-    }
-
-
-@pytest.mark.parametrize(
-    "result,code",
-    [("success", 0), ("failure", 1), ("cancelled", 1), ("skipped", 1), ("", 1)],
-)
-def test_real_hosted_verdict_reports_the_test_result_without_store(jobs, result, code):
-    # Arrange
-    step = next(s for s in jobs["verdict"]["steps"] if s.get("if") == HOSTED_ONLY)
-    env = {"PATH": "/usr/bin:/bin", "TEST_RESULT": result}
-    # Act
-    run = subprocess.run(
-        ["/bin/bash", "-c", step["run"]],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    # Assert
-    assert (run.returncode, run.stdout, run.stderr, set(step["env"])) == (
-        code,
-        f"Hosted test verdict: {result}; company feedback rail not admitted.\n",
-        "",
-        {"TEST_RESULT"},
-    )
+    assert matches_central_contract
 
 
 @pytest.fixture

@@ -141,8 +141,7 @@ def _is_configured() -> bool:
     return bool(os.environ.get(API_URL_ENV, "").strip())
 
 
-@require_GET
-def index(request: HttpRequest):
+def _fleet_context(request: HttpRequest) -> dict:
     """Render the fleet SHELL immediately; never block on the control plane.
 
     P0 (operator-reproduced): this view used to run the whole control-plane read
@@ -168,7 +167,12 @@ def index(request: HttpRequest):
     elif snapshot.error:
         # A completed failure is the last thing observed for this identity:
         # show unavailable + Retry, not a pending spinner, and not an empty fleet.
-        agents, comm_error, fleet_state, observed_age = [], snapshot.error, "unavailable", snapshot.age()
+        agents, comm_error, fleet_state, observed_age = (
+            [],
+            snapshot.error,
+            "unavailable",
+            snapshot.age(),
+        )
     else:
         agents = [dict(row) for row in snapshot.agents]
         comm_error = ""
@@ -198,10 +202,7 @@ def index(request: HttpRequest):
         on_error=_record_failure,
     )
 
-    context = _app_context(
-        request,
-        "Agents",
-        view_path="",
+    return dict(
         agents=agents,
         summary=_summary(agents),
         identity=identity,
@@ -216,10 +217,17 @@ def index(request: HttpRequest):
         cache_ttl=CACHE.ttl,
         page="fleet",
         fleet_state=fleet_state,
-        diagnostic_reason="the control plane did not answer" if fleet_state == "unavailable" else "",
+        diagnostic_reason="the control plane did not answer"
+        if fleet_state == "unavailable"
+        else "",
     )
-    template = "scitex_agent_container/fleet.html"
-    return render(request, template, context)
+
+
+@require_GET
+def index(request: HttpRequest):
+    """Render the standalone or mounted leaf shell from the same fleet context."""
+    context = _app_context(request, "Agents", view_path="", **_fleet_context(request))
+    return render(request, "scitex_agent_container/fleet.html", context)
 
 
 @require_GET

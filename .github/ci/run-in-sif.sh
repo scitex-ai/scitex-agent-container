@@ -402,7 +402,9 @@ fi
 # available CPUs, with priority handling". exec replaces the shell with nice,
 # which execs ionice, which execs python (still PID-traceable, signals/exit
 # code propagate to the runner step).
-PYTEST_ARGS=(tests/ -n "$WORKERS" --dist load -q -rfEs -p no:cacheprovider)
+# Match pyproject's 300s faulthandler diagnostic with an actual per-test
+# timeout: a stack dump alone leaves a wedged xdist worker occupying the job.
+PYTEST_ARGS=(tests/ -n "$WORKERS" --dist load -q -rfEs --timeout=300 -p no:cacheprovider)
 if [ "$SUITE" = matrix ]; then
     PYTEST_ARGS+=(--cov=src/scitex_agent_container --cov-report=xml --cov-report=term)
 fi

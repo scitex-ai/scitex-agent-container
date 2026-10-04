@@ -27,7 +27,7 @@ the prompt came through.
 Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac
 claims a free port from `~/.scitex/agent-container/config.yaml`'s
 `a2a.port_range` (default `[19000, 19999]`) at start time and persists
-it in `state.db`. Operators see the assigned port via `sac agents list`.
+it in the shared PostgreSQL store. Operators see the assigned port via `sac agents list`.
 Most agents need no `a2a` block at all:
 
 ```yaml
@@ -207,7 +207,7 @@ fleet, a contracted vendor). Wrapping it in a `kind: AgentProxy`
 agent lets the rest of sac (`sac agents send`, `sac listen`, the
 AgentCard discovery surface) treat it the same as a local SDK agent.
 
-The proxy agent has no Claude SDK; it just forwards `POST /v1/turn`
+The proxy agent has no agent SDK; it just forwards `POST /v1/turn`
 to its configured `spec.proxy.upstream` and re-projects the
 upstream AgentCard at its own `/.well-known/agent-card.json` so
 peers see one consistent skill list.
@@ -218,7 +218,7 @@ kind: AgentProxy
 
 spec:
   runtime: apptainer
-  apptainer: { image: ~/.scitex/agent-container/containers/sac-proxy.sif }
+  apptainer: { image: sac-proxy }
   proxy:
     upstream: https://peer.example.com
     trust: local-mesh

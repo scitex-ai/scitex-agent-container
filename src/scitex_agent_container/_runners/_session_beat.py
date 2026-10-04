@@ -46,6 +46,7 @@ STATE_IDLE = "idle"  # legacy (pre-v4-step-5 beats); superseded by READY
 STATE_WORKING = "working"  # legacy (pre-v4-step-5 beats); superseded by BUSY
 STATE_READY = "ready"
 STATE_BUSY = "busy"
+STATE_BLOCKED = "blocked"  # quota incident latched: no backend turns admitted
 STATE_STOPPING = "stopping"
 
 
@@ -545,6 +546,7 @@ async def heartbeat_loop(
 
 
 __all__ = [
+    "STATE_BLOCKED",
     "STATE_BUSY",
     "STATE_IDLE",
     "STATE_READY",

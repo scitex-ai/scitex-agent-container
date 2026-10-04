@@ -1,110 +1,25 @@
 name: import-smoke
 
-# Catches "wheel installs but `import scitex_agent_container` blows
-# up at runtime" — separate from the full pytest suite so a broken
-# entry-point fails fast without paying for the matrix.
-#
-# Also doubles as the def-from-source gate: the apptainer .def files
-# install sac via ``pip install /opt/scitex-agent-container-src`` (a
-# %files copy of the package's OWN source tree, see
-# containers/apptainer-base.def). This workflow proves the same
-# pip-install-from-source path works on a clean runner with no
-# git+https fallback — if this is green the in-SIF install will also
-# resolve. We don't build an actual SIF here: apptainer SIF builds
-# need ``sudo`` (or ``--fakeroot`` + uidmap for sandboxes) and a full
-# base+scitex build is ~30-60 min of apt/uv work — not "cheap" in CI.
-# The contract test ``tests/scitex_agent_container/containers/
-# test_def_install_from_bundled_source.py`` locks the .def-side of the
-# invariant; this workflow locks the install-side.
-#
-# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
-# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
-# never fall back to a hosted runner.
-#
-# WHY NOT actions/setup-python: the bare Spartan node has no Python and no
-# Python tool cache; that action fails there ("version 3.x not found for this
-# OS"). `uv venv --python 3.12` fetches uv's own managed CPython instead —
-# the pattern the org-level reusables already run GREEN on spartan-cpu.
-#
-# NOTE this job does NOT simply call the org reusable
-# (scitex-ai/.github/.github/workflows/import-smoke.yml). That reusable stops
-# at `import <pkg>`; sac additionally asserts the CONSOLE SCRIPT resolves
-# (`sac --version`), which is the same entry point the SIF exercises and is the
-# half of this gate that actually catches [project.scripts] drift. Calling the
-# reusable would have silently dropped that coverage. Upstream the extra step
-# first if this is ever consolidated.
-
 on:
   push:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
   schedule:
-    - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
-# Cancel a PR's superseded runs; strict no-op everywhere else (the nightly cron
-# included — a scheduled run keys on its own run_id and is alone in its group).
-# Argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   install-check:
-    # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: import-smoke-on-ubuntu-py3-12
-    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
-    #
-    # 47s median, single-core, and it never enters the CI SIF. That is the
-    # POINT of this job: it installs from source on the BARE runner precisely to
-    # check that the package imports without the SIF's baked environment, so
-    # routing it to a SIF-capable host would not help it and sending it to a
-    # small machine costs it nothing.
-    #
-    # It was holding one of four 32-core machines per run on a pool at 93-94%
-    # utilisation, then queueing 289s median (p90 902s). #1006 routed it away
-    # for that reason, and that intent is UNCHANGED — only the SEAM changed,
-    # from a literal label list to a repo variable, so a dead pool is a
-    # settings change rather than a code change. Unset LIGHT_RUNS_ON and this
-    # lane rides the main pool; it never reads a value `tests` or the release
-    # gate would inherit.
-    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v3
-        with:
-          # PINNED: unpinned `latest` made CI a function of wall-clock
-          # time and runner cache state. See sac-ci-pin-uv-version-*.
-          version: "0.11.29"
-          cache-dependency-glob: pyproject.toml
-
-      - name: Prepare job-scoped import scratch
-        run: bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV
-
-      - name: Install from source (no extras)
-        # Mirrors the in-SIF install: install the package source root itself.
-        # No git+https fallback — if this step fails the .def's
-        # ``pip install /opt/scitex-agent-container-src`` will also fail.
-        run: |
-          set -euo pipefail
-          uv venv --python 3.12 "$IMPORT_VENV"
-          uv pip install --python "$IMPORT_VENV/bin/python" -e .
-
-      - name: Import smoke
-        run: $IMPORT_VENV/bin/python -c "import scitex_agent_container; print(scitex_agent_container.__version__)"
-
-      - name: CLI entry-point smoke (sac --version)
-        # The console script defined in pyproject.toml's [project.scripts]
-        # (sac = scitex_agent_container.cli:cli_entry_point) must be on
-        # PATH and resolve to the installed package — same shape as the
-        # in-SIF entry point. A venv install DOES materialise entry-point
-        # scripts in .venv/bin (unlike `pip install --target`, which does
-        # not — that is why run-in-sif.sh has to hand-write shims).
-        run: $IMPORT_VENV/bin/sac --version
-
-      - name: Remove this job's import scratch
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh import-smoke 3.12
+    uses: scitex-ai/.github/.github/workflows/import-smoke.yml@main
+    with:
+      console_script: sac
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'

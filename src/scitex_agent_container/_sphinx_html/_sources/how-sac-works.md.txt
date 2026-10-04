@@ -1,7 +1,7 @@
 # How sac works
 
 `scitex-agent-container` (`sac`) materializes a `spec.yaml` into a long-lived,
-externally addressable Claude agent.
+externally addressable agent process — whichever harness drives its turns.
 
 ## Launch flow
 
@@ -10,11 +10,11 @@ externally addressable Claude agent.
   to_home/    ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
-                              long-lived Claude SDK session
+                              long-lived harness session (TUI or SDK)
                               │
                               ├── $HOME  (= runtime/<name>/home/, bind-mounted)
-                              │     CLAUDE.md / .mcp.json / .env / state.md     ← from to_home/
-                              │     .claude/{commands,skills,hooks,...}         ← from to_home/.claude/
+                              │     e.g. CLAUDE.md / .mcp.json / .env / state.md ← from to_home/
+                              │     e.g. .claude/{commands,skills,hooks,...}     ← from to_home/.claude/
                               │
                               ├── spec.mounts[]  ← explicit host-path allowlist (ro/rw)
                               │
@@ -48,15 +48,27 @@ parent directory — no name field in the YAML. See [spec-reference.md](spec-ref
 
 A directory next to `spec.yaml`. At start, `sac` mirrors its contents into the
 agent's container `$HOME` (= `runtime/<name>/home/`). Every path under
-`to_home/` lands at the same relative path under `$HOME`:
+`to_home/` lands at the same relative path under `$HOME` — the mirror itself is
+harness-agnostic. `AGENTS.md` is the neutral instruction source. For Hermes,
+SAC verifies the projected bytes and passes them through Hermes'
+`agent.system_prompt` configuration. It never translates `CLAUDE.md` silently:
 
 | Source                    | Destination                     | Merge rule             |
 |---------------------------|---------------------------------|------------------------|
-| `CLAUDE.md`               | `$HOME/CLAUDE.md`               | marker-protected append |
+| `AGENTS.md` | `$HOME/AGENTS.md` | exact projection |
+| `CLAUDE.md` | `$HOME/CLAUDE.md` | marker-protected projection |
 | `.mcp.json`               | `$HOME/.mcp.json`               | full overwrite         |
 | `.env`                    | `$HOME/.env`                    | mode 0600, overwrite   |
 | `state.md`                | `$HOME/state.md`                | marker-protected append |
 | `.claude/{commands,skills,hooks}/` | `$HOME/.claude/*/`     | recursive copy         |
+
+Every launch writes `$HOME/.sac/prompt-projections.json` from the executable
+materializer. It records SHA-256 provenance for the explicit startup prompts,
+declared instruction/skill sources, and effective runtime projections. Source
+changes during assembly or a projection that no longer matches the manifest
+abort launch; documentation is not used as a runtime fallback.
+Hermes launch also fails if the manifest has no verified root `AGENTS.md`, if
+the home backings disagree, or if its recorded hash no longer matches.
 
 ### Apptainer instance
 
@@ -67,13 +79,39 @@ agent's container `$HOME` (= `runtime/<name>/home/`). Every path under
 - env vars from `spec.apptainer.env`
 - optional GPU passthrough (`--nv` / `--rocm`)
 
-### Claude SDK session
+### Harness session
 
-Inside the container, `sac` launches `claude` (Claude Code CLI) as a long-lived
-SDK session. Session state persists in the host-side state dir so it survives
-container restarts. `spec.claude.session` controls whether to start fresh
-(`new-session`), continue the last session (`continue`), or resume a specific
-one (`resume <sid>`).
+Inside the container, `sac` launches the *harness* — the agent program that
+drives one turn. sac owns the process, its lifecycle, and its addressability;
+the harness owns only the turn. Session state persists in the host-side state
+dir so it survives container restarts.
+
+The harness is selected by `spec.harness` (family) plus `spec.runtime` (launch
+mode within that family). Four harnesses are registered; **only the `anthropic`
+ones can be started today.** A registry entry is a declaration, not a working
+launch path, so the table says which is which:
+
+| `spec.harness` | Registry entry     | Selected by                                       | Process shape                     | `sac agents start`? |
+|----------------|--------------------|---------------------------------------------------|-----------------------------------|---------------------|
+| `anthropic` *(default)* | `claude-code-tui`  | `runtime: tui`, or unset                  | external `claude` binary in a PTY | **yes** |
+| `anthropic`    | `claude-agent-sdk` | `runtime: claude-agent-sdk` (legacy alias `apptainer`) | sac-hosted session runner | **yes** |
+| `openai`       | `openai-agents`    | the harness axis alone                            | sac-hosted session runner         | **no** — refused |
+| `codex`        | `codex-sdk`        | the harness axis alone                            | sac-hosted session runner         | **no** — refused |
+
+`spec.runtime` only discriminates *within* the `anthropic` family; the `openai`
+and `codex` families have one entry each, so the runtime axis selects nothing
+for them.
+
+**Honest limit today:** a non-`anthropic` harness loads, validates and resolves
+to its registry entry, but every lifecycle launch path *refuses* it — loudly,
+rather than silently starting a Claude harness under a spec that asked for
+something else. The one working alternative is `spec.a2a.handler:
+openai_session` for the OpenAI SDK; there is no equivalent A2A executor for
+`codex` yet.
+
+`spec.claude.session` controls whether to start fresh (`new-session`), continue
+the last session (`continue`), or resume a specific one (`resume <sid>`) for the
+Claude-family harnesses.
 
 ### A2A inbound (`spec.a2a.port`)
 
@@ -92,6 +130,19 @@ operations: health checks, agent status, send, agent-card, and more.
 The runner supervisor checks `spec.health` probes and applies `spec.restart`
 policy (never / on-failure / always) with exponential backoff.
 Heartbeat state is written to `runtime/<name>/heartbeat.json` every tick.
+
+For resident Hermes agents, `heartbeat.json.authoritative_heartbeat` is the
+privacy-safe native projection: stable agent/spec/engine/model/session/boot
+identities, monotonic sequence/time, progress checkpoint, bounded host lease,
+and optional Cards `developer`/`reviewer` lease. It never carries prompts,
+responses, tool payloads, account names, or credentials. The owning host also
+advances the matching record in the explicitly shared PostgreSQL instances
+store (`SCITEX_STORE_DSN` is mandatory); the append-only heartbeat diary remains
+terse and per-host. Lease age uses the Store HLC observed by readers, not the
+publisher's wall-clock expiry. Fleet
+readers reject future, duplicate, out-of-order,
+spoofed, and overlapping cross-host leases before classifying a resident as
+`idle`, `active`, `blocked`, `stalled`, `disconnected`, or `dead`.
 
 ## See also
 
