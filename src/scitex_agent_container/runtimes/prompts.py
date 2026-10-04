@@ -321,6 +321,29 @@ _CODEX_FOOTER = re.compile(
     re.M,
 )
 _CODEX_TAIL_ROWS = 8
+_CODEX_WRAP_ROWS = 15
+
+
+def _detect_codex_wrapped_composer(content: str) -> bool:
+    """Recognize an indented wrapped input above the existing live footer."""
+    rows = content.rstrip().splitlines()[-_CODEX_WRAP_ROWS:]
+    footer_rows = range(
+        len(rows) - 1, max(-1, len(rows) - _CODEX_TAIL_ROWS - 1), -1
+    )
+    footer = next(
+        (index for index in footer_rows if _CODEX_FOOTER.match(rows[index])),
+        None,
+    )
+    if footer is None:
+        return False
+    for index in range(footer - 1, -1, -1):
+        row = rows[index].lstrip()
+        if row.startswith(_CODEX_COMPOSER_MARKERS):
+            return bool(row[1:].strip()) and all(
+                not line.strip() or line[0].isspace()
+                for line in rows[index + 1:footer]
+            )
+    return False
 
 
 def codex_blocking_modal(content: str) -> str | None:
@@ -398,10 +421,12 @@ def _detect_codex_done(content: str) -> bool:
     if "OpenAI Codex (v" in content and "permissions:" in content:
         return True
     tail = "\n".join(content.rstrip().splitlines()[-_CODEX_TAIL_ROWS:])
-    return (
+    if (
         any(marker in tail for marker in _CODEX_COMPOSER_MARKERS)
         and _CODEX_FOOTER.search(tail) is not None
-    )
+    ):
+        return True
+    return _detect_codex_wrapped_composer(content)
 
 
 def _detect_hermes_contributor_tier(content: str) -> bool:
