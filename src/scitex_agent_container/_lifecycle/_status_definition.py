@@ -52,6 +52,7 @@ def defined_status(
     instance_reader: Callable[[], list[dict]] | None = None,
     process_probe: Callable[[AgentConfig, Any], Signal] | None = None,
     remote_process_probe: Callable[[AgentConfig, str], Signal] | None = None,
+    remote_host_resolver: Callable[[str], str | None] | None = None,
 ) -> dict:
     """Observe the local runtime without creating a registry/birth/session claim.
 
@@ -70,7 +71,7 @@ def defined_status(
         if target_host:
             from ._verdict_remote import _remote_peer_for_host
 
-            peer = _remote_peer_for_host(target_host)
+            peer = (remote_host_resolver or _remote_peer_for_host)(target_host)
         else:
             peer = None
         if peer:

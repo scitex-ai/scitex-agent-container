@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scitex_agent_container._lifecycle import _verdict_remote
 from scitex_agent_container._lifecycle._status import agent_status
 from scitex_agent_container._lifecycle._status_definition import defined_status
 from scitex_agent_container._lifecycle._verdict import (
@@ -215,7 +214,7 @@ def test_old_foreign_host_is_preserved_as_placement(stopped_definition):
     assert result["placement_evidence"]["records"][0]["host"] == "windows-peer"
 
 
-def test_latest_instance_host_owns_remote_process_probe(scope, monkeypatch):
+def test_latest_instance_host_owns_remote_process_probe(scope):
     # Arrange
     fleet, workdir, _, _ = scope
     path = write_spec(fleet, workdir)
@@ -235,25 +234,28 @@ def test_latest_instance_host_owns_remote_process_probe(scope, monkeypatch):
             INSTRUMENT_HOST_TMUX,
         )
 
-    monkeypatch.setattr(_verdict_remote, "_remote_peer_for_host", resolve_host)
     # Act
     result = defined_status(
         "paper", str(path), config,
         runtime_factory=lambda _config: pytest.fail("local runtime must not be probed"),
         instance_reader=foreign_rows,
         remote_process_probe=remote_probe,
+        remote_host_resolver=resolve_host,
     )
     # Assert
-    assert resolved_hosts == ["windows-peer"]
-    assert remote_peers == ["windows-peer"]
-    assert result["host"] == "current-node"
-    assert result["process_observation_scope"] == "remote"
-    assert result["process_observation_host"] == "windows-peer"
-    assert result["liveness"]["verdict"] == ALIVE
-    assert result["status"] == "running"
+    assert (
+        resolved_hosts,
+        remote_peers,
+        result["host"],
+        result["process_observation_scope"],
+        result["process_observation_host"],
+        result["liveness"]["verdict"],
+        result["status"],
+    ) == (["windows-peer"], ["windows-peer"], "current-node", "remote",
+          "windows-peer", ALIVE, "running")
 
 
-def test_unresolvable_instance_host_is_unknown_without_local_probe(scope, monkeypatch):
+def test_unresolvable_instance_host_is_unknown_without_local_probe(scope):
     # Arrange
     fleet, workdir, _, _ = scope
     path = write_spec(fleet, workdir)
@@ -262,17 +264,16 @@ def test_unresolvable_instance_host_is_unknown_without_local_probe(scope, monkey
     def unresolved(_host):
         raise RuntimeError("peer mapping unavailable")
 
-    monkeypatch.setattr(_verdict_remote, "_remote_peer_for_host", unresolved)
     # Act
     result = defined_status(
         "paper", str(path), config,
         runtime_factory=lambda _config: pytest.fail("must not probe locally"),
         instance_reader=foreign_rows,
+        remote_host_resolver=unresolved,
     )
     # Assert
-    assert result["process_observation_scope"] == "unknown"
-    assert result["liveness"]["verdict"] == UNKNOWN
-    assert result["status"] == "unknown"
+    assert (result["process_observation_scope"], result["liveness"]["verdict"],
+            result["status"]) == ("unknown", UNKNOWN, "unknown")
 
 
 def test_foreign_row_cannot_replace_current_local_host(stopped_definition):
