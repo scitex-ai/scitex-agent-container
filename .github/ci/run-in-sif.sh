@@ -16,8 +16,13 @@
 #
 # Fail-loud: a missing interpreter or a failed install is a hard error.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/sif-runtime-lib.sh"
+ci_test_pg_require
+ci_driver_environment
 
 V="${1:?python version arg required (3.11/3.12/3.13)}"
+SUITE="${2:-matrix}"
+case "$SUITE" in matrix|nightly) ;; *) echo '::error::unknown test suite profile' >&2; exit 1 ;; esac
 VENV="/opt/venv-$V"
 test -x "$VENV/bin/python" || {
     echo "::error::baked python missing in $VENV — rebuild the SIF: scitex-container apptainer build ci-cpu"
@@ -86,55 +91,9 @@ export GIT_CONFIG_VALUE_1=false
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path ci "$V")"
 export TMPDIR
-# `${TMPDIR:?}` AND NOT `$TMPDIR`, at every `rm -rf` of this path.
-#
-# The name is produced by a function in ANOTHER file, so "it is always non-empty"
-# is a property of tmpdir-lib.sh, not of this line — one refactor away from being
-# false, and nothing here would notice.
-#
-# `rm -rf ""` IS NOT THE SAFE NO-OP IT LOOKS LIKE. Measured on GNU coreutils 9.4:
-# `-f` treats the empty operand as a nonexistent file, so it exits 0 SILENTLY —
-# `set -euo pipefail` does not catch it, and the script CONTINUES with TMPDIR="".
-# Every later use is then a path off the filesystem root: `"$TMPDIR/site"` is
-# `/site`, and the sibling sweep's `! -path "$TMPDIR"` self-exclusion stops
-# matching anything. The empty value is dangerous because it is silent.
-#
-# `:?` makes the shell abort right here, naming the variable, before the deletion.
-rm -rf "${TMPDIR:?ci scratch path came back empty — refusing to rm -rf it}"
+ci_tmpdir_prepare "${TMPDIR:?scratch path required}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
-
-# REMOVE OUR OWN SCRATCH ON THE WAY OUT. The `rm -rf` above only ever deletes a
-# RE-RUN of this exact (run_id, attempt, version) triple, because the name it
-# cleans is the name it is about to use. Every new run gets a new GITHUB_RUN_ID
-# and therefore a new directory, so nothing has ever removed the previous one.
-#
-# MEASURED 2026-08-09 on scitex-compute-04: 153 orphaned ci-* directories,
-# 1.8-2.2G each, ~290G total — the root filesystem hit 393G/393G, 0 bytes free.
-# Every writing test then failed with `fatal: failed to write commit object`, on
-# EVERY pull request regardless of its diff, which reads as a runner fault and
-# is not one. `sac listen` also began returning HTTP 500 (it could not write its
-# audit log). One PR costs ~6G across the three matrix legs.
-#
-# The trap preserves the script's exit status (bash re-raises it after the
-# handler), so a failing test suite still fails.
-#
-# Same `:?` guard as above, and it matters MORE here: a trap body is evaluated at
-# EXIT, so it reads whatever TMPDIR holds then — not what it held at line 80.
-trap 'rm -rf "${TMPDIR:?exiting with an empty scratch path — refusing to rm -rf it}"' EXIT
-
-# ...and sweep SIBLINGS left behind by jobs that never reached the trap — a
-# cancelled workflow, a SIGKILL, an OOM, or any run that predates this change.
-# Without this the 153-directory backlog needs a human with sudo, which is how
-# it reached 290G in the first place: the only cleanup path was one nobody ran.
-#
-# Age-gated rather than name-gated: a concurrent matrix leg on this same runner
-# owns a sibling directory that is minutes old and MUST NOT be removed, while
-# anything untouched for hours belongs to a job that is long gone. Mirrors the
-# `_REAP_MIN_AGE_S` process reap in exec-in-sif.sh — same hazard, same guard.
-_TMPDIR_REAP_MIN_AGE_MIN="${SCITEX_CI_TMPDIR_REAP_MIN_AGE_MIN:-360}"
-find /tmp -maxdepth 1 -type d -name 'ci-scitex_agent_container-*' \
-    -mmin "+$_TMPDIR_REAP_MIN_AGE_MIN" ! -path "$TMPDIR" \
-    -exec rm -rf {} + 2>/dev/null || true
+# The host supervisor waits and reaps the owned body before removing scratch.
 
 # The HPC compute-node $HOME is READ-ONLY inside the container, so uv/pip cannot
 # create their default caches under ~/.cache — point them at the writable
@@ -175,29 +134,16 @@ export TZ="Asia/Tokyo"
 
 # venv bin on PATH (this matrix leg's python3 + pip); PYTHONPATH points at the
 # writable target so imports + coverage use the freshly-installed checkout.
-export PATH="$VENV/bin:$PATH"
+export PATH="$VENV/bin:/usr/local/bin:/usr/bin:/bin"
 
 echo "py=$("$VENV/bin/python" -V) target=$TMPDIR/site"
 
-# Install scitex-agent-container + its [all,dev] extras WITH deps into the writable target.
-# Fallback chain mirrors scitex-agent-container's historical bare-uv/pip workflow so a
-# packaging hiccup in an optional extra doesn't strand CI: [all,dev] → [dev] →
-# bare. uv first (fast resolver), pip as a final safety net.
-uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[all,dev]" ||
-    uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[dev]" ||
-    uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e "." ||
-    pip install --target="$TMPDIR/site" -e ".[dev]"
+# Full declared closure is the gate; reduced extras or a pip retry changes it.
+uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[all,dev]"
+uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" tzdata
 
-# The CI SIF ships no SYSTEM tzdata, so zoneinfo.ZoneInfo("Asia/Tokyo") (the
-# account-list renderer's TZ resolver; ~290 clock assertions assume +09:00)
-# raises ZoneInfoNotFoundError and silently falls back to UTC on the release
-# node — TZ above is then inert. Provide the data via the pip ``tzdata`` package
-# (zoneinfo discovers it through importlib, no /usr/share/zoneinfo needed).
-# No-op where system tzdata already exists (the dedicated matrix nodes).
-uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" tzdata ||
-    pip install --target="$TMPDIR/site" tzdata || true
-
-export PYTHONPATH="$TMPDIR/site:$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$TMPDIR/site:$PWD/src"
+ci_test_pg_verify "$VENV/bin/python" "$TMPDIR/site"
 
 # Several tests invoke the `sac` / `scitex-agent-container` CONSOLE SCRIPTS as a
 # subprocess (e.g. the shell-completion + install tests). `pip install --target`
@@ -209,7 +155,7 @@ mkdir -p "$TMPDIR/bin"
 for _prog in sac scitex-agent-container; do
     {
         echo "#!/bin/sh"
-        echo "export PYTHONPATH=\"$TMPDIR/site:$PWD/src\${PYTHONPATH:+:\$PYTHONPATH}\""
+        echo "export PYTHONPATH=\"$TMPDIR/site:$PWD/src\""
         echo "exec \"$VENV/bin/python\" -m scitex_agent_container \"\$@\""
     } >"$TMPDIR/bin/$_prog"
     chmod +x "$TMPDIR/bin/$_prog"
@@ -397,7 +343,11 @@ case "$WORKERS" in
         ;;
 esac
 
-[ "$WORKERS" -lt 4 ] && WORKERS=4
+if [ "$SUITE" = nightly ]; then
+    WORKERS="$(nproc 2>/dev/null || echo 2)"
+else
+    [ "$WORKERS" -lt 4 ] && WORKERS=4
+fi
 
 # EVERY source, not the winner. When these disagree on a host nobody has met
 # yet, the disagreement is already in the log instead of costing a probe run.
@@ -452,7 +402,8 @@ fi
 # available CPUs, with priority handling". exec replaces the shell with nice,
 # which execs ionice, which execs python (still PID-traceable, signals/exit
 # code propagate to the runner step).
-exec nice -n 19 ionice -c 3 \
-    python -m pytest tests/ -n "$WORKERS" --dist load -q -rfEs \
-    --cov=src/scitex_agent_container --cov-report=xml --cov-report=term \
-    -p no:cacheprovider
+PYTEST_ARGS=(tests/ -n "$WORKERS" --dist load -q -rfEs -p no:cacheprovider)
+if [ "$SUITE" = matrix ]; then
+    PYTEST_ARGS+=(--cov=src/scitex_agent_container --cov-report=xml --cov-report=term)
+fi
+exec nice -n 19 ionice -c 3 python -m pytest "${PYTEST_ARGS[@]}"
