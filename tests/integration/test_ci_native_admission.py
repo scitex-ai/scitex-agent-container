@@ -149,11 +149,15 @@ def test_hook_guard_failure_is_preserved_without_fallback(workflow_hook_process)
 
 def test_leaf_ci_is_only_a_central_reusable_workflow_call(workflow_doc):
     """Execution policy belongs to the organization workflow, not this leaf."""
+    # Arrange
     job = workflow_doc["jobs"]["tests"]
-    assert job == {
+    # Act
+    matches_central_contract = job == {
         "uses": "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main",
         "with": {"suite": "matrix"},
     } and set(workflow_doc["jobs"]) == {"tests"}
+    # Assert
+    assert matches_central_contract
 
 
 @pytest.fixture
