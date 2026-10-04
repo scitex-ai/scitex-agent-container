@@ -78,6 +78,14 @@ __all__ = [
     "main",
 ]
 
+
+def _protocol_field(value: Any, snake_name: str, camel_name: str) -> Any:
+    """Read SDK model attributes or the app-server's JSON field spelling."""
+    if isinstance(value, dict):
+        return value.get(snake_name, value.get(camel_name))
+    result = getattr(value, snake_name, None)
+    return result if result is not None else getattr(value, camel_name, None)
+
 _INSTALL_HINT = (
     "codex_session requires `openai-codex` "
     "(`pip install scitex-agent-container[codex-sdk]`). NOTE the extra is "
@@ -387,43 +395,43 @@ class CodexSession:
             completed: Any = None
             terminal_errors: list[Any] = []
             async for notification in stream:
-                method = str(getattr(notification, "method", "") or "")
+                method = str(_protocol_field(notification, "method", "method") or "")
                 # The installed native app-server schema declares
                 # ServerNotification as {method, params}; SDK versions may
                 # expose the same decoded body as ``payload``. Read both
                 # spellings while preserving the typed notification body.
-                payload = getattr(notification, "params", None)
+                payload = _protocol_field(notification, "params", "params")
                 if payload is None:
-                    payload = getattr(notification, "payload", None)
-                if method == "error" and getattr(payload, "turn_id", None) == turn.id:
+                    payload = _protocol_field(notification, "payload", "payload")
+                if method == "error" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
                     terminal_errors.append(payload)
-                if method == "item/completed" and getattr(payload, "turn_id", None) == turn.id:
-                    items.append(getattr(payload, "item", None))
-                elif method == "thread/tokenUsage/updated" and getattr(payload, "turn_id", None) == turn.id:
-                    usage = getattr(payload, "token_usage", None)
+                if method == "item/completed" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
+                    items.append(_protocol_field(payload, "item", "item"))
+                elif method == "thread/tokenUsage/updated" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
+                    usage = _protocol_field(payload, "token_usage", "tokenUsage")
                 elif method == "turn/completed":
-                    candidate = getattr(payload, "turn", None)
-                    if candidate is not None and getattr(candidate, "id", None) == turn.id:
+                    candidate = _protocol_field(payload, "turn", "turn")
+                    if candidate is not None and _protocol_field(candidate, "id", "id") == turn.id:
                         completed = candidate
             if completed is None:
                 raise RuntimeError("Codex app-server ended the turn stream without turn/completed")
-            failed_error = getattr(completed, "error", None)
+            failed_error = _protocol_field(completed, "error", "error")
             if failed_error is None:
                 # ErrorNotification is a real app-server notification and
                 # carries the same TurnError shape. Use only a matching turn's
                 # error when its terminal turn/completed record failed.
                 failed_error = next(
                     (
-                        getattr(event, "error", None)
+                        _protocol_field(event, "error", "error")
                         for event in reversed(terminal_errors)
-                        if getattr(event, "error", None) is not None
+                        if _protocol_field(event, "error", "error") is not None
                     ),
                     None,
                 )
-            status = getattr(completed, "status", "")
+            status = _protocol_field(completed, "status", "status") or ""
             status = getattr(status, "value", status)
             if failed_error is not None or status == "failed":
-                message = str(getattr(failed_error, "message", "") or "")
+                message = str(_protocol_field(failed_error, "message", "message") or "")
                 if not message:
                     message = f"Codex turn failed with status {status or 'unknown'}"
                 yield NormalizedEvent(kind="error", error=message, raw=failed_error or completed)

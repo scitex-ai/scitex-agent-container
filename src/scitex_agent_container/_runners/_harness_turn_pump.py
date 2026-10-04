@@ -134,7 +134,14 @@ async def drive_harness_turn(
                 )
             elif event.kind == "error":
                 error_detail = str(event.error)
-                codex_error_info = getattr(event.raw, "codex_error_info", None)
+                if isinstance(event.raw, dict):
+                    codex_error_info = event.raw.get(
+                        "codex_error_info", event.raw.get("codexErrorInfo")
+                    )
+                else:
+                    codex_error_info = getattr(event.raw, "codex_error_info", None)
+                    if codex_error_info is None:
+                        codex_error_info = getattr(event.raw, "codexErrorInfo", None)
                 codex_error_info = getattr(codex_error_info, "value", codex_error_info)
                 is_codex_usage_cap = (
                     harness == "codex-sdk"
