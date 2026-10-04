@@ -49,6 +49,7 @@ class WorktreePlan:
     action: str
     owner_file: str
     primary_repo_root: str = ""
+    owner_repo_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,7 @@ def _owner_record(config: Any, plan: WorktreePlan) -> dict[str, str]:
     return {
         "agent": str(config.name),
         "spec": str(getattr(config, "config_path", "") or ""),
-        "repo_root": plan.repo_root,
+        "repo_root": plan.owner_repo_root or plan.repo_root,
         "worktree": plan.resolved_workdir,
         "branch": plan.branch,
         "session": str(getattr(claude, "session", "") or ""),
@@ -328,16 +329,29 @@ def plan_task_worktree(
     info = _invoke(cli, ["inspect", "--repo", str(authored)], timeout_s=timeout_s)
     surface = _text(info, "surface")
     if surface == "linked-worktree":
+        primary_repo_root = _primary_root_from_linked_context(info, authored)
+        owner_file = _owner_path(config)
+        owner = _read_owner(owner_file)
+        # Primary provisioning and explicit adoption name the same checkout
+        # differently. Retain an existing primary-root owner only when the
+        # neutral common-dir and both real Git contexts proved that identity.
+        owner_repo_root = (
+            primary_repo_root
+            if primary_repo_root
+            and owner is not None
+            and owner.get("repo_root") == primary_repo_root
+            else ""
+        )
         plan = WorktreePlan(
             authored_workdir=str(authored),
             resolved_workdir=str(authored),
             repo_root=_text(info, "repo_root"),
             branch=_text(info, "branch"),
             action="reuse-explicit",
-            owner_file=str(_owner_path(config)),
-            primary_repo_root=_primary_root_from_linked_context(info, authored),
+            owner_file=str(owner_file),
+            primary_repo_root=primary_repo_root,
+            owner_repo_root=owner_repo_root,
         )
-        owner = _read_owner(Path(plan.owner_file))
         if owner is None and _dirty(authored):
             raise WorktreePolicyError(
                 f"unowned linked worktree {authored} is dirty; refusing adoption"
