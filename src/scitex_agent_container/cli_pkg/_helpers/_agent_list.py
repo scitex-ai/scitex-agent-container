@@ -206,6 +206,7 @@ def get_agent_list_data(
     running_only: bool = False,
     remote_status_probe=None,
     remote_run_ssh=None,
+    detail_level: int | None = None,
 ) -> list[dict]:
     """Get agent list as plain dicts for JSON or table output.
 
@@ -586,6 +587,16 @@ def get_agent_list_data(
         _spec_cache.flush()
     except Exception:
         pass
+    if detail_level is not None:
+        from ._agent_observation import enrich_rows
+
+        results = enrich_rows(
+            results,
+            active_instances,
+            local_host,
+            detail=detail_level,
+            births=births_by_name,
+        )
     return results
 
 

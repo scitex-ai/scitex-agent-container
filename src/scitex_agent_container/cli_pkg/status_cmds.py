@@ -23,7 +23,7 @@ from ._helpers import (
 from ._timefmt import format_jst
 
 
-def _status_via_host_listen(name: str) -> None:
+def _status_via_host_listen(name: str, detail_level: int = 0) -> None:
     """In-SIF per-agent status proxy — GET /agents/<name>/status.
 
     PR-3 Checkpoint 3 — the path the ``sac agents status <name>``
@@ -49,7 +49,8 @@ def _status_via_host_listen(name: str) -> None:
     )
 
     try:
-        status, body = host_listen_call("GET", f"/agents/{name}/status")
+        suffix = f"?detail={min(3, detail_level)}" if detail_level else ""
+        status, body = host_listen_call("GET", f"/agents/{name}/status{suffix}")
         outcome = build_outcome(http_status=status, body=body)
     except HostListenTransportError as exc:
         outcome = transport_outcome(str(exc), url=exc.url)
@@ -183,12 +184,9 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     "--verbose",
     "-v",
     "verbose",
-    is_flag=True,
-    default=False,
-    help="Fleet view: show the FULL list — every status "
-    "(running/stopped/invalid/definition) WITH per-agent validation-error "
-    "detail and the spec.yaml Path column. The default view shows only "
-    "running agents (the full roster is an unusable wall on a real fleet).",
+    count=True,
+    help="Add detail: -v selected provider/account/plan, -vv environment versions, "
+    "-vvv observation provenance. Also show the full roster and validation.",
 )
 @click.option(
     "--all",
@@ -234,7 +232,7 @@ def status(
     capability: str | None,
     machine: str | None,
     group: str | None,
-    verbose: bool,
+    verbose: int,
     show_all: bool,
     with_snapshot: bool,
     with_priority: bool,
@@ -304,7 +302,10 @@ def status(
         from .._lifecycle._in_sif_broker import is_in_sif
 
         if is_in_sif() and (os.environ.get("SAC_LISTEN_BASE_URL") or "").strip():
-            _status_via_host_listen(name)
+            if verbose:
+                _status_via_host_listen(name, detail_level=verbose)
+            else:
+                _status_via_host_listen(name)
             return  # noreturn — _status_via_host_listen sys.exits
 
         # stx-allow: fallback (reason: agent_status queries registry and multiplexer state that may be unavailable; CLI exits with code 1 and reports the error in the requested format)
@@ -316,6 +317,13 @@ def status(
             else:
                 render_rich(f"[red]Error: {exc}[/red]", __name__)
             sys.exit(1)
+
+        from ._helpers._agent_observation import observe_status, unknown
+
+        try:
+            info["observation"] = observe_status(name, detail=min(3, verbose))
+        except Exception:  # stx-allow: fallback (optional canonical observation is UNKNOWN, never private exception text)
+            info["observation"] = unknown("canonical-observation-unavailable")
 
         if with_snapshot:
             from .._state.snapshot import take_snapshot

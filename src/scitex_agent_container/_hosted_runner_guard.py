@@ -101,7 +101,10 @@ CODE_UNRESOLVABLE = "SAC-CI002"  # runs-on cannot be proven either way
 CODE_ALLOWLIST_NO_REASON = "SAC-CI003"  # allowlist entry without an argument
 CODE_ALLOWLIST_STALE = "SAC-CI004"  # allowlist entry that no longer applies
 
-_EXPR_RE = re.compile(r"\$\{\{(.+?)\}\}", re.DOTALL)
+# Closing braces inside a quoted JSON object belong to the literal, not to
+# the surrounding expression. Partial extraction must never expose its keys
+# as independent runner labels.
+_EXPR_RE = re.compile(r"\$\{\{((?:'[^']*'|\"[^\"]*\"|[^'\"])*?)\}\}", re.DOTALL)
 _QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
 _MATRIX_REF_RE = re.compile(r"matrix\.([A-Za-z0-9_-]+)")
 
@@ -170,9 +173,22 @@ def _labels_from_expression(expr: str, job: dict) -> list[str]:
     for match in _QUOTED_RE.finditer(expr):
         literal = match.group(1) if match.group(1) is not None else match.group(2)
         stripped = literal.strip()
-        if stripped.startswith("["):
+        if stripped.startswith(("[", "{")):
             try:
-                labels.extend(_flatten(json.loads(stripped)))
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    # The finite GitHub runner-object shape, not arbitrary data.
+                    if (
+                        set(parsed) != {"group", "labels"}
+                        or not isinstance(parsed["group"], str)
+                        or not isinstance(parsed["labels"], list)
+                        or any(not isinstance(label, str) for label in parsed["labels"])
+                    ):
+                        continue
+                    labels.extend(_flatten(parsed["group"]))
+                    labels.extend(_flatten(parsed["labels"]))
+                else:
+                    labels.extend(_flatten(parsed))
                 continue
             except ValueError:
                 pass  # not JSON after all — fall through and take it whole
@@ -445,9 +461,7 @@ def check_repo(repo: Path) -> list[Violation]:
             # caller" must not become a way to launder a new job into someone
             # else's exception.
             if "runs-on" not in job and job.get("uses"):
-                if entry is not None and (
-                    exempt_jobs is None or job_id in exempt_jobs
-                ):
+                if entry is not None and (exempt_jobs is None or job_id in exempt_jobs):
                     used.add((path.name, job_id))
                 continue
 

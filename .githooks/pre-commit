@@ -80,7 +80,6 @@ if [ -z "$PRE_COMMIT" ]; then
 fi
 
 # Runs ONLY on the staged files, and only the hooks in
-# .pre-commit-config.yaml — every one of which is fast, bounded, and
-# `language: python` (an isolated, pre-commit-built venv), never
-# `language: system` reaching for whatever interpreter happens to be ambient.
+# .pre-commit-config.yaml — fast, bounded checks. The local workflow guards
+# use UV with explicit SAC_HOOK_PYTHON, never an ambient Python or installer.
 exec "$PRE_COMMIT" run --hook-stage pre-commit

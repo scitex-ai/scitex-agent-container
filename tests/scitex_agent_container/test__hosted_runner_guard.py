@@ -232,6 +232,35 @@ def test_unresolvable_runs_on_is_refused(tmp_path: Path) -> None:
     assert codes == [CODE_UNRESOLVABLE]
 
 
+@pytest.mark.parametrize(
+    "runner,expected",
+    [
+        ({"group": "Organization", "labels": ["self-hosted", "scitex-org-cpu"]}, []),
+        ({"group": "Organization", "labels": ["ubuntu-latest"]}, [CODE_HOSTED]),
+        (
+            {"group": "Organization", "labels": {"hidden": "self-hosted"}},
+            [CODE_UNRESOLVABLE],
+        ),
+        (
+            {"group": "Organization", "labels": ["self-hosted"], "extra": True},
+            [CODE_UNRESOLVABLE],
+        ),
+    ],
+)
+def test_literal_json_runner_object_is_parsed_without_stringifying_fields(
+    tmp_path, runner, expected
+):
+    # Arrange
+    import json
+
+    expression = "${{ fromJSON('" + json.dumps(runner, separators=(",", ":")) + "') }}"
+    _write_repo(tmp_path, {"ci.yml": _workflow(expression)})
+    # Act
+    codes = _codes(tmp_path)
+    # Assert
+    assert codes == expected
+
+
 def test_allowlist_entry_without_reason_is_rejected(tmp_path: Path) -> None:
     # Arrange: the mandatory `reason:` is enforced by the MECHANISM
     _write_repo(

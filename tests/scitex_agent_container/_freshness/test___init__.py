@@ -473,7 +473,15 @@ def _write_systemctl_start(executable: Path, started_at: float) -> None:
 @pytest.fixture
 def daemon_cache_evidence(tmp_path):
     """Warm stale cache plus a real executable supplying systemctl evidence."""
-    installed_at = time.time() - 600.0
+    with open("/proc/uptime", encoding="utf-8") as uptime_file:
+        uptime_s = float(uptime_file.read().split()[0])
+    now = time.time()
+    span = min(600.0, uptime_s)
+    # All three synthetic daemon starts must be after this kernel boot. A
+    # fixed now-300 timestamp is impossible on a freshly booted hosted node.
+    old_start = now - span * 0.75
+    installed_at = now - span * 0.50
+    new_start = now - span * 0.25
     cache = tmp_path / "version-currency.json"
     cache.write_text(
         json.dumps(
@@ -488,7 +496,7 @@ def daemon_cache_evidence(tmp_path):
                         "remedy": "systemctl --user restart sac-listen.service",
                         "detail": "",
                         "data": {
-                            "daemon_started_at": installed_at - 3600.0,
+                            "daemon_started_at": old_start,
                             "installed_at": installed_at,
                         },
                     }
@@ -503,7 +511,7 @@ def daemon_cache_evidence(tmp_path):
     os.environ["SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE"] = str(cache)
     os.environ["PATH"] = str(tmp_path)
     try:
-        yield installed_at, systemctl
+        yield old_start, installed_at, new_start, systemctl
     finally:
         if old_cache is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_FRESHNESS_CACHE", None)
@@ -520,8 +528,8 @@ class TestDaemonWarningCacheCoherency:
 
     def test_old_live_start_preserves_cached_warning(self, daemon_cache_evidence):
         # Arrange
-        installed_at, systemctl = daemon_cache_evidence
-        _write_systemctl_start(systemctl, installed_at - 3600.0)
+        old_start, _installed_at, _new_start, systemctl = daemon_cache_evidence
+        _write_systemctl_start(systemctl, old_start)
         # Act
         stale = _has_stale_cached()
         # Assert
@@ -531,8 +539,8 @@ class TestDaemonWarningCacheCoherency:
         self, daemon_cache_evidence
     ):
         # Arrange
-        installed_at, systemctl = daemon_cache_evidence
-        _write_systemctl_start(systemctl, installed_at + 300.0)
+        _old_start, _installed_at, new_start, systemctl = daemon_cache_evidence
+        _write_systemctl_start(systemctl, new_start)
         # Act
         stale = _has_stale_cached()
         # Assert
@@ -540,7 +548,7 @@ class TestDaemonWarningCacheCoherency:
 
     def test_failed_live_probe_preserves_cached_warning(self, daemon_cache_evidence):
         # Arrange
-        _installed_at, systemctl = daemon_cache_evidence
+        _old_start, _installed_at, _new_start, systemctl = daemon_cache_evidence
         systemctl.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         systemctl.chmod(0o755)
         # Act

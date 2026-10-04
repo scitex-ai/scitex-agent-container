@@ -1,5 +1,5 @@
 /* SciTeX Agents — scoped dashboard.
-   Fills the scitex_ui standalone shell's app_content block. All class names are
+   Fills the scitex_sdk/ui standalone shell's app_content block. All class names are
    prefixed `agents-` / `dot` / `pill` / `btn` and scoped under .agents-app so
    they cannot leak into the shared shell. Colors use shell CSS custom
    properties with literal fallbacks, so the app themes correctly in both dark

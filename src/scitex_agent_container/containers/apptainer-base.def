@@ -392,7 +392,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
     done
     /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
-    python3 -m pip install --no-cache-dir --break-system-packages pipx
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pipx
     # pre-commit into SYSTEM python on purpose: every repo's git hook execs
     # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
     # ``pre-commit install`` bakes into .git/hooks/pre-commit. A module
@@ -404,7 +404,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # still stays in the venv, section 6b). Regression context: this was a
     # runtime overlay install that the fresh-SIF refresh wiped fleet-wide
     # (figrecipe 2026-06-28) — pinning it into the image makes it durable.
-    python3 -m pip install --no-cache-dir --break-system-packages pre-commit
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pre-commit
 
     # ---- 6a. python convenience symlink -----------------------------
     # Ubuntu 24.04's `python3-is-python3` doesn't ship by default; many
@@ -668,7 +668,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
 
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "d18a977379a245d0d1ce2ffc7a5c4c1af747fb24"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "1a3815aac3b4162cf3adea29344deea280d3aab8"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
     "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
@@ -1035,10 +1035,13 @@ EOF
     export CARGO_HOME=/opt/cargo
 
 %test
-    # The image must not be published with a console entry point whose
-    # packaged target is absent. Apptainer runs this after %post and fails
-    # the build before scitex-container atomically promotes the SIF.
-    /opt/venv-sac/bin/sac --version
+    set -eu
+    # Keep import-time Logging state writable during the read-only image test.
+    # SCITEX_DIR is its supported state root; preserve the declared HOME.
+    sac_test_state="$(mktemp -d /tmp/sac-base-test.XXXXXX)"
+    trap 'rm -rf -- "$sac_test_state"' EXIT
+    # A failed console check must fail the image test before later tool checks.
+    SCITEX_DIR="$sac_test_state" /opt/venv-sac/bin/sac --version
     env -i \
         PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         HOME=/tmp \
@@ -1056,7 +1059,7 @@ EOF
     org.scitex.hermes.version 0.21.2
     org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
     org.scitex.hermes.commit 17c5fde5a3f3642262003cd6aa09d54cf4d11de3
-    org.scitex.cards.commit d18a977379a245d0d1ce2ffc7a5c4c1af747fb24
+    org.scitex.cards.commit 1a3815aac3b4162cf3adea29344deea280d3aab8
 
 %help
     scitex-agent-container :base layer.

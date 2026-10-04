@@ -25,10 +25,10 @@ PACKAGE = "scitex-agent-container"
 
 def _embed():
     try:
-        import scitex_app.embed as embed
+        import scitex_sdk.app.embed as embed
     except ImportError as exc:  # stx-allow: fallback (reason: clear install hint)
         raise click.ClickException(
-            "The SAC GUI requires scitex-app. Install it with: "
+            "The SAC GUI requires scitex-sdk. Install it with: "
             "uv pip install 'scitex-agent-container[gui]'"
         ) from exc
     return embed
