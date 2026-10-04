@@ -16,17 +16,20 @@ def _warm(client):
 def test_workspace_mount_does_not_follow_workspace_page_location(
     client, loopback, env_save_restore
 ):
-    # Arrange: the same acting identity and real fleet feed both surfaces.
+    # Arrange
+    # The same acting identity and real fleet feed both surfaces.
     env_save_restore.set(IDENTITY_ENV, "alice")
     env_save_restore.delete(OPERATORS_ENV)
     _warm(client)
     standalone = client.get("/").content.decode()
     request = RequestFactory().get("/workspace/?app=agents")
-    # Act: a workspace project adds no fleet grant or URL authority.
+    # Act
+    # A workspace project adds no fleet grant or URL authority.
     workspace = render_content(
         request, object(), stx_mount="/custom/agents/"
     ).content.decode()
-    # Assert: both retain the same own-scope rows; links use the admitted mount.
+    # Assert
+    # Both retain the same own-scope rows; links use the admitted mount.
     assert (
         "alpha" in standalone
         and "alpha" in workspace
@@ -41,12 +44,14 @@ def test_workspace_mount_does_not_follow_workspace_page_location(
 
 
 def test_cold_workspace_poll_uses_registered_mount(loopback, env_save_restore):
-    # Arrange: cold cache, unrelated workspace URL.
+    # Arrange
+    # Cold cache, unrelated workspace URL.
     env_save_restore.set(IDENTITY_ENV, "alice")
     request = RequestFactory().get("/workspace/")
-    # Act.
+    # Act
     html = render_content(request, None, stx_mount="/apps/agents/").content.decode()
-    # Assert: the loading request uses the actual leaf API, not /workspace/api.
+    # Assert
+    # The loading request uses the actual leaf API, not /workspace/api.
     assert 'var base = "/apps/agents";' in html and "/workspace/api" not in html
 
 
@@ -63,20 +68,45 @@ def test_cold_workspace_poll_uses_registered_mount(loopback, env_save_restore):
         "/agents\n",
     ],
 )
-def test_invalid_mount_rejected_before_control_plane_read(mount, listener_requests):
-    # Arrange.
+def test_invalid_mount_raises_value_error(mount, listener_requests):
+    # Arrange
     request = RequestFactory().get("/workspace/")
-    # Act.
+    # Act
+    # Assert
+    # Exactly one behavior: the invalid mount raises.
     with pytest.raises(ValueError):
         render_content(request, None, stx_mount=mount)
-    # Assert.
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "https://host/agents",
+        "//host/agents",
+        "/../agents",
+        "/agents?x=1",
+        "/agents#x",
+        "/agents%2f",
+        "/agents\\x",
+        "/agents\n",
+    ],
+)
+def test_invalid_mount_performs_no_control_plane_read(mount, listener_requests):
+    # Arrange
+    request = RequestFactory().get("/workspace/")
+    # Act: swallow the expected refusal; what matters is the listener log.
+    try:
+        render_content(request, None, stx_mount=mount)
+    except ValueError:
+        pass
+    # Assert
     assert listener_requests == []
 
 
 def test_workspace_renderer_rejects_post_before_read(listener_requests):
-    # Arrange.
+    # Arrange
     request = RequestFactory().post("/workspace/")
-    # Act.
+    # Act
     response = render_content(request, None, stx_mount="/apps/agents/")
-    # Assert.
+    # Assert
     assert response.status_code == 405 and listener_requests == []

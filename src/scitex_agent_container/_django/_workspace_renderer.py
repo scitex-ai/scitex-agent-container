@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from django.shortcuts import render
-from django.views.decorators.http import require_GET
+try:
+    from django.shortcuts import render
+    from django.views.decorators.http import require_GET
+except ImportError as exc:
+    raise ImportError(
+        "SAC GUI dependencies are unavailable; install "
+        "scitex-agent-container[gui]."
+    ) from exc
 
 from .views import _fleet_context
 
