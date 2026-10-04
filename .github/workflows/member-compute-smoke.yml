@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - ci-runner-smoke-20261004
+  pull_request:
+    branches:
+      - ci-runner-pr-smoke-base-20261004
 
 permissions:
   contents: read
