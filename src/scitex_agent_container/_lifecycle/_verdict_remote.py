@@ -35,8 +35,8 @@ __all__ = [
 ]
 
 
-def _remote_peer_for_config(config: Any) -> str | None:
-    """Return the peer name if the agent's ``spec.host`` is a remote peer.
+def _remote_peer_for_host(host: Any) -> str | None:
+    """Resolve a placement host to its remote peer, or ``None`` if local.
 
     Uses the SAME chain resolver ``sac agents start`` and ``sac agents attach``
     route through, so "remote" means one thing across the whole control plane
@@ -50,28 +50,29 @@ def _remote_peer_for_config(config: Any) -> str | None:
     anyway by ssh-probing the peer's tmux. Without an oracle the walk is pure
     and its answer is the historical head-of-chain, minus the typo bug.
 
-    Best-effort — any resolution failure returns ``None`` and the caller falls
-    back to the ordinary (local) process probe. Imports are LAZY to avoid a
+    Resolution failures propagate. A caller must not turn an unresolvable
+    remote placement into a local process probe: local absence says nothing
+    about a process on an unknown peer. Imports are LAZY to avoid a
     ``cli_pkg`` -> ``_lifecycle`` import cycle.
     """
-    try:
-        from ..cli_pkg.lifecycle._common import _local_host_names
-        from ..cli_pkg.lifecycle._host_chain import resolve_host_chain
-        from ..config._host import resolve_hostname
-
-        host = config.hosts_spec.host
-        if not host:
-            return None
-        from .._state.host_config import load as _load_host_config
-
-        current = resolve_hostname()
-        peers = _load_host_config().peers
-        route = resolve_host_chain(
-            host, current, peers, local_names=_local_host_names(current)
-        )
-        return route.peer
-    except Exception:  # stx-allow: fallback (unresolvable host -> treat as local; the local probe still runs)
+    if not host:
         return None
+    from .._state.host_config import load as _load_host_config
+    from ..cli_pkg.lifecycle._common import _local_host_names
+    from ..cli_pkg.lifecycle._host_chain import resolve_host_chain
+    from ..config._host import resolve_hostname
+
+    current = resolve_hostname()
+    peers = _load_host_config().peers
+    route = resolve_host_chain(
+        host, current, peers, local_names=_local_host_names(current)
+    )
+    return route.peer
+
+
+def _remote_peer_for_config(config: Any) -> str | None:
+    """Return the remote peer selected by the agent's spec, if any."""
+    return _remote_peer_for_host(getattr(config.hosts_spec, "host", ""))
 
 
 def _run_ssh_rc(argv: list[str]) -> int:

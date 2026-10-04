@@ -12,14 +12,18 @@ import pytest
 import yaml
 
 from scitex_agent_container._lifecycle._status import agent_status
+from scitex_agent_container._lifecycle._status_definition import defined_status
 from scitex_agent_container._lifecycle._verdict import (
     ALIVE,
     DEAD,
+    INSTRUMENT_HOST_TMUX,
     INSTRUMENT_PID_NAMESPACE,
     SOURCE_PROCESS,
+    UNKNOWN,
     Signal,
 )
 from scitex_agent_container._state.registry import Registry
+from scitex_agent_container.config import load_config
 from scitex_agent_container.config._resolve import AmbiguousRegistryScope
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
@@ -82,7 +86,9 @@ def scope(tmp_path, env_save_restore):
     workdir.mkdir()
     env_save_restore.set("HOME", str(home))
     env_save_restore.set("SCITEX_DIR", str(home / ".scitex"))
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime"))
+    # Keep the import-time runtime-state constant under conftest's per-worker
+    # safety floor. A tmp_path override is too late when the status adapter is
+    # imported lazily, and the teardown guard correctly rejects that escape.
     env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "current-node")
     env_save_restore.delete("SAC_AGENT_SCOPE")
     env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
@@ -120,7 +126,7 @@ def live_definition(scope):
         process.wait(timeout=5)
 
 
-def read_local(definition, *, runtime_factory=ProcessRuntime, instance_reader=foreign_rows):
+def read_local(definition, *, runtime_factory=ProcessRuntime, instance_reader=lambda: []):
     _, registry = definition
     return agent_status("paper", registry=registry, runtime_factory=runtime_factory,
                         instance_reader=instance_reader, process_probe=process_probe)
@@ -190,11 +196,11 @@ def test_local_reaped_process_reports_local_absence(stopped_definition):
     assert result["observation"]["process"]["state"] == "absent"
 
 
-def test_reaped_local_process_does_not_declare_foreign_owner_dead(stopped_definition):
+def test_placement_row_remains_unknown_without_remote_process_evidence(stopped_definition):
     # Arrange
     definition = stopped_definition
     # Act
-    result = read_local(definition)
+    result = read_local(definition, instance_reader=foreign_rows)
     # Assert
     assert result["placement_evidence"]["records"][0]["liveness"] == "unknown"
 
@@ -203,16 +209,92 @@ def test_old_foreign_host_is_preserved_as_placement(stopped_definition):
     # Arrange
     definition = stopped_definition
     # Act
-    result = read_local(definition)
+    result = read_local(definition, instance_reader=foreign_rows)
     # Assert
     assert result["placement_evidence"]["records"][0]["host"] == "windows-peer"
+
+
+def test_latest_instance_host_owns_remote_process_probe(scope):
+    # Arrange
+    fleet, workdir, _, _ = scope
+    path = write_spec(fleet, workdir)
+    config = load_config(path)
+    config.hosts_spec.host = "current-node"  # stale spec intent loses to launch row
+    resolved_hosts = []
+    remote_peers = []
+    local_probes = []
+
+    def resolve_host(host):
+        resolved_hosts.append(host)
+        return "windows-peer"
+
+    def remote_probe(_config, peer):
+        remote_peers.append(peer)
+        return Signal(
+            SOURCE_PROCESS, ALIVE, "remote owner tmux session is alive",
+            INSTRUMENT_HOST_TMUX,
+        )
+
+    def local_probe(_config):
+        local_probes.append(True)
+        raise RuntimeError("local process probe should not run")
+
+    # Act
+    result = defined_status(
+        "paper", str(path), config,
+        runtime_factory=local_probe,
+        instance_reader=foreign_rows,
+        remote_process_probe=remote_probe,
+        remote_host_resolver=resolve_host,
+    )
+    # Assert
+    assert (
+        resolved_hosts,
+        remote_peers,
+        local_probes,
+        result["host"],
+        result["process_observation_scope"],
+        result["process_observation_host"],
+        result["liveness"]["verdict"],
+        result["status"],
+    ) == (["windows-peer"], ["windows-peer"], [], "current-node", "remote",
+          "windows-peer", ALIVE, "running")
+
+
+def test_unresolvable_instance_host_is_unknown_without_local_probe(scope):
+    # Arrange
+    fleet, workdir, _, _ = scope
+    path = write_spec(fleet, workdir)
+    config = load_config(path)
+
+    def unresolved(_host):
+        raise RuntimeError("peer mapping unavailable")
+
+    local_probes = []
+
+    def local_probe(_config):
+        local_probes.append(True)
+        raise RuntimeError("local process probe should not run")
+
+    # Act
+    result = defined_status(
+        "paper", str(path), config,
+        runtime_factory=local_probe,
+        instance_reader=foreign_rows,
+        remote_host_resolver=unresolved,
+    )
+    # Assert
+    assert (local_probes, result["process_observation_scope"],
+            result["liveness"]["verdict"], result["status"]) == (
+                [], "unknown", UNKNOWN, "unknown"
+            )
 
 
 def test_foreign_row_cannot_replace_current_local_host(stopped_definition):
     # Arrange
     definition = stopped_definition
     # Act
-    result = read_local(definition)
+    result = read_local(definition, instance_reader=foreign_rows)
     # Assert
     assert result["host"] == "current-node"
 
@@ -221,7 +303,7 @@ def test_foreign_row_cannot_supply_local_session(stopped_definition):
     # Arrange
     definition = stopped_definition
     # Act
-    result = read_local(definition)
+    result = read_local(definition, instance_reader=foreign_rows)
     # Assert
     assert result["screen"] == ""
 
@@ -230,7 +312,7 @@ def test_foreign_row_cannot_supply_local_start_time(stopped_definition):
     # Arrange
     definition = stopped_definition
     # Act
-    result = read_local(definition)
+    result = read_local(definition, instance_reader=foreign_rows)
     # Assert
     assert result["started_at"] == ""
 

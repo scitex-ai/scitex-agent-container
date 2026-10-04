@@ -1,131 +1,26 @@
 name: docs
 
-# Sphinx HTML build + refresh of the bundled src/scitex_agent_container/
-# _sphinx_html/ snapshot. (Local `sphinx-build` smoke check — ReadTheDocs
-# itself builds independently from its own webhook.)
-#
-# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
-# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
-# never fall back to a hosted runner.
-#
-# WHAT ubuntu-latest WAS HIDING HERE: `pip install -e ".[docs]"` onto the
-# runner's SYSTEM python. On Spartan that dies twice over — no Python on the
-# bare node (actions/setup-python fails "version 3.x not found for this OS")
-# and a PEP-668 externally-managed system python (pip refuses with
-# `externally-managed-environment`). Same class of latent breakage as lint and
-# quality: the step never worked, it was carried by the hosted image.
-#
-# NOTE this job does NOT call the org reusable
-# (scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml). That reusable
-# probes for conf.py at docs/, docs/source/ and docs/src/ ONLY — sac's lives at
-# docs/sphinx/conf.py, so the reusable would have found nothing, printed
-# "no sphinx conf.py — skipping" and exited 0. It would have converted this
-# gate into a GREEN NO-OP. Consolidate only after teaching it that path.
-#
-# `sphinx-build` is invoked as the CONSOLE SCRIPT (not `python -m sphinx`) so
-# the scitex-dev auditor's PS-122 still detects that this workflow runs it.
-
 on:
   push:
     branches: [main, develop]
   pull_request:
+    branches: [main, develop]
 
-# Cancel a PR's superseded runs; strict no-op everywhere else. Argued once, in
-# pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   sphinx:
-    # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: rtd-sphinx-build-on-ubuntu-latest
-    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
-    #
-    # 51s median, single-core, and it never enters the CI SIF — checkout + uv +
-    # sphinx-build on the bare runner, no /data/gpfs bind. It was holding one of
-    # four 32-core machines per run on a pool at 93-94% utilisation, then
-    # queueing 289s median (p90 902s). #1006 routed it away for that reason,
-    # and that intent is UNCHANGED — only the SEAM changed, from a literal
-    # label list to a repo variable, so a dead pool is a settings change rather
-    # than a code change.
-    #
-    # THIS JOB COMMITS, which is why the host matters beyond size, and it is
-    # the one light-lane job with a HOST-SPECIFIC requirement rather than a
-    # size preference. The default-branch refresh below pushes regenerated
-    # HTML, and commit signing fails 13/13 on compute-04 ("failed to write
-    # commit object" — ssh signing against a key that is not there). A pool
-    # variable cannot express "not that one machine", so if the refresh starts
-    # failing that way again the fix is to make the signing config right on the
-    # host, not to re-pin this job to a pool that may be offline. Two symptoms
-    # are then distinguishable rather than fused: a commit failure names the
-    # host in the log, whereas a pin at a dead pool produces silence.
-    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
-    timeout-minutes: 20
+    uses: scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: astral-sh/setup-uv@v3
-        with:
-          # PINNED: unpinned `latest` made CI a function of wall-clock
-          # time and runner cache state. See sac-ci-pin-uv-version-*.
-          version: "0.11.29"
-          cache-dependency-glob: pyproject.toml
-
-      - name: Prepare job-scoped docs scratch
-        run: bash .github/ci/prepare-bare-scratch.sh docs 3.12 DOCS_VENV
-
-      - name: Install package + docs deps
-        run: |
-          set -euo pipefail
-          uv venv --python 3.12 "$DOCS_VENV"
-          uv pip install --python "$DOCS_VENV/bin/python" -e ".[docs]"
-
-      - name: Build Sphinx HTML (warnings fail PRs only)
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            "$DOCS_VENV/bin/sphinx-build" -W -b html docs/sphinx docs/sphinx/_build/html
-          else
-            "$DOCS_VENV/bin/sphinx-build" -b html docs/sphinx docs/sphinx/_build/html
-          fi
-
-      - name: Refresh src/scitex_agent_container/_sphinx_html/ (push to default branch only)
-        if: github.event_name == 'push'
-        run: |
-          rm -rf src/scitex_agent_container/_sphinx_html
-          cp -rf docs/sphinx/_build/html src/scitex_agent_container/_sphinx_html
-          # ``.doctrees/`` is Sphinx's internal pickled-AST cache —
-          # not part of the published HTML. The binary
-          # ``environment.pickle`` is what made every release's
-          # sync-main fast-forward fail with merge conflicts on
-          # develop ↔ main. Strip it before committing so the two
-          # branches never carry divergent binaries.
-          rm -rf src/scitex_agent_container/_sphinx_html/.doctrees
-          touch src/scitex_agent_container/_sphinx_html/.nojekyll
-
-      - name: Commit refreshed HTML if it changed
-        continue-on-error: true
-        if: github.event_name == 'push'
-        run: |
-          if [ -n "$(git status --porcelain src/scitex_agent_container/_sphinx_html)" ]; then
-            # `git config` WITHOUT --global, deliberately. On a PERSISTENT
-            # self-hosted runner $HOME is the OPERATOR'S REAL HOME — a
-            # `--global` write here would edit the operator's live ~/.gitconfig
-            # on every single docs build. Repo-local config stays inside the
-            # workspace and is discarded with it.
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/scitex_agent_container/_sphinx_html
-            git commit -m "docs: refresh _sphinx_html/ from CI build [skip ci]"
-            git push
-          fi
-
-      - name: Remove this job's docs scratch
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh docs 3.12
+    with:
+      runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
+      docs_dir: docs/sphinx
+      fail_on_warning: ${{ github.event_name == 'pull_request' }}
+      bundle_dir: src/scitex_agent_container/_sphinx_html
