@@ -72,7 +72,6 @@ LIGHT_LANE = [
 # The two pins this repo keeps on purpose, with their arguments on file.
 ALLOWED_PINS = [
     ("spartan-capacity-canary-on-self-hosted.yml", "canary"),
-    ("pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml", "verdict"),
 ]
 
 GOOD_REASON = (
