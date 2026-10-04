@@ -881,16 +881,25 @@ def _docs_steps() -> list[dict]:
 
 
 def test_docs_job_uses_the_central_sphinx_workflow():
+    # Arrange
     job = _docs_steps()
-    assert job["uses"] == (
-        "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main"
+    # Act
+    actual = (job["uses"], job["with"]["docs_dir"], job["with"]["bundle_dir"])
+    # Assert
+    assert actual == (
+        "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main",
+        "docs/sphinx",
+        "src/scitex_agent_container/_sphinx_html",
     )
-    assert job["with"]["docs_dir"] == "docs/sphinx"
-    assert job["with"]["bundle_dir"] == "src/scitex_agent_container/_sphinx_html"
 
 
 def test_docs_caller_does_not_select_a_runner_locally():
-    assert "runs-on" not in _docs_steps()
+    # Arrange
+    job = _docs_steps()
+    # Act
+    has_local_runner = "runs-on" in job
+    # Assert
+    assert not has_local_runner
 
 
 def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -913,15 +922,24 @@ def _import_steps() -> list[dict]:
 
 
 def test_import_job_uses_the_central_import_workflow():
+    # Arrange
     job = _import_steps()
-    assert job["uses"] == (
-        "scitex-ai/.github/.github/workflows/import-smoke.yml@main"
+    # Act
+    actual = (job["uses"], job["with"]["console_script"])
+    # Assert
+    assert actual == (
+        "scitex-ai/.github/.github/workflows/import-smoke.yml@main",
+        "sac",
     )
-    assert job["with"]["console_script"] == "sac"
 
 
 def test_import_caller_does_not_select_a_runner_locally():
-    assert "runs-on" not in _import_steps()
+    # Arrange
+    job = _import_steps()
+    # Act
+    has_local_runner = "runs-on" in job
+    # Assert
+    assert not has_local_runner
 
 
 def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -976,13 +994,21 @@ def test_bare_scratch_helper_exports_managed_job_paths(
 
 
 def test_lint_job_uses_the_central_organization_command_runner():
+    # Arrange
     doc = yaml.safe_load((_WORKFLOWS / "lint.yml").read_text(encoding="utf-8"))
     job = doc["jobs"]["ruff"]
-    assert job["uses"] == (
-        "scitex-ai/.github/.github/workflows/organization-job.yml@main"
+    # Act
+    actual = (
+        job["uses"],
+        "ruff check --select F401,F811" in job["with"]["command"],
+        "ruff check --select T201,T203 src/" in job["with"]["command"],
     )
-    assert "ruff check --select F401,F811" in job["with"]["command"]
-    assert "ruff check --select T201,T203 src/" in job["with"]["command"]
+    # Assert
+    assert actual == (
+        "scitex-ai/.github/.github/workflows/organization-job.yml@main",
+        True,
+        True,
+    )
 
 
 def test_exec_wrapper_sources_the_lifecycle_library():
