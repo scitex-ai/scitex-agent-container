@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -554,7 +555,8 @@ def test_codex_session_exposes_the_native_active_turn_and_steers_it():
     )
 
 
-async def _structured_usage_limit_events():
+def test_codex_session_preserves_structured_usage_limit_error_from_failed_turn():
+    # Arrange
     error = SimpleNamespace(
         message="You’ve hit your usage limit. Try again later.",
         codex_error_info="usageLimitExceeded",
@@ -578,27 +580,21 @@ async def _structured_usage_limit_events():
         session._thread = _NativeThread(handle)
         return [event async for event in session.send(SimpleNamespace(content="work"))]
 
-    return await _scenario()
-
-
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [("count", 1), ("kind", "error"), ("error", "You’ve hit your usage limit. Try again later."),
-     ("codex_error_info", "usageLimitExceeded")],
-)
-def test_structured_usage_limit_error_preserves_each_field(field, expected):
-    # Arrange
-    events = asyncio.run(_structured_usage_limit_events())
-    event = events[0] if field != "count" else events
     # Act
-    actual = len(event) if field == "count" else (
-        getattr(event, "raw").codex_error_info if field == "codex_error_info" else getattr(event, field)
-    )
-    # Assert
-    assert actual == expected
+    events = asyncio.run(_scenario())
+
+    # Assert: exactly one behavior — the failed turn surfaces as
+    # a single structured error event preserving message and signal.
+    assert (
+        len(events),
+        events[0].kind,
+        events[0].error,
+        events[0].raw.codex_error_info,
+    ) == (1, "error", error.message, "usageLimitExceeded")
 
 
-async def _schema_usage_limit_events():
+def test_codex_session_preserves_schema_error_notification_for_failed_turn():
+    # Arrange
     # Schema-faithful ServerNotification shape from the installed native
     # Codex app-server definitions: {method: "error", params: {turnId,
     # error: {codexErrorInfo, message}, willRetry}} followed by the terminal
@@ -633,28 +629,31 @@ async def _schema_usage_limit_events():
         session._thread = _NativeThread(handle)
         return [event async for event in session.send(SimpleNamespace(content="work"))]
 
-    return await _scenario()
+    # Act
+    events = asyncio.run(_scenario())
+
+    # Assert: exactly one behavior — the schema notification
+    # surfaces as a single structured error event.
+    assert (
+        len(events),
+        events[0].kind,
+        events[0].error,
+        events[0].raw["codexErrorInfo"],
+    ) == (1, "error", error["message"], "usageLimitExceeded")
 
 
 @pytest.mark.parametrize(
-    ("field", "expected"),
-    [("count", 1), ("kind", "error"), ("error", "You’ve hit your usage limit."),
-     ("codex_error_info", "usageLimitExceeded")],
+    ("error_code", "expected_kind"),
+    [
+        ("usageLimitExceeded", "codex_usage_limit"),
+        ("rateLimitExceeded", "harness_turn"),
+    ],
 )
-def test_schema_usage_limit_error_preserves_each_field(field, expected):
-    # Arrange
-    events = asyncio.run(_schema_usage_limit_events())
-    event = events[0] if field != "count" else events
-    # Act
-    actual = len(event) if field == "count" else (
-        event.raw["codexErrorInfo"] if field == "codex_error_info" else getattr(event, field)
-    )
-    # Assert
-    assert actual == expected
-
-
-async def _run_failed_quota_harness_turn(tmp_path, error_code):
-    # Arrange
+def test_harness_pump_failed_turn_resolves_response_with_error(
+    tmp_path, error_code, expected_kind
+):
+    # Arrange: real tmp state dir, no stubs; writers fall back to real
+    # files (transcript) and best-effort drops (diary without a store).
     class _FailedSession:
         async def send(self, _message):
             yield NormalizedEvent(
@@ -663,38 +662,119 @@ async def _run_failed_quota_harness_turn(tmp_path, error_code):
                 raw={"codexErrorInfo": error_code},
             )
 
-    loop = asyncio.get_running_loop()
-    response = loop.create_future()
-    # Act
-    await _harness_turn_pump.drive_harness_turn(
-        _FailedSession(),
-        SimpleNamespace(text="do work", response=response),
-        state_dir=tmp_path,
-        pid=123,
-        stop=asyncio.Event(),
-        print_stream=False,
-        name="quota-test",
-        host=None,
-        harness="codex-sdk",
-    )
-    return response.exception()
+    async def _scenario():
+        loop = asyncio.get_running_loop()
+        response = loop.create_future()
+        await _harness_turn_pump.drive_harness_turn(
+            _FailedSession(),
+            SimpleNamespace(text="do work", response=response),
+            state_dir=tmp_path,
+            pid=123,
+            stop=asyncio.Event(),
+            print_stream=False,
+            name="quota-test",
+            host="compute-02",
+            harness="codex-sdk",
+        )
+        return response.exception()
 
-
-def test_codex_cap_is_recorded_with_its_own_error_kind(tmp_path):
-    # Arrange
     # Act
-    asyncio.run(_run_failed_quota_harness_turn(tmp_path, "usageLimitExceeded"))
-    record = (tmp_path / "session.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    failure = asyncio.run(_scenario())
     # Assert
-    assert '"kind": "codex_usage_limit"' in record
+    assert isinstance(failure, RuntimeError)
 
 
-def test_transient_rate_limit_does_not_latch_quota_route(tmp_path):
-    # Arrange
+@pytest.mark.parametrize(
+    ("error_code", "expected_kind"),
+    [
+        ("usageLimitExceeded", "codex_usage_limit"),
+        ("rateLimitExceeded", "harness_turn"),
+    ],
+)
+def test_harness_pump_failed_turn_records_error_kind_in_transcript(
+    tmp_path, error_code, expected_kind
+):
+    # Arrange: real tmp state dir, no stubs.
+    class _FailedSession:
+        async def send(self, _message):
+            yield NormalizedEvent(
+                kind="error",
+                error="Codex turn failed",
+                raw={"codexErrorInfo": error_code},
+            )
+
+    async def _scenario():
+        loop = asyncio.get_running_loop()
+        response = loop.create_future()
+        await _harness_turn_pump.drive_harness_turn(
+            _FailedSession(),
+            SimpleNamespace(text="do work", response=response),
+            state_dir=tmp_path,
+            pid=123,
+            stop=asyncio.Event(),
+            print_stream=False,
+            name="quota-test",
+            host="compute-02",
+            harness="codex-sdk",
+        )
+
     # Act
-    asyncio.run(_run_failed_quota_harness_turn(tmp_path, "rateLimitExceeded"))
+    asyncio.run(_scenario())
     # Assert
-    assert not (tmp_path / "quota_incident.json").exists()
+    kinds = [
+        json.loads(line).get("kind")
+        for line in (tmp_path / "session.jsonl").read_text().splitlines()
+        if json.loads(line).get("type") == "error"
+    ]
+    assert kinds[-1] == expected_kind
+
+
+@pytest.mark.parametrize(
+    ("error_code", "expected_cause"),
+    [
+        ("usageLimitExceeded", "quota-exhausted"),
+        ("rateLimitExceeded", "harness-turn"),
+    ],
+)
+def test_harness_pump_error_cause_lands_in_diary(
+    pg_schema, tmp_path, error_code, expected_cause
+):
+    # Arrange: genuine isolated schema (loud skip without PG; hard-fails
+    # only when a target is declared). No stubs, no mocks.
+    from scitex_agent_container._state import state_store_diary
+
+    class _FailedSession:
+        async def send(self, _message):
+            yield NormalizedEvent(
+                kind="error",
+                error="Codex turn failed",
+                raw={"codexErrorInfo": error_code},
+            )
+
+    async def _scenario():
+        loop = asyncio.get_running_loop()
+        response = loop.create_future()
+        await _harness_turn_pump.drive_harness_turn(
+            _FailedSession(),
+            SimpleNamespace(text="do work", response=response),
+            state_dir=tmp_path,
+            pid=123,
+            stop=asyncio.Event(),
+            print_stream=False,
+            name="quota-test",
+            host="compute-02",
+            harness="codex-sdk",
+        )
+
+    # Act
+    asyncio.run(_scenario())
+    store = state_store_diary._open(state_store_diary._errors_schema())
+    try:
+        causes = [row.values["cause"] for row in store.rows()]
+    finally:
+        store.close()
+    # Assert
+    assert causes == [expected_cause]
 
 
 def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():

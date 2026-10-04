@@ -2,7 +2,6 @@
 
 import pytest
 
-from scitex_agent_container.runtimes import prompts
 from scitex_agent_container.runtimes.prompts import (
     PROMPT_HANDLERS,
     PromptHandler,
@@ -19,6 +18,7 @@ from scitex_agent_container.runtimes.prompts import (
     _detect_theme_selection,
     _detect_thinking_effort,
     _recent_tail,
+    codex_blocking_modal,
     detect,
     detect_and_respond,
     is_ready,
@@ -832,59 +832,63 @@ def test_hermes_contributor_tier_accepts_training(contributor_prompt):
     assert sent == ["y", "Enter"]
 
 
-BANNER = (
+# ── Native quota hard-cap rendering ──────────────────────────────────────────
+
+_HARD_CAP_BANNER = (
     "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
     "to purchase more credits or try again at Oct 10th, 2026 10:57 PM."
 )
-COMPOSER = "› Await instructions\ngpt-6.1-sol ultra fast · /fixture\n"
+_HARD_CAP_COMPOSER = "› Await instructions\ngpt-6.1-sol ultra fast · /fixture\n"
 
 
 @pytest.mark.parametrize(
     "pane",
     [
-        BANNER,
-        "■ " + BANNER,
-        "■ " + BANNER + "\n\n" + COMPOSER,
-        "■ " + BANNER.replace("’", "'") + "\n\n" + COMPOSER,
-        "  ■ " + BANNER + "\n\n  " + COMPOSER.replace("\n", "\n  "),
-        "• Context compacted · 3m 20s\n\n■ " + BANNER + "\n\n" + COMPOSER,
-        "■ " + BANNER + "\n\n» <channel source=\"cct\">\n" + COMPOSER,
+        _HARD_CAP_BANNER,
+        "■ " + _HARD_CAP_BANNER,
+        "■ " + _HARD_CAP_BANNER + "\n\n" + _HARD_CAP_COMPOSER,
+        "■ " + _HARD_CAP_BANNER.replace("’", "'") + "\n\n" + _HARD_CAP_COMPOSER,
+        "  ■ " + _HARD_CAP_BANNER + "\n\n  " + _HARD_CAP_COMPOSER.replace("\n", "\n  "),
+        "• Context compacted · 3m 20s\n\n■ " + _HARD_CAP_BANNER + "\n\n" + _HARD_CAP_COMPOSER,
+        "■ " + _HARD_CAP_BANNER + "\n\n» <channel source=\"cct\">\n" + _HARD_CAP_COMPOSER,
     ],
 )
 def test_exact_hard_cap_remains_blocked_beside_native_composer(pane):
-    # Arrange: actual reported banner, with explicitly offline TUI surroundings.
+    # Arrange
     sent = []
-    # Act: use the registry that both native boot and dispatch consult.
-    detected = prompts.detect_and_respond(pane, set(), sent.append)
-    ready = prompts.is_ready(pane)
-    # Assert: a composer is not proof of quota recovery and no key is accepted.
+    # Act
+    detected = detect_and_respond(pane, set(), sent.append)
+    ready = is_ready(pane)
+    # Assert
     assert (detected, ready, sent) == ("codex-usage-limit", False, [])
 
 
 @pytest.mark.parametrize(
     "quote",
     [
-        "User said: " + BANNER,
-        "> ■ " + BANNER,
-        "```text\n■ " + BANNER + "\n```",
-        "› Explain this error:\n  ■ " + BANNER,
-        "The documented error is \"" + BANNER + "\"",
+        "User said: " + _HARD_CAP_BANNER,
+        "> ■ " + _HARD_CAP_BANNER,
+        "```text\n■ " + _HARD_CAP_BANNER + "\n```",
+        "› Explain this error:\n  ■ " + _HARD_CAP_BANNER,
+        "The documented error is \"" + _HARD_CAP_BANNER + "\"",
     ],
 )
 def test_quoted_user_documentation_is_not_a_native_fault(quote):
     # Arrange
-    pane = quote + "\n\n" + COMPOSER
+    pane = quote + "\n\n" + _HARD_CAP_COMPOSER
     # Act
-    blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+    blocked = codex_blocking_modal(pane)
+    ready = is_ready(pane)
     # Assert
     assert (blocked, ready) == (None, True)
 
 
 def test_old_error_is_superseded_by_later_native_response():
     # Arrange
-    pane = "■ " + BANNER + "\n• Completed a later turn\n\n" + COMPOSER
+    pane = "■ " + _HARD_CAP_BANNER + "\n• Completed a later turn\n\n" + _HARD_CAP_COMPOSER
     # Act
-    blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+    blocked = codex_blocking_modal(pane)
+    ready = is_ready(pane)
     # Assert
     assert (blocked, ready) == (None, True)
 
@@ -893,7 +897,7 @@ def test_burst_rate_limit_keeps_a_distinct_ui_classification():
     # Arrange
     pane = "Too many requests\n? for shortcuts\n"
     # Act
-    blocked = prompts.codex_blocking_modal(pane)
+    blocked = codex_blocking_modal(pane)
     # Assert
     assert blocked == "codex-rate-limit"
 
@@ -902,64 +906,79 @@ def test_hard_cap_has_no_direct_keystroke_handler():
     # Arrange
     sent = []
     # Act
-    handled = prompts.respond_modal("codex-usage-limit", sent.append)
+    handled = respond_modal("codex-usage-limit", sent.append)
     # Assert
-    assert not handled and sent == []
+    assert (handled, sent) == (False, [])
 
 
 REMOTE_COMPACT_CAP = (
     "■ Error running remote compact task: You’ve hit your usage limit. Visit https://"
 )
+
+
 REMOTE_COMPACT_WRAPPED = "chatgpt.com/codex/settings/usage\nto purchase more credits."
 
 
 def test_remote_compact_hard_cap_prefix_blocks_latest_native_error():
     # Arrange
-    pane = REMOTE_COMPACT_CAP + "\n" + REMOTE_COMPACT_WRAPPED + "\n\n" + COMPOSER
+    # the actual latest native heading plus its wrapped dashboard
+    # line, with an explicitly offline composer beside it.
+    pane = REMOTE_COMPACT_CAP + "\n" + REMOTE_COMPACT_WRAPPED + "\n\n" + _HARD_CAP_COMPOSER
     sent = []
     # Act
-    detected = prompts.detect_and_respond(pane, set(), sent.append)
-    ready = prompts.is_ready(pane)
+    detected = detect_and_respond(pane, set(), sent.append)
+    ready = is_ready(pane)
     # Assert
+    # latest native hard cap blocks; no key accepted.
     assert (detected, ready, sent) == ("codex-usage-limit", False, [])
 
 
 def test_older_direct_cap_beside_remote_compact_stays_blocked():
     # Arrange
-    pane = "■ " + BANNER + "\n" + REMOTE_COMPACT_CAP + "\n\n" + COMPOSER
+    # an older direct cap row remains above the newer remote-compact
+    # row; neither may un-block the other and no later success follows.
+    pane = "■ " + _HARD_CAP_BANNER + "\n" + REMOTE_COMPACT_CAP + "\n\n" + _HARD_CAP_COMPOSER
     # Act
-    blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+    blocked, ready = codex_blocking_modal(pane), is_ready(pane)
     # Assert
     assert (blocked, ready) == ("codex-usage-limit", False)
 
 
 def test_quoted_remote_compact_prefix_is_not_a_native_fault():
     # Arrange
+    # the exact prefix quoted, fenced, and typed as user input.
     panes = [
-        "> " + REMOTE_COMPACT_CAP + "\n\n" + COMPOSER,
-        "```text\n" + REMOTE_COMPACT_CAP + "\n```\n\n" + COMPOSER,
-        "› Explain this error:\n  " + REMOTE_COMPACT_CAP + "\n\n" + COMPOSER,
+        "> " + REMOTE_COMPACT_CAP + "\n\n" + _HARD_CAP_COMPOSER,
+        "```text\n" + REMOTE_COMPACT_CAP + "\n```\n\n" + _HARD_CAP_COMPOSER,
+        "› Explain this error:\n  " + REMOTE_COMPACT_CAP + "\n\n" + _HARD_CAP_COMPOSER,
     ]
     for pane in panes:
         # Act
-        blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+        blocked, ready = codex_blocking_modal(pane), is_ready(pane)
         # Assert
+        # quoted/fenced/typed text never acquires fault authority.
         assert (blocked, ready) == (None, True)
 
 
 def test_later_native_success_after_remote_compact_recovers_observation():
     # Arrange
-    pane = REMOTE_COMPACT_CAP + "\n• Completed a later turn\n\n" + COMPOSER
+    # the remote-compact cap remains visible above a later native
+    # success response.
+    pane = REMOTE_COMPACT_CAP + "\n• Completed a later turn\n\n" + _HARD_CAP_COMPOSER
     # Act
-    blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+    blocked, ready = codex_blocking_modal(pane), is_ready(pane)
     # Assert
+    # this text observation is not a persistent incident API.
     assert (blocked, ready) == (None, True)
 
 
 def test_compact_mention_without_anchored_prefix_does_not_block():
     # Arrange
-    pane = "Compacting the context took a while\n\n" + COMPOSER
+    # prose merely mentioning compacting, without the anchored
+    # native error prefix (no ■ glyph, wrong heading start).
+    pane = "Compacting the context took a while\n\n" + _HARD_CAP_COMPOSER
     # Act
-    blocked, ready = prompts.codex_blocking_modal(pane), prompts.is_ready(pane)
+    blocked, ready = codex_blocking_modal(pane), is_ready(pane)
     # Assert
+    # no arbitrary substring grant.
     assert (blocked, ready) == (None, True)
