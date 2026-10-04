@@ -65,7 +65,6 @@ INCIDENT_PIN = '["self-hosted", "Linux", "X64", "spartan-cpu"]'
 LIGHT_LANE = [
     ("lint.yml", "ruff"),
     ("import-smoke-on-ubuntu-py3-12.yml", "install-check"),
-    ("no-hosted-runners-guard-on-self-hosted.yml", "no-hosted-runners"),
     ("rtd-sphinx-build-on-ubuntu-latest.yml", "sphinx"),
 ]
 
@@ -155,10 +154,10 @@ def regressed_repo(tmp_path: Path) -> Path:
     is a no-op: a silently-unchanged file would make every test below pass
     against a clean tree and prove nothing at all.
     """
-    live = (WORKFLOWS / "lint.yml").read_text(encoding="utf-8")
-    regressed = live.replace(f"runs-on: {LIGHT}", f"runs-on: {INCIDENT_PIN}")
+    live = _workflow(CANONICAL)
+    regressed = live.replace(f"    runs-on: {CANONICAL}", f"    runs-on: {INCIDENT_PIN}")
     if regressed == live:
-        pytest.fail("the light-lane seam moved — update LIGHT in this test module")
+        pytest.fail("the runner seam moved — update this synthetic regression test")
     return _write_repo(tmp_path, {"lint.yml": regressed})
 
 
@@ -462,11 +461,14 @@ def test_this_repo_is_clean() -> None:
 
 
 @pytest.mark.parametrize("filename,job_id", LIGHT_LANE)
-def test_no_light_lane_job_names_a_pool_literally(filename: str, job_id: str) -> None:
+def test_light_lane_jobs_use_only_central_reusable_calls(filename: str, job_id: str) -> None:
     # Arrange
     job = _job(filename, job_id)
     # Act
-    seam = reads_a_variable(job)
+    seam = (
+        job.get("uses", "").startswith("scitex-ai/.github/.github/workflows/")
+        and "runs-on" not in job
+    )
     # Assert
     assert seam, f"{filename} -> {job_id} froze its pool again"
 
@@ -475,14 +477,15 @@ def test_no_light_lane_job_names_a_pool_literally(filename: str, job_id: str) ->
 def test_the_light_lane_falls_back_to_the_main_pool_variable(
     filename: str, job_id: str
 ) -> None:
-    # Arrange: LIGHT_RUNS_ON is deliberately UNSET in repo settings, so the
-    # `|| vars.CI_RUNS_ON` fall-through is what actually routes these jobs
-    # today. A light lane reading ONLY its own variable would be dark.
-    text = (WORKFLOWS / filename).read_text(encoding="utf-8")
+    # Arrange
+    job = _job(filename, job_id)
     # Act
-    has_fallthrough = "vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON" in text
+    centralized = (
+        job.get("uses", "").startswith("scitex-ai/.github/.github/workflows/")
+        and "runs-on" not in job
+    )
     # Assert
-    assert has_fallthrough, f"{filename} -> {job_id} lost its fall-through"
+    assert centralized, f"{filename} -> {job_id} added local runner routing"
 
 
 def test_the_repo_pin_allowlist_is_fully_argued() -> None:

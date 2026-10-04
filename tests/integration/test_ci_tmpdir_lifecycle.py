@@ -877,34 +877,20 @@ def test_every_cleanup_step_is_guarded_by_always(wiring):
 
 def _docs_steps() -> list[dict]:
     doc = yaml.safe_load(_DOCS_WORKFLOW.read_text(encoding="utf-8"))
-    return doc["jobs"]["sphinx"]["steps"]
+    return doc["jobs"]["sphinx"]
 
 
-def test_docs_job_places_cache_temp_and_venv_in_managed_scratch():
-    # Arrange
-    prepare = next(
-        step for step in _docs_steps() if step.get("name") == "Prepare job-scoped docs scratch"
+def test_docs_job_uses_the_central_sphinx_workflow():
+    job = _docs_steps()
+    assert job["uses"] == (
+        "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main"
     )
-    run = str(prepare.get("run", "")).strip()
-    # Act
-    expected = "bash .github/ci/prepare-bare-scratch.sh docs 3.12 DOCS_VENV"
-    # Assert
-    assert run == expected
+    assert job["with"]["docs_dir"] == "docs/sphinx"
+    assert job["with"]["bundle_dir"] == "src/scitex_agent_container/_sphinx_html"
 
 
-def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
-    # Arrange
-    cleanup = next(
-        step for step in _docs_steps() if step.get("name") == "Remove this job's docs scratch"
-    )
-    # Act
-    condition = str(cleanup.get("if", ""))
-    command = str(cleanup.get("run", "")).strip()
-    # Assert
-    assert ("always()" in condition, command) == (
-        True,
-        "bash .github/ci/clean-tmpdir.sh docs 3.12",
-    )
+def test_docs_caller_does_not_select_a_runner_locally():
+    assert "runs-on" not in _docs_steps()
 
 
 def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -923,40 +909,19 @@ def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
 
 def _import_steps() -> list[dict]:
     doc = yaml.safe_load(_IMPORT_WORKFLOW.read_text(encoding="utf-8"))
-    return doc["jobs"]["install-check"]["steps"]
+    return doc["jobs"]["install-check"]
 
 
-def test_import_job_places_cache_temp_and_venv_in_managed_scratch():
-    # Arrange
-    prepare = next(
-        step
-        for step in _import_steps()
-        if step.get("name") == "Prepare job-scoped import scratch"
+def test_import_job_uses_the_central_import_workflow():
+    job = _import_steps()
+    assert job["uses"] == (
+        "scitex-ai/.github/.github/workflows/import-smoke.yml@main"
     )
-    run = str(prepare.get("run", "")).strip()
-    # Act
-    expected = (
-        "bash .github/ci/prepare-bare-scratch.sh import-smoke 3.12 IMPORT_VENV"
-    )
-    # Assert
-    assert run == expected
+    assert job["with"]["console_script"] == "sac"
 
 
-def test_import_job_removes_its_exact_scratch_scope_even_after_failure():
-    # Arrange
-    cleanup = next(
-        step
-        for step in _import_steps()
-        if step.get("name") == "Remove this job's import scratch"
-    )
-    # Act
-    condition = str(cleanup.get("if", ""))
-    command = str(cleanup.get("run", "")).strip()
-    # Assert
-    assert ("always()" in condition, command) == (
-        True,
-        "bash .github/ci/clean-tmpdir.sh import-smoke 3.12",
-    )
+def test_import_caller_does_not_select_a_runner_locally():
+    assert "runs-on" not in _import_steps()
 
 
 def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -1010,44 +975,14 @@ def test_bare_scratch_helper_exports_managed_job_paths(
     ) == (0, True, True, True), result.stderr
 
 
-@pytest.mark.parametrize(
-    ("workflow", "job", "prepare_name", "prepare_command", "cleanup_command"),
-    [
-        (
-            _WORKFLOWS / "lint.yml",
-            "ruff",
-            "Prepare job-scoped lint scratch",
-            "bash .github/ci/prepare-bare-scratch.sh lint 3.12 LINT_VENV",
-            "bash .github/ci/clean-tmpdir.sh lint 3.12",
-        ),
-        (
-            _WORKFLOWS / "no-hosted-runners-guard-on-self-hosted.yml",
-            "no-hosted-runners",
-            "Prepare job-scoped runner-guard scratch",
-            "bash .github/ci/prepare-bare-scratch.sh runner-guard 3.12 GUARD_VENV",
-            "bash .github/ci/clean-tmpdir.sh runner-guard 3.12",
-        ),
-    ],
-)
-def test_other_self_hosted_uv_jobs_use_managed_scratch_and_cleanup(
-    workflow: Path,
-    job: str,
-    prepare_name: str,
-    prepare_command: str,
-    cleanup_command: str,
-):
-    # Arrange
-    doc = yaml.safe_load(workflow.read_text(encoding="utf-8"))
-    steps = doc["jobs"][job]["steps"]
-    prepare = next(step for step in steps if step.get("name") == prepare_name)
-    cleanup = next(
-        step for step in steps if str(step.get("run", "")).strip() == cleanup_command
+def test_lint_job_uses_the_central_organization_command_runner():
+    doc = yaml.safe_load((_WORKFLOWS / "lint.yml").read_text(encoding="utf-8"))
+    job = doc["jobs"]["ruff"]
+    assert job["uses"] == (
+        "scitex-ai/.github/.github/workflows/organization-job.yml@main"
     )
-    # Act
-    actual_prepare = str(prepare.get("run", "")).strip()
-    condition = str(cleanup.get("if", ""))
-    # Assert
-    assert (actual_prepare, "always()" in condition) == (prepare_command, True)
+    assert "ruff check --select F401,F811" in job["with"]["command"]
+    assert "ruff check --select T201,T203 src/" in job["with"]["command"]
 
 
 def test_exec_wrapper_sources_the_lifecycle_library():
