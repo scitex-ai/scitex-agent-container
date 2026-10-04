@@ -31,10 +31,6 @@ CI_DIR = REPO_ROOT / ".github" / "ci"
 GATE_WORKFLOW = (
     REPO_ROOT / ".github" / "workflows" / "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
 )
-
-# Carried by exactly one runner in the org pool: the machine that runs
-# `sac listen` and the card store.
-CONTROL_PLANE_LABEL = "sac-control-plane"
 LONG_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -619,149 +615,21 @@ def test_a_red_verdict_names_what_broke(rail) -> None:
     assert "assert 2 == 4" in text
 
 
-# ---------------------------------------------------------------------------
-# WORKFLOW SHAPE -- the single-line edits that would silently re-break it
-# ---------------------------------------------------------------------------
-def test_verdict_job_is_pinned_to_the_control_plane_host(verdict_job) -> None:
-    """ADR-0024 assumed "the self-hosted runners execute on this host".
-
-    They do not. ``vars.CI_RUNS_ON`` is ``scitex-org-cpu``: four runners
-    on four machines, and only scitex-04-org-cpu-01 sits on the box
-    running ``sac listen`` and the card store. Unpinned, this job would
-    75% of the time POST to another machine's loopback and write to
-    another postgres -- delivered to nobody, recorded nowhere, silent.
-    """
+# Workflow invariants for the verdict rail now live beside the shared
+# reusable workflow in scitex-ai/.github. This leaf suite keeps its rail
+# behavior tests; its only workflow contract is the reusable SIF caller.
+def test_leaf_workflow_calls_the_central_sif_matrix(gate_workflow) -> None:
     # Arrange
-    runs_on = verdict_job["runs-on"]
+    jobs = gate_workflow["jobs"]
     # Act
-    from scitex_agent_container._hosted_runner_guard import _runner_labels
-
-    labels, _ = _runner_labels({"runs-on": runs_on})
+    caller_is_central = jobs == {
+        "tests": {
+            "uses": "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main",
+            "with": {"suite": "matrix"},
+        }
+    }
     # Assert
-    assert CONTROL_PLANE_LABEL in labels
-
-
-def test_verdict_job_does_not_inherit_the_shared_runner_pool(verdict_job) -> None:
-    """A literal label list, never ``vars.CI_RUNS_ON``."""
-    # Arrange
-    runs_on = verdict_job["runs-on"]
-    # Act
-    declares_fixed_group = '"group":"Organization"' in str(runs_on)
-    # Assert
-    assert declares_fixed_group and "vars.CI_RUNS_ON" not in str(runs_on)
-
-
-def test_verdict_job_reports_red(verdict_job) -> None:
-    """Without ``always()`` a failed gate SKIPS this job.
-
-    The rail would then deliver green verdicts and stay silent on red --
-    a congratulations service, not a feedback rail.
-    """
-    # Arrange
-    condition = str(verdict_job.get("if", ""))
-    # Act
-    fires_unconditionally = "always()" in condition
-    # Assert
-    assert fires_unconditionally
-
-
-def test_verdict_job_waits_for_the_gate(verdict_job) -> None:
-    # Arrange
-    needs = verdict_job["needs"]
-    # Act
-    waits_on_test = "test" in needs
-    # Assert
-    assert waits_on_test
-
-
-def test_verdict_job_passes_the_card_store_explicitly(verdict_env) -> None:
-    """A noninteractive runner must name the shared-store authority itself.
-
-    A ``run:`` step gets a non-interactive shell sourcing no profile, so
-    the DSN must come from the workflow. Cards-specific SQLite-era variables
-    are intentionally no longer part of ambient store resolution.
-    """
-    # Arrange
-    keys = set(verdict_env)
-    # Act
-    declares_store = "SCITEX_STORE_DSN" in keys
-    # Assert
-    assert declares_store
-
-
-def test_verdict_job_points_at_a_postgres_store(verdict_env) -> None:
-    # Arrange
-    dsn = verdict_env["SCITEX_STORE_DSN"]
-    # Act
-    is_postgres = "postgres" in dsn
-    # Assert
-    assert is_postgres
-
-
-def test_verdict_job_uses_project_scoped_canonical_store_role(
-    verdict_env, rail_cards
-) -> None:
-    # Arrange
-    dsn = verdict_env["SCITEX_STORE_DSN"]
-    # Act
-    authority_is_exact = dsn == rail_cards.CANONICAL_CI_STORE_DSN
-    # Assert
-    assert authority_is_exact
-
-
-def test_verdict_job_does_not_export_sqlite_era_cards_variable(verdict_env) -> None:
-    # Arrange
-    keys = set(verdict_env)
-    # Act
-    exports_old_name = "SCITEX_CARDS_DB" in keys
-    # Assert
-    assert not exports_old_name
-
-
-def test_verdict_job_can_read_failed_job_logs(gate_workflow) -> None:
-    """Naming the failure needs ``actions: read``.
-
-    A workflow that withholds a permission its own job needs is one of
-    the inert-but-configured shapes this fleet keeps rediscovering.
-    """
-    # Arrange
-    permissions = gate_workflow["permissions"]
-    # Act
-    granted = permissions.get("actions")
-    # Assert
-    assert granted == "read"
-
-
-def test_verdict_step_invokes_the_rail(verdict_run_script) -> None:
-    # Arrange
-    script = verdict_run_script
-    # Act
-    invokes = "ci_card_rail.py verdict" in script
-    # Assert
-    assert invokes
-
-
-def test_verdict_step_passes_the_gate_result(verdict_run_script) -> None:
-    # Arrange
-    script = verdict_run_script
-    # Act
-    passes_conclusion = "--conclusion" in script
-    # Assert
-    assert passes_conclusion
-
-
-def test_verdict_step_resolves_uv_by_absolute_path(verdict_run_script) -> None:
-    """The runner service's PATH is the system default.
-
-    It does not include ~/.local/bin, so a bare ``uv`` is not found here
-    even though it is on the operator's interactive PATH.
-    """
-    # Arrange
-    script = verdict_run_script
-    # Act
-    has_absolute_fallback = ".local/bin/uv" in script
-    # Assert
-    assert has_absolute_fallback
+    assert caller_is_central
 
 
 # EOF

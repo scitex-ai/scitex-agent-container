@@ -153,8 +153,7 @@ def test_leaf_ci_is_only_a_central_reusable_workflow_call(workflow_doc):
     assert job == {
         "uses": "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main",
         "with": {"suite": "matrix"},
-    }
-    assert set(workflow_doc["jobs"]) == {"tests"}
+    } and set(workflow_doc["jobs"]) == {"tests"}
 
 
 @pytest.fixture
