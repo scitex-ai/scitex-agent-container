@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   member-compute:
-    uses: scitex-ai/.github/.github/workflows/organization-job.yml@refs/heads/main
+    uses: scitex-ai/.github/.github/workflows/organization-job.yml@main
     with:
       runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
       command: 'printf "runner_environment=%s\n" "$RUNNER_ENVIRONMENT"; hostname'
