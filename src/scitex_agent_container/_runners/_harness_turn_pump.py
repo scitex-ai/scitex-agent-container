@@ -134,18 +134,31 @@ async def drive_harness_turn(
                 )
             elif event.kind == "error":
                 error_detail = str(event.error)
+                codex_error_info = getattr(event.raw, "codex_error_info", None)
+                codex_error_info = getattr(codex_error_info, "value", codex_error_info)
+                is_codex_usage_cap = (
+                    harness == "codex-sdk"
+                    and codex_error_info == "usageLimitExceeded"
+                )
+                error_kind = "codex_usage_limit" if is_codex_usage_cap else "harness_turn"
+                error_cause = "quota-exhausted" if is_codex_usage_cap else "harness-turn"
                 logger.error(
                     "%s turn failed for %s: %s", harness or "harness", name, error_detail
                 )
                 append_session_message(
                     state_dir,
-                    {"type": "error", "kind": "harness_turn", "detail": error_detail},
+                    {
+                        "type": "error",
+                        "kind": error_kind,
+                        "codex_error_info": codex_error_info if is_codex_usage_cap else None,
+                        "detail": error_detail,
+                    },
                 )
                 if host:
                     report_sdk_error(
                         name=name,
                         host=host,
-                        cause="harness-turn",
+                        cause=error_cause,
                         detail=error_detail,
                     )
                 break

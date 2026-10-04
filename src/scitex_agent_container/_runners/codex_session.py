@@ -60,6 +60,7 @@ once the turn completes, carrying ``final_response``, the thread id as
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 import scitex_logging as slogging
@@ -216,6 +217,23 @@ def usage_as_dict(usage: Any) -> dict[str, Any]:
     return out
 
 
+def _final_response_from_items(items: Sequence[Any]) -> str:
+    """Select the same assistant item the SDK convenience runner returns."""
+    fallback = ""
+    for item in reversed(items):
+        item = getattr(item, "root", item)
+        if str(getattr(item, "type", "") or "") != "agent_message":
+            continue
+        text = _item_text(item)
+        phase = getattr(item, "phase", None)
+        phase = getattr(phase, "value", phase)
+        if phase == "final_answer":
+            return text
+        if phase is None and not fallback:
+            fallback = text
+    return fallback
+
+
 # ---------------------------------------------------------------------------
 # The session
 # ---------------------------------------------------------------------------
@@ -363,7 +381,39 @@ class CodexSession:
             # mid-turn ``turn/steer`` and ``turn/interrupt`` requests.
             turn = await self._thread.turn(message.content)
             self._active_turn = turn
-            result = await turn.run()
+            stream = turn.stream()
+            items: list[Any] = []
+            usage: Any = None
+            completed: Any = None
+            async for notification in stream:
+                method = str(getattr(notification, "method", "") or "")
+                payload = getattr(notification, "payload", None)
+                if method == "item/completed" and getattr(payload, "turn_id", None) == turn.id:
+                    items.append(getattr(payload, "item", None))
+                elif method == "thread/tokenUsage/updated" and getattr(payload, "turn_id", None) == turn.id:
+                    usage = getattr(payload, "token_usage", None)
+                elif method == "turn/completed":
+                    candidate = getattr(payload, "turn", None)
+                    if candidate is not None and getattr(candidate, "id", None) == turn.id:
+                        completed = candidate
+            if completed is None:
+                raise RuntimeError("Codex app-server ended the turn stream without turn/completed")
+            failed_error = getattr(completed, "error", None)
+            status = getattr(completed, "status", "")
+            status = getattr(status, "value", status)
+            if failed_error is not None or status == "failed":
+                message = str(getattr(failed_error, "message", "") or "")
+                if not message:
+                    message = f"Codex turn failed with status {status or 'unknown'}"
+                yield NormalizedEvent(kind="error", error=message, raw=failed_error or completed)
+                return
+            result = SimpleNamespace(
+                items=items,
+                error=None,
+                final_response=_final_response_from_items(items),
+                usage=usage,
+                status=status,
+            )
         except asyncio.CancelledError:  # cooperative cancellation stays loud
             raise
         except Exception as exc:  # stx-allow: fallback (reason: SDK/subprocess/network surface is broad; the Protocol contract is a turn-ending kind="error" event, not an exception mid-iteration)

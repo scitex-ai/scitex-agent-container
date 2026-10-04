@@ -33,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from scitex_agent_container._runners import session_daemon
+from scitex_agent_container._runners import _harness_turn_pump, session_daemon
 from scitex_agent_container._runners._codex_session_cli import main as cli_main
 from scitex_agent_container._runners._codex_turn_driver import run_codex_conversation
 from scitex_agent_container._runners._harness_session import (
@@ -122,6 +122,21 @@ class _NativeTurnHandle:
             final_response="native ack",
             usage=SimpleNamespace(input_tokens=5, output_tokens=2),
             status="completed",
+        )
+
+    async def stream(self):
+        self.started.set()
+        await self.release.wait()
+        item = SimpleNamespace(type="agent_message", text="native ack", phase="final_answer")
+        yield SimpleNamespace(
+            method="item/completed",
+            payload=SimpleNamespace(turn_id=self.id, item=item),
+        )
+        yield SimpleNamespace(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                turn=SimpleNamespace(id=self.id, status="completed", error=None)
+            ),
         )
 
     async def steer(self, text: str) -> Any:
@@ -537,6 +552,97 @@ def test_codex_session_exposes_the_native_active_turn_and_steers_it():
         ["change course"],
         "thr_native",
     )
+
+
+def test_codex_session_preserves_structured_usage_limit_error_from_failed_turn():
+    error = SimpleNamespace(
+        message="You’ve hit your usage limit. Try again later.",
+        codex_error_info="usageLimitExceeded",
+    )
+    async def _scenario() -> list[NormalizedEvent]:
+        handle = _NativeTurnHandle()
+
+        async def _failed_stream():
+            yield SimpleNamespace(
+                method="turn/completed",
+                payload=SimpleNamespace(
+                    turn=SimpleNamespace(
+                        id=handle.id, status="failed", error=error
+                    )
+                ),
+            )
+
+        handle.stream = _failed_stream
+        session = CodexSession("ag-cx-quota")
+        session._started = True
+        session._thread = _NativeThread(handle)
+        return [event async for event in session.send(SimpleNamespace(content="work"))]
+
+    events = asyncio.run(_scenario())
+
+    assert len(events) == 1
+    assert events[0].kind == "error"
+    assert events[0].error == error.message
+    assert events[0].raw.codex_error_info == "usageLimitExceeded"
+
+
+@pytest.mark.parametrize(
+    ("error_code", "expected_cause", "expected_kind"),
+    [
+        ("usageLimitExceeded", "quota-exhausted", "codex_usage_limit"),
+        ("rateLimitExceeded", "harness-turn", "harness_turn"),
+    ],
+)
+def test_harness_pump_records_codex_quota_separately_from_transient_rate_limit(
+    tmp_path, monkeypatch, error_code, expected_cause, expected_kind
+):
+    records: list[dict[str, Any]] = []
+    reported: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        _harness_turn_pump,
+        "append_session_message",
+        lambda _state, row: records.append(row),
+    )
+    monkeypatch.setattr(
+        _harness_turn_pump,
+        "report_sdk_error",
+        lambda **fields: reported.append(fields),
+    )
+    monkeypatch.setattr(
+        _harness_turn_pump,
+        "write_heartbeat",
+        lambda *_args, **_fields: None,
+    )
+
+    class _FailedSession:
+        async def send(self, _message):
+            yield NormalizedEvent(
+                kind="error",
+                error="Codex turn failed",
+                raw=SimpleNamespace(codex_error_info=error_code),
+            )
+
+    async def _scenario():
+        loop = asyncio.get_running_loop()
+        response = loop.create_future()
+        await _harness_turn_pump.drive_harness_turn(
+            _FailedSession(),
+            SimpleNamespace(text="do work", response=response),
+            state_dir=tmp_path,
+            pid=123,
+            stop=asyncio.Event(),
+            print_stream=False,
+            name="quota-test",
+            host="compute-02",
+            harness="codex-sdk",
+        )
+        return response.exception()
+
+    failure = asyncio.run(_scenario())
+
+    assert isinstance(failure, RuntimeError)
+    assert records[-1]["kind"] == expected_kind
+    assert reported[-1]["cause"] == expected_cause
 
 
 def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():
