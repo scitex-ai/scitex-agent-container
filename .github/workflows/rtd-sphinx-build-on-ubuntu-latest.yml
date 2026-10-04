@@ -19,6 +19,7 @@ jobs:
     uses: scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main
     permissions:
       contents: write
+      pull-requests: write
     with:
       runs_on: '["self-hosted","Linux","X64","scitex-org-cpu"]'
       docs_dir: docs/sphinx
