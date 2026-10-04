@@ -1,0 +1,15 @@
+name: trusted pytest default smoke
+
+on:
+  pull_request:
+    branches:
+      - ci-runner-pr-matrix-base-20261004
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-matrix:
+    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@main
+    with:
+      full_python_versions: '["3.12"]'
