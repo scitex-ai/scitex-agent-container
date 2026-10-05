@@ -215,3 +215,15 @@ diff --git a/agent/credential_pool.py b/agent/credential_pool.py
 +                if _is_manual_source(entry.source) and not entry.source.startswith("manual:sac:"):
                      dead_at = entry.last_status_at or 0
                      if dead_at and now - dead_at > DEAD_MANUAL_PRUNE_TTL_SECONDS:
+diff --git a/tui_gateway/server.py b/tui_gateway/server.py
+--- a/tui_gateway/server.py
++++ b/tui_gateway/server.py
+@@ -1562,3 +1562,8 @@
+     if not row:
+         return {}
++    # SAC verified the declared model/key cascade before this launch. A route
++    # saved by the previous engine must not override that verified profile.
++    # Unmanaged Hermes sessions retain their usual per-chat model selection.
++    if _load_cfg().get("sac_managed_model") is True:
++        return {}
+     model_config = _parse_model_config(row.get("model_config"), quiet=True)

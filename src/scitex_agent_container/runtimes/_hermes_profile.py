@@ -439,6 +439,33 @@ def ensure_api_key(state_dir: Path) -> str:
     return value
 
 
+def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
+    """Probe before deploying files into an existing agent home."""
+    plan = _launch_plan(config, launch_mode=launch_mode)
+    selection = compile_hermes_config(plan, workdir=str(config.workdir))
+    env, pools = configure_failover(config, selection)
+    targets = [home / ".hermes"]
+    upper = resolve_overlay_upper_home(config)
+    if upper is not None:
+        targets.append(upper / ".hermes")
+    preflight_pools(selection, pools, targets)
+    if pools:
+        selection["sac_managed_model"] = True
+    return plan, selection, env, pools
+
+
+def _apply_verified_route(rendered: dict, selection: dict) -> None:
+    for key in (
+        "model",
+        "providers",
+        "fallback_providers",
+        "credential_pool_strategies",
+        "sac_managed_model",
+    ):
+        if key in selection:
+            rendered[key] = selection[key]
+
+
 def materialize_hermes_profile(
     config: AgentConfig, *, state_dir: Path, api_port: int
 ) -> tuple[str, list[Path]]:
@@ -446,6 +473,9 @@ def materialize_hermes_profile(
     state_dir.mkdir(parents=True, exist_ok=True)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
+    plan, selection, failover_env, credential_pools = _verified_route(
+        config, home, launch_mode="headless"
+    )
     deploy_to_home(config, str(home))
     setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
@@ -457,7 +487,6 @@ def materialize_hermes_profile(
     system_prompt = _verified_instruction_text(config, targets)
     api_key = ensure_api_key(state_dir)
     provider_key = resolve_primary_key(config, resolve_provider_api_key)
-    plan = _launch_plan(config)
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
@@ -467,7 +496,7 @@ def materialize_hermes_profile(
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    failover_env, credential_pools = configure_failover(config, rendered)
+    _apply_verified_route(rendered, selection)
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -505,7 +534,6 @@ def materialize_hermes_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
-    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -527,6 +555,9 @@ def materialize_hermes_tui_profile(
     ensure_api_key(state_dir)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
+    plan, selection, failover_env, credential_pools = _verified_route(
+        config, home, launch_mode="tui"
+    )
     if deploy_home:
         deploy_to_home(config, str(home))
         overlay_home = deploy_to_home_overlay(config)
@@ -540,7 +571,6 @@ def materialize_hermes_tui_profile(
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
     provider_key = resolve_primary_key(config, resolve_provider_api_key)
-    plan = _launch_plan(config, launch_mode="tui")
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
@@ -550,7 +580,7 @@ def materialize_hermes_tui_profile(
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    failover_env, credential_pools = configure_failover(config, rendered)
+    _apply_verified_route(rendered, selection)
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )
@@ -582,7 +612,6 @@ def materialize_hermes_tui_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
-    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
