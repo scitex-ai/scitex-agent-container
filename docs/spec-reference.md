@@ -231,6 +231,16 @@ credential retain one pool member. Profile refresh preserves account cooldowns;
 exhausted pools retain the normal bounded refusal instead of unpooled fallback.
 No strategy change restarts a session or crosses an existing engine/account pin.
 
+Before launching a declared pool, SAC uses `scitex_genai.availability` to
+probe each eligible key with a tiny synthetic inference request. The checker
+returns `scitex_dev.status.Check` and preserves the provider's native status
+code. An HTTP 401 quarantines that static key in runtime state; the key stays
+in the spec and becomes eligible when replaced or explicitly reset. Quota
+failures preserve reset times and become eligible after the window reopens.
+Timeouts remain unknown availability results and are skipped temporarily.
+If the primary has no verified account, SAC starts on the first verified
+declared backup. If none passes, it refuses launch with the pool state retained.
+
 ### `spec.available_harnesses.<key>.compression` — Hermes only
 
 Hermes context compaction is configured beside the Hermes harness that owns

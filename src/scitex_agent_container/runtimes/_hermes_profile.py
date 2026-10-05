@@ -22,6 +22,7 @@ from ..config._launch_plan import (
 )
 from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
+from ._hermes_key_probe import preflight_pools
 from ._hermes_profile_logs import ensure_hermes_log_files
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
@@ -504,6 +505,7 @@ def materialize_hermes_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -580,6 +582,7 @@ def materialize_hermes_tui_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)

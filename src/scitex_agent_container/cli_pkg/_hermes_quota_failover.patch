@@ -197,3 +197,21 @@ index 000000000..4b668a4a3
 +        retryable=False,
 +        retry_after=max(0, until - time.time()) if until is not None else None,
 +    )
+diff --git a/agent/credential_pool.py b/agent/credential_pool.py
+--- a/agent/credential_pool.py
++++ b/agent/credential_pool.py
+@@ -1220,2 +1220,9 @@
+         terminal = self._is_terminal_auth_failure(status_code, normalized_error)
++        # SAC keeps declared keys in the spec. A rejected static key cannot
++        # refresh: quarantine it until replacement or an explicit status reset.
++        terminal = terminal or (
++            entry.source.startswith("manual:sac:")
++            and entry.auth_type == AUTH_TYPE_API_KEY
++            and status_code == 401
++        )
+         # Carry the classifier's verdict so the cooldown is sized by what
+@@ -2076,3 +2082,3 @@
+-                if _is_manual_source(entry.source):
++                if _is_manual_source(entry.source) and not entry.source.startswith("manual:sac:"):
+                     dead_at = entry.last_status_at or 0
+                     if dead_at and now - dead_at > DEAD_MANUAL_PRUNE_TTL_SECONDS:

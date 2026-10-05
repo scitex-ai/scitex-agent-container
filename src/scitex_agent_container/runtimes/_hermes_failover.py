@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .._logging import get_logger
@@ -20,6 +20,7 @@ from ._apptainer_provider import resolve_provider_api_key
 class DeclaredPool:
     credentials: list[dict]
     suppressed_sources: list[str]
+    probe: dict = field(default_factory=dict)
 
 
 def resolve_primary_key(config, resolver):
@@ -126,7 +127,9 @@ def configure_failover(
                 "config:" + p["name"] for p in compiled["providers"].values()
             )
             suppressed.append("model_config")
-        pools[provider] = DeclaredPool(rows, suppressed)
+        from ._hermes_key_probe import probe_spec
+
+        pools[provider] = DeclaredPool(rows, suppressed, probe_spec(plan, compiled))
         # Custom routes resolve their key_env before attaching the pool. Native
         # routes use the pool directly; keep their unpooled base alias absent.
         if compiled["providers"]:
@@ -188,7 +191,19 @@ def materialize_pools(profile: Path, pools: dict[str, DeclaredPool]) -> None:
                 matches, key=lambda old: old.get("last_status_at") or 0, default={}
             )
 
-        existing[provider] = [{**old_state(row), **row} for row in rows]
+        reconciled = []
+        for row in rows:
+            current = {**old_state(row), **row}
+            # Static API keys cannot refresh themselves. Preserve a rejected
+            # key in the declared pool, but do not lease it again after the
+            # upstream transient-auth cooldown. A changed token has a new id
+            # and no matching old state, so it is tried normally.
+            if (current.get("auth_type") == "api_key"
+                    and current.get("last_status") == "exhausted"
+                    and current.get("last_error_code") == 401):
+                current["last_status"] = "dead"
+            reconciled.append(current)
+        existing[provider] = reconciled
         previous_suppressed = suppressed.get(provider, [])
         if not isinstance(previous_suppressed, list):
             raise ValueError(
