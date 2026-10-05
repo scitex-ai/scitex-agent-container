@@ -172,3 +172,21 @@ def test_rejected_static_key_rotates_and_stays_skipped_across_reload(
     }
     materialize_pools(tmp_path, pools)
     assert cp.load_pool("custom:sac-diagnostic").select().id == "sac-replacement"
+
+
+def test_generated_profiles_cascade_through_real_http_errors():
+    # Arrange
+    import subprocess
+    import sys
+
+    source = os.environ.get("SAC_HERMES_SOURCE_DIR")
+    if not source:
+        pytest.skip("Set SAC_HERMES_SOURCE_DIR to validate a real Hermes turn")
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("_hermes_cascade_probe.py")),
+    ]
+    # Act
+    result = subprocess.run(command, capture_output=True, text=True, timeout=45)
+    # Assert
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
