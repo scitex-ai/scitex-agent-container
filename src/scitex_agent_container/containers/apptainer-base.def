@@ -673,6 +673,37 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
 
+    # ---- 6c-2. Hermes local browser (agent-browser + pinned Chromium) --
+    # hermes browser tools (browser_exec / browser-harness) resolve their
+    # Chromium through hermes_cli.browser_runtime.chromium_executable():
+    #   $AGENT_BROWSER_EXECUTABLE_PATH, else pm.installed_package("chromium").
+    # Neither is present in a fresh image: agent-browser is an OPTIONAL
+    # default PM package (not installed by `uv sync`), and the "chromium"
+    # PM package is not a default at all. Without both, every browser tool
+    # fails at launch — silently from the agent's point of view.
+    #
+    # `hermes pm install agent-browser` installs the pinned CLI (lock.json,
+    # agent-browser 0.26.0) AND its declared dep `chromium` (pinned
+    # 1208+145.0.7632.6, sha256 in lock).
+    #
+    # STORE ANCHORING — the critical half. pm.store_root() resolves to
+    # HERMES_RUNTIME_DIR when set, else $HERMES_HOME/tools. A bare install
+    # at build time (HOME=/root) would bake the store at /root/.hermes —
+    # invisible to every agent (HOME=/home/agent). So the store lives at
+    # the image-absolute /opt/hermes-tools and HERMES_RUNTIME_DIR pins it
+    # for every process via %environment below. Local-first: no cloud key,
+    # no CDP override, no real-profile browsing, no consent change.
+    HERMES_RUNTIME_DIR=/opt/hermes-tools \
+        "$HERMES_ROOT/.venv/bin/hermes" pm install agent-browser
+    # Gate resolves exactly as an agent process will: same override, no HOME.
+    _BROWSER_EXE=$(HERMES_RUNTIME_DIR=/opt/hermes-tools "$HERMES_ROOT/.venv/bin/python" -c 'from hermes_cli.browser_runtime import chromium_executable; print(chromium_executable() or "")')
+    test -n "$_BROWSER_EXE" || { echo "BROWSER: FAIL - no Chromium resolves after pm install agent-browser" >&2; exit 1; }
+    test -x "$_BROWSER_EXE" || { echo "BROWSER: FAIL - not executable: $_BROWSER_EXE" >&2; exit 1; }
+    echo "BROWSER: $_BROWSER_EXE"
+    # Launch smoke: the binary must START headless, not just exist.
+    "$_BROWSER_EXE" --headless --no-sandbox --disable-gpu --dump-dom about:blank
+    unset _BROWSER_EXE
+
     # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
     # silently shipped scitex-todo 0.7.50 — days and two minor releases
@@ -1031,6 +1062,10 @@ EOF
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
     export HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
+    # Hermes PM tool store (agent-browser + pinned Chromium, section 6c-2).
+    # HERMES_RUNTIME_DIR wins over $HERMES_HOME/tools in pm.store_root(),
+    # so every agent resolves the image-baked store regardless of HOME.
+    export HERMES_RUNTIME_DIR=/opt/hermes-tools
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
