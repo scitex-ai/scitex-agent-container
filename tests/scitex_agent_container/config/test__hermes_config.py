@@ -110,7 +110,8 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "background_review": {"enabled": False},
             "goal_judge": {
                 "provider": "custom:sac-qwen",
-                "model": "qwen38-27b",
+                "model": "meta-muse-spark-1.3-contributor",
+                "reasoning_effort": "xhigh",
                 "timeout": 60,
                 "max_tokens": 4096,
             },
@@ -420,7 +421,8 @@ def test_goal_judge_rides_the_agent_lane():
     result = compile_hermes_config(plan, workdir="/work")
     assert result["auxiliary"]["goal_judge"] == {
         "provider": "custom:sac-qwen",
-        "model": "qwen38-27b",
+        "model": "meta-muse-spark-1.3-contributor",
+        "reasoning_effort": "xhigh",
         "timeout": 60,
         "max_tokens": 4096,
     }
@@ -432,12 +434,14 @@ def test_goal_judge_rides_the_native_lane():
     result = compile_hermes_config(plan, workdir="/work")
     assert result["auxiliary"]["goal_judge"]["provider"] == "opencode-go"
     assert (
-        result["auxiliary"]["goal_judge"]["model"] == "muse-spark-1.3-contributor"
+        result["auxiliary"]["goal_judge"]["model"]
+        == "meta-muse-spark-1.3-contributor"
     )
+    assert result["auxiliary"]["goal_judge"]["reasoning_effort"] == "xhigh"
 
 
 def test_goal_budget_exceeds_hermes_default():
     # Operator order 2026-10-06: 20-turn default stalls fleet agents.
     plan = _plan()
     result = compile_hermes_config(plan, workdir="/work")
-    assert result["goals"]["max_turns"] > 20
+    assert result["goals"]["max_turns"] == 99999
