@@ -73,6 +73,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "default": "qwen38-27b",
             "provider": "custom:sac-qwen",
             "api_mode": "chat_completions",
+            "extra_headers": {"x-opencode-session": "sac:scitex-scholar"},
         },
         "provider": {
             "name": "SAC qwen",
