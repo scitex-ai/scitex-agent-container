@@ -197,6 +197,20 @@ def compile_hermes_config(
         "auxiliary": {
             "title_generation": {"enabled": False},
             "background_review": {"enabled": background_review},
+            # Operator rule: the goal judge runs on the same Muse route as
+            # the agent itself (muse-spark-1.3-contributor via the primary
+            # custom provider). An undefined goal_judge falls back to Hermes
+            # defaults, which left fleet agents' goal loops dying on
+            # unreachable-judge pauses — the definition (spec + generated
+            # profile) must show everything, no implicit behavior.
+            "goal_judge": {
+                # Same lane the agent itself runs on (native name or the
+                # named-custom identity — never a Hermes default).
+                "provider": model_block["provider"],
+                "model": model,
+                "timeout": 60,
+                "max_tokens": 4096,
+            },
         },
     }
 

@@ -108,6 +108,12 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
         "auxiliary": {
             "title_generation": {"enabled": False},
             "background_review": {"enabled": False},
+            "goal_judge": {
+                "provider": "custom:sac-qwen",
+                "model": "qwen38-27b",
+                "timeout": 60,
+                "max_tokens": 4096,
+            },
         },
         "secret_absent": True,
     }
@@ -405,3 +411,26 @@ def test_native_provider_with_empty_name_refuses():
     # Assert
     with pytest.raises(ValueError, match="names no provider"):
         compile_hermes_config(plan, workdir="/work")
+
+
+def test_goal_judge_rides_the_agent_lane():
+    # Operator rule: the goal judge runs on the same Muse route as the
+    # agent itself — never an implicit Hermes default. URL endpoint lane:
+    plan = _plan()
+    result = compile_hermes_config(plan, workdir="/work")
+    assert result["auxiliary"]["goal_judge"] == {
+        "provider": "custom:sac-qwen",
+        "model": "qwen38-27b",
+        "timeout": 60,
+        "max_tokens": 4096,
+    }
+
+
+def test_goal_judge_rides_the_native_lane():
+    # Native lane: the judge names the same native provider, not custom:.
+    plan = _native_plan()
+    result = compile_hermes_config(plan, workdir="/work")
+    assert result["auxiliary"]["goal_judge"]["provider"] == "opencode-go"
+    assert (
+        result["auxiliary"]["goal_judge"]["model"] == "muse-spark-1.3-contributor"
+    )
