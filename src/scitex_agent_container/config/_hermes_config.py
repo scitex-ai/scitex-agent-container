@@ -150,6 +150,10 @@ def compile_hermes_config(
         "model": model_block,
         "providers": providers_block,
         "fallback_providers": [],
+        # Operator order 2026-10-06: the Hermes default goal budget (20
+        # turns) stalls fleet agents mid-work. The SAC autonomous loop is
+        # the spend backstop; the goal budget must not be the tighter one.
+        "goals": {"max_turns": 200},
         "toolsets": ["hermes-cli"],
         "agent": agent,
         "delegation": {

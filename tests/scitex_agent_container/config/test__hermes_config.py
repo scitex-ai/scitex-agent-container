@@ -434,3 +434,10 @@ def test_goal_judge_rides_the_native_lane():
     assert (
         result["auxiliary"]["goal_judge"]["model"] == "muse-spark-1.3-contributor"
     )
+
+
+def test_goal_budget_exceeds_hermes_default():
+    # Operator order 2026-10-06: 20-turn default stalls fleet agents.
+    plan = _plan()
+    result = compile_hermes_config(plan, workdir="/work")
+    assert result["goals"]["max_turns"] > 20
