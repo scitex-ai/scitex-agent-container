@@ -13,7 +13,7 @@ from pathlib import Path
 from .._logging import get_logger
 from ..config._engine_types import apply_engine
 from ..config._hermes_config import compile_hermes_config
-from ._apptainer_provider import resolve_provider_api_key
+from ._apptainer_provider import ProviderEnvError, resolve_provider_api_key
 
 
 @dataclass
@@ -28,15 +28,41 @@ def resolve_primary_key(config, resolver):
     names = config.hermes_failover.accounts.get(config.engine_key)
     if not names:
         return resolver(config)
+    for name in names:
+        token = _resolve_declared_key(config, name, resolver)
+        if token is not None:
+            return token
+    raise ProviderEnvError(
+        f"No credentials resolve for Hermes engine {config.engine_key!r}; "
+        f"declared slots: {', '.join(names)}"
+    )
+
+
+def _resolve_declared_key(config, name, resolver):
+    """A declared slot without an installed secret must not block its siblings."""
     credential_config = deepcopy(config)
-    credential_config.claude.provider.auth_token_env = names[0]
-    return resolver(credential_config)
+    credential_config.claude.provider.auth_token_env = name
+    try:
+        token = resolver(credential_config).strip()
+    except ProviderEnvError:
+        get_logger(__name__).warning(
+            "Hermes failover skips unresolved credential slot %s", name
+        )
+        return None
+    if not token:
+        get_logger(__name__).warning(
+            "Hermes failover skips empty credential slot %s", name
+        )
+        return None
+    if any(c in token for c in "\r\n"):
+        raise ValueError(f"Hermes failover credential {name} contains a newline")
+    return token
 
 
 def configure_failover(
     config, rendered: dict, *, credential_resolver=resolve_provider_api_key
 ) -> tuple[dict[str, str], dict[str, DeclaredPool]]:
-    """Compile only declared routes; unresolved routes fail before profile writes."""
+    """Compile declared routes, skipping unavailable slots without editing specs."""
     policy = config.hermes_failover
     if not policy.accounts and not policy.engines:
         return {}, {}
@@ -82,13 +108,9 @@ def configure_failover(
         seen: set[str] = set()
         rows = []
         for name in names:
-            credential_config = deepcopy(route)
-            credential_config.claude.provider.auth_token_env = name
-            token = credential_resolver(credential_config).strip()
-            if not token or any(c in token for c in "\r\n"):
-                raise ValueError(
-                    f"Hermes failover credential {name} is empty or contains a newline"
-                )
+            token = _resolve_declared_key(route, name, credential_resolver)
+            if token is None:
+                continue
             if token in seen:
                 logger.warning(
                     "Hermes failover engine %s: duplicate credential alias %s omitted",
@@ -110,6 +132,11 @@ def configure_failover(
             if base_url:
                 row["base_url"] = base_url
             rows.append(row)
+        if not rows:
+            raise ProviderEnvError(
+                f"No credentials resolve for Hermes engine {key!r}; "
+                f"declared slots: {', '.join(names)}"
+            )
         if provider in pools:
             raise ValueError(
                 f"Hermes failover repeats provider pool {provider!r}; "
