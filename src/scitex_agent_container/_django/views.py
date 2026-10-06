@@ -703,7 +703,7 @@ def forget_action(request: HttpRequest, name: str):
     unregisters the ``comms_nodes`` pin. No ssh, no signal — purely
     local state mutations, so this is also the verb for entries the
     listener no longer lists (the gate then requires the
-    lifecycle-operator list). A refusal (live rows, no ``force``) and
+    lifecycle-operator list). A refusal (live rows) and
     any backend failure FAIL LOUD as 409/502 with the reason in the
     body — never a silent redirect. Grants, denials and outcomes are
     audited.
@@ -723,18 +723,28 @@ def forget_action(request: HttpRequest, name: str):
             }
         )
         return HttpResponseForbidden("You are not authorized for this action.")
-    force_raw = request.POST.get("force", "")
-    force = (
-        force_raw.strip().lower() in {"on", "true", "1", "yes"}
-        if isinstance(force_raw, str)
-        else False
-    )
+    if "force" in request.POST:
+        record_audit(
+            {
+                "event": "forget_action",
+                "identity": fleet_identity,
+                "agent": name,
+                "cross_host": cross_host,
+                "state": "refused",
+                "message": "force is unsupported; stop the agent before forgetting it",
+                "path": request.path,
+            }
+        )
+        return JsonResponse(
+            {"error": "force is unsupported; stop the agent before forgetting it"},
+            status=400,
+        )
     try:
         from click import ClickException
 
         from ..cli_pkg.lifecycle._forget import _forget_one
 
-        envelope = _forget_one(name, force=force, dry_run=False)
+        envelope = _forget_one(name, force=False, dry_run=False)
         message = (
             f"forgot {name!r}: tombstoned "
             f"{len(envelope['forgotten_instance_ids'])} instance row(s)"
@@ -747,8 +757,8 @@ def forget_action(request: HttpRequest, name: str):
 
         raw_message = str(exc)  # kept for the server-side audit only
         if isinstance(exc, ClickException):
-            # The live-row refusal: names the remedy (``--force`` / stop
-            # first), so it is a 409 with the reason, not a redirect the
+            # The live-row refusal names the remedy (stop first), so it is
+            # a 409 with the reason, not a redirect the
             # fleet page would swallow.
             record_audit(
                 {
@@ -884,8 +894,7 @@ def create_agent(request: HttpRequest):
     live-scanned from the agents root on every GET, so it cannot go
     stale. Unknown templates, invalid names and existing specs fail
     loud as 400/409 with the CLI's own reason — never a silent
-    redirect, never an overwrite (the GUI offers no ``--force``; use
-    the CLI to replace a spec).
+    redirect, never an overwrite. Edit an existing spec directly.
 
     Authorization mirrors :func:`launch` at its strictest: the caller
     must be in the lifecycle-operator allowlist. Grants, denials and

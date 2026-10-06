@@ -47,6 +47,8 @@ way in the other.
 
 from __future__ import annotations
 
+from .._logging import write_stream
+
 from pathlib import Path
 from typing import Any, Callable
 
@@ -326,7 +328,7 @@ def _warn_no_headroom(
         "refresh-quota-cache`."
     )
     if log_stream is not None:
-        print(f"[sac:creds] {text}", file=log_stream)
+        write_stream(f"[sac:creds] {text}", log_stream)
         return
 
     from ..cli_pkg._helpers._console import system_msg
@@ -518,7 +520,7 @@ def _warn_unverifiable(
         "quota without asking."
     )
     if log_stream is not None:
-        print(f"[sac:creds] {text}", file=log_stream)
+        write_stream(f"[sac:creds] {text}", log_stream)
         return
 
     from ..cli_pkg._helpers._console import system_msg

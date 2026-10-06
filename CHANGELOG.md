@@ -28,6 +28,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Remove the generic `--force` option from SAC commands. Use `agents restart`
+  to replace an agent, including `--fresh` for a new session; restart keeps
+  active-turn draining and supports the same behavior locally and remotely.
+- Ship the worktree policy checker and defaults in the Python package as
+  `sac worktree policy`. Host policy overrides and SAC-owned MCP state live
+  under `~/.scitex/agent-container`; no dotfiles executable is required.
+- Route start previews and diagnostics through `scitex-logging`, preserve
+  exact protocol stdout, and remove raw-print lint exemptions from `src`.
+- Advertise lazy public API names through `dir()` and load each API group
+  when that group is accessed.
+
 ### Fixed
 - **Lifecycle spec authority now fails closed instead of warning through
   provenance uncertainty.** Starts refuse non-git/unreachable sources, dirty
@@ -73,10 +85,9 @@ versioning follows [SemVer](https://semver.org/).
   now emit `process/3` with explicit unverified ownership instead of leaking a
   raw `KeyError`, and never authorize a name-based signal.
 - **Plain agent restart preserves the harness conversation.** Internal
-  `start --force` now means process replacement only; it no longer clears
+  process replacement during guarded `agents restart` no longer clears
   `session_id` or `session_id_history` when the resolved session policy is
-  `continue`. Only a forced start with an explicit `fresh` override
-  resets those artifacts.
+  `continue`. An explicit `--fresh` restart resets those artifacts.
 
 ### Removed
 - **The retired per-agent SQLite contract and its misleading Python namespace.**
@@ -89,14 +100,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 - **Write-capable agent tasks now pass the harness-neutral worktree policy
-  gate.** SAC invokes the operator-owned `scitex-worktree-policy` CLI before a
+  gate.** SAC invokes its packaged worktree policy checker before a
   new Claude, Codex, or Hermes harness process starts; automatically resolves a
   stable agent-owned linked worktree while preserving/refusing dirty or
   conflicting checkouts; exposes the migration plan in dry-run/explain; fails
   closed on missing, denied, stale, malformed, or hash-inconsistent results;
   and records `policy_sha256` plus `projection_sha256` on the incarnation.
-  Policy remains in dotfiles; SAC adds no hook-, skill-, prompt-, or doc-based
-  rule copy or bypass.
+  Host policy overrides and generated projections live under
+  `~/.scitex/agent-container`; no external script or bypass is required.
 - **Hermes Cards messages now enter the visible TUI as durable steer turns.**
   Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
   doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed

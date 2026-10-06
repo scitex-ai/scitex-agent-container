@@ -188,13 +188,13 @@ def test_iso_ms_is_none_for_absent_expiry():
 # ------------------------------------------------------- refusal message
 
 
-def test_refusal_names_the_override_flag():
+def test_refusal_names_the_required_wait():
     # Arrange
     expiry = "2026-08-09T17:38:54+00:00"
     # Act
     message = refusal_message("acct", expiry, 2.0, is_pinned=True)
     # Assert
-    assert "--force" in message
+    assert "Wait for the active users to finish" in message
 
 
 def test_refusal_names_the_account():

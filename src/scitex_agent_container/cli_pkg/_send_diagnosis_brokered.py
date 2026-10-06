@@ -189,7 +189,7 @@ def _interpret_brokered(diagnosis: dict[str, Any]) -> str:
     if registry == "stopped":
         return (
             "the host fleet registry holds no a2a-port claim for this agent, "
-            "and a claim is released only at `sac agents stop` / --force — so "
+            "and a claim is released only at `sac agents stop` — so "
             "it is very likely stopped. This is the HOST's answer about the "
             "real fleet, not a container-local guess"
         )

@@ -328,7 +328,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         True,
         "postgresql://scitex-primary:55432/scitex",
         "operator__business",
-        "/home/agent/.sac-pgpass",
+        "/home/agent/.scitex/agent-container/runtime/pgpass",
     )
 
 
@@ -395,14 +395,14 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
     validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
     profile = yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
     cards_env = profile["mcp_servers"]["scitex-cards"]["env"]
-    generated_passfile = home / ".sac-pgpass"
+    generated_passfile = home / ".scitex" / "agent-container" / "runtime" / "pgpass"
     rendered_argv = " ".join(argv)
 
     # Assert
     assert (
         isinstance(runtime, HermesTuiSessionRuntime)
         and cards_env["PGUSER"] == "operator__scitex-hub"
-        and cards_env["PGPASSFILE"] == "/home/agent/.sac-pgpass"
+        and cards_env["PGPASSFILE"] == "/home/agent/.scitex/agent-container/runtime/pgpass"
         and cards_env["SCITEX_STORE_DSN"] == "postgresql://scitex-primary:55432/scitex"
         and generated_passfile.read_text(encoding="utf-8")
         == "scitex-primary:55432:scitex:operator__scitex-hub:correct\n"

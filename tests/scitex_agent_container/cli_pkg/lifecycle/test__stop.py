@@ -348,7 +348,7 @@ def single_yaml_run(tmp_path):
         ),
     ):
         runner = CliRunner()
-        result = runner.invoke(stop, [str(p), "--force"])
+        result = runner.invoke(stop, [str(p)])
     # Assert
     return result, stopped
 
@@ -625,72 +625,18 @@ def remote_row_for_clew(cross_host_state_store, pg_schema: str):
     return iid
 
 
-def test_force_release_on_unreachable_peer_exits_zero(
-    remote_row_for_clew, ssh_shim_unreachable
-):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(stop, ["clew", "--force"])
-    # Assert — operator unblocked (otherwise the bm025 repro returns rc=1).
-    assert result.exit_code == 0, result.output
-
-
-def test_force_release_tombstones_instance_row(
-    remote_row_for_clew, ssh_shim_unreachable
-):
+def test_force_cannot_release_unreachable_peer_binding(remote_row_for_clew, ssh_shim_unreachable):
     # Arrange
     from scitex_agent_container._state.state_store import list_active_instances
-
-    runner = CliRunner()
-    # Act
-    runner.invoke(stop, ["clew", "--force"])
-    # Assert — no active row for clew anywhere; the binding was released.
-    rows = [r for r in list_active_instances() if r["name"] == "clew"]
-    assert rows == []
-
-
-def test_force_release_clears_comms_nodes_binding(
-    remote_row_for_clew, ssh_shim_unreachable
-):
-    # Arrange — the federated comms_nodes pin must ALSO clear, otherwise
-    # subsequent a2a routing still tries the unreachable peer even after
-    # the instances row is closed.
     from scitex_agent_container._state.state_store_comms_nodes import lookup_comms_node
-
-    runner = CliRunner()
     # Act
-    runner.invoke(stop, ["clew", "--force"])
+    result = CliRunner().invoke(stop, ["clew", "--force", "--json"])
     # Assert
-    assert lookup_comms_node(name="clew") is None
-
-
-def test_force_release_json_envelope_carries_force_released_flag(
-    remote_row_for_clew, ssh_shim_unreachable
-):
-    import json as _json
-
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.stdout)
-    # Assert
-    assert envelope.get("force_released") is True
-
-
-def test_force_release_json_envelope_carries_release_exit_reason(
-    remote_row_for_clew, ssh_shim_unreachable
-):
-    import json as _json
-
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.stdout)
-    # Assert
-    assert envelope.get("exit_reason") == "peer-unreachable-force-released"
+    assert (
+        result.exit_code,
+        bool([r for r in list_active_instances() if r["name"] == "clew"]),
+        lookup_comms_node(name="clew") is not None,
+    ) == (2, True, True)
 
 
 def test_no_force_on_unreachable_peer_exits_nonzero(

@@ -363,6 +363,7 @@ def agent_restart(
     engine_override: str | None = None,
     probe_engine: bool | None = None,
     drain_timeout_s: float = 0.0,
+    session_override: str | None = None,
     managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
@@ -609,7 +610,7 @@ def agent_restart(
         # conversation. Only the CLI's explicit --fresh route may request a
         # new conversation; internal force is teardown mechanics, not consent
         # to erase session_id/session_id_history.
-        session_override="continue",
+        session_override=session_override or "continue",
         engine_override=engine_override,
         probe_engine=probe_engine,
         runtime_factory=runtime_factory,

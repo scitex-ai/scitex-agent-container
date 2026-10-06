@@ -199,7 +199,7 @@ generic provider shape. **[Full harness + model + provider reference →](docs/s
 
 **Worktree policy.** Before a new write-capable Claude, Codex, or Hermes task
 starts, the host resolves or provisions a deterministic agent-owned linked
-worktree, then invokes the neutral `scitex-worktree-policy` CLI and fails closed
+worktree, then invokes the packaged `sac worktree policy` checker and fails closed
 unless its context and generated projections are current and allowed. Existing
 agent work is resumed; dirty authority or conflicting ownership is preserved
 and refused. Dry-run/explain show the planned resolution without creating it.
@@ -255,10 +255,9 @@ sac agents start  <name> [--foreground]   # daemon by default; --foreground stre
                                            # inside a SIF: auto-brokers to host listen
                                            # (no apptainer-in-apptainer needed)
 sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
-                                           # --force tolerates an unreachable bound host
 sac agents restart <name>
 sac agents delete <name>                  # stop + remove spec dir + runtime dir + registry
-sac agents forget <name> [--force]        # shared-store bookkeeping cleanup for the
+sac agents forget <name>        # shared-store bookkeeping cleanup for the
                                            # "agent is gone, only stale rows persist" case
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session

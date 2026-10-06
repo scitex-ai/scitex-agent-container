@@ -60,7 +60,7 @@ def _parse_ttl(raw: str) -> int:
 
 
 def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
-    """Schedule a detached host-side ``sac agents stop <fork> --force`` after TTL.
+    """Schedule a detached host-side ``sac agents stop <fork>`` after TTL.
 
     Best-effort soft cap (a detached timer, not a durable scheduler — it
     does not survive a host reboot). Runs on the HOST where the fork lives:
@@ -72,7 +72,7 @@ def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
 
     from ..._lifecycle._in_sif_broker import is_in_sif
 
-    inner = f"sleep {ttl_seconds}; sac agents stop {shlex.quote(fork_name)} --force"
+    inner = f"sleep {ttl_seconds}; sac agents stop {shlex.quote(fork_name)}"
     if is_in_sif():
         # Broker to the host: background + setsid so the daemon call returns
         # immediately instead of blocking for the whole TTL.

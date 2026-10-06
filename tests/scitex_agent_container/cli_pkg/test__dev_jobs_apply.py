@@ -487,17 +487,17 @@ def test_every_rendered_service_has_an_execstart(rendered_units) -> None:
     assert without == []
 
 
-def test_install_forwards_force_to_the_delegation_seam() -> None:
+def test_install_rejects_force_before_delegation() -> None:
     """The end-to-end shape of the defect: install's refusal names --force."""
     # Arrange
     recorder = _Recorder()
     # Act
     with _delegating_to(recorder):
-        CliRunner().invoke(
+        result = CliRunner().invoke(
             dj._make_group("timer"), ["install", "host-sync-check", "--yes", "--force"]
         )
     # Assert
-    assert recorder.passed and recorder.passed[0].get("force") is True
+    assert (result.exit_code, recorder.passed) == (2, [])
 
 
 def test_uninstall_rejects_force_because_upstream_has_no_such_option() -> None:

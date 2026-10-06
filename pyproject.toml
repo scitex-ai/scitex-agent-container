@@ -86,7 +86,8 @@ dependencies = [
     # publishes the inner boot symlink the round trip previously left
     # stale. See cli_pkg/_image_repro_build.py.
     "scitex-container>=0.4.0",
-    "scitex-logging>=0.1.5",
+    # getConsole is the stdout counterpart used by SAC's output adapters.
+    "scitex-logging>=0.2.0",
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
@@ -956,81 +957,15 @@ line-length = 88
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "T201", "T203"]
 ignore = ["E501"]
 
-# ---------------------------------------------------------------------------
-# T201 (`print` found) allowlist — the raw-print gate's ONLY escape hatch.
-#
-# CI (.github/workflows/lint.yml, step "No raw print() in src/ (T201)") runs
-# `ruff check --select T201,T203 src/`. sac's diagnostics belong to
-# scitex-logging, which stamps the emitting module on every record and fans out
-# to the rotating runtime log as well as stderr; a raw print carries no origin
-# and dies with whatever stream was attached.
-#
-# Note T201 already ignores `print(..., file=<injected stream>)`, so a
-# function whose caller supplies `stream=` / `err_stream=` / `log_stream=`
-# needs NO entry here — that print is part of the function's reporting
-# contract, not an unrouted diagnostic. Everything below therefore writes to a
-# HARDCODED stdout/stderr on purpose.
-#
-# HOUSE RULE: one file per entry, each with its own written reason, added
-# deliberately. Never a blanket ignore and never a widened glob — a gate that
-# cannot fail is worse than no gate. If you are tempted to add an entry for a
-# DIAGNOSTIC, you want the logger instead; these exemptions exist only where
-# stdout/stderr IS the interface.
+# Raw print() and pprint() are forbidden throughout src. Protocol output
+# uses the SciTeX logging output adapters instead of per-file exemptions.
+
 [tool.ruff.lint.per-file-ignores]
-# Claude Code WorktreeCreate hook, executed as a standalone script from the
-# agent's own $HOME after being copied out of _baseline_assets. STDOUT IS THE
-# PROTOCOL: the SDK reads the created worktree path from it (`print(policy_path)`),
-# so a stray log line on stdout breaks worktree creation outright. Its stderr
-# prints are the SDK's documented human-diagnostic channel. It also cannot rely
-# on scitex_logging being importable in the environment it is copied into.
-"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_create.py" = ["T201"]
-
-# Same deal: a standalone Claude Code hook copied into the agent's $HOME,
-# reporting through the SDK's stderr channel with no sac import available.
-"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_remove.py" = ["T201"]
-
-# Same deal: a standalone SessionStart hook copied into the agent's $HOME. Its
-# one print is the reap summary the SDK surfaces to the operator.
-"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/session_start_reap_stale.py" = ["T201"]
-
-# Standalone Claude Code PreToolUse hook copied into the agent's HOME. Stderr
-# is the SDK's refusal channel and the deployment cannot assume that the sac
-# package or scitex_logging remains importable beside the copied script.
-"src/scitex_agent_container/_baseline_assets/process_wait_hooks/self_matching_pgrep_wait.py" = ["T201"]
-
-# `sac never-stop-when-task-remains` is a Claude Code Stop hook whose STDOUT IS
-# A JSON DECISION FRAME (tests/.../test_never_stop_when_task_remains_cmds.py
-# asserts `json.loads(stdout)` still parses). Routing its stderr diagnostics to
-# a logger would risk a handler putting log text on stdout and corrupting that
-# frame — the precise failure class this whole change is meant to avoid.
-"src/scitex_agent_container/cli_pkg/never_stop_when_task_remains_cmds.py" = ["T201"]
-
-# `sac-statusline` is invoked by Claude Code on every status-line update and its
-# STDOUT IS THE RENDERED STATUS LINE consumed by the client. Nothing else may
-# appear there.
-"src/scitex_agent_container/statusline.py" = ["T201"]
-
-# A standalone probe baked into the SIF and run by the image build to verify
-# the artifact's symbols. It deliberately imports nothing from sac (that is the
-# point of the probe) and its stdout OK/FATAL lines are the build's verdict.
-"src/scitex_agent_container/containers/sif_symbol_probe.py" = ["T201"]
-
-# A worked example shipped inside a skill for operators to copy and run; its
-# print is the example's output. Not a sac code path.
-"src/scitex_agent_container/_skills/scitex-agent-container/scitex_smoke_test.py" = ["T201"]
-
-# render_content() is the explicit content-rendering contract: exact bytes to
-# stdout for published outputs (statusline payload, sourced completion
-# script). A level prefix or stderr hop would corrupt the payload.
-"src/scitex_agent_container/_logging/_streams.py" = ["T201"]
-
-# emit_collect() is a worker-mode entry whose stdout IS the machine-readable
-# manifest JSON (exit code carries pass/fail). Logging it would corrupt the
-# frame the parent parses.
-"src/scitex_agent_container/cli_pkg/_fleet_sync_code_collect.py" = ["T201"]
+# Tests exercise capture and rejection of third-party/raw output.
+"tests/**" = ["T201", "T203"]
 
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters

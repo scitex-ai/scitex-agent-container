@@ -136,7 +136,7 @@ def refusal_message(
         f"--min-ttl-hours={min_ttl_hours:g}h).\n"
         f"A refresh ROTATES the single-use refresh_token, which invalidates "
         f"the access token every agent holding it is using — {strands}.\n"
-        f"If you meant to rotate it anyway, re-run with --force."
+        f"Wait for the active users to finish before rotating this credential."
     )
 
 

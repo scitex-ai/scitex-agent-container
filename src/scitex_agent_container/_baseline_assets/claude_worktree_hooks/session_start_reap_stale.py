@@ -66,6 +66,7 @@ try:
 
     log = slogging.getLogger(__name__)
 except ImportError:  # standalone copy without sac installed
+
     class _StderrFallback:
         """Minimal log-surface writing verbatim lines to stderr.
 
@@ -232,8 +233,7 @@ def _reap_one(worktree_path: Path) -> tuple[bool, str]:
          itself works — ``git -C <worktree>`` resolves to the main repo
          transparently because ``.git`` is a gitlink).
       3. ``git worktree remove <path>`` — clean teardown.
-      4. On failure, ``git worktree remove --force <path>`` — second
-         pass for residual locks/marker files.
+      4. On failure, preserve the worktree and report Git's refusal.
 
     Returns ``(True, "")`` on successful reap, ``(False, "<reason>")``
     on any skip. The reason string is for the operator-visible stderr
@@ -254,15 +254,10 @@ def _reap_one(worktree_path: Path) -> tuple[bool, str]:
             break
     if not git_root:
         return False, "no-git-root"
-    ok, _ = _run_git("worktree", "remove", str(worktree_path), cwd=git_root)
+    ok, error = _run_git("worktree", "remove", str(worktree_path), cwd=git_root)
     if ok:
         return True, ""
-    ok2, err2 = _run_git(
-        "worktree", "remove", "--force", str(worktree_path), cwd=git_root
-    )
-    if ok2:
-        return True, ""
-    return False, f"git-refused: {err2}"
+    return False, f"git-refused: {error}"
 
 
 def _summarize(reaped: int, skipped: int, roots: list[Path]) -> str:

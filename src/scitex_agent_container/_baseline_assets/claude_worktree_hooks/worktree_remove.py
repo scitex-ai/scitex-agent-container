@@ -57,6 +57,7 @@ try:
 
     log = slogging.getLogger(__name__)
 except ImportError:  # standalone copy without sac installed
+
     class _StderrFallback:
         """Minimal log-surface writing verbatim lines to stderr.
 
@@ -137,8 +138,8 @@ def main() -> int:
 
     Graceful-degradation order:
       1. If we can locate the git root AND the worktree is registered,
-         try ``git worktree remove`` and then ``--force`` — if both
-         fail, surface the error (exit 2) so the operator sees it.
+         try ``git worktree remove``. If Git refuses, preserve the worktree
+         and surface the error (exit 2) so the operator sees it.
       2. If we cannot locate the git root, or the worktree is already
          unregistered, succeed silently (desired end-state achieved).
       3. If the environment itself is broken (git binary missing,
@@ -185,22 +186,11 @@ def main() -> int:
 
     ok, err = _try_git("worktree", "remove", worktree_path, cwd=git_root)
     if not ok:
-        # Try --force as a second pass — the worktree may have local
-        # changes the operator's cron didn't trip on. Still better than
-        # silent orphan.
-        ok2, err2 = _try_git(
-            "worktree", "remove", "--force", worktree_path, cwd=git_root
+        log.error(
+            f"WorktreeRemove hook: 'git worktree remove' refused for "
+            f"{worktree_path!r}; preserved the worktree: {err}"
         )
-        if not ok2:
-            # We located the git root AND the worktree was registered,
-            # but git itself refuses to remove it. This is a real
-            # surface the operator should see (vs. env-drift WARNs
-            # above which are recoverable via prune cron).
-            log.error(
-                f"WorktreeRemove hook: 'git worktree remove' failed for "
-                f"{worktree_path!r}: {err}; force-remove also failed: {err2}"
-            )
-            return 2
+        return 2
     return 0
 
 

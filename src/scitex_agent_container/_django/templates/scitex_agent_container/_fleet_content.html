@@ -126,10 +126,9 @@ mounted) so the per-row links are correct at any mount.
             loud (409/404/502 with the reason) rather than vanishing.
             {% endcomment %}
             <form method="post" action="{{ url_base }}/{{ a.name }}/forget" class="qa-form"
-                  onsubmit="return confirm('Forget {{ a.name }}? This tombstones its registry rows (no ssh, no signal). Tick force for rows the store still shows as live.')">
+                  onsubmit="return confirm('Forget {{ a.name }}? This drops inactive registry state (no ssh, no signal). Stop any live agent first.')">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
               <button type="submit" class="btn qa warn" title="Forget {{ a.name }}: drop stale registry rows">Forget</button>
-              <label class="qa-force" title="Also forget rows the store still shows as live (like `sac agents forget --force`)"><input type="checkbox" name="force" value="on"> force</label>
             </form>
             <form method="post" action="{{ url_base }}/{{ a.name }}/delete" class="qa-form"
                   onsubmit="return confirm('Delete {{ a.name }}? This stops it, deregisters it and removes its spec and runtime dirs. This cannot be undone.')">

@@ -72,7 +72,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -85,7 +84,7 @@ logger = slogging.getLogger(__name__)
 #: Directory (under the in-container ``$HOME``) holding per-agent MCP configs.
 #: Created 0700 — the file itself is 0600, the directory keeps the *names*
 #: private too.
-MCP_CONFIG_DIRNAME = ".sac/mcp"
+MCP_CONFIG_DIRNAME = ".scitex/agent-container/runtime/mcp"
 
 #: Mode for the config file. It holds resolved secret literals, so it must be
 #: readable by the owning uid only — the whole point of moving off argv.
@@ -126,18 +125,10 @@ def _slug(agent_name: str) -> str:
 
 
 def _candidate_dirs() -> list[Path]:
-    """Writable-directory candidates, most preferred first.
+    """Keep SAC-owned MCP configuration within the canonical runtime root."""
+    from .._runtime_paths import runtime_base_dir
 
-    ``$HOME`` is the agent's own (per-agent overlay) home inside the
-    container, so a config there is already isolated to this agent; the
-    tempdir is the fallback for a read-only or unset home.
-    """
-    out: list[Path] = []
-    home = os.environ.get("HOME")
-    if home:
-        out.append(Path(home) / MCP_CONFIG_DIRNAME)
-    out.append(Path(tempfile.gettempdir()) / "sac-mcp")
-    return out
+    return [runtime_base_dir() / "mcp"]
 
 
 def write_mcp_config_file(
@@ -172,7 +163,7 @@ def write_mcp_config_file(
             # "Expecting value: line 1 column 1 (char 0)". MEASURED on CI
             # 2026-08-22, py3.11 leg, xdist worker gw4: several tests call
             # build_sdk_options("alpha", ...) concurrently and all of them
-            # resolve to the SAME $HOME/.sac/mcp/alpha.mcp.json, because the
+            # resolve to the SAME $HOME/.scitex/agent-container/runtime/mcp/alpha.mcp.json, because the
             # filename is keyed on the AGENT NAME while $HOME is shared. Not a
             # test-only fault: in production the same window lets a starting
             # `claude` read an empty MCP config and come up with no servers.

@@ -148,12 +148,16 @@ def render_one(
     Used by ``--instance-id`` for ad-hoc one-offs that don't justify
     a CSV; ``mapping`` mimics one row of read_csv_rows output.
     """
-    return expand_params_file(
-        template_path,
-        _make_inline_csv([{"name": name, **mapping}]),
-        output_dir,
-        overwrite=overwrite,
-    )[0]
+    parameters = _make_inline_csv([{"name": name, **mapping}])
+    try:
+        return expand_params_file(
+            template_path,
+            parameters,
+            output_dir,
+            overwrite=overwrite,
+        )[0]
+    finally:
+        parameters.unlink(missing_ok=True)
 
 
 def _make_inline_csv(rows: Iterable[dict[str, str]]) -> Path:
@@ -164,13 +168,19 @@ def _make_inline_csv(rows: Iterable[dict[str, str]]) -> Path:
     """
     import tempfile
 
+    from .._runtime_paths import runtime_base_dir
+
     rows = list(rows)
     if not rows:
         raise ValueError("render_one: empty mapping")
     cols = list(rows[0].keys())
     if "name" not in cols:
         cols = ["name", *cols]
-    fd, path = tempfile.mkstemp(suffix=".csv")
+    temporary_root = runtime_base_dir() / "tmp"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(
+        prefix="fleet-template-", suffix=".csv", dir=temporary_root
+    )
     with open(fd, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()

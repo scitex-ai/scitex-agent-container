@@ -555,14 +555,14 @@ def test_the_pass_through_forwards_adopt() -> None:
     assert "--adopt" in argv
 
 
-def test_the_pass_through_forwards_force() -> None:
+def test_the_pass_through_rejects_force() -> None:
     """The other half of that same refusal message."""
     # Arrange
     delegation = _install_delegation()
     # Act
-    argv = backend.build_argv(delegation, name="sac.x", yes=True, force=True, exe="sd")
     # Assert
-    assert "--force" in argv
+    with pytest.raises(ValueError, match="cannot overwrite an existing supervisor"):
+        backend.build_argv(delegation, name="sac.x", yes=True, force=True, exe="sd")
 
 
 def test_neither_flag_appears_unless_asked() -> None:

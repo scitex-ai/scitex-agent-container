@@ -25,8 +25,6 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-import click
-
 from ..._lifecycle._launch_verify import (
     SKIPPED,
     UNVERIFIED,
@@ -35,7 +33,7 @@ from ..._lifecycle._launch_verify import (
     LaunchVerdict,
     verify_launch,
 )
-from ..._logging import render_rich
+from ..._logging import get_logger, render_content, render_rich
 from .._helpers import system_msg
 
 #: verdict status -> the ``--json`` ``status`` field. ``skipped`` maps to
@@ -57,19 +55,10 @@ def _indent(text: str, prefix: str = "      ") -> str:
 
 
 def _echo_boot_log_tail(verdict: LaunchVerdict, *, style: str) -> None:
-    """Headline via ``system_msg`` (leveled), tail body VERBATIM.
-
-    The body deliberately bypasses ``system_msg``: the console helper
-    strips ``[tag]``-shaped rich markup before logging, and the exact
-    text this report exists to surface is bracket-shaped —
-    ``[Errno 98]`` matches the tag regex and would be silently eaten
-    (measured: the pre-fix render showed ``OSError:  error while
-    attempting to bind``). ``click.echo(..., err=True)`` keeps it
-    byte-exact and on stderr, where the listen's detached-launch
-    adoption also captures it into the STARTUP_FAILED marker.
-    """
+    """Log the tail without interpreting bracket text as Rich markup."""
     system_msg(f"boot log tail ({verdict.log_path}):", style=style)
-    click.echo(_indent(verdict.log_tail), err=True)
+    logger = get_logger(__name__)
+    getattr(logger, "error" if style == "error" else "fail")(_indent(verdict.log_tail))
 
 
 def _emit_report_json(
@@ -215,7 +204,7 @@ def report_start_result(
 
     if foreground:
         # Agent stdout often lacks a trailing newline.
-        click.echo("")
+        render_content("")
     if verdict.status == VERIFIED_UP:
         system_msg(
             f"[bold]{config.name}[/bold] started [dim]({location})[/dim] — "

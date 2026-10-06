@@ -80,6 +80,8 @@ def agent_start(
     verdict_override: Any = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
+    managed_turn_probe: Callable[[AgentConfig], Any] | None = None,
+    stop_instance_resolver: Callable[[AgentConfig, Any], dict | None] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -135,6 +137,10 @@ def agent_start(
         handover_mod: Injectable real handover collaborator exposing the
             module-level API of :mod:`._lifecycle.handover`. Default
             ``None`` resolves to the real module.
+        managed_turn_probe: Native activity observer for an internal process
+            replacement. The stop guard always preserves active Hermes turns.
+        stop_instance_resolver: Resolve the exact instance during an internal
+            process replacement; defaults to the stop backend's resolver.
 
     Truthy on success, False on failure; the already-running no-op
     returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
@@ -143,32 +149,14 @@ def agent_start(
     registry = registry or Registry()
     config = load_config(config_path)
 
-    # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
-    # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
-    # the deployment shape we target — POST the spawn to bare-host
-    # ``sac listen`` instead. The host re-runs ``check_spawn`` + records
-    # lineage + shells the real ``sac agent start``. Bypassed on
-    # dry-run (dry-run inspects the LOCAL planned workspace). Fail-loud
-    # contract lives in :func:`_in_sif_broker.maybe_broker_in_sif_spawn`.
+    # Nested apptainer launches are unsupported: broker them to the host,
+    # which checks spawn authority and records lineage. Dry-run stays local.
     from ._in_sif_broker import is_in_sif, maybe_broker_in_sif_spawn
 
-    # PR-α (lead msg d96a468c 2026-06-06): propagate --foreground /
-    # --one-shot through the broker so the host listen's /agents handler
-    # appends them to its inner `sac agents start` argv. The cohort
-    # one-shot capsule runs synchronously → real rc + real stderr land
-    # in STARTUP_FAILED on crash (the diagnostic clew needs to find
-    # WHY the bm172 capsule dies after one heartbeat).
-    # ``force`` is LOAD-BEARING here (incident 2026-07-12): this broker
-    # fires BEFORE the local force branch below, so dropping it silently
-    # downgraded an in-SIF RESTART into an unforced host start that
-    # no-op'd over the live agent and still reported SUCC + rc=0.
-    # The broker's POST body threads force/foreground/one_shot/assume_yes
-    # EXPLICITLY and drops anything not listed, so an --engine passed
-    # in-SIF would reach the host as a plain start on the DEFAULT engine
-    # — the silent fallback operator answer Q3 rules out, arriving by way
-    # of a dropped field rather than a decision. Refuse instead, naming
-    # the command that works. (Threading engine through the broker body,
-    # the host listen handler and its argv builder is the follow-up.)
+    # The spawn broker refuses obsolete replacement requests; container-side
+    # restarts use the dedicated restart endpoint. Foreground/one-shot/consent
+    # are forwarded, but engine and resume IDs are unsupported by this wire
+    # contract. Refuse those requests before dropping their explicit intent.
     if engine_override and not dry_run and is_in_sif():
         raise RuntimeError(
             f"--engine {engine_override!r} cannot be honoured from inside "
@@ -177,7 +165,7 @@ def agent_start(
             "engine would be silently dropped and the agent would start "
             "on its DEFAULT engine. sac refuses to start rather than "
             f"start on a backend you did not ask for. Run on the host: "
-            f"sac agents start {config.name} --force --yes --engine "
+            f"sac agents restart {config.name} --yes --engine "
             f"{engine_override}"
         )
     if resume_id_override and not dry_run and is_in_sif():
@@ -231,7 +219,7 @@ def agent_start(
 
             ensure_instances_ownership_schema()
 
-    # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (force-restart
+    # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (restart cleanup
     # stops here; ``agent_restart`` starts there).
     from ._stop import agent_stop
 
@@ -248,17 +236,10 @@ def agent_start(
 
         clear_stale_instance_lease(config.name)
 
-    # TERNARY liveness (ALIVE / DEAD / UNKNOWN), never a bool. Only POSITIVE
-    # evidence of life pins the no-op branch; UNKNOWN now falls through to a
-    # real start, which is what makes a previously-unfalsifiable row
-    # recoverable WITHOUT ``--force --fresh``. Safe because starting is not
-    # destroying — the runtime's own duplicate-session guard no-ops over a
-    # live session. Full rationale (incl. why this is strictly LESS
-    # destructive than the old three-way AND) in :mod:`._start_verdict`.
-    # ``verdict_override`` is the injection seam for the no-op WIRING (a real
-    # LivenessVerdict, not a mock): the decision rule and the resolvers have
-    # their own suites, so what remains to pin is "does ALIVE no-op, and does
-    # UNKNOWN start?".
+    # Only observed ALIVE pins the no-op; UNKNOWN proceeds to the runtime's
+    # duplicate-session guard without destroying a live session. See
+    # _start_verdict for the decision rule. verdict_override supplies a real
+    # observation when testing this wiring independently of the instruments.
     from ._start_verdict import resolve_start_verdict
 
     verdict = (
@@ -288,8 +269,8 @@ def agent_start(
             # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
             # 20260712): probe the already-rotated successor credential; a
             # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
-            # the live container is LEFT UP. Covers `start --force` (the PR #628
-            # self-restart bounce); `sac agents restart` is covered upstream.
+            # the live container is LEFT UP. Internal restart cleanup also
+            # guards activity again in case another process appeared meanwhile.
             from ._restart_preflight import assert_successor_auth_usable
 
             _auth_check = successor_auth_check or assert_successor_auth_usable
@@ -300,6 +281,9 @@ def agent_start(
                 force=True,
                 runtime_factory=runtime_factory,
                 handover_mod=handover_mod,
+                allow_active_turn_kill=False,
+                managed_turn_probe=managed_turn_probe,
+                stop_instance_resolver=stop_instance_resolver,
             )
             forced_stop = True
             # Small grace period so the previous container is fully torn
@@ -337,24 +321,20 @@ def agent_start(
             force=True,
             runtime_factory=runtime_factory,
             handover_mod=handover_mod,
+            allow_active_turn_kill=False,
+            managed_turn_probe=managed_turn_probe,
+            stop_instance_resolver=stop_instance_resolver,
         )
         forced_stop = True
 
-    # Re-establish the A2A port claim after a ``--force`` ``agent_stop``.
-    # ``agent_stop`` calls ``release_a2a_port`` which DELETEs the claim
-    # row that the ``resolve_a2a_port`` above inserted. Without this,
-    # ``record_local_instance`` reads ``get_port(name)`` from the now-empty
-    # claim table → the ``instances`` row is written with ``a2a_port=None``
-    # and ``/v1/turn`` routing (which reads that row) fails after a
-    # ``sac agents start --force`` restart. ``resolve_a2a_port`` is
-    # idempotent: it re-INSERTs the same int already held in
-    # ``config.a2a.port``, keeping the ``a2a_ports`` claim table,
-    # ``config.a2a.port``, and the ``instances`` row all consistent.
+    # Cleanup releases the port allocated above. Re-establish its claim before
+    # recording the successor, or the new row would have a2a_port=None and
+    # inbound turn routing would fail. Resolution preserves config.a2a.port.
     if forced_stop:
         resolve_a2a_port(config)
 
     # Process replacement and conversation replacement are independent.
-    # ``--force`` guarantees a clean PROCESS cycle; only an explicitly
+    # Internal restart cleanup replaces the process; only an explicitly
     # requested ``--fresh`` session override may wipe the conversation.
     if _should_clear_persisted_session(
         force=force,

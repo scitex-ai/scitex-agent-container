@@ -1,53 +1,80 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Caller-owned stream writes — the PS-220 content-transport primitive.
+"""SciTeX logging adapters for human output and caller-owned protocol streams.
 
-PS-220 forbids a bare ``print`` in shippable SciTeX source because a caller
-importing the module cannot silence, redirect or capture it: there is no flag,
-no handler and no level. The rule spares exactly three *mechanically provable*
-transports, and one of them is a **caller-owned required stream** — a ``print``
-whose ``file=`` is a REQUIRED parameter of the enclosing function, so the
-CALLER, not this module, owns the destination.
-
-``write_stream`` is that transport, factored out so the call sites that must
-honour a caller-supplied stream (a captured ``io.StringIO`` in tests, a
-redirected CLI stream, a cron job's own log sink) do not each re-derive it.
-The stream is a REQUIRED parameter: this module never chooses a destination, so
-nothing here is "library code writing unconditionally to stdout".
-
-This is deliberately NOT a general ``print`` escape hatch. Routing a
-caller-directed payload through a logger would be wrong, not merely noisy:
-scitex-logging writes every console record to STDERR, which would corrupt a
-machine-readable payload the caller asked to receive on its own stream.
+Human output carries its logging level. Protocol transports use a dedicated
+logger and a message-only formatter to preserve JSON, shell completion, and
+caller-supplied stream contracts. No writer uses raw print().
 """
 
 from __future__ import annotations
 
+import logging
+from threading import RLock
 from typing import TextIO
 
 __all__ = ["render_content", "render_rich", "write_stream"]
 
+_STREAM_LOCK = RLock()
+_CONTENT_LOGGER: logging.Logger | None = None
+
+
+class _ProtocolHandler(logging.StreamHandler):
+    """Keep transport failures visible to the caller that owns the stream."""
+
+    def __init__(self, stream: TextIO | None = None, *, flush: bool = True) -> None:
+        self._flush_output = flush
+        super().__init__(stream)
+
+    def flush(self) -> None:
+        if self._flush_output:
+            super().flush()
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        # StreamHandler normally reports errors to stderr and then returns.
+        # A lost JSON frame must fail its caller instead of looking successful.
+        raise
+
+
+class _ProtocolConsoleHandler(_ProtocolHandler):
+    """Retain SciTeX's current-stdout resolution while exposing I/O errors."""
+
+    def __init__(self, console_handler: logging.StreamHandler) -> None:
+        self._console_handler = console_handler
+        super().__init__()
+
+    @property
+    def stream(self) -> TextIO:
+        return self._console_handler.stream
+
+    @stream.setter
+    def stream(self, value: TextIO) -> None:
+        # The SciTeX handler resolves stdout dynamically, including its
+        # print-capture bypass, so a redirect never leaves a stale destination.
+        pass
+
 
 def render_content(content: str) -> None:
-    """Print caller-supplied, already-rendered content verbatim to stdout.
+    """Emit protocol content through a dedicated SciTeX stdout logger."""
+    import scitex_logging
 
-    This is the *explicit content-rendering contract* PS-220 recognises
-    structurally: the enclosing API is an output operation that emits its
-    caller-supplied content unchanged. It exists for the handful of product
-    outputs whose exact bytes are a published contract — ``sac-statusline``
-    (consumed by Claude Code as the pane contents), a shell completion
-    script that gets ``source``d — where a logging level prefix or a hop to
-    stderr would corrupt the payload rather than clarify it.
-
-    It is NOT a general ``print`` hatch: human-facing status and diagnostics
-    belong on ``scitex_logging.getConsole``/``getLogger``, which carry the
-    level, the aligned prefix and the searchable record the mandate exists
-    for.
-    """
-    print(content)
+    global _CONTENT_LOGGER
+    with _STREAM_LOCK:
+        if _CONTENT_LOGGER is None:
+            console = scitex_logging.getConsole(f"{__name__}.content")
+            for original in console.handlers[:]:
+                handler = _ProtocolConsoleHandler(original)
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                console.removeHandler(original)
+                console.addHandler(handler)
+                original.close()
+            _CONTENT_LOGGER = console
+        _CONTENT_LOGGER.info(content)
 
 
-def render_rich(renderable, name: str, *, level: str = "info", width: int | None = None) -> None:
+def render_rich(
+    renderable, name: str, *, level: str = "info", width: int | None = None
+) -> None:
     """Render a Rich renderable through the SciTeX stdout console.
 
     Rich's ``Console.print`` is forbidden in shippable source (PS-220) and has
@@ -55,8 +82,7 @@ def render_rich(renderable, name: str, *, level: str = "info", width: int | None
     no aligned prefix and no searchable record. So the renderable (a ``Table``,
     a markup string) is rendered with Rich's own renderer to text — the console
     stream is never written to — and that text is emitted as ONE levelled
-    record. The table a reader sees is byte-identical; the operator gains the
-    level.
+    record. The table layout is preserved and the output carries its level.
 
     Parameters
     ----------
@@ -80,7 +106,10 @@ def render_rich(renderable, name: str, *, level: str = "info", width: int | None
     console = Console(width=width) if width else Console()
     lines = console.render_lines(renderable, console.options, pad=False)
     text = "\n".join("".join(segment.text for segment in line) for line in lines)
-    getattr(slogging.getConsole(name), level)(text.rstrip("\n"))
+    with _STREAM_LOCK:
+        getattr(slogging.getConsole(f"{name}.console", level=slogging.get_level()), level)(
+            text.rstrip("\n")
+        )
 
 
 def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
@@ -102,4 +131,19 @@ def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
     -------
     None
     """
-    print(text, file=stream, flush=flush)
+    import scitex_logging
+
+    # Dedicated names keep a transport's handler from changing the destination
+    # of the application's diagnostic logger. Serialize temporary handlers so
+    # concurrent callers cannot emit into one another's streams.
+    with _STREAM_LOCK:
+        logger = scitex_logging.getLogger(f"{__name__}.stream")
+        logger.setLevel(scitex_logging.INFO)
+        logger.propagate = False
+        handler = _ProtocolHandler(stream, flush=flush)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+        try:
+            logger.info(text)
+        finally:
+            logger.removeHandler(handler)

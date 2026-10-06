@@ -54,13 +54,64 @@ def test_manifest_records_source_and_runtime_hashes(tmp_path, env_save_restore):
         "startup_hash_present": bool(payload["startup_prompts"][0]["sha256"]),
         "source_layers": {item["layer"] for item in payload["sources"]},
         "verified": verify_prompt_projection_manifest(config, home) == payload,
+        "canonical": manifest_path
+        == home / ".scitex" / "agent-container" / "runtime" / "prompt-projections.json",
+        "legacy_absent": not (home / ".sac").exists(),
     }
     assert observed == {
         "schema": "scitex-agent-container/prompt-projections/v1",
         "startup_hash_present": True,
         "source_layers": {"user-shared", "per-agent"},
         "verified": True,
+        "canonical": True,
+        "legacy_absent": True,
     }
+
+
+def test_legacy_manifest_is_read_only_compatible_during_upgrade(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    config, shared, _ = _config(tmp_path)
+    env_save_restore.set("SAC_USER_TO_HOME_BASELINE", str(shared))
+    home = tmp_path / "home"
+    home.mkdir()
+    canonical = write_prompt_projection_manifest(
+        config, home, capture_prompt_sources(config)
+    )
+    legacy = home / ".sac" / "prompt-projections.json"
+    legacy.parent.mkdir()
+    canonical.rename(legacy)
+    recorded = json.loads(legacy.read_text())
+    # Act
+    verified = verify_prompt_projection_manifest(config, home)
+    # Assert
+    assert verified == recorded and not canonical.exists()
+
+
+def test_broken_canonical_manifest_does_not_fall_back_to_legacy(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    config, shared, _ = _config(tmp_path)
+    env_save_restore.set("SAC_USER_TO_HOME_BASELINE", str(shared))
+    home = tmp_path / "home"
+    home.mkdir()
+    canonical = write_prompt_projection_manifest(
+        config, home, capture_prompt_sources(config)
+    )
+    legacy = home / ".sac" / "prompt-projections.json"
+    legacy.parent.mkdir()
+    canonical.rename(legacy)
+    canonical.symlink_to("missing-manifest.json")
+
+    # Act
+    def action():
+        return verify_prompt_projection_manifest(config, home)
+
+    # Assert
+    with pytest.raises(PromptProjectionDriftError, match="manifest is missing"):
+        action()
 
 
 def test_source_change_after_capture_fails_loud(tmp_path, env_save_restore):

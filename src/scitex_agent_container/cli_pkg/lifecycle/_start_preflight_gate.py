@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterator
 
-import click
+from ..._logging import get_logger
 
 
 def _target_needs_anthropic_oauth(cfg: object) -> bool:
@@ -127,7 +127,7 @@ def make_preflight_runner(
                     continue
                 check_spec_oauth_credentials(cfg)
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
-            click.echo(f"Error: {exc}", err=True)
+            get_logger(__name__).error(str(exc))
             raise SystemExit(1)
 
     return _run_preflight_once

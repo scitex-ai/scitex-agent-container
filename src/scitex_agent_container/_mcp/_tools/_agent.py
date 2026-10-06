@@ -284,7 +284,7 @@ def agent_restart(name: str, fresh: bool = False) -> dict[str, Any]:
     tool needs no extra wiring; on a bare host (row resolvable) the local
     path runs unchanged.
 
-    ``fresh=True`` brokers a NEW Claude session (``start --force --fresh``)
+    ``fresh=True`` starts a new conversation through guarded ``restart --fresh``
     instead of a resuming restart — the deterministic recovery for an agent
     wedged on a boot prompt whose queued input keeps returning on a plain
     restart.

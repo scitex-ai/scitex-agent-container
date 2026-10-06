@@ -426,3 +426,75 @@ def test_main_cli_module_imports_cleanly() -> None:
         err = None
     # Assert
     assert mod is not None, f"_main import failed: {err!r}"
+
+
+def _commands(command, path=()):
+    yield path, command
+    if isinstance(command, click.Group):
+        context = click.Context(command)
+        for name in command.list_commands(context):
+            child = command.get_command(context, name)
+            if child is not None:
+                yield from _commands(child, (*path, name))
+
+
+def test_no_command_exposes_force():
+    # Arrange
+    command_tree = main
+    # Act
+    exposed = [
+        " ".join(path)
+        for path, command in _commands(command_tree)
+        for parameter in command.params
+        if isinstance(parameter, click.Option) and "--force" in parameter.opts
+    ]
+    # Assert
+    assert exposed == []
+
+
+@pytest.mark.parametrize("verb", ["start", "stop", "restart", "forget"])
+def test_agent_commands_reject_force_before_mutating(verb):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(main, ["agents", verb, "example", "--force", "-y"])
+    # Assert
+    assert (
+        result.exit_code,
+        "No such option" in result.output,
+        "--force" in result.output,
+    ) == (2, True, True)
+
+
+def test_shared_scaffold_backend_refuses_force_and_preserves_existing_spec(tmp_path):
+    # Arrange
+    from scitex_agent_container.cli_pkg._create import scaffold_agent
+
+    spec = tmp_path / "example" / "spec.yaml"
+    spec.parent.mkdir()
+    spec.write_text("operator-authored spec\n")
+    refusal = ""
+    # Act
+    try:
+        scaffold_agent("example", base_dir=tmp_path, force=True)
+    except click.ClickException as exc:
+        refusal = str(exc)
+    # Assert
+    assert ("force is unsupported" in refusal, spec.read_text()) == (
+        True,
+        "operator-authored spec\n",
+    )
+
+
+def test_shared_forget_backend_refuses_force_before_store_access():
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._forget import _forget_one
+
+    refusal = ""
+    # Act
+    try:
+        _forget_one("example", force=True, dry_run=False)
+    except click.ClickException as exc:
+        refusal = str(exc)
+    # Assert
+    assert "force is unsupported" in refusal

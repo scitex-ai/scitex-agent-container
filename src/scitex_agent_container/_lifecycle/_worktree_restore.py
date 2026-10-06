@@ -149,7 +149,7 @@ def restore_owned_task_worktree(
     before Git. Git's ordinary no-force add handles path/branch contention.
     A failed postverification leaves evidence intact for explicit review.
     """
-    cli = Path(cli_path or DEFAULT_WORKTREE_POLICY_CLI).expanduser()
+    cli = Path(cli_path).expanduser() if cli_path else DEFAULT_WORKTREE_POLICY_CLI
     if apply and not receipt_sha256:
         raise WorktreePolicyError("apply requires the exact dry-run receipt SHA256")
     approval = _approval(config, expected_tip, cli, timeout_s)

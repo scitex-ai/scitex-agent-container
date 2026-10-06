@@ -269,7 +269,7 @@ def _dispatch_remote_delete(name: str) -> bool:
     # 1. Remote stop (force, ignore-on-missing). We use --force so a
     # remote registry that's already drifted past the running state
     # doesn't abort the delete.
-    stop_argv = build_ssh_argv(peer, ["sac", "agents", "stop", name, "--force"], peers)
+    stop_argv = build_ssh_argv(peer, ["sac", "agents", "stop", name], peers)
     stop_proc = subprocess.run(stop_argv, capture_output=True, text=True, check=False)
     # Don't raise on stop failure — the agent may already be stopped.
     # But surface stderr so the operator can correlate.

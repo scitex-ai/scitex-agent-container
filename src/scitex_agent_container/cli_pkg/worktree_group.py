@@ -33,6 +33,22 @@ def worktree_group() -> None:
     """
 
 
+@worktree_group.command(
+    "policy",
+    context_settings={"ignore_unknown_options": True},
+    add_help_option=False,
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def policy(args: tuple[str, ...]) -> None:
+    """Inspect and enforce the packaged Git worktree policy.
+
+    Example: sac worktree policy inspect --repo .
+    """
+    from .._worktree_policy_cli import main
+
+    raise SystemExit(main(list(args)))
+
+
 _worktree_gc.register(worktree_group)
 
 __all__ = ["worktree_group"]
