@@ -10,6 +10,7 @@ caller-supplied stream contracts. No writer uses raw print().
 from __future__ import annotations
 
 import logging
+import re
 from threading import RLock
 from typing import TextIO
 
@@ -17,6 +18,29 @@ __all__ = ["render_content", "render_rich", "write_stream"]
 
 _STREAM_LOCK = RLock()
 _CONTENT_LOGGER: logging.Logger | None = None
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _RedirectAwareFormatter(logging.Formatter):
+    """Keep SciTeX's human format while removing colors from redirected output."""
+
+    def __init__(
+        self, formatter: logging.Formatter, handler: logging.StreamHandler
+    ) -> None:
+        super().__init__()
+        self._formatter = formatter
+        self._handler = handler
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = self._formatter.format(record)
+        try:
+            is_terminal = self._handler.stream.isatty()
+        except (AttributeError, OSError, ValueError):
+            is_terminal = False
+        # Older SciTeX formatters honor a process-wide force-color flag even
+        # when redirected. Adapt only this SAC console's destination; retain
+        # the configured prefix, continuation lines, and real-terminal color.
+        return formatted if is_terminal else _ANSI_SGR.sub("", formatted)
 
 
 class _ProtocolHandler(logging.StreamHandler):
@@ -83,6 +107,9 @@ def render_rich(
     a markup string) is rendered with Rich's own renderer to text — the console
     stream is never written to — and that text is emitted as ONE levelled
     record. The table layout is preserved and the output carries its level.
+    SAC keeps redirected output free of color escapes even when SciTeX's
+    process-wide force-color setting is enabled. A terminal destination keeps
+    SciTeX's configured colors; other SciTeX consoles are unaffected.
 
     Parameters
     ----------
@@ -107,9 +134,14 @@ def render_rich(
     lines = console.render_lines(renderable, console.options, pad=False)
     text = "\n".join("".join(segment.text for segment in line) for line in lines)
     with _STREAM_LOCK:
-        getattr(slogging.getConsole(f"{name}.console", level=slogging.get_level()), level)(
-            text.rstrip("\n")
-        )
+        logger = slogging.getConsole(f"{name}.console", level=slogging.get_level())
+        for handler in logger.handlers:
+            formatter = handler.formatter
+            if formatter is not None and not isinstance(
+                formatter, _RedirectAwareFormatter
+            ):
+                handler.setFormatter(_RedirectAwareFormatter(formatter, handler))
+        getattr(logger, level)(text.rstrip("\n"))
 
 
 def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:

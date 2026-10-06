@@ -37,6 +37,9 @@ versioning follows [SemVer](https://semver.org/).
   under `~/.scitex/agent-container`; no dotfiles executable is required.
 - Route start previews and diagnostics through `scitex-logging`, preserve
   exact protocol stdout, and remove raw-print lint exemptions from `src`.
+- Keep rendered stdout free of ANSI color codes when redirected, while
+  retaining log prefixes and terminal colors. Account refresh also refuses
+  the removed force override through its internal expiry gate.
 - Advertise lazy public API names through `dir()` and load each API group
   when that group is accessed.
 

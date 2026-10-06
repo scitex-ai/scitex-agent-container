@@ -74,7 +74,7 @@ from ._account_refresh_skip import (
         "always refreshed). Fresh tokens are left untouched — this is the "
         "rotate-only-when-stale gate, which avoids needlessly rotating a "
         "single-use refresh_token and stranding every agent holding the "
-        "current access token. Applies to a single named account too; use "
+        "current access token. Applies to a single named account too. "
         "Active users must finish before credential rotation."
     ),
 )

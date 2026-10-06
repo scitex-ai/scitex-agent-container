@@ -189,3 +189,66 @@ render_content('{"status":"accepted"}')
         "file_after": True,
         "protocol_archived": False,
     }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Real terminal check requires a PTY")
+def test_human_console_preserves_prefixes_and_adapts_color_to_current_destination():
+    # Arrange
+    code = """
+import json
+import os
+import pty
+import sys
+from contextlib import redirect_stdout
+from io import StringIO
+from rich.text import Text
+import scitex_logging as slogging
+from scitex_agent_container._logging import render_rich
+payload = Text('literal [/][link=https://evil.invalid]click[/link]\\nsecond')
+read_fd, write_fd = pty.openpty()
+with os.fdopen(write_fd, 'w', buffering=1) as terminal:
+    with redirect_stdout(terminal):
+        render_rich(payload, 'redirect-contract', width=200)
+    terminal_output = os.read(read_fd, 65536).decode().replace('\\r\\n', '\\n')
+os.close(read_fd)
+redirected = StringIO()
+with redirect_stdout(redirected):
+    render_rich(payload, 'redirect-contract', width=200)
+unrelated = StringIO()
+with redirect_stdout(unrelated):
+    slogging.getConsole('unrelated-console').info('unrelated')
+render_rich(payload, 'redirect-contract', width=200)
+sys.stdout.write(json.dumps({
+    'terminal': terminal_output,
+    'redirected': redirected.getvalue(),
+    'unrelated_color': '\\x1b[' in unrelated.getvalue(),
+}) + '\\n')
+"""
+    env = dict(os.environ)
+    env.update(
+        PYTHONPATH=str(Path(__file__).resolve().parents[3] / "src"),
+        SCITEX_LOGGING_LEVEL="info",
+        SCITEX_LOGGING_FORMAT="default",
+        SCITEX_LOGGING_FORCE_COLOR="1",
+    )
+    expected = (
+        "INFO: literal [/][link=https://evil.invalid]click[/link]\nINFO| second\n"
+    )
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    observed = {"piped": "\n".join(lines[:-1]) + "\n", **json.loads(lines[-1])}
+    # Assert
+    assert observed == {
+        "terminal": "\x1b[90m" + expected.rstrip("\n") + "\x1b[0m\n",
+        "redirected": expected,
+        "piped": expected,
+        "unrelated_color": True,
+    }

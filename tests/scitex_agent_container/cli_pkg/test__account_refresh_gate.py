@@ -115,13 +115,15 @@ def test_unknown_expiry_is_refreshed():
     assert result is True
 
 
-def test_force_refreshes_a_fresh_token():
+def test_force_cannot_bypass_expiry_gate():
     # Arrange
     expires_ms = _FRESH_MS
     # Act
-    result = needs_refresh(expires_ms, force=True, min_ttl_hours=2.0, now=_NOW_S)
+    def act():
+        needs_refresh(expires_ms, force=True, min_ttl_hours=2.0, now=_NOW_S)
     # Assert
-    assert result is True
+    with pytest.raises(ValueError, match="cannot bypass the expiry gate"):
+        act()
 
 
 def test_gate_takes_no_do_all_parameter():
