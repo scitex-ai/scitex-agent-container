@@ -11,6 +11,7 @@ from scitex_agent_container.cli_pkg._provider_auth_probe import (
     OK,
     PROBE_FAILED,
     UNREACHABLE,
+    UNRESOLVED,
     probe_provider_auth,
 )
 from scitex_agent_container.config import AgentConfig, ProviderSpec
@@ -176,3 +177,35 @@ def test_pool_transport_failure_remains_unknown(monkeypatch):
     verdict = probe_provider_auth(config, timeout=0.1)
     # Assert
     assert (verdict.state, verdict.is_failure) == (UNREACHABLE, False)
+
+
+def test_uninstalled_slots_do_not_block_a_real_declared_inference(monkeypatch):
+    with backend({"fake-good": 200}) as (url, observed):
+        config = config_for(url, monkeypatch, keys=["fake-good"])
+        missing = "SAC_POOL_CHECK_UNINSTALLED"
+        monkeypatch.delenv(missing, raising=False)
+        config.hermes_failover.accounts["primary"] = [missing, "SAC_POOL_CHECK_0"]
+
+        verdict = probe_provider_auth(config)
+
+    assert verdict.state == OK
+    assert [key for _, key in observed] == [
+        "fake-good", "fake-good", "sac-preflight-control-not-a-valid-key"
+    ]
+    assert config.hermes_failover.accounts["primary"] == [missing, "SAC_POOL_CHECK_0"]
+
+
+def test_an_entirely_uninstalled_pool_reports_unresolved_without_using_ambient_key(
+    monkeypatch,
+):
+    with backend({"fake-ambient-good": 200}) as (url, observed):
+        config = config_for(url, monkeypatch, keys=["fake-good"])
+        missing = "SAC_POOL_CHECK_UNINSTALLED"
+        monkeypatch.delenv(missing, raising=False)
+        config.hermes_failover.accounts["primary"] = [missing]
+
+        verdict = probe_provider_auth(config)
+
+    assert verdict.state == UNRESOLVED
+    assert verdict.is_failure
+    assert observed == []
