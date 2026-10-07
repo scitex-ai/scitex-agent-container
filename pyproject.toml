@@ -88,6 +88,8 @@ dependencies = [
     "scitex-container>=0.4.0",
     # 0.2.3 provides unfiltered protocol output with caller-stream support.
     "scitex-logging>=0.2.3",
+    # Native Hermes credential preflight uses the shared availability API.
+    "scitex-genai>=0.2.3",
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
