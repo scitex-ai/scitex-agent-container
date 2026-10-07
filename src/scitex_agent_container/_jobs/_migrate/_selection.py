@@ -67,10 +67,14 @@ def parse_selection(text: str) -> frozenset[str]:
     and the file form parse identically — one grammar, not two.
     """
     out: set[str] = set()
-    for raw in text.replace(",", "\n").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            out.add(line)
+    for raw in text.splitlines():
+        # A comment owns the rest of its original line, including commas.
+        # Splitting commas first can accidentally select a commented job.
+        line = raw.split("#", 1)[0]
+        for value in line.split(","):
+            value = value.strip()
+            if value:
+                out.add(value)
     return frozenset(out)
 
 

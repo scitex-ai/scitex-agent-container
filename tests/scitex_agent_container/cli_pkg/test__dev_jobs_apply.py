@@ -69,6 +69,13 @@ from scitex_agent_container.cli_pkg._dev_jobs_apply import (  # noqa: E402
 from scitex_agent_container.cli_pkg.installation_group import boot  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_job_catalog(tmp_path, monkeypatch):
+    """Keep operator recovery pauses out of installation catalog expectations."""
+    monkeypatch.setenv("SCITEX_DIR", str(tmp_path / "ecosystem-root"))
+    monkeypatch.delenv("SAC_JOBS_ENABLED", raising=False)
+
+
 def _declared_timers() -> list[str]:
     """Canonical names of every kind='timer' job sac really declares.
 

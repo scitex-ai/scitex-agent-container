@@ -109,6 +109,17 @@ def test_changed_file_is_applied_on_each_provider_discovery(tmp_path):
     assert {j.name for j in supervisor.discover_periodic_jobs()} == before
 
 
+def test_documented_operator_pause_ignores_commented_recovery_names(tmp_path):
+    keep = {j.name for j in _jobs(tmp_path)} - RECOVERY
+    _write(
+        tmp_path,
+        "# SAC-owned periodic jobs. Agent recovery is paused by operator request.\n"
+        "# Omitted: fleet-reconcile, restart-login-expired-agents, "
+        "resume-rate-limited-agents.\n" + "\n".join(sorted(keep)) + "\n",
+    )
+    assert {j.name for j in _jobs(tmp_path)} == keep
+
+
 def test_canonical_scitex_dir_override_controls_provider_path(tmp_path, monkeypatch):
     ecosystem_root = tmp_path / "ecosystem"
     own_root = ecosystem_root / "agent-container"
