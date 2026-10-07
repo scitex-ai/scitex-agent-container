@@ -1,13 +1,13 @@
 """Published output helpers preserve the caller's protocol payload."""
 
+import json
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout, suppress
 from io import StringIO
-import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 import pytest
 
@@ -189,6 +189,34 @@ render_content('{"status":"accepted"}')
         "file_after": True,
         "protocol_archived": False,
     }
+
+
+@pytest.mark.parametrize("capture_prints", [False, True])
+def test_protocol_output_survives_global_logging_disable(capture_prints):
+    code = """
+import logging
+import sys
+from io import StringIO
+import scitex_logging as slogging
+from scitex_agent_container._logging import render_content, write_stream
+slogging.configure(level='critical', enable_file=False, capture_prints=sys.argv[1] == 'True')
+logging.disable(logging.CRITICAL)
+render_content('{"transport":"stdout"}')
+owned = StringIO()
+write_stream('caller-owned \\u03bb', owned)
+render_content(owned.getvalue().rstrip('\\n'))
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(capture_prints)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == '{"transport":"stdout"}\ncaller-owned λ\n'
+    assert result.stderr == ""
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Real terminal check requires a PTY")

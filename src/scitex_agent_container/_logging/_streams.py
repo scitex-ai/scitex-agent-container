@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """SciTeX logging adapters for human output and caller-owned protocol streams.
 
-Human output carries its logging level. Protocol transports use a dedicated
-logger and a message-only formatter to preserve JSON, shell completion, and
-caller-supplied stream contracts. No writer uses raw print().
+Human output carries its logging level. Protocol transports use SciTeX's plain
+writer to preserve JSON, shell completion, and caller-supplied stream contracts
+independently of diagnostic thresholds. No writer uses raw print().
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import TextIO
 __all__ = ["render_content", "render_rich", "write_stream"]
 
 _STREAM_LOCK = RLock()
-_CONTENT_LOGGER: logging.Logger | None = None
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -43,57 +42,12 @@ class _RedirectAwareFormatter(logging.Formatter):
         return formatted if is_terminal else _ANSI_SGR.sub("", formatted)
 
 
-class _ProtocolHandler(logging.StreamHandler):
-    """Keep transport failures visible to the caller that owns the stream."""
-
-    def __init__(self, stream: TextIO | None = None, *, flush: bool = True) -> None:
-        self._flush_output = flush
-        super().__init__(stream)
-
-    def flush(self) -> None:
-        if self._flush_output:
-            super().flush()
-
-    def handleError(self, record: logging.LogRecord) -> None:
-        # StreamHandler normally reports errors to stderr and then returns.
-        # A lost JSON frame must fail its caller instead of looking successful.
-        raise
-
-
-class _ProtocolConsoleHandler(_ProtocolHandler):
-    """Retain SciTeX's current-stdout resolution while exposing I/O errors."""
-
-    def __init__(self, console_handler: logging.StreamHandler) -> None:
-        self._console_handler = console_handler
-        super().__init__()
-
-    @property
-    def stream(self) -> TextIO:
-        return self._console_handler.stream
-
-    @stream.setter
-    def stream(self, value: TextIO) -> None:
-        # The SciTeX handler resolves stdout dynamically, including its
-        # print-capture bypass, so a redirect never leaves a stale destination.
-        pass
-
-
 def render_content(content: str) -> None:
-    """Emit protocol content through a dedicated SciTeX stdout logger."""
+    """Emit protocol content through SciTeX's unfiltered stdout writer."""
     import scitex_logging
 
-    global _CONTENT_LOGGER
     with _STREAM_LOCK:
-        if _CONTENT_LOGGER is None:
-            console = scitex_logging.getConsole(f"{__name__}.content")
-            for original in console.handlers[:]:
-                handler = _ProtocolConsoleHandler(original)
-                handler.setFormatter(logging.Formatter("%(message)s"))
-                console.removeHandler(original)
-                console.addHandler(handler)
-                original.close()
-            _CONTENT_LOGGER = console
-        _CONTENT_LOGGER.info(content)
+        scitex_logging.getPlainConsole(__name__).emit(content)
 
 
 def render_rich(
@@ -165,17 +119,7 @@ def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
     """
     import scitex_logging
 
-    # Dedicated names keep a transport's handler from changing the destination
-    # of the application's diagnostic logger. Serialize temporary handlers so
-    # concurrent callers cannot emit into one another's streams.
+    # Keep transport frames serialized without changing diagnostic loggers or
+    # taking ownership of the caller's stream.
     with _STREAM_LOCK:
-        logger = scitex_logging.getLogger(f"{__name__}.stream")
-        logger.setLevel(scitex_logging.INFO)
-        logger.propagate = False
-        handler = _ProtocolHandler(stream, flush=flush)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(handler)
-        try:
-            logger.info(text)
-        finally:
-            logger.removeHandler(handler)
+        scitex_logging.getPlainConsole(__name__).emit(text, stream=stream, flush=flush)

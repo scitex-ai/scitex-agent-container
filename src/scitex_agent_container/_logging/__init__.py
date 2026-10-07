@@ -1,8 +1,8 @@
 """Lazy SciTeX logging access for SAC diagnostics and output transports.
 
 Human diagnostics use get_logger(); rendered results use render_rich(). Exact
-protocol frames use render_content() or write_stream() with a dedicated
-message-only formatter. All output goes through scitex-logging.
+protocol frames use render_content() or write_stream() with its plain writer.
+All output goes through scitex-logging.
 """
 
 from __future__ import annotations

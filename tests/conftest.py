@@ -401,6 +401,14 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     if error is not None:
         raise RuntimeError(error)
 
+    # The CLI suite owns its test process's logging configuration. Logger
+    # imports preserve pytest's existing handlers and threshold, so importing
+    # a library no longer supplies the CLI's default INFO/stderr behavior.
+    # Configure that behavior explicitly without creating diagnostic files.
+    import scitex_logging
+
+    scitex_logging.configure(level="info", enable_file=False, capture_prints=False)
+
 
 # ---------------------------------------------------------------------------
 # THE FLOOR MUST BE ABLE TO DETECT ITS OWN BREACH.

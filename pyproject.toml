@@ -86,12 +86,13 @@ dependencies = [
     # publishes the inner boot symlink the round trip previously left
     # stale. See cli_pkg/_image_repro_build.py.
     "scitex-container>=0.4.0",
-    # getConsole is the stdout counterpart used by SAC's output adapters.
-    "scitex-logging>=0.2.0",
+    # 0.2.3 provides unfiltered protocol output with caller-stream support.
+    "scitex-logging>=0.2.3",
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
-    "scitex-dev>=0.61.0",
+    # Keep its auditors compatible with logging's mandatory provider SPI.
+    "scitex-dev>=0.62.4.dev0",
     # SAC directly opens PostgreSQL channel connections and classifies lost
     # connections with psycopg exceptions. Match scitex_dev.store's driver
     # floor and binary extra so a bare install does not require system libpq.
