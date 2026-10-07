@@ -76,6 +76,13 @@ from ._spec import (
     delivery_spec_for,
     validate_delivery_specs,
 )
+from ._redeliver import (
+    DEFAULT_MAX_RETRIES,
+    RedeliveryAttempt,
+    RedeliveryPolicy,
+    RedeliveryReport,
+    redeliver,
+)
 from ._state import DeliveryState
 from ._token import (
     DELIVERY_TOKEN_BYTES,
@@ -89,6 +96,7 @@ __all__ = [
     "DEFAULT_ARRIVAL_TIMEOUT_S",
     "DEFAULT_IDLE_WAIT_S",
     "DEFAULT_MAX_RESENDS",
+    "DEFAULT_MAX_RETRIES",
     "DEFAULT_POLL_S",
     "DELIVERY_LOAD_BEARING",
     "DELIVERY_SIGNALS",
@@ -107,9 +115,13 @@ __all__ = [
     "DeliveryAssessment",
     "DeliverySignalSpec",
     "DeliveryState",
+    "RedeliveryAttempt",
+    "RedeliveryPolicy",
+    "RedeliveryReport",
     "Route",
     "assess_delivery",
     "deliver",
+    "redeliver",
     "delivery_spec_for",
     "flatten_pane",
     "format_payload",
