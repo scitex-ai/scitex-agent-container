@@ -242,6 +242,8 @@ non-positive limits are rejected. Omitted controls preserve the existing
 Hermes configuration: unlimited per-response turns and its default goal
 budget. SAC's `autonomous.max_turns` separately limits the headless daemon
 loop; it does not set either Hermes limit.
+`goals.max_turns` supplies the default for newly created goals. Existing
+persisted goals retain their own budgets; a profile refresh does not rewrite them.
 
 An explicit `goals.judge_engine` must name the declared selected agent engine.
 SAC renders the pinned Hermes API `auxiliary.goal_judge.provider: main` with

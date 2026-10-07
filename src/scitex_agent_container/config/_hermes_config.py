@@ -150,7 +150,8 @@ def compile_hermes_config(
         providers_block = {provider_key: provider}
     agent: dict[str, Any] = {
         # SAC's autonomous loop has its own independent safety cap.  Hermes'
-        # TUI defaults an omitted value to 500, so emit its unlimited sentinel.
+        # TUI defaults an omitted value to 500. Preserve our unlimited default
+        # unless the author explicitly supplies a positive limit.
         "max_turns": "none" if max_turns is None else max_turns,
         # Hermes subtracts disabled toolsets after expanding ``hermes-cli``.
         # Naming its one-tool ``delegation`` toolset removes delegate_task
