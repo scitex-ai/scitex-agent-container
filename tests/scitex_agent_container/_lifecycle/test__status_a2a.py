@@ -179,7 +179,11 @@ def test_remote_instance_direct_dead_outranks_active_row() -> None:
     ) == ("stopped", "exited")
 
 
-def test_heartbeat_only_direct_alive_outranks_disconnection() -> None:
+def test_heartbeat_only_never_claims_aliveness_to_another_agent() -> None:
+    # OPERATOR ORDER 2026-10-07 (CCT 4187): a heartbeat read by ANOTHER
+    # agent must learn NOTHING about aliveness — only work evidence.
+    # Even with a directly-observed live process on the OWNER host and a
+    # connected federation, the cross-agent fallback reports unknown.
     # Arrange
     beat = _beat(process_alive=True, connected=False)
     # Act
@@ -191,10 +195,13 @@ def test_heartbeat_only_direct_alive_outranks_disconnection() -> None:
         result["status"],
         result["liveness"]["verdict"],
         result["observation"]["process"]["state"],
-    ) == ("running", "alive", "alive")
+    ) == ("unknown", "unknown", "unknown")
 
 
-def test_fresh_heartbeat_repairs_unknown_liveness_consistently() -> None:
+def test_heartbeat_only_surfaces_work_state_vocabulary() -> None:
+    # The work-state vocabulary (idle/active/blocked/stalled) stays
+    # visible — it describes what the agent is DOING, not whether it
+    # is alive — while every aliveness verdict reads unknown.
     # Arrange
     beat = _beat(process_alive=None)
     # Act
@@ -202,8 +209,10 @@ def test_fresh_heartbeat_repairs_unknown_liveness_consistently() -> None:
         "remote-worker", heartbeat_reader=lambda: [beat]
     )
     # Assert
-    assert result is not None and (
+    assert result is not None
+    assert result["resident_state"] == "idle"
+    assert (
         result["status"],
         result["liveness"]["verdict"],
         result["observation"]["process"]["state"],
-    ) == ("running", "alive", "alive")
+    ) == ("unknown", "unknown", "unknown")
