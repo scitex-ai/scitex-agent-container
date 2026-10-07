@@ -259,13 +259,25 @@ def test_a_tui_agent_is_unknown_not_dead_when_the_probe_cannot_see_the_fleet():
 
 
 def test_a_fresh_heartbeat_is_alive(tmp_path):
-    # Arrange
+    # Arrange — work evidence present: turns completed.
     hb = tmp_path / "heartbeat.json"
-    hb.write_text('{"ts": 1.0, "pid": 0, "state": "running"}')
+    hb.write_text('{"ts": 1.0, "pid": 0, "state": "running", "turns_completed": 3, "tools_completed": 5}')
     # Act
     signal = heartbeat_signal("grant", path=hb)
     # Assert
     assert signal.verdict == ALIVE
+
+
+def test_a_fresh_heartbeat_without_work_is_unknown(tmp_path):
+    # Operator order 2026-10-07: fresh beat + zero work = UNKNOWN, never
+    # ALIVE. An idle agent beats forever; presence is not work evidence.
+    # Arrange
+    hb = tmp_path / "heartbeat.json"
+    hb.write_text('{"ts": 1.0, "pid": 0, "state": "running", "turns_completed": 0, "tools_completed": 0}')
+    # Act
+    signal = heartbeat_signal("grant", path=hb)
+    # Assert
+    assert signal.verdict == UNKNOWN
 
 
 def test_a_stale_heartbeat_is_unknown_never_dead(tmp_path):
