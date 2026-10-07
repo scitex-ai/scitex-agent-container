@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
@@ -78,7 +80,7 @@ def test_tui_launches_through_single_gateway_owner():
         "/usr/bin/tini",
         "-s",
         "--",
-        "python3",
+        sys.executable,
         "-m",
         "scitex_agent_container.runtimes._hermes_tui_owner",
         "--state-dir",
