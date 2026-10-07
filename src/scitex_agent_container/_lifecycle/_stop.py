@@ -537,10 +537,10 @@ def agent_restart(
         )
         from ._restart_preflight import preflight_workspace_from_config_path
 
-        preflight_workspace_from_config_path(
+        preflight_native_tui_from_config_path(
             config_path, engine_override=engine_override
         )
-        preflight_native_tui_from_config_path(
+        preflight_workspace_from_config_path(
             config_path, engine_override=engine_override
         )
 
