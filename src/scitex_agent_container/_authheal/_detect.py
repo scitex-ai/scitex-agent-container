@@ -109,7 +109,9 @@ def detect_login_expired(
     pane could not be read). Pure: no tmux, no I/O, so it is unit-testable
     against captured panes without mocks.
 
-    Only ``auth_failed`` authorises a restart. ``unknown`` never does — absence
+    ``auth_failed`` identifies a report-only candidate; the pass also requires
+    the positional and liveness auditors' explicit restart admission.
+    ``unknown`` never authorises a restart — absence
     of evidence is not evidence of a wedge, and bouncing an agent on a reading
     we failed to take would destroy the context of something that was working
     fine — but it is returned rather than dropped, so the pass can report it.
