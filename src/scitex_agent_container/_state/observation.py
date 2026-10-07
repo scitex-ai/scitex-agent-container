@@ -152,6 +152,18 @@ def build_agent_observation(
     )
 
     liveness = status.get("liveness") or {}
+    # OPERATOR ORDER 2026-10-07 (CCT 4187): heartbeat must NEVER carry
+    # liveness. Another agent reading my heartbeat must learn NOTHING
+    # about whether I am alive — only work evidence. So the heartbeat
+    # repair below is LOCAL-ONLY: it fires only when a DIRECT local
+    # process probe exists in this same evidence list (i.e. the reader
+    # observed the process itself on THIS host). A heartbeat arriving
+    # without a co-present local process signal (remote rows,
+    # heartbeat-only fallbacks, cross-host reads) leaves process UNKNOWN.
+    has_local_process_signal = any(
+        item.get("source") == "process"
+        for item in liveness.get("evidence", [])
+    )
     process_signal = next(
         (
             item
@@ -162,8 +174,12 @@ def build_agent_observation(
     )
     # A fresh heartbeat is observer testimony that the process is present. It
     # may repair an unread process probe, but it never overrides a direct
-    # process verdict (especially a confirmed exit).
-    if process_signal is None or str(process_signal.get("verdict")) == "unknown":
+    # process verdict (especially a confirmed exit) — and only for a LOCAL
+    # reader that probed the process itself (see above).
+    if has_local_process_signal and (
+        process_signal is None
+        or str(process_signal.get("verdict")) == "unknown"
+    ):
         heartbeat_alive = next(
             (
                 item

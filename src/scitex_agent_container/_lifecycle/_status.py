@@ -286,7 +286,15 @@ def _heartbeat_only_status(
     *,
     heartbeat_reader: Callable[[], list[dict]] | None = None,
 ) -> dict | None:
-    """Resolve a fleet-visible resident from its current host lease alone."""
+    """Resolve a fleet-visible resident from its current host lease alone.
+
+    OPERATOR ORDER 2026-10-07 (CCT 4187): a heartbeat read by ANOTHER
+    agent (which is every reader of this fallback — the local agent has
+    a registry entry and never reaches here) must NOT yield a liveness
+    verdict. Presence without a local process probe is UNKNOWN, always.
+    Work evidence (progress_seq, session movement) is surfaced; aliveness
+    is not claimed.
+    """
     try:
         from .._state.authoritative_heartbeat import classify_resident_state
         if heartbeat_reader is None:
@@ -316,22 +324,15 @@ def _heartbeat_only_status(
             progress_stale_s=120.0,
         )
         heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
-        running = process_alive is True or heartbeat_alive
-        dead = process_alive is False or resident_state == "dead"
-        process_verdict = (
-            "alive"
-            if process_alive is True
-            else "dead"
-            if process_alive is False
-            else "unknown"
-        )
-        liveness_verdict = (
-            process_verdict
-            if process_verdict != "unknown"
-            else "alive"
-            if heartbeat_alive
-            else "unknown"
-        )
+        # CCT 4187: no local process probe exists on this path (the local
+        # agent has a registry entry and never reaches this fallback), so
+        # the reader learns NOTHING about aliveness. running/dead collapse
+        # to unknown; the heartbeat's work evidence (progress_seq, session
+        # movement) is still surfaced on the row.
+        running = False
+        dead = False
+        process_verdict = "unknown"
+        liveness_verdict = "unknown"
         result = {
             "name": name,
             "config": "",
@@ -356,12 +357,17 @@ def _heartbeat_only_status(
                     {
                         "source": "process",
                         "verdict": process_verdict,
-                        "detail": "host process evidence from authoritative projection",
+                        "detail": "no local process probe on the heartbeat-only path — aliveness unknown by construction (CCT 4187)",
                     },
                     {
                         "source": "heartbeat",
-                        "verdict": "alive" if heartbeat_alive else "unknown",
-                        "detail": f"authoritative heartbeat resident state: {resident_state}",
+                        # CCT 4187: the heartbeat carries WORK evidence, never
+                        # aliveness, to another agent. resident_state stays
+                        # visible as work-state vocabulary (idle/active/
+                        # blocked/stalled describe what it is DOING), but the
+                        # verdict is unknown: presence is not aliveness.
+                        "verdict": "unknown",
+                        "detail": f"authoritative heartbeat work state: {resident_state} (presence only, not aliveness)",
                     }
                 ],
             },
