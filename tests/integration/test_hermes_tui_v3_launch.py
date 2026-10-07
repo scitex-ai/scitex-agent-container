@@ -19,6 +19,7 @@ from scitex_agent_container.runtimes._apptainer_inner_argv_tui import (
 from scitex_agent_container.runtimes._hermes_profile import (
     validate_hermes_tui_profile,
 )
+from scitex_agent_container.runtimes._hermes_sac_runtime import sac_installation
 from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
@@ -382,6 +383,11 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
 
     # Act: this is the production config -> runtime -> profile -> argv seam.
     config = load_config(spec_path)
+    # Explicitly expose the compiling installation and every interpreter
+    # alias, just as a fleet's existing home/scratch binds do in production.
+    for path in sac_installation(config).required_paths:
+        if path.is_dir():
+            config.apptainer.binds.append(f"{path}:{path}:ro")
     select_engine_at_start(config, None, log=False)
     runtime = _get_runtime(config)
     home = runtime.materialize_workspace(config)

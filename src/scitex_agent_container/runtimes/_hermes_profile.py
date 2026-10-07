@@ -153,6 +153,9 @@ def validate_hermes_tui_profile(
     config: AgentConfig, *, state_dir: Path, launch_argv: Sequence[str]
 ) -> None:
     """Validate the materialized profile against the real finalized argv."""
+    from ._hermes_sac_runtime import validate_sac_runtime
+
+    validate_sac_runtime(config, launch_argv=launch_argv)
     targets = [state_dir / "home"]
     upper = resolve_overlay_upper_home(config)
     if upper is not None:
@@ -307,6 +310,9 @@ def _mcp_servers(
 def _bind_mcp_runtime_env(
     config: AgentConfig, servers: dict[str, dict[str, Any]]
 ) -> None:
+    from ._hermes_sac_runtime import bind_sac_mcp_command
+
+    bind_sac_mcp_command(config, servers)
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
