@@ -9,6 +9,27 @@ discovery and fresh periodic execution receipts, stop/disable duplicate
 resume-rate-limited-agents}.timer` units. Keep authored unit configuration in
 dotfiles and package-owned mechanisms in SAC/Dev, with no external helper.
 
+SAC's provider reads `$SCITEX_DIR/agent-container/jobs-enabled.txt` on every
+discovery (default `~/.scitex/agent-container/jobs-enabled.txt`). This is an
+allowlist: one local, canonical, or historical `sac.` job name per line;
+commas and `#` comments are accepted. An absent file preserves the existing
+all-jobs default, an empty file selects no SAC jobs, and `*` selects all.
+The nonblank `SAC_JOBS_ENABLED` environment setting takes precedence. An
+unknown name, unreadable file, or malformed text refuses SAC job discovery
+visibly rather than silently restoring recovery. Other providers are not
+filtered by this SAC-owned setting.
+
+For a fleet shutdown or package/spec window, retain all desired maintenance
+job names in that file while omitting exactly `fleet-reconcile`,
+`restart-login-expired-agents`, and `resume-rate-limited-agents`. An installed
+new provider applies file edits on subsequent discovery without killing its
+unrelated child services. Installing a new Python wheel requires a new Dev
+supervisor process; SIGHUP only repeats discovery with already-imported code.
+Do not resume a previously paused supervisor carrying the old provider until
+the new process and persistent selection have been verified. In-flight
+recovery CLI processes must finish before modifying specs or packages; changing
+the allowlist does not cancel a restart already underway.
+
 The five-minute fleet reconciler handles agents with `restart.policy` set to
 `always` or `on-failure` whose local session is gone. It respects deliberate
 stops, host placement, a thirty-minute debounce, two attempts per rolling

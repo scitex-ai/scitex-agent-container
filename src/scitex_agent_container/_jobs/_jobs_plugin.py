@@ -12,13 +12,20 @@ the moment ``discover_jobs()`` actually calls it.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.jobs import JobSpec
 
 
-def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
+def provide_jobs(
+    *,
+    executable: str | None = None,
+    env: dict[str, str] | None = None,
+    root: Path | None = None,
+) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
     Thirteen jobs today (the accounts, maintenance, liveness and
@@ -64,14 +71,12 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
       (``restart.policy``) is dead code without it, and 33 agents once
       stayed dead for hours because of that.
 
-    * ``sac.restart-login-expired-agents`` (``kind="timer"``) — the SIBLING of
-      fleet-reconcile and the exact division of labor: fleet-reconcile owns
-      DEAD/no-session corpses; this owns LIVE-session-but-AUTH-DEAD agents (a
-      frozen "Login expired" banner) that fleet-reconcile explicitly leaves
-      alone, because touching a live session destroys context. Detection is
-      READ-ONLY + 2-run-corroborated; the restart runs through the pool-loading
-      start path (so a timer-driven restart cannot strip an agent's CCT/Telegram
-      token) and is rate-limited exactly like fleet-reconcile.
+    * ``sac.restart-login-expired-agents`` (``kind="timer"``) — the REPORT-ONLY
+      sibling of fleet-reconcile. It audits live auth-banner candidates with
+      --check. Frozen banners can remain on healthy idle sessions, so the
+      positional/liveness auditors refuse destructive admission, including
+      for older jobs carrying --apply. Native Hermes needs session/turn
+      evidence of actual failure or assigned-work stalls.
 
       DEPLOY GATE — declared here so the mechanism is version-controlled and
       TESTED, but it MUST NOT be enabled on a host until that host's
@@ -255,7 +260,7 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     # each resolves its own absolute `sac` through :mod:`._sac_bin`. Spliced
     # in THIS order to preserve the historical order of the nine specs, which
     # `collect_cron_jobs` and every existing test still read positionally.
-    return [
+    jobs = [
         *accounts_jobs(executable=executable),
         *maintenance_jobs(executable=executable),
         # The two AGENT-LIVENESS enforcers live together in
@@ -267,6 +272,38 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
         # positional reader above keeps its index.
         *reachability_jobs(executable=executable),
     ]
+
+    # Discovery is the actual PeriodicRunner execution boundary. Applying the
+    # selection only during legacy unit migration left the configured pause
+    # inert after scheduling moved into the collective supervisor.
+    from .._state.state_paths import agent_container_root
+    from ._migrate._selection import SELECT_ALL, is_selected, selection
+    from ._names import is_ours, local, resolve
+
+    chosen = selection(
+        env=dict(os.environ) if env is None else env,
+        home=Path.home(),
+        root=agent_container_root() if root is None else root,
+        strict=True,
+    )
+    if chosen is not None:
+        declared = {j.name for j in jobs}
+        normalized = set()
+        for token in chosen:
+            if token == SELECT_ALL:
+                normalized.add(token)
+                continue
+            try:
+                normalized.add(
+                    resolve(local(token) if is_ours(token) else token, declared)
+                )
+            except KeyError:
+                raise ValueError(
+                    "SAC jobs-enabled selection contains unknown job names; "
+                    "refusing job discovery rather than guessing"
+                ) from None
+        chosen = frozenset(normalized)
+    return [job for job in jobs if is_selected(job.name, chosen)]
 
 
 __all__ = ["provide_jobs"]
