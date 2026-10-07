@@ -295,7 +295,7 @@ def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_rest
     assert "not in scope" in html
 
 
-def test_detail_cross_agent_visible_to_crosshost_operator(client, loopback, env_save_restore):
+def test_detail_cross_agent_visible_to_crosshost_operator(client, loopback, env_save_restore, audit_log):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "op1")
     env_save_restore.set(CROSS_ENV, "op1")

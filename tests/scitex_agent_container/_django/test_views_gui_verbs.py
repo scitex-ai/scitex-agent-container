@@ -129,7 +129,7 @@ def test_create_rejects_invalid_name(client, loopback, env_save_restore):
     assert resp.status_code == 400 and "Invalid agent name" in json.loads(resp.content)["error"]
 
 
-def test_create_rejects_unknown_template(client, loopback, env_save_restore):
+def test_create_rejects_unknown_template(client, loopback, env_save_restore, audit_log):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "op1")
     env_save_restore.set(OPS_ENV, "op1")
