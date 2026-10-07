@@ -286,7 +286,8 @@ def test_fresh_heartbeat_repairs_stopped_projection_when_spec_no_longer_loads(
     state_dir = tmp_path / ".scitex" / "agent-container" / "runtime" / "hub"
     state_dir.mkdir(parents=True)
     (state_dir / "heartbeat.json").write_text(
-        json.dumps({"ts": time.time(), "pid": 0, "state": "running"}),
+        json.dumps({"ts": time.time(), "pid": 0, "state": "running",
+                    "turns_completed": 2, "tools_completed": 4}),
         encoding="utf-8",
     )
     from scitex_agent_container._lifecycle._status import agent_status
