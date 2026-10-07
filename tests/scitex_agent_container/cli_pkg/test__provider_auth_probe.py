@@ -108,7 +108,9 @@ def _serve_recording_user_agent():
 
 
 @contextmanager
-def _serve_hermes_chat(*, actual_model: str | None = None, accept_all=False):
+def _serve_hermes_chat(
+    *, actual_model: str | None = None, accept_all=False, completion=False
+):
     observed: list[dict] = []
 
     class _Handler(BaseHTTPRequestHandler):
@@ -145,7 +147,20 @@ def _serve_hermes_chat(*, actual_model: str | None = None, accept_all=False):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             resolved = actual_model or str(payload.get("model") or "")
-            self.wfile.write(json.dumps({"model": resolved, "choices": []}).encode())
+            choices = (
+                [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "OK"},
+                        "finish_reason": "stop",
+                    }
+                ]
+                if completion
+                else []
+            )
+            self.wfile.write(
+                json.dumps({"model": resolved, "choices": choices}).encode()
+            )
 
         def log_message(self, *args) -> None:
             pass
@@ -216,7 +231,7 @@ def _hermes_config(base_url: str, *, model="deepseek-v4.1-flash"):
     config.model = model
     config.claude.provider.extra_headers = {
         "User-Agent": "scitex-agent-container/hermes",
-        "x-opencode-session": "${sac:session_id}"
+        "x-opencode-session": "${sac:session_id}",
     }
     return config
 
@@ -306,9 +321,7 @@ def test_hermes_responses_probe_uses_exact_path_and_discriminates_keys(
 
     # Act
     with _serve_hermes_chat() as (base_url, observed):
-        config = _hermes_config(
-            f"{base_url}/v1/responses", model="gpt-5.6-sol"
-        )
+        config = _hermes_config(f"{base_url}/v1/responses", model="gpt-5.6-sol")
         verdict = probe_provider_auth(config, timeout=5)
 
     # Assert

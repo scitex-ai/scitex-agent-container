@@ -193,10 +193,10 @@ def _hermes_headers(config, provider, api_key: str) -> dict[str, str]:
     headers = {"User-Agent": "scitex-agent-container/preflight"}
     headers.update(
         {
-        str(name): str(value)
-        .replace(AGENT_ID_TEMPLATE, agent)
-        .replace(SESSION_ID_TEMPLATE, session)
-        for name, value in raw.items()
+            str(name): str(value)
+            .replace(AGENT_ID_TEMPLATE, agent)
+            .replace(SESSION_ID_TEMPLATE, session)
+            for name, value in raw.items()
         }
     )
     headers.update(
@@ -442,6 +442,13 @@ def _probe_hermes_responses_auth(
 
 def probe_provider_auth(config, *, timeout: float = 5.0) -> ProviderAuthVerdict:
     """Ask ``config``'s provider backend whether its resolved key works."""
+    policy = getattr(config, "hermes_failover", None)
+    if getattr(config, "harness", None) == "hermes" and policy is not None:
+        if policy.accounts or policy.engines:
+            from ._provider_auth_pool_probe import probe_declared_provider_auth
+
+            return probe_declared_provider_auth(config, timeout=timeout)
+
     from ..runtimes._apptainer_provider import (
         ProviderEnvError,
         provider_active,

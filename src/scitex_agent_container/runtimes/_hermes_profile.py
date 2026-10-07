@@ -22,6 +22,7 @@ from ..config._launch_plan import (
 )
 from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
+from ._hermes_key_probe import preflight_pools
 from ._hermes_profile_logs import ensure_hermes_log_files
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
@@ -438,6 +439,74 @@ def ensure_api_key(state_dir: Path) -> str:
     return value
 
 
+def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
+    """Probe before deploying files into an existing agent home."""
+    from .._lifecycle._hermes_restart_preflight import (
+        consume_prepared_route,
+        prepare_hermes_successor,
+    )
+
+    prepared = consume_prepared_route(config, launch_mode=launch_mode)
+    if prepared is None and (
+        config.hermes_failover.accounts or config.hermes_failover.engines
+    ):
+        targets = [home / ".hermes"]
+        upper = resolve_overlay_upper_home(config)
+        if upper is not None:
+            targets.append(upper / ".hermes")
+        prepared = prepare_hermes_successor(config, profiles=targets)
+    if prepared is not None:
+        config._hermes_prepared_provider_key = prepared.provider_key
+        return prepared.plan, prepared.selection, prepared.env, prepared.pools
+    plan = _launch_plan(config, launch_mode=launch_mode)
+    selection = compile_hermes_config(plan, workdir=str(config.workdir))
+    env, pools = configure_failover(config, selection)
+    targets = [home / ".hermes"]
+    upper = resolve_overlay_upper_home(config)
+    if upper is not None:
+        targets.append(upper / ".hermes")
+    preflight_pools(selection, pools, targets)
+    if pools:
+        selection["sac_managed_model"] = True
+    return plan, selection, env, pools
+
+
+def _apply_verified_route(rendered: dict, selection: dict) -> None:
+    for key in (
+        "model",
+        "providers",
+        "fallback_providers",
+        "credential_pool_strategies",
+        "sac_managed_model",
+    ):
+        if key in selection:
+            rendered[key] = selection[key]
+    if selection.get("credential_pool_strategies"):
+        # A stale base alias must not bypass the managed credential pool in
+        # main or auxiliary clients. The pool owns the live usable key.
+        for provider in rendered.get("providers", {}).values():
+            provider["key_env"] = ""
+            provider.pop("api_key", None)
+    judge = rendered.get("auxiliary", {}).get("goal_judge")
+    if judge:
+        from .._lifecycle._hermes_restart_preflight import same_goal_model
+
+        actual = rendered["model"]["default"]
+        if not same_goal_model(judge.get("model"), actual):
+            raise ValueError(
+                "Hermes verified fallback changes the authored goal judge model"
+            )
+        judge["model"] = actual
+
+
+def _profile_primary_key(config):
+    prepared = getattr(config, "_hermes_prepared_provider_key", None)
+    if prepared is not None:
+        del config._hermes_prepared_provider_key
+        return prepared
+    return resolve_primary_key(config, resolve_provider_api_key)
+
+
 def materialize_hermes_profile(
     config: AgentConfig, *, state_dir: Path, api_port: int
 ) -> tuple[str, list[Path]]:
@@ -445,6 +514,9 @@ def materialize_hermes_profile(
     state_dir.mkdir(parents=True, exist_ok=True)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
+    plan, selection, failover_env, credential_pools = _verified_route(
+        config, home, launch_mode="headless"
+    )
     deploy_to_home(config, str(home))
     setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
@@ -455,18 +527,19 @@ def materialize_hermes_profile(
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
     api_key = ensure_api_key(state_dir)
-    provider_key = resolve_primary_key(config, resolve_provider_api_key)
-    plan = _launch_plan(config)
+    provider_key = _profile_primary_key(config)
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
+        max_turns=config.hermes_max_turns,
+        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    failover_env, credential_pools = configure_failover(config, rendered)
+    _apply_verified_route(rendered, selection)
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -525,6 +598,9 @@ def materialize_hermes_tui_profile(
     ensure_api_key(state_dir)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
+    plan, selection, failover_env, credential_pools = _verified_route(
+        config, home, launch_mode="tui"
+    )
     if deploy_home:
         deploy_to_home(config, str(home))
         overlay_home = deploy_to_home_overlay(config)
@@ -537,18 +613,19 @@ def materialize_hermes_tui_profile(
         setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
-    provider_key = resolve_primary_key(config, resolve_provider_api_key)
-    plan = _launch_plan(config, launch_mode="tui")
+    provider_key = _profile_primary_key(config)
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
+        max_turns=config.hermes_max_turns,
+        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    failover_env, credential_pools = configure_failover(config, rendered)
+    _apply_verified_route(rendered, selection)
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )

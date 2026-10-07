@@ -82,6 +82,7 @@ def agent_start(
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
     managed_turn_probe: Callable[[AgentConfig], Any] | None = None,
     stop_instance_resolver: Callable[[AgentConfig, Any], dict | None] | None = None,
+    prepared_hermes_route: Any = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -204,6 +205,10 @@ def agent_start(
         one_shot=one_shot,
         dry_run=dry_run,
     )
+    if prepared_hermes_route is not None:
+        from ._hermes_restart_preflight import attach_prepared_route
+
+        attach_prepared_route(config, prepared_hermes_route)
 
     uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
@@ -273,8 +278,22 @@ def agent_start(
             # guards activity again in case another process appeared meanwhile.
             from ._restart_preflight import assert_successor_auth_usable
 
-            _auth_check = successor_auth_check or assert_successor_auth_usable
-            _auth_check(config)
+            if successor_auth_check is not None:
+                successor_auth_check(config)
+            elif config.harness == "hermes":
+                from ._hermes_restart_preflight import (
+                    assert_prepared_source_current,
+                    attach_prepared_route,
+                    prepare_hermes_successor,
+                )
+
+                prepared = getattr(config, "_hermes_prepared_route", None)
+                if prepared is None:
+                    prepared = prepare_hermes_successor(config)
+                    attach_prepared_route(config, prepared)
+                assert_prepared_source_current(prepared)
+            else:
+                assert_successor_auth_usable(config)
             agent_stop(
                 config.name,
                 registry=registry,

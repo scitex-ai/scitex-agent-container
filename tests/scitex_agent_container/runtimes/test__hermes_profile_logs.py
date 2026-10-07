@@ -319,6 +319,8 @@ def materialized_home_backings(tmp_path, request):
             endpoint=SimpleNamespace(auth_env="SYNTHETIC_KEY")
         ),
         "compile_hermes_config": lambda *args, **kwargs: {},
+        "configure_failover": lambda *args, **kwargs: ({}, {}),
+        "preflight_pools": lambda *args, **kwargs: None,
         "_mcp_servers": lambda *args, **kwargs: ({}, []),
         "_sac_profile_env": lambda *args: {},
         "_cct_profile_env": lambda *args: {},
@@ -330,10 +332,17 @@ def materialized_home_backings(tmp_path, request):
         runtime="tui",
         hermes_failover=SimpleNamespace(accounts={}, engines=[]),
         hermes_run_budget_seconds=60,
+        hermes_max_turns=None,
+        hermes_goals=None,
         hermes_compression=None,
         hermes_background_review=None,
         claude=SimpleNamespace(channels=None),
     )
+    # The route and key helpers now own the common preflight boundary. Bind
+    # them to the same controlled collaborators as the materializer under
+    # test, so this log-file test cannot acquire real credentials or probe.
+    namespace["_verified_route"] = _bind(profile._verified_route, namespace)
+    namespace["_profile_primary_key"] = _bind(profile._profile_primary_key, namespace)
     sdk = _bind(profile.materialize_hermes_profile, namespace)
     tui = _bind(profile.materialize_hermes_tui_profile, namespace)
     calls = {
