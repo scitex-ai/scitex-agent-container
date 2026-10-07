@@ -198,10 +198,8 @@ def test_heartbeat_only_never_claims_aliveness_to_another_agent() -> None:
     ) == ("unknown", "unknown", "unknown")
 
 
-def test_heartbeat_only_surfaces_work_state_vocabulary() -> None:
-    # The work-state vocabulary (idle/active/blocked/stalled) stays
-    # visible — it describes what the agent is DOING, not whether it
-    # is alive — while every aliveness verdict reads unknown.
+def test_heartbeat_only_result_is_present_for_unknown_beat() -> None:
+    # A beat with unknown aliveness still yields a status result.
     # Arrange
     beat = _beat(process_alive=None)
     # Act
@@ -210,8 +208,32 @@ def test_heartbeat_only_surfaces_work_state_vocabulary() -> None:
     )
     # Assert
     assert result is not None
-    assert result["resident_state"] == "idle"
-    assert (
+
+
+def test_heartbeat_only_surfaces_idle_resident_state() -> None:
+    # The work-state vocabulary (idle/active/blocked/stalled) stays
+    # visible — it describes what the agent is DOING, not whether it
+    # is alive.
+    # Arrange
+    beat = _beat(process_alive=None)
+    # Act
+    result = status_module._heartbeat_only_status(
+        "remote-worker", heartbeat_reader=lambda: [beat]
+    )
+    # Assert
+    assert result is not None and result["resident_state"] == "idle"
+
+
+def test_heartbeat_only_reports_unknown_aliveness() -> None:
+    # While work state stays visible, every aliveness verdict reads unknown.
+    # Arrange
+    beat = _beat(process_alive=None)
+    # Act
+    result = status_module._heartbeat_only_status(
+        "remote-worker", heartbeat_reader=lambda: [beat]
+    )
+    # Assert
+    assert result is not None and (
         result["status"],
         result["liveness"]["verdict"],
         result["observation"]["process"]["state"],
