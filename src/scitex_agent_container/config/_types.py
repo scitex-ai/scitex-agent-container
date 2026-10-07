@@ -22,6 +22,7 @@ from ._engine_types import EngineSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._hermes_compression import HermesCompressionSpec
 from ._hermes_failover import HermesFailoverSpec
+from ._hermes_goals import HermesGoalSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 from ._opencode_approval import DEFAULT_OPENCODE_APPROVAL_POLICY
 from ._opencode_run_budget import DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
@@ -340,6 +341,8 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hermes_background_review: bool = False
+    hermes_max_turns: int | None = None
+    hermes_goals: HermesGoalSpec = field(default_factory=HermesGoalSpec)
     hermes_failover: HermesFailoverSpec = field(default_factory=HermesFailoverSpec)
     hermes_yolo: bool = False
     hermes_run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS

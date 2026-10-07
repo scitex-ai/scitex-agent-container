@@ -9,6 +9,7 @@ from scitex_agent_container.config._hermes_compression import (
     parse_selected_hermes_compression,
 )
 from scitex_agent_container.config._hermes_config import compile_hermes_config
+from scitex_agent_container.config._hermes_goals import HermesGoalSpec
 from scitex_agent_container.config._launch_plan import LaunchPlan, compile_launch_plan
 
 
@@ -133,6 +134,50 @@ def test_default_agent_profile_leaves_hermes_turn_budgets_unset():
         result["agent"]["max_turns"],
         "run_budget_seconds" in result["agent"],
     ) == ("none", False)
+
+
+def test_explicit_turn_caps_and_same_engine_judge_use_supported_hermes_fields():
+    # Arrange
+    plan = _plan()
+    # Act
+    result = compile_hermes_config(
+        plan,
+        workdir="/work",
+        max_turns=99999,
+        goals=HermesGoalSpec(max_turns=99999, judge_engine=plan.engine.key),
+    )
+    # Assert
+    assert (
+        result["agent"]["max_turns"],
+        result["goals"],
+        result["auxiliary"]["goal_judge"],
+    ) == (
+        99999,
+        {"max_turns": 99999},
+        {"provider": "main", "model": plan.engine.model_id},
+    )
+
+
+@pytest.mark.parametrize("value", [True, False, 0, -1, "99999", 1.5])
+@pytest.mark.parametrize("field", ["agent", "goals"])
+def test_compiler_refuses_invalid_explicit_turn_caps(value, field):
+    # Arrange
+    options = (
+        {"max_turns": value}
+        if field == "agent"
+        else {"goals": HermesGoalSpec(max_turns=value)}
+    )
+    # Act / Assert
+    with pytest.raises(ValueError, match="positive integer"):
+        compile_hermes_config(_plan(), workdir="/work", **options)
+
+
+def test_compiler_refuses_judge_selected_from_another_engine():
+    # Arrange
+    goals = HermesGoalSpec(judge_engine="different-engine")
+    # Act / Assert
+    with pytest.raises(ValueError, match="selected agent engine"):
+        compile_hermes_config(_plan(), workdir="/work", goals=goals)
 
 
 def test_compiler_embeds_explicit_verified_system_prompt():

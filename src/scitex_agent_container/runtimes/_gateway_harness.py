@@ -119,14 +119,12 @@ class _HermesGatewayHarness:
 
     def parse_agent_options(self, config: Any) -> dict[str, Any]:
         compression = getattr(config, "hermes_compression", None)
-        return {
+        options = {
             "session": str(getattr(getattr(config, "claude", None), "session", "")),
             "background_review": bool(
                 getattr(config, "hermes_background_review", False)
             ),
-            "run_budget_seconds": getattr(
-                config, "hermes_run_budget_seconds", None
-            ),
+            "run_budget_seconds": getattr(config, "hermes_run_budget_seconds", None),
             "compression": (
                 dict(compression.__dict__) if compression is not None else {}
             ),
@@ -135,12 +133,20 @@ class _HermesGatewayHarness:
                 "model": str(getattr(config, "model", "") or ""),
             },
         }
+        max_turns = getattr(config, "hermes_max_turns", None)
+        goals = getattr(config, "hermes_goals", None)
+        if max_turns is not None:
+            options["max_turns"] = max_turns
+        if goals is not None and (goals.max_turns is not None or goals.judge_engine):
+            options["goals"] = dict(goals.__dict__)
+        return options
 
     def compile_profile(
         self, plan: Any, *, workdir: str, options: dict[str, Any]
     ) -> dict[str, Any]:
-        from ..config._hermes_config import compile_hermes_config
         from ..config._hermes_compression import HermesCompressionSpec
+        from ..config._hermes_config import compile_hermes_config
+        from ..config._hermes_goals import HermesGoalSpec
 
         compression = options.get("compression") or {}
         spec = (
@@ -152,6 +158,8 @@ class _HermesGatewayHarness:
             plan,
             workdir=workdir,
             run_budget_seconds=options.get("run_budget_seconds"),
+            max_turns=options.get("max_turns"),
+            goals=HermesGoalSpec(**(options.get("goals") or {})),
             background_review=bool(options.get("background_review", False)),
             compression=spec,
         )

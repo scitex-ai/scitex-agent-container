@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._hermes_goals import HermesGoalSpec
 from scitex_agent_container.runtimes._gateway_harness import (
     GATEWAY_HARNESSES,
     HERMES_GATEWAY,
@@ -24,6 +25,48 @@ def _hermes_config(**overrides):
     base = {"name": "worker", "harness": "hermes", "runtime": "tui"}
     base.update(overrides)
     return AgentConfig(**base)
+
+
+def test_authored_turn_and_judge_controls_reach_gateway_profile_compiler():
+    # Arrange
+    from scitex_agent_container.config._launch_plan import compile_launch_plan
+
+    config = _hermes_config(
+        hermes_max_turns=99999, hermes_goals=HermesGoalSpec(99999, "muse")
+    )
+    plan = compile_launch_plan(
+        {
+            "harness": "hermes",
+            "launch_mode": "tui",
+            "container": {"backend": "apptainer"},
+            "engine": "muse",
+            "available_engines": {
+                "muse": {
+                    "model": "muse-spark-1.3-contributor",
+                    "endpoints": {
+                        "openai-chat-completions": {
+                            "url": "http://synthetic.invalid/v1/chat/completions",
+                            "auth": {"kind": "bearer", "env": "SYNTHETIC_KEY"},
+                        }
+                    },
+                }
+            },
+        },
+        agent_name="lead",
+    )
+    # Act
+    options = HERMES_GATEWAY.parse_agent_options(config)
+    rendered = HERMES_GATEWAY.compile_profile(plan, workdir="/work", options=options)
+    # Assert
+    assert (
+        rendered["agent"]["max_turns"],
+        rendered["goals"]["max_turns"],
+        rendered["auxiliary"]["goal_judge"],
+    ) == (
+        99999,
+        99999,
+        {"provider": "main", "model": "muse-spark-1.3-contributor"},
+    )
 
 
 def test_hermes_adapter_satisfies_the_protocol():
