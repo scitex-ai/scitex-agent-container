@@ -35,47 +35,124 @@ SPEC = importlib.util.spec_from_file_location(
 RELEASE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RELEASE)
 PREFIX = "repos/scitex-ai/scitex-agent-container"
-OWNER = "scitex_agent_container-0.29.4.dist-info"
-VERSION = "0.29.4"
+# Version, owner dir and tag follow the LIVE project metadata: freezing them
+# rotted the whole file the moment pyproject moved past 0.29.4.
+_LIVE_PROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+VERSION = _LIVE_PROJECT["version"]
 TAG = "v" + VERSION
+OWNER = "scitex_agent_container-" + VERSION + ".dist-info"
 RUN = "773311"
 ATTEMPT = "2"
 STAMP = "src/scitex_agent_container/_provenance/_build_info.py"
-# Genuine static Hatchling 1.27 metadata projection of exact 121bf pyproject,
-# independently produced without executing a build hook or product import.
-GENERATED_METADATA = base64.b64decode(
-    "TWV0YWRhdGEtVmVyc2lvbjogMi40Ck5hbWU6IHNjaXRleC1hZ2VudC1jb250YWluZXIKVmVyc2lvbjogMC4yOS40ClN1bW1hcnk6IERlY2xhcmF0aXZlIFlBTUwtYmFzZWQgZnJhbWV3b3JrIGZvciBkZWZpbmluZywgbWFuYWdpbmcsIGFuZCBvcmNoZXN0cmF0aW5nIEFJIGNvZGluZyBhZ2VudCBpbnN0YW5jZXMKUHJvamVjdC1VUkw6IEhvbWVwYWdlLCBodHRwczovL2dpdGh1Yi5jb20veXdhdGFuYWJlMTk4OS9zY2l0ZXgtYWdlbnQtY29udGFpbmVyClByb2plY3QtVVJMOiBSZXBvc2l0b3J5LCBodHRwczovL2dpdGh1Yi5jb20veXdhdGFuYWJlMTk4OS9zY2l0ZXgtYWdlbnQtY29udGFpbmVyLmdpdApQcm9qZWN0LVVSTDogSXNzdWVzLCBodHRwczovL2dpdGh1Yi5jb20veXdhdGFuYWJlMTk4OS9zY2l0ZXgtYWdlbnQtY29udGFpbmVyL2lzc3VlcwpQcm9qZWN0LVVSTDogRG9jdW1lbnRhdGlvbiwgaHR0cHM6Ly9zY2l0ZXgtYWdlbnQtY29udGFpbmVyLnJlYWR0aGVkb2NzLmlvCkF1dGhvci1lbWFpbDogWXVzdWtlIFdhdGFuYWJlIDx5d2F0YW5hYmVAc2NpdGV4LmFpPgpMaWNlbnNlLUV4cHJlc3Npb246IEFHUEwtMy4wLW9ubHkKTGljZW5zZS1GaWxlOiBMSUNFTlNFCktleXdvcmRzOiBhZ2VudCxjbGF1ZGUtY29kZSxjb250YWluZXIsb3JjaGVzdHJhdGlvbixzY2l0ZXgseWFtbApDbGFzc2lmaWVyOiBEZXZlbG9wbWVudCBTdGF0dXMgOjogMyAtIEFscGhhCkNsYXNzaWZpZXI6IEVudmlyb25tZW50IDo6IENvbnNvbGUKQ2xhc3NpZmllcjogSW50ZW5kZWQgQXVkaWVuY2UgOjogRGV2ZWxvcGVycwpDbGFzc2lmaWVyOiBPcGVyYXRpbmcgU3lzdGVtIDo6IE9TIEluZGVwZW5kZW50CkNsYXNzaWZpZXI6IFByb2dyYW1taW5nIExhbmd1YWdlIDo6IFB5dGhvbiA6OiAzCkNsYXNzaWZpZXI6IFByb2dyYW1taW5nIExhbmd1YWdlIDo6IFB5dGhvbiA6OiAzLjExCkNsYXNzaWZpZXI6IFByb2dyYW1taW5nIExhbmd1YWdlIDo6IFB5dGhvbiA6OiAzLjEyCkNsYXNzaWZpZXI6IFByb2dyYW1taW5nIExhbmd1YWdlIDo6IFB5dGhvbiA6OiAzLjEzCkNsYXNzaWZpZXI6IFRvcGljIDo6IFNvZnR3YXJlIERldmVsb3BtZW50IDo6IExpYnJhcmllcwpSZXF1aXJlcy1QeXRob246ID49My4xMQpSZXF1aXJlcy1EaXN0OiBhMmEtc2RrW2h0dHAtc2VydmVyXT49MS4wLjIKUmVxdWlyZXMtRGlzdDogY2xhdWRlLWFnZW50LXNkaz49MC4xLjAKUmVxdWlyZXMtRGlzdDogY2xpY2s+PTguMgpSZXF1aXJlcy1EaXN0OiBodHRweD49MC4yOC4xClJlcXVpcmVzLURpc3Q6IHByb3RvYnVmPDYKUmVxdWlyZXMtRGlzdDogcHN1dGlsPj01LjkKUmVxdWlyZXMtRGlzdDogcHN5Y29wZ1tiaW5hcnldPj0zLjEKUmVxdWlyZXMtRGlzdDogcHlkYW50aWM8Myw+PTIuMTAKUmVxdWlyZXMtRGlzdDogcHl5YW1sPj02LjAKUmVxdWlyZXMtRGlzdDogcmljaD49MTMuMApSZXF1aXJlcy1EaXN0OiBydWFtZWwteWFtbD49MC4xOApSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtY2FyZHM+PTAuNTMuNApSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtY29uZmlnPj0wLjMuMApSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtY29udGFpbmVyPj0wLjQuMApSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtZGV2Pj0wLjYxLjAKUmVxdWlyZXMtRGlzdDogc2NpdGV4LWxvZ2dpbmc+PTAuMS41ClJlcXVpcmVzLURpc3Q6IHNjaXRleC1zc2g+PTEuMC4wClJlcXVpcmVzLURpc3Q6IHV2aWNvcm4+PTAuMjcKUmVxdWlyZXMtRGlzdDogd2Vic29ja2V0czwxNiw+PTE1ClByb3ZpZGVzLUV4dHJhOiBhbGwKUmVxdWlyZXMtRGlzdDogY2xhdWRlLWNvZGUtdGVsZWdyYW1tZXI+PTAuNi4xOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBkamFuZ28+PTQuMjsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogZmFzdG1jcDw0LD49Mi4wOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBmYXN0bWNwPDQsPj0zLjA7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IG1jcDwyLD49MS4yOTsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogbXlzdC1wYXJzZXI+PTIuMDsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogb3BlbmFpLWFnZW50cz49MC4xOS4wOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBvcGVuYWktY29kZXg+PTAuMTQ0LjQ7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHByZS1jb21taXQ+PTMuNS4wOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBweXRlc3QtYXN5bmNpbz49MC4yMzsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogcHl0ZXN0LWNvdj49NC4wLjA7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHB5dGVzdC10aW1lb3V0Pj0yLjA7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHB5dGVzdC14ZGlzdD49My4wLjA7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHB5dGVzdDw5LjAuMCw+PTcuMC4wOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtZ2VuYWlbZ2F0ZXdheV0+PTAuMS40OyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtZ2l0Pj0wLjMuMDsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogc2NpdGV4LWhwYz49MC42LjI7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHNjaXRleC1ub3RpZmljYXRpb24+PTAuMi45OyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtc2RrW2d1aV0+PTAuMy4xOyBleHRyYSA9PSAnYWxsJwpSZXF1aXJlcy1EaXN0OiBzcGhpbngtYXV0b2RvYy10eXBlaGludHM+PTEuMjU7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHNwaGlueC1jb3B5YnV0dG9uPj0wLjU7IGV4dHJhID09ICdhbGwnClJlcXVpcmVzLURpc3Q6IHNwaGlueC1ydGQtdGhlbWU+PTIuMDsgZXh0cmEgPT0gJ2FsbCcKUmVxdWlyZXMtRGlzdDogc3BoaW54Pj03LjA7IGV4dHJhID09ICdhbGwnClByb3ZpZGVzLUV4dHJhOiBjb2RleApSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtZ2VuYWlbZ2F0ZXdheV0+PTAuMS40OyBleHRyYSA9PSAnY29kZXgnClByb3ZpZGVzLUV4dHJhOiBjb2RleC1zZGsKUmVxdWlyZXMtRGlzdDogb3BlbmFpLWNvZGV4Pj0wLjE0NC40OyBleHRyYSA9PSAnY29kZXgtc2RrJwpQcm92aWRlcy1FeHRyYTogZGV2ClJlcXVpcmVzLURpc3Q6IGRqYW5nbz49NC4yOyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBmYXN0bWNwPDQsPj0zLjA7IGV4dHJhID09ICdkZXYnClJlcXVpcmVzLURpc3Q6IG1jcDwyLD49MS4yOTsgZXh0cmEgPT0gJ2RldicKUmVxdWlyZXMtRGlzdDogb3BlbmFpLWNvZGV4Pj0wLjE0NC40OyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBwcmUtY29tbWl0Pj0zLjUuMDsgZXh0cmEgPT0gJ2RldicKUmVxdWlyZXMtRGlzdDogcHl0ZXN0LWFzeW5jaW8+PTAuMjM7IGV4dHJhID09ICdkZXYnClJlcXVpcmVzLURpc3Q6IHB5dGVzdC1jb3Y+PTQuMC4wOyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBweXRlc3QtdGltZW91dD49Mi4wOyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBweXRlc3QteGRpc3Q+PTMuMC4wOyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBweXRlc3Q8OS4wLjAsPj03LjAuMDsgZXh0cmEgPT0gJ2RldicKUmVxdWlyZXMtRGlzdDogc2NpdGV4LWdpdD49MC4zLjA7IGV4dHJhID09ICdkZXYnClJlcXVpcmVzLURpc3Q6IHNjaXRleC1ocGM+PTAuNi4yOyBleHRyYSA9PSAnZGV2JwpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtc2RrW2d1aV0+PTAuMy4xOyBleHRyYSA9PSAnZGV2JwpQcm92aWRlcy1FeHRyYTogZG9jcwpSZXF1aXJlcy1EaXN0OiBteXN0LXBhcnNlcj49Mi4wOyBleHRyYSA9PSAnZG9jcycKUmVxdWlyZXMtRGlzdDogc3BoaW54LWF1dG9kb2MtdHlwZWhpbnRzPj0xLjI1OyBleHRyYSA9PSAnZG9jcycKUmVxdWlyZXMtRGlzdDogc3BoaW54LWNvcHlidXR0b24+PTAuNTsgZXh0cmEgPT0gJ2RvY3MnClJlcXVpcmVzLURpc3Q6IHNwaGlueC1ydGQtdGhlbWU+PTIuMDsgZXh0cmEgPT0gJ2RvY3MnClJlcXVpcmVzLURpc3Q6IHNwaGlueD49Ny4wOyBleHRyYSA9PSAnZG9jcycKUHJvdmlkZXMtRXh0cmE6IGd1aQpSZXF1aXJlcy1EaXN0OiBkamFuZ28+PTQuMjsgZXh0cmEgPT0gJ2d1aScKUmVxdWlyZXMtRGlzdDogc2NpdGV4LXNka1tndWldPj0wLjMuMTsgZXh0cmEgPT0gJ2d1aScKUHJvdmlkZXMtRXh0cmE6IG1jcApSZXF1aXJlcy1EaXN0OiBmYXN0bWNwPDQsPj0yLjA7IGV4dHJhID09ICdtY3AnClJlcXVpcmVzLURpc3Q6IG1jcDwyLD49MS4yOTsgZXh0cmEgPT0gJ21jcCcKUHJvdmlkZXMtRXh0cmE6IG5vdGlmeQpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtbm90aWZpY2F0aW9uPj0wLjIuOTsgZXh0cmEgPT0gJ25vdGlmeScKUHJvdmlkZXMtRXh0cmE6IG9wZW5haQpSZXF1aXJlcy1EaXN0OiBvcGVuYWktYWdlbnRzPj0wLjE5LjA7IGV4dHJhID09ICdvcGVuYWknClByb3ZpZGVzLUV4dHJhOiBzbHVybQpSZXF1aXJlcy1EaXN0OiBzY2l0ZXgtaHBjPj0wLjYuMjsgZXh0cmEgPT0gJ3NsdXJtJwpQcm92aWRlcy1FeHRyYTogdGVsZWdyYW0KUmVxdWlyZXMtRGlzdDogY2xhdWRlLWNvZGUtdGVsZWdyYW1tZXI+PTAuNi4xOyBleHRyYSA9PSAndGVsZWdyYW0nCkRlc2NyaXB0aW9uLUNvbnRlbnQtVHlwZTogdGV4dC9tYXJrZG93bgo="
-)
-GENERATED_ENTRIES = {
-    "scitex.apps": {
-        "agents": "scitex_agent_container._django.apps:AgentContainerDashboardConfig"
-    },
-    "scitex_dev.docs": {"scitex-agent-container": "scitex_agent_container"},
-    "scitex_dev.skills": {"scitex-agent-container": "scitex_agent_container"},
-    "scitex_dev.linter.plugins": {
-        "scitex-agent-container": "scitex_agent_container._linter_plugin:get_plugin"
-    },
-    "scitex_dev.jobs": {
-        "scitex-agent-container": "scitex_agent_container._jobs._jobs_plugin:provide_jobs"
-    },
-    "scitex_dev.system_deps": {
-        "scitex-agent-container": "scitex_agent_container._system_deps:provide"
-    },
-    "scitex_dev.store.plugins": {
-        "scitex-agent-container": "scitex_agent_container._store_plugin:provide"
-    },
-    "scitex_cards.hooks": {
-        "scitex-agent-container": "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
-    },
-    "scitex_dev.hooks": {
-        "scitex-agent-container": "scitex_agent_container._claude_hooks_plugin:provide_hooks"
-    },
-    "console_scripts": {
-        "scitex-agent-container": "_scitex_agent_container_bootstrap:cli_entry_point",
-        "sac": "_scitex_agent_container_bootstrap:cli_entry_point",
-        "sac-statusline": "scitex_agent_container.statusline:main",
-    },
-}
+
+
+def _projected_requirements(project):
+    """Render Requires-Dist lines from live source strings.
+
+    Each line normalizes through the verifier's own requirement_identity to
+    exactly the declared_metadata sets (including resolved self-extra
+    inheritance), so the frozen-projection refresh problem cannot recur.
+    """
+    identity = RELEASE.requirement_identity
+    own = RELEASE.normalized_name(project["name"])
+    optionals = project.get("optional-dependencies", {})
+    direct = {}
+    children = {}
+    for name, requirements in optionals.items():
+        key = RELEASE.normalized_name(name)
+        direct[key] = []
+        children[key] = set()
+        for value in requirements:
+            row = identity(value)
+            if row[0] == own:
+                children[key].update(row[1])
+            else:
+                direct[key].append(value)
+    resolved = {}
+
+    def collect(name, active):
+        if name in resolved:
+            return resolved[name]
+        if name in active or name not in direct:
+            raise ValueError("unknown or cyclic source extra: " + name)
+        out = list(direct[name])
+        for child in sorted(children[name]):
+            out.extend(collect(child, active | {name}))
+        resolved[name] = out
+        return out
+
+    rendered = list(project.get("dependencies", []))
+    for extra in sorted(direct):
+        for value in collect(extra, set()):
+            req, _, marker = value.partition(";")
+            if marker.strip():
+                rendered.append(
+                    f"{req.strip()}; ({marker.strip()}) and extra == '{extra}'"
+                )
+            else:
+                rendered.append(f"{value.strip()}; extra == '{extra}'")
+    return rendered
+
+
+def _projected_metadata(project):
+    """Static Hatch-style metadata projection of the LIVE pyproject.
+
+    Field-for-field it carries what metadata_source_identity checks (name,
+    version, requires-python, extras, requirements, license file); the
+    negative tests mutate these lines and demand refusal, so rendering must
+    stay exact — sorted for byte stability.
+    """
+    lines = [
+        "Metadata-Version: 2.4",
+        "Name: " + project["name"],
+        "Version: " + project["version"],
+        "Summary: " + project.get("description", ""),
+    ]
+    for label, url in sorted(project.get("urls", {}).items()):
+        lines.append(f"Project-URL: {label}, {url}")
+    for author in project.get("authors", []):
+        if author.get("email"):
+            lines.append(
+                "Author-email: "
+                + (author.get("name", "") + " <" + author["email"] + ">").strip()
+            )
+    if isinstance(project.get("license"), str):
+        lines.append("License-Expression: " + project["license"])
+    lines.append("License-File: LICENSE")
+    for keyword in sorted(project.get("keywords", [])):
+        lines.append("Keywords: " + keyword)
+    for classifier in sorted(project.get("classifiers", [])):
+        lines.append("Classifier: " + classifier)
+    if project.get("requires-python"):
+        lines.append("Requires-Python: " + project["requires-python"])
+    extras = sorted(
+        RELEASE.normalized_name(n) for n in project.get("optional-dependencies", {})
+    )
+    for extra in extras:
+        lines.append("Provides-Extra: " + extra)
+    for requirement in sorted(set(_projected_requirements(project))):
+        lines.append("Requires-Dist: " + requirement)
+    return ("\n".join(lines) + "\n").encode()
+
+
+# Genuine static metadata projection of the live pyproject, produced without
+# executing a build hook or product import.
+GENERATED_METADATA = _projected_metadata(_LIVE_PROJECT)
+
+
+def _projected_entries(project):
+    entries = {
+        group: dict(values) for group, values in project.get("entry-points", {}).items()
+    }
+    for key, group in (("scripts", "console_scripts"), ("gui-scripts", "gui_scripts")):
+        if project.get(key):
+            if group in entries:
+                raise ValueError("ambiguous source entry-point group")
+            entries[group] = dict(project[key])
+    return entries
+
+
+GENERATED_ENTRIES = _projected_entries(_LIVE_PROJECT)
 
 
 @contextlib.contextmanager
@@ -533,7 +610,7 @@ class ReleaseFixtures(unittest.TestCase):
         def changes(routes):
             record = routes[PREFIX + "/contents/pyproject.toml?ref=" + self.commit]
             raw = base64.b64decode(record["content"]).replace(
-                b'version = "0.29.4"', b'version = "0.29.40"', 1
+                b'version = "0.29.5"', b'version = "0.29.50"', 1
             )
             record.update(
                 content=base64.b64encode(raw).decode(),
@@ -813,7 +890,7 @@ class ReleaseFixtures(unittest.TestCase):
         for name, kind in (
             ("../escape", tarfile.REGTYPE),
             ("foreign/root", tarfile.REGTYPE),
-            ("scitex_agent_container-0.29.4/link", tarfile.SYMTYPE),
+            ("scitex_agent_container-0.29.5/link", tarfile.SYMTYPE),
         ):
             item = tarfile.TarInfo(name)
             item.type = kind
@@ -843,7 +920,7 @@ class ReleaseFixtures(unittest.TestCase):
         for name, kind in (
             ("../escape", tarfile.REGTYPE),
             ("foreign/root", tarfile.REGTYPE),
-            ("scitex_agent_container-0.29.4/link", tarfile.SYMTYPE),
+            ("scitex_agent_container-0.29.5/link", tarfile.SYMTYPE),
         ):
             item = tarfile.TarInfo(name)
             item.type = kind
@@ -868,7 +945,7 @@ class ReleaseFixtures(unittest.TestCase):
     def test_rehashed_sdist_source_version_and_body_refuse(self):
         # Arrange
         for key, before, after in (
-            ("pyproject.toml", b'version = "0.29.4"', b'version = "0.29.40"'),
+            ("pyproject.toml", b'version = "0.29.5"', b'version = "0.29.50"'),
             ("src/scitex_agent_container/__init__.py", b"", b"forged"),
         ):
             sdist = dict(self.sdist)
@@ -890,9 +967,9 @@ class ReleaseFixtures(unittest.TestCase):
         # Arrange
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            wheel = path / "scitex_agent_container-0.29.4-py3-none-any.whl"
+            wheel = path / "scitex_agent_container-0.29.5-py3-none-any.whl"
             wheel.write_bytes(zip_bytes(self.wheel))
-            (path / "scitex_agent_container-0.29.4.tar.gz").write_bytes(
+            (path / "scitex_agent_container-0.29.5.tar.gz").write_bytes(
                 tar_bytes(self.sdist)
             )
             # Act
@@ -907,13 +984,13 @@ class ReleaseFixtures(unittest.TestCase):
             # Assert
             (path / "extra.txt").unlink()
             wheel.rename(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError):
                 RELEASE.artifact_proof(path, TAG, self.commit, RUN, ATTEMPT, self.root)
             # Assert
             wheel.symlink_to(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError):
                 RELEASE.regular_bytes(wheel)
@@ -923,9 +1000,9 @@ class ReleaseFixtures(unittest.TestCase):
         # Arrange
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            wheel = path / "scitex_agent_container-0.29.4-py3-none-any.whl"
+            wheel = path / "scitex_agent_container-0.29.5-py3-none-any.whl"
             wheel.write_bytes(zip_bytes(self.wheel))
-            (path / "scitex_agent_container-0.29.4.tar.gz").write_bytes(
+            (path / "scitex_agent_container-0.29.5.tar.gz").write_bytes(
                 tar_bytes(self.sdist)
             )
             # Act
@@ -941,13 +1018,13 @@ class ReleaseFixtures(unittest.TestCase):
             ) == (True, True)
             (path / "extra.txt").unlink()
             wheel.rename(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.artifact_proof(path, TAG, self.commit, RUN, ATTEMPT, self.root)
             # Assert
             wheel.symlink_to(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.regular_bytes(wheel)
@@ -959,9 +1036,9 @@ class ReleaseFixtures(unittest.TestCase):
         # Arrange
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            wheel = path / "scitex_agent_container-0.29.4-py3-none-any.whl"
+            wheel = path / "scitex_agent_container-0.29.5-py3-none-any.whl"
             wheel.write_bytes(zip_bytes(self.wheel))
-            (path / "scitex_agent_container-0.29.4.tar.gz").write_bytes(
+            (path / "scitex_agent_container-0.29.5.tar.gz").write_bytes(
                 tar_bytes(self.sdist)
             )
             # Act
@@ -973,7 +1050,7 @@ class ReleaseFixtures(unittest.TestCase):
             # Assert
             (path / "extra.txt").unlink()
             wheel.rename(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.artifact_proof(path, TAG, self.commit, RUN, ATTEMPT, self.root)
@@ -983,7 +1060,7 @@ class ReleaseFixtures(unittest.TestCase):
                 bool(refusal["reason"]),
             ) == (True, True)
             wheel.symlink_to(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.regular_bytes(wheel)
@@ -993,9 +1070,9 @@ class ReleaseFixtures(unittest.TestCase):
         # Arrange
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            wheel = path / "scitex_agent_container-0.29.4-py3-none-any.whl"
+            wheel = path / "scitex_agent_container-0.29.5-py3-none-any.whl"
             wheel.write_bytes(zip_bytes(self.wheel))
-            (path / "scitex_agent_container-0.29.4.tar.gz").write_bytes(
+            (path / "scitex_agent_container-0.29.5.tar.gz").write_bytes(
                 tar_bytes(self.sdist)
             )
             # Act
@@ -1007,13 +1084,13 @@ class ReleaseFixtures(unittest.TestCase):
             # Assert
             (path / "extra.txt").unlink()
             wheel.rename(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.artifact_proof(path, TAG, self.commit, RUN, ATTEMPT, self.root)
             # Assert
             wheel.symlink_to(
-                wheel.with_name("scitex_agent_container-0.29.40-py3-none-any.whl")
+                wheel.with_name("scitex_agent_container-0.29.50-py3-none-any.whl")
             )
             with refuses(ValueError) as refusal:
                 RELEASE.regular_bytes(wheel)
@@ -1027,10 +1104,10 @@ class ReleaseFixtures(unittest.TestCase):
         # Arrange
         with tempfile.TemporaryDirectory() as directory:
             dist = Path(directory)
-            (dist / "scitex_agent_container-0.29.4-py3-none-any.whl").write_bytes(
+            (dist / "scitex_agent_container-0.29.5-py3-none-any.whl").write_bytes(
                 zip_bytes(self.wheel)
             )
-            (dist / "scitex_agent_container-0.29.4.tar.gz").write_bytes(
+            (dist / "scitex_agent_container-0.29.5.tar.gz").write_bytes(
                 tar_bytes(self.sdist)
             )
             with (

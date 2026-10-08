@@ -105,10 +105,25 @@ def _run_clean(root: Path, *args: str):
     )
 
 
-def _mkdir(root: Path, name: str, *, age_s: int = 0) -> Path:
-    """Create a fake scratch dir with a payload, optionally backdated."""
+def _mkdir(root: Path, name: str, *, age_s: int = 0, kind: str = "job") -> Path:
+    """Create an OWNED fake scratch dir with a payload, optionally backdated.
+
+    The ownership-guarded library refuses markerless directories, so fixtures
+    go through ``ci_tmpdir_prepare`` exactly like the real work steps do.
+    ``kind="group"`` records a dead self-group (the preparing shell is gone
+    by assertion time), which is what makes a leftover prune-reclaimable:
+    prune never touches job-kind directories, only dead groups.
+    ``kind="bare"`` keeps the old markerless layout for names the library
+    must refuse as unmanaged.
+    """
     d = root / name
-    (d / "site").mkdir(parents=True)
+    if kind != "bare":
+        owned = f'SAC_CI_GROUP_PID=$BASHPID ci_tmpdir_prepare "{d}"' if kind == "group" else f'ci_tmpdir_prepare "{d}"'
+        res = _bash(owned, root)
+        assert res.returncode == 0, f"prepare {d}: {res.stderr}"
+    else:
+        d.mkdir(parents=True)
+    (d / "site").mkdir(parents=True, exist_ok=True)
     (d / "site" / "payload.bin").write_bytes(b"x" * 1024)
     if age_s:
         when = time.time() - age_s
@@ -387,7 +402,9 @@ def test_cleanup_refusal_destroys_nothing(root: Path, spec: str):
 
 @pytest.fixture
 def leftover_prune(root: Path):
-    old = _mkdir(root, "ci-scitex_agent_container-11110000-1-3.12", age_s=_ANCIENT_S)
+    old = _mkdir(
+        root, "ci-scitex_agent_container-11110000-1-3.12", age_s=_ANCIENT_S, kind="group"
+    )
     return old, _bash("ci_tmpdir_prune", root)
 
 
@@ -444,8 +461,8 @@ def test_control_removing_the_run_identity_guard_destroys_the_sibling(
     """MUTATION CONTROL for the test above — a guard that cannot be shown to
     fail proves nothing about the green."""
     # Arrange
-    lib = _mutated_lib(tmp_path, '! -name "*-${run_id}-${attempt}-*" \\\n')
-    leg = _mkdir(root, _leg("3.12"), age_s=_ANCIENT_S)
+    lib = _mutated_lib(tmp_path, '! -name "*-${run_id}-${attempt}-*" ')
+    leg = _mkdir(root, _leg("3.12"), age_s=_ANCIENT_S, kind="group")
     # Act
     _bash("ci_tmpdir_prune", root, lib=lib)
     # Assert
@@ -462,13 +479,38 @@ def test_prune_spares_a_young_directory_from_another_run(root: Path):
     assert young.is_dir()
 
 
+def test_prune_spares_a_live_group_from_another_run_even_when_old(root: Path):
+    """A concurrent run's LIVE group scratch must survive the prune even when
+    backdated past the age floor and outside the run-identity name filter:
+    only group death grants deletion authority."""
+    # Arrange
+    sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    try:
+        old = root / "ci-scitex_agent_container-99990000-1-3.12"
+        res = _bash(
+            f'SAC_CI_GROUP_PID={sleeper.pid} ci_tmpdir_prepare "{old}"',
+            root,
+        )
+        assert res.returncode == 0, res.stderr
+        (old / "site").mkdir(parents=True)
+        when = time.time() - _ANCIENT_S
+        os.utime(old, (when, when))
+        # Act
+        _bash("ci_tmpdir_prune", root)
+        # Assert
+        assert old.is_dir(), "prune deleted a LIVE concurrent run's scratch"
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
 def test_control_dropping_the_age_floor_destroys_the_concurrent_run(
     root: Path, tmp_path: Path
 ):
     """MUTATION CONTROL for the age floor."""
     # Arrange
-    lib = _mutated_lib(tmp_path, '-mmin "+${age_min}" \\\n')
-    young = _mkdir(root, "ci-scitex_agent_container-99990000-1-3.12")
+    lib = _mutated_lib(tmp_path, '-mmin "+${age_min}"')
+    young = _mkdir(root, "ci-scitex_agent_container-99990000-1-3.12", kind="group")
     # Act
     _bash("ci_tmpdir_prune", root, lib=lib)
     # Assert
@@ -481,7 +523,7 @@ def test_control_dropping_the_age_floor_destroys_the_concurrent_run(
 def test_prune_leaves_unrelated_directories_alone(root: Path, name: str):
     """/tmp on that box holds 636 entries belonging to other things."""
     # Arrange
-    foreign = _mkdir(root, name, age_s=_ANCIENT_S)
+    foreign = _mkdir(root, name, age_s=_ANCIENT_S, kind="bare")
     # Act
     _bash("ci_tmpdir_prune", root)
     # Assert
@@ -507,7 +549,7 @@ def test_prune_covers_every_leaking_prefix(root: Path, prefix: str):
     release, which is slower to notice, not less of a leak."""
     # Arrange
     old = _mkdir(
-        root, f"{prefix}-scitex_agent_container-11110000-1-3.12", age_s=_ANCIENT_S
+        root, f"{prefix}-scitex_agent_container-11110000-1-3.12", age_s=_ANCIENT_S, kind="group"
     )
     # Act
     _bash("ci_tmpdir_prune", root)
@@ -794,7 +836,7 @@ def test_prune_survives_a_malformed_age_override_under_errexit(root: Path, age: 
 def test_prune_still_reclaims_a_leftover_under_a_valid_age_override(root: Path):
     """The clamp must not neuter the knob the tests above rely on."""
     # Arrange
-    old = _mkdir(root, "ci-scitex_agent_container-11110000-1-3.12", age_s=2 * 3600)
+    old = _mkdir(root, "ci-scitex_agent_container-11110000-1-3.12", age_s=2 * 3600, kind="group")
     # Act
     _prune_with_age(root, "1")
     # Assert
@@ -832,6 +874,27 @@ def wiring():
                 hit = _tail_invocation(step.get("run") or "", "exec-in-sif.sh")
                 if hit and hit[0] in _SCRATCH_CREATORS:
                     pairs.append((f"{wf.name}:{job_name}", hit, cleans))
+                direct = re.fullmatch(
+                    r"bash \.github/ci/(build-in-sif\.sh|publish-in-sif\.sh) (3\.12)",
+                    str(step.get("run") or "").strip(),
+                )
+                if direct:
+                    # Hosted release packaging owns a distinct exclusive root
+                    # and body group. Its EXIT trap, not the legacy fixed-path
+                    # cleanup table, owns removal after wait/group drainage.
+                    # The release test legs run in the separately fenced
+                    # shared callee, which the scan cannot see into.
+                    source = (_CI / direct[1]).read_text()
+                    assert "trap cleanup_owned_tmp EXIT" in source
+                    assert "owned child group remains" in source
+                    assert '"$current_id" = "$OWNED_TMP_ID"' in source
+                    pairs.append(
+                        (
+                            f"{wf.name}:{job_name}",
+                            (direct[1], direct[2]),
+                            [(direct[1], direct[2], "always() owned EXIT trap")],
+                        )
+                    )
     return pairs
 
 
@@ -839,7 +902,9 @@ def test_workflow_scan_finds_the_scratch_creating_steps(wiring):
     """Positive control: an empty scan would pass the two tests below
     vacuously — exactly the failure mode this whole fix is about."""
     # Arrange
-    expected_minimum = 4  # 2x pytest-matrix/release test legs, build, publish
+    # One canary exec wrapper plus both self-owned release packaging bodies.
+    # The release test legs run in the separately fenced shared callee.
+    expected_minimum = 3
     # Act
     found = len(wiring)
     # Assert
