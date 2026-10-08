@@ -119,15 +119,26 @@ def _audit_path() -> Path:
 def record_audit(event: dict[str, Any]) -> Path:
     """Append one structured line to the cross-host authorization audit trail."""
     path = _audit_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "epoch": time.time(),
         **event,
     }
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, separators=(",", ":")) + "\n")
-    return path
+    attempts = 0
+    while True:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+            return path
+        except (FileExistsError, FileNotFoundError):
+            # xdist workers share HOME with the runtime pruner: it can delete
+            # the directory between our mkdir and our write (or between the
+            # makedirs probe and its is_dir recheck). Retry once, then raise
+            # so a genuinely broken audit surface still fails loudly.
+            attempts += 1
+            if attempts > 1:
+                raise
 
 
 def _verified_user(request: Any) -> bool:
