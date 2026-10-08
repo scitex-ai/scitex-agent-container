@@ -282,7 +282,8 @@ def test_unloadable_spec_with_fresh_heartbeat_reports_unknown_not_running(
     # no local process probe, so the heartbeat repair cannot fire — the
     # reader learns NOTHING about aliveness. status is unknown (never a
     # false running), while the liveness verdict still records the fresh
-    # beat's work evidence via heartbeat_signal's work-evidence gate.
+    # beat's byte-delta work evidence via heartbeat_signal's work-evidence
+    # gate.
     missing_spec = tmp_path / "retired-authority-snapshot" / "spec.yaml"
     isolated_registry.add("hub", str(missing_spec), "cld-hub")
     # Liveness deliberately resolves its observer-owned heartbeat from HOME,
@@ -292,7 +293,8 @@ def test_unloadable_spec_with_fresh_heartbeat_reports_unknown_not_running(
     state_dir.mkdir(parents=True)
     (state_dir / "heartbeat.json").write_text(
         json.dumps({"ts": time.time(), "pid": 0, "state": "running",
-                    "turns_completed": 2, "tools_completed": 4}),
+                    "session_jsonl_delta_bytes": 64,
+                    "subagent_jsonl_delta_bytes": 0}),
         encoding="utf-8",
     )
     from scitex_agent_container._lifecycle._status import agent_status

@@ -9,6 +9,7 @@ from pathlib import Path
 from .._runners._session_state import read_heartbeat, read_instance_id, state_dir_for
 from .._state.authoritative_heartbeat import (
     AuthoritativeHeartbeatError,
+    heartbeat_delta_bytes,
     validate_heartbeat,
 )
 from ..runtimes._activity_source_identity import (
@@ -34,7 +35,6 @@ from ._observation_contract import (
 )
 
 _PRODUCER_EPOCH = uuid.uuid4().hex
-_COUNTERS: tuple[str, ...] = ()
 
 
 class UnsupportedObservationAdapter(CodexActivityError):
@@ -157,14 +157,11 @@ def runtime_observation(heartbeat, authority, *, now, progress_stale_s=None):
         lease_expired=now > deadline,
     )
     progress = _time(resident["progress_at"])
-    session_delta = resident.get("session_jsonl_delta_bytes")
-    subagent_delta = resident.get("subagent_jsonl_delta_bytes")
-    for delta in (session_delta, subagent_delta):
-        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
-            continue
+    deltas_ok = heartbeat_delta_bytes(resident)
+    for delta in deltas_ok:
         if delta > 0 and progress is not None and progress <= now:
-            result.session_jsonl_delta_bytes = float(session_delta) if isinstance(session_delta, (int, float)) and not isinstance(session_delta, bool) else None
-            result.subagent_jsonl_delta_bytes = float(subagent_delta) if isinstance(subagent_delta, (int, float)) and not isinstance(subagent_delta, bool) else None
+            result.session_jsonl_delta_bytes = deltas_ok[0]
+            result.subagent_jsonl_delta_bytes = deltas_ok[1]
             result.progress_at = progress
             result.progress_age_s = now - progress
             break

@@ -282,7 +282,7 @@ def _heartbeat_only_status(
     agent (which is every reader of this fallback — the local agent has
     a registry entry and never reaches here) must NOT yield a liveness
     verdict. Presence without a local process probe is UNKNOWN, always.
-    Work evidence (progress_seq, session movement) is surfaced; aliveness
+    Work evidence (session-jsonl byte deltas) is surfaced; aliveness
     is not claimed.
     """
     try:
@@ -343,9 +343,9 @@ def _heartbeat_only_status(
                         "source": "heartbeat",
                         # CCT 4187: the heartbeat carries WORK evidence, never
                         # aliveness, to another agent. resident_state stays
-                        # visible as work-state vocabulary (idle/active/
-                        # blocked/stalled describe what it is DOING), but the
-                        # verdict is unknown: presence is not aliveness.
+                        # visible as binary work-state vocabulary
+                        # (working/dead), but the verdict is unknown:
+                        # presence is not aliveness.
                         "verdict": "unknown",
                         "detail": f"authoritative heartbeat work state: {resident_state} (presence only, not aliveness)",
                     }

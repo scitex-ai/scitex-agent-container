@@ -56,13 +56,16 @@ __all__ = [
 # :func:`heartbeat_signal`.
 HEARTBEAT_STALE_S = 600.0
 
-# Work-evidence gate (operator order 2026-10-07): a FRESH beat alone is not
+# Work-evidence gate (HEARTBEAT SPEC 2026-10-08): a FRESH beat alone is not
 # ALIVE. The TUI beat is written by sac listen on tmux-session presence —
 # an idle agent beats forever without doing anything. ALIVE additionally
-# requires the record to show completed work: turns_completed > 0, or (for
-# agents whose harness never completes turns) tools_completed > 0. A fresh
-# beat with zero completed work is UNKNOWN ("present, no work evidence"),
-# never ALIVE — that is the misjudgment this gate exists to prevent.
+# requires the record to show produced work: session_jsonl_delta_bytes or
+# subagent_jsonl_delta_bytes > 0 (mechanically-measured file-size growth;
+# self-reported turns/tools counters are forbidden), plus a matching
+# nonce echo where the beat carries a challenge (dual confirmation).
+# A fresh beat with zero work evidence is UNKNOWN ("present, no work
+# evidence"), never ALIVE — that is the misjudgment this gate exists to
+# prevent.
 WORK_IDLE_STALE_S = 3600.0
 
 _HEARTBEAT_FILENAME = "heartbeat.json"
@@ -178,32 +181,54 @@ def heartbeat_signal(
         pass
 
     if age < stale_s:
-        # Work-evidence gate: a fresh beat proves presence, not work. Read
-        # the record's completed-work counters; zero work means UNKNOWN.
+        # Work-evidence gate (HEARTBEAT SPEC 2026-10-08): a fresh beat
+        # proves presence, not work. The ONLY work evidence is the two
+        # mechanically-measured byte deltas — session_jsonl_delta_bytes
+        # and subagent_jsonl_delta_bytes (file-size growth, never
+        # self-declared counters: turns/tools_completed are forbidden).
+        # Zero deltas mean UNKNOWN ("present, no work evidence"), never
+        # ALIVE. Where the record carries a nonce challenge, the
+        # reflected echo must also match (dual confirmation, CCT 4309).
         work_note = ""
         try:
             import json as _json2
 
-            rec2 = _json2.loads(hb.read_text(encoding="utf-8", errors="replace"))
+            from .._state.authoritative_heartbeat import (
+                heartbeat_delta_bytes,
+                nonce_echo_confirms,
+            )
+
+            rec2 = _json2.loads(hb.read_text(encoding='utf-8', errors='replace'))
             if isinstance(rec2, dict):
-                turns = rec2.get("turns_completed", 0)
-                tools = rec2.get("tools_completed", 0)
-                if isinstance(turns, int) and isinstance(tools, int):
-                    if turns <= 0 and tools <= 0:
-                        return Signal(
-                            SOURCE_HEARTBEAT,
-                            UNKNOWN,
-                            f"beaten {age:.0f}s ago but zero completed work "
-                            f"(turns_completed=0, tools_completed=0) — present, "
-                            f"no work evidence{pid_note}",
-                            instrument,
-                        )
-                    work_note = (
-                        f"; work evidence turns_completed={turns}, "
-                        f"tools_completed={tools}"
+                session_delta, subagent_delta = heartbeat_delta_bytes(rec2)
+                if session_delta + subagent_delta <= 0:
+                    return Signal(
+                        SOURCE_HEARTBEAT,
+                        UNKNOWN,
+                        'beaten %ds ago but zero work evidence '
+                        '(session_jsonl_delta_bytes=%g, '
+                        'subagent_jsonl_delta_bytes=%g) — present, '
+                        'no work evidence%s'
+                        % (age, session_delta, subagent_delta, pid_note),
+                        instrument,
                     )
+                echo = nonce_echo_confirms(rec2)
+                if echo is False:
+                    return Signal(
+                        SOURCE_HEARTBEAT,
+                        UNKNOWN,
+                        'beaten %ds ago with work bytes but the nonce echo '
+                        'does not match the challenge — agentic response '
+                        'unconfirmed%s' % (age, pid_note),
+                        instrument,
+                    )
+                work_note = (
+                    '; work evidence session_jsonl_delta_bytes=%g, '
+                    'subagent_jsonl_delta_bytes=%g'
+                    % (session_delta, subagent_delta)
+                )
         except (OSError, ValueError):
-            pass  # unreadable counters: fall through to presence verdict
+            pass  # unreadable deltas: fall through to presence verdict
         return Signal(
             SOURCE_HEARTBEAT,
             ALIVE,

@@ -122,7 +122,20 @@ def _write_heartbeat(
 ) -> None:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     hb = runtime_dir / "heartbeat.json"
-    hb.write_text(json.dumps({"pid": 0, "ts": time.time() - ts_seconds_ago}))
+    # HEARTBEAT SPEC 2026-10-08: supersession needs a beat that PROVES
+    # work, not just presence — the fixture beat carries positive
+    # mechanically-measured byte deltas, or the work-evidence gate reads
+    # UNKNOWN and nothing is superseded.
+    hb.write_text(
+        json.dumps(
+            {
+                "pid": 0,
+                "ts": time.time() - ts_seconds_ago,
+                "session_jsonl_delta_bytes": 128,
+                "subagent_jsonl_delta_bytes": 0,
+            }
+        )
+    )
     target = time.time() - mtime_seconds_ago
     os.utime(hb, (target, target))
 

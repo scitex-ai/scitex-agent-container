@@ -203,8 +203,7 @@ def test_heartbeat_only_never_claims_aliveness_to_another_agent() -> None:
 
 def test_heartbeat_only_surfaces_binary_work_verdict() -> None:
     # The binary work vocabulary (working/dead) stays visible — it
-    # describes what the agent is DOING, not whether it is alive —
-    # while every aliveness verdict reads unknown.
+    # describes what the agent is DOING, not whether it is alive.
     # Arrange
     beat = _beat()
     # Act
@@ -212,9 +211,19 @@ def test_heartbeat_only_surfaces_binary_work_verdict() -> None:
         "remote-worker", heartbeat_reader=lambda: [beat]
     )
     # Assert
-    assert result is not None
-    assert result["resident_state"] == "dead"
-    assert (
+    assert result is not None and result["resident_state"] == "dead"
+
+
+def test_heartbeat_only_never_claims_aliveness() -> None:
+    # Every aliveness verdict reads unknown on the heartbeat-only path.
+    # Arrange
+    beat = _beat()
+    # Act
+    result = status_module._heartbeat_only_status(
+        "remote-worker", heartbeat_reader=lambda: [beat]
+    )
+    # Assert
+    assert result is not None and (
         result["status"],
         result["liveness"]["verdict"],
         result["observation"]["process"]["state"],

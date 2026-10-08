@@ -23,6 +23,12 @@ from .test__handshake_snapshot import _ReadOnlyLedger, _record
 def native(tmp_path):
     layout = _layout(tmp_path)
     _promote(layout)
+    # The first beat only records size baselines (no work evidence yet).
+    # Session growth before the second beat is the mechanically-measured
+    # work the binary verdict reads — without it every verdict is DEAD.
+    session_log = layout["state"] / "session.jsonl"
+    session_log.write_text("native turn produced output\n")
+    _promote(layout, now=101)
     authority = capture_observation_authority(
         AGENT,
         HOST,
@@ -64,15 +70,16 @@ def test_real_writer_and_owned_metadata_publish_same_source(native):
     # Act
     row, store = _batch(native)
     evidence = row["observation"]
-    # Assert
+    # Assert: session growth across the two fixture beats reads WORKING
+    # with positive byte-delta work evidence — never counters, never phase.
     assert (
         evidence["authority"]["source"]["identity"],
         _cache(layout)["activity_source_id"],
-        evidence["runtime"]["tools_started"],
-        evidence["runtime"]["tools_completed"],
-        evidence["runtime"]["progress_stale_s"],
+        evidence["runtime"]["resident_state"],
+        evidence["runtime"]["session_jsonl_delta_bytes"] > 0,
+        "tools_completed" in evidence["runtime"],
         len(store.calls),
-    ) == (authority.source.identity, authority.source.identity, 1, 1, None, 1)
+    ) == (authority.source.identity, authority.source.identity, "working", True, False, 1)
 
 
 def test_passive_replay_keeps_server_stamp_and_no_ledger_write(native):
@@ -134,8 +141,13 @@ def test_old_work_identity_cannot_be_attached_to_current_source(native, key):
     heartbeat[key] = "old"
     # Act
     result = runtime_observation(heartbeat, authority, now=106)
-    # Assert
-    assert (result.state, result.tools_started, result.tools_completed) == (
+    # Assert: fenced identity refuses the stale source; deltas stay None,
+    # never a fabricated zero.
+    assert (
+        result.state,
+        result.session_jsonl_delta_bytes,
+        result.subagent_jsonl_delta_bytes,
+    ) == (
         "unknown",
         None,
         None,
@@ -159,39 +171,47 @@ def test_invalid_or_future_work_observation_does_not_fabricate_zero(native, time
     )
 
 
-def test_expired_work_lease_keeps_facts_and_counters_unknown(native):
+def test_expired_work_lease_keeps_facts_with_deltas_but_no_verdict(native):
     # Arrange
     layout, authority = native
-    # Act
-    result = runtime_observation(_cache(layout), authority, now=191)
-    # Assert
+    # Act: the fixture's second beat observed at t=101 with a 90s lease,
+    # so t=192 is past the deadline.
+    result = runtime_observation(_cache(layout), authority, now=192)
+    # Assert: clocks stay factual (age 91, 90s lease, expired), the
+    # measured deltas survive (progress needs no lease), but the binary
+    # verdict is withheld — an expired lease reads no verdict at all.
     assert (
         result.state,
         result.age_s,
         result.heartbeat_lease_s,
         result.lease_expired,
-        result.tools_started,
+        result.session_jsonl_delta_bytes,
+        result.resident_state,
         result.lease_remaining_s,
-    ) == ("unknown", 91, 90, True, None, -1)
+    ) == ("unknown", 91, 90, True, 28, None, -1)
 
 
 @pytest.mark.parametrize(
-    "threshold, stale", [(None, None), (96, False), (95, True), (0, True)]
+    "threshold", [None, 96, 95, 0], ids=["none", "equal", "below", "zero"]
 )
-def test_progress_uses_only_supplied_threshold_independently(native, threshold, stale):
-    # Arrange
+def test_progress_ignores_supplied_threshold_and_reads_deltas(native, threshold):
+    # Arrange: the threshold knob is accepted for call-site compatibility
+    # only — progress is byte-delta work evidence, never staleness math.
     layout, authority = native
     # Act
     result = runtime_observation(
         _cache(layout), authority, now=110, progress_stale_s=threshold
     )
-    # Assert
+    # Assert: progress age comes from the rollout event clock (110-14)
+    # regardless of threshold; no staleness fields exist on the contract.
     assert (
         result.progress_age_s,
-        result.progress_stale_s,
-        result.progress_is_stale,
-        result.tools_completed,
-    ) == (96, threshold, stale, 1)
+        result.session_jsonl_delta_bytes,
+        result.subagent_jsonl_delta_bytes,
+        result.resident_state,
+        hasattr(result, "progress_stale_s"),
+        hasattr(result, "progress_is_stale"),
+    ) == (96, 28, 0, "working", False, False)
 
 
 def test_missing_native_source_stamp_keeps_work_unknown(native):
@@ -202,7 +222,11 @@ def test_missing_native_source_stamp_keeps_work_unknown(native):
     # Act
     result = runtime_observation(heartbeat, authority, now=106)
     # Assert
-    assert (result.state, result.authority, result.tools_started) == (
+    assert (
+        result.state,
+        result.authority,
+        result.session_jsonl_delta_bytes,
+    ) == (
         "unknown",
         None,
         None,
@@ -216,12 +240,14 @@ def test_ledger_outage_does_not_erase_independent_work_or_liveness(native):
 
     # Act
     row, _ = _batch(native, reader=unavailable)
-    # Assert
+    # Assert: the ledger outage blinds the handshake, but the fenced
+    # byte-delta work evidence and the row's own liveness survive it.
     assert (
         row["observation"]["handshake"]["reason"],
-        row["observation"]["runtime"]["tools_completed"],
+        row["observation"]["runtime"]["resident_state"],
+        row["observation"]["runtime"]["session_jsonl_delta_bytes"] > 0,
         row["liveness"],
-    ) == ("ledger_unavailable", 1, {"verdict": "alive"})
+    ) == ("ledger_unavailable", "working", True, {"verdict": "alive"})
 
 
 def test_clock_regression_keeps_ages_unknown(native):
@@ -262,9 +288,9 @@ def test_existing_runtime_batch_reuses_birth_and_active_snapshot(native):
     # Assert
     assert (
         result["observation"]["authority"],
-        result["observation"]["runtime"]["tools_completed"],
+        result["observation"]["runtime"]["resident_state"],
         len(store.calls),
-    ) == (authority.model_dump(), 1, 1)
+    ) == (authority.model_dump(), "working", 1)
 
 
 def test_known_hermes_launch_remains_unsupported_without_ledger_or_provider_calls(
@@ -303,10 +329,10 @@ def test_tool_output_in_native_source_does_not_finalize_pending_ledger(native):
     assert (
         row["observation"]["handshake"]["current_exchange"]["phase"],
         row["observation"]["handshake"]["last_verified_reply"],
-        row["observation"]["runtime"]["tools_completed"],
+        row["observation"]["runtime"]["resident_state"],
         pending,
         len(store.calls),
-    ) == ("pending", None, 1, original, 1)
+    ) == ("pending", None, "working", original, 1)
 
 
 @pytest.mark.parametrize("harness", ["codex", "hermes"])
@@ -345,21 +371,22 @@ def test_same_name_foreign_row_cannot_borrow_local_evidence(
     by_host = {row["host"]: row for row in result}
     local = by_host[HOST]["observation"]
     foreign = by_host["foreign-peer"]["observation"]
-    # Assert
+    # Assert: the foreign row borrows nothing — no authority, no work
+    # verdict, no handshake — while the local row keeps its own.
     assert (
         local["authority"],
-        local["runtime"]["tools_completed"],
+        local["runtime"]["resident_state"],
         local["handshake"]["reason"],
         foreign["authority"],
         foreign["runtime"]["state"],
-        foreign["runtime"]["tools_completed"],
+        foreign["runtime"]["resident_state"],
         foreign["handshake"]["reason"],
         foreign["handshake"]["last_verified_reply"],
         by_host["foreign-peer"]["liveness"],
         len(store.calls),
     ) == (
         authority.model_dump() if harness == "codex" else None,
-        1 if harness == "codex" else None,
+        "working" if harness == "codex" else None,
         "" if harness == "codex" else "capability_unknown",
         None,
         "unknown",

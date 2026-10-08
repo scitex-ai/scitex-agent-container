@@ -13,12 +13,12 @@ from .._runners._session_state import read_heartbeat
 _UNKNOWN = "No authoritative runtime evidence is published."
 _RUNTIME_SIGNALS = ("queue", "inference", "tool", "wait")
 _FENCED_WRITERS = {"hermes-session-events", "codex-rollout-events"}
-_COUNTERS = (
-    "turns_accepted",
-    "turns_completed",
-    "tools_started",
-    "tools_completed",
-    "tools_inflight",
+# HEARTBEAT SPEC 2026-10-08: the ONLY work evidence is the two
+# mechanically-measured byte deltas. Self-reported step counters
+# (turns/tools_*) are forbidden and no longer published here.
+_WORK_DELTAS = (
+    "session_jsonl_delta_bytes",
+    "subagent_jsonl_delta_bytes",
 )
 _EVENT_TYPES = {
     "function_call",
@@ -106,7 +106,7 @@ def _fenced_heartbeat(heartbeat: dict, now: float) -> dict | None:
 
 def _typed_activity(heartbeat: dict, resident: dict | None) -> dict[str, Any]:
     keys = (
-        *_COUNTERS,
+        *_WORK_DELTAS,
         "last_event_type",
         "last_turn_status",
         "last_error_code",
@@ -115,20 +115,14 @@ def _typed_activity(heartbeat: dict, resident: dict | None) -> dict[str, Any]:
     result = {key: _unknown() for key in keys}
     if resident is None:
         return result
-    values = [heartbeat.get(key) for key in _COUNTERS]
-    if all(type(value) is int and value >= 0 for value in values):
-        accepted, completed, started, finished, inflight = values
-        if (
-            completed <= accepted
-            and finished <= started
-            and inflight <= started - finished
-        ):
-            result.update(
-                {
-                    key: _observed(value, f"heartbeat.{key}")
-                    for key, value in zip(_COUNTERS, values)
-                }
-            )
+    values = [_number(heartbeat.get(key)) for key in _WORK_DELTAS]
+    if all(value is not None and value >= 0 for value in values):
+        result.update(
+            {
+                key: _observed(value, f"heartbeat.{key}")
+                for key, value in zip(_WORK_DELTAS, values)
+            }
+        )
     status = heartbeat.get("last_turn_status")
     if isinstance(status, str) and status in {"complete", "error", "interrupted"}:
         result["last_turn_status"] = _observed(status, "heartbeat.last_turn_status")
@@ -201,7 +195,7 @@ def activity_projection(
         )
 
     progress_at = _number(resident.get("progress_at")) if resident else None
-    if progress_at is not None and (progress_at <= 0 or resident["progress_seq"] == 0):
+    if progress_at is not None and progress_at <= 0:
         progress_at = None
     projected["last_progress"] = (
         _observed(

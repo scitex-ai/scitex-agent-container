@@ -322,6 +322,14 @@ def write_heartbeat(
     if writer != "codex-rollout-events":
         payload.update(heartbeat_jsonl_fields(state_dir, now))
         payload.update(heartbeat_progress_fields(state_dir))
+    else:
+        # The codex promoter measures its own deltas (authoritative_fields
+        # below), so the generic enrichment is skipped — but the byte
+        # BASELINES must still be recorded, or the next beat has no prior
+        # size to diff against and codex deltas would read 0 forever.
+        for key, value in heartbeat_jsonl_fields(state_dir, now).items():
+            if key in {"session_jsonl_bytes", "subagent_jsonl_bytes"}:
+                payload[key] = value
     if authoritative_fields:
         # Harness-native instruments may replace fields whose generic source
         # does not exist for that harness.  Hermes, for example, has no SDK
@@ -352,13 +360,30 @@ def write_heartbeat(
             "session_id",
             "boot_id",
             "progress_at",
-            "progress_seq",
         )
         if all(authoritative_fields.get(key) not in {None, ""} for key in required):
             resident_state = "active" if state == STATE_BUSY else "idle"
             if str(payload.get("current_phase") or "").lower() == "blocked":
                 resident_state = "blocked"
+            # HEARTBEAT SPEC 2026-10-08: the resident projection carries
+            # ONLY the two mechanically-measured delta fields plus the
+            # nonce pair. ``progress_seq`` (self-reported counter) is
+            # forbidden and no longer required; absent deltas read as 0
+            # (no evidence yet on a first beat), absent nonce keys mean
+            # the writer is not enrolled in the challenge protocol.
             resident_heartbeat = {key: authoritative_fields[key] for key in required}
+            for delta_key in (
+                "session_jsonl_delta_bytes",
+                "subagent_jsonl_delta_bytes",
+            ):
+                delta = authoritative_fields.get(delta_key, 0)
+                if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+                    delta = 0
+                resident_heartbeat[delta_key] = max(0.0, float(delta))
+            for nonce_key in ("nonce_challenge", "nonce_echo"):
+                nonce_value = authoritative_fields.get(nonce_key)
+                if isinstance(nonce_value, str) and nonce_value:
+                    resident_heartbeat[nonce_key] = nonce_value
             prior_resident = (
                 previous_heartbeat.get("authoritative_heartbeat")
                 if isinstance(previous_heartbeat, dict)

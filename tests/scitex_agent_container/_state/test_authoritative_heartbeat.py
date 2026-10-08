@@ -10,9 +10,12 @@ from scitex_agent_container._state.authoritative_heartbeat import (
     issue_challenge_nonce,
     nonce_echo_confirms,
     read_card_lease,
+    read_challenge_nonce,
+    scan_session_echo,
     select_federated_heartbeats,
     validate_heartbeat,
     write_card_lease,
+    write_challenge_nonce,
 )
 
 
@@ -261,25 +264,48 @@ def test_nonce_missing_echo_is_dead_despite_positive_delta() -> None:
     assert state == "dead"
 
 
-def test_nonce_protocol_helpers() -> None:
+def test_issued_challenge_nonces_are_16_digit_tokens() -> None:
     # Arrange
     # Act
     challenge_a = issue_challenge_nonce()
     challenge_b = issue_challenge_nonce()
-    # Assert — 16-digit zero-padded tokens; confirm rules.
-    assert len(challenge_a) == 16 and challenge_a.isdigit()
-    assert len(challenge_b) == 16 and challenge_b.isdigit()
+    # Assert — zero-padded fixed-width tokens, greppable in session.jsonl.
     assert (
-        nonce_echo_confirms(
-            {"nonce_challenge": challenge_a, "nonce_echo": challenge_a}
-        )
-        is True
+        len(challenge_a) == 16
+        and challenge_a.isdigit()
+        and len(challenge_b) == 16
+        and challenge_b.isdigit()
     )
-    assert (
-        nonce_echo_confirms({"nonce_challenge": challenge_a, "nonce_echo": "0" * 16})
-        is False
+
+
+def test_byte_exact_echo_confirms_the_challenge() -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    confirmed = nonce_echo_confirms(
+        {"nonce_challenge": challenge, "nonce_echo": challenge}
     )
-    assert nonce_echo_confirms({}) is None
+    # Assert
+    assert confirmed is True
+
+
+def test_mismatched_echo_fails_confirmation() -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    confirmed = nonce_echo_confirms(
+        {"nonce_challenge": challenge, "nonce_echo": "0" * 16}
+    )
+    # Assert
+    assert confirmed is False
+
+
+def test_beat_without_challenge_defers_to_deltas() -> None:
+    # Arrange — writer not enrolled in the nonce protocol.
+    # Act
+    confirmed = nonce_echo_confirms({})
+    # Assert
+    assert confirmed is None
 
 
 def test_card_lease_role_is_bounded() -> None:
@@ -329,3 +355,80 @@ def test_failover_waits_for_old_host_lease_to_expire() -> None:
         selected[0]["host"],
         selected[0]["boot_id"],
     ) == (True, "compute-04", "new")
+
+
+def test_progress_seq_absent_passes_validation() -> None:
+    # Arrange — HEARTBEAT SPEC forbids requiring the self-reported counter.
+    no_counter = _beat()
+    del no_counter["progress_seq"]
+    # Act
+    first = validate_heartbeat(
+        no_counter, expected_agent="scholar", expected_host="compute-04", now=101.0
+    )
+    # Assert
+    assert "progress_seq" not in first
+
+
+def test_progress_seq_present_but_regressed_is_rejected() -> None:
+    # Arrange
+    regressed = _beat(seq=8, monotonic_ns=800, observed_at=102.0, progress_seq=3)
+    # Act
+    # Assert: monotonicity still enforced when the counter is sent.
+    with pytest.raises(AuthoritativeHeartbeatError, match="progress sequence"):
+        validate_heartbeat(
+            regressed,
+            expected_agent="scholar",
+            expected_host="compute-04",
+            now=103.0,
+            previous=_beat(),
+        )
+
+
+def test_challenge_enrollment_starts_empty(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    enrolled = read_challenge_nonce(tmp_path)
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert (enrolled, echoed) == (None, None)
+
+
+def test_challenge_round_trip_reads_back_enrolled_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    write_challenge_nonce(tmp_path, challenge)
+    # Assert
+    assert read_challenge_nonce(tmp_path) == challenge
+
+
+def test_session_echo_scan_confirms_agentically_repeated_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    write_challenge_nonce(tmp_path, challenge)
+    (tmp_path / "session.jsonl").write_text(
+        '{"event": "assistant-turn", "text": "ack %s done"}\n' % challenge
+    )
+    # Act
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert echoed == challenge
+
+
+def test_session_echo_scan_misses_an_unrepeated_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    (tmp_path / "session.jsonl").write_text('{"event": "assistant-turn"}\n')
+    # Act
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert echoed is None
+
+
+def test_malformed_challenge_nonce_is_rejected(tmp_path) -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(AuthoritativeHeartbeatError, match="invalid challenge"):
+        write_challenge_nonce(tmp_path, "not-a-nonce")

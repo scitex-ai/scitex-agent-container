@@ -324,17 +324,35 @@ def _native_work(tmp_path, rig):
         _meta() + _turn("task_started") + _tool("function_call", timestamp=14)
     )
     diary = _Diary()
+
+    def _write(directory, **fields):
+        return write_heartbeat(directory, db_writer=diary, **fields)
+
+    readers = dict(
+        instance_reader=lambda _: dict(layout["record"]),
+        birth_reader=lambda _: dict(birth),
+    )
     promote_codex_activity(
         layout["state"],
         TARGET["agent"],
         host=TARGET["host"],
-        write_fn=lambda directory, **fields: write_heartbeat(
-            directory, db_writer=diary, **fields
-        ),
-        instance_reader=lambda _: dict(layout["record"]),
-        birth_reader=lambda _: dict(birth),
+        write_fn=lambda directory, **fields: _write(directory, **fields),
         proc_root=layout["proc"],
         now_fn=lambda: 100,
+        **readers,
+    )
+    # A first beat only records size baselines (no work evidence yet).
+    # Session growth before the second beat is the mechanically-measured
+    # work the binary verdict reads.
+    (layout["state"] / "session.jsonl").write_text("native turn produced output\n")
+    promote_codex_activity(
+        layout["state"],
+        TARGET["agent"],
+        host=TARGET["host"],
+        write_fn=lambda directory, **fields: _write(directory, **fields),
+        proc_root=layout["proc"],
+        now_fn=lambda: 101,
+        **readers,
     )
     heartbeat = json.loads((layout["state"] / "heartbeat.json").read_text())
     rig.source.target.update(
@@ -366,15 +384,14 @@ async def test_missing_ack_while_native_work_is_busy_never_marks_process_stopped
     resident = classify_resident_state(
         heartbeat["authoritative_heartbeat"],
         now=102,
-        process_alive=True,
-        federation_connected=True,
-        progress_stale_s=90,
     )
-    # Assert
+    # Assert: the deadline miss proves nothing either way (verified_at stays
+    # None), while session growth reads busy with positive byte-delta work
+    # evidence and a WORKING verdict. Counters are gone from the contract.
     assert (
         result.json()["verified_at"],
         activity["operation"]["value"],
-        activity["tools_started"]["value"],
-        activity["tools_inflight"]["value"],
+        activity["session_jsonl_delta_bytes"]["value"] > 0,
+        "tools_started" in activity,
         resident,
-    ) == (None, "busy", 1, 1, "active")
+    ) == (None, "busy", True, False, "working")

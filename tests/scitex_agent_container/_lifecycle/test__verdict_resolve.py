@@ -259,9 +259,9 @@ def test_a_tui_agent_is_unknown_not_dead_when_the_probe_cannot_see_the_fleet():
 
 
 def test_a_fresh_heartbeat_is_alive(tmp_path):
-    # Arrange — work evidence present: turns completed.
+    # Arrange — work evidence present: positive session-jsonl byte delta.
     hb = tmp_path / "heartbeat.json"
-    hb.write_text('{"ts": 1.0, "pid": 0, "state": "running", "turns_completed": 3, "tools_completed": 5}')
+    hb.write_text('{"ts": 1.0, "pid": 0, "state": "running", "session_jsonl_delta_bytes": 64, "subagent_jsonl_delta_bytes": 0}')
     # Act
     signal = heartbeat_signal("grant", path=hb)
     # Assert

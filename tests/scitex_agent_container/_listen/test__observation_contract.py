@@ -31,10 +31,24 @@ def test_source_type_refuses_raw_path_payload():
         )
 
 
-@pytest.mark.parametrize("count", [True, "0", -1, 1.5])
-def test_counter_types_do_not_coerce_missing_or_invalid_evidence(count):
-    # Arrange
+@pytest.mark.parametrize("delta", [True, "0", float("nan"), float("inf")])
+def test_delta_types_do_not_coerce_missing_or_invalid_evidence(delta):
+    # Arrange — HEARTBEAT SPEC: the contract carries byte deltas, never
+    # step counters. Ambiguous numbers must raise, not coerce.
     # Act
     # Assert
     with pytest.raises(ValidationError):
-        RuntimeObservation(tools_started=count)
+        RuntimeObservation(session_jsonl_delta_bytes=delta)
+
+
+def test_delta_types_accept_measured_floats():
+    # Arrange — measured deltas are floats; the contract accepts them.
+    # Act
+    observed = RuntimeObservation(
+        session_jsonl_delta_bytes=28.0, subagent_jsonl_delta_bytes=0.0
+    )
+    # Assert
+    assert (
+        observed.session_jsonl_delta_bytes,
+        observed.subagent_jsonl_delta_bytes,
+    ) == (28.0, 0.0)

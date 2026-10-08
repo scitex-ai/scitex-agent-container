@@ -162,7 +162,13 @@ def validate_heartbeat(
         raise AuthoritativeHeartbeatError(f"invalid resident state: {state!r}")
     seq = _integer(payload, "seq")
     monotonic_ns = _integer(payload, "monotonic_ns")
-    progress_seq = _integer(payload, "progress_seq")
+    # OPERATOR ORDER 2026-10-08 (HEARTBEAT SPEC): ``progress_seq`` is a
+    # forbidden self-reported counter — the verdict never reads it, and
+    # writers no longer send it. Accept it when present (monotonicity
+    # still enforced within a boot) but never require it.
+    progress_seq: int | None = None
+    if payload.get("progress_seq") is not None:
+        progress_seq = _integer(payload, "progress_seq")
     observed_at = _number(payload, "observed_at")
     progress_at = _number(payload, "progress_at")
     lease_expires_at = _number(payload, "lease_expires_at")
@@ -195,8 +201,11 @@ def validate_heartbeat(
                 raise AuthoritativeHeartbeatError("heartbeat sequence is duplicate/out-of-order")
             if monotonic_ns <= _integer(previous, "monotonic_ns"):
                 raise AuthoritativeHeartbeatError("heartbeat monotonic time regressed")
-            if progress_seq < _integer(previous, "progress_seq"):
-                raise AuthoritativeHeartbeatError("heartbeat progress sequence regressed")
+            if progress_seq is not None and previous.get("progress_seq") is not None:
+                if progress_seq < _integer(previous, "progress_seq"):
+                    raise AuthoritativeHeartbeatError(
+                        "heartbeat progress sequence regressed"
+                    )
         elif seq > 1:
             raise AuthoritativeHeartbeatError("new heartbeat boot must reset sequence")
     return dict(payload)
@@ -272,13 +281,84 @@ def nonce_echo_confirms(heartbeat: Mapping[str, object]) -> bool | None:
     return _hmac.compare_digest(challenge, echo)
 
 
+def read_challenge_nonce(state_dir: Path) -> str | None:
+    """Return the listen-issued challenge for this agent, if any.
+
+    The challenge lives in ``<state_dir>/nonce-challenge.txt`` (written
+    by ``sac listen`` when it enrolls the agent in the nonce protocol,
+    via :func:`write_challenge_nonce`). The agent learns the token when
+    listen delivers it, and echoes it agentically in its own session
+    output; promoters reflect the observed echo as ``nonce_echo``.
+    Returns ``None`` when no challenge is enrolled — beats without a
+    challenge are decided on byte deltas alone. NEVER raises.
+    """
+    try:
+        token = _nonce_token(
+            Path(state_dir).joinpath("nonce-challenge.txt").read_text(
+                encoding="utf-8"
+            ).strip()
+        )
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return token
+
+
+def write_challenge_nonce(state_dir: Path, nonce: str) -> str:
+    """Enroll (or rotate) this agent's challenge nonce (listen side).
+
+    Persists the 16-digit ``nonce`` to ``nonce-challenge.txt`` so every
+    promoter reflects the same challenge until listen rotates it.
+    Raises :class:`AuthoritativeHeartbeatError` on a malformed token.
+    """
+    token = _nonce_token(nonce)
+    if token is None:
+        raise AuthoritativeHeartbeatError("invalid challenge nonce")
+    state_path = Path(state_dir)
+    state_path.mkdir(parents=True, exist_ok=True)
+    from .._runners._atomic import atomic_write_text
+
+    atomic_write_text(state_path / "nonce-challenge.txt", token + "\n")
+    return token
+
+
+def scan_session_echo(
+    state_dir: Path, challenge: str | None, *, tail_bytes: int = 16 * 1024
+) -> str | None:
+    """Return ``challenge`` iff the session.jsonl tail contains it.
+
+    The agent proves it can respond agentically by reproducing the
+    challenge token in its own session output — the token is greppable
+    as a fixed-width 16-digit string, so a trailing slice suffices and
+    long sessions stay cheap. Anything else (no challenge enrolled,
+    no session.jsonl, token absent) is ``None``: no echo observed.
+    NEVER raises.
+    """
+    token = _nonce_token(challenge)
+    if token is None:
+        return None
+    try:
+        size = Path(state_dir).joinpath("session.jsonl").stat().st_size
+    except OSError:
+        return None
+    if size <= 0:
+        return None
+    try:
+        with Path(state_dir).joinpath("session.jsonl").open("rb") as fh:
+            if size > tail_bytes:
+                fh.seek(size - tail_bytes)
+            tail = fh.read().decode("utf-8", errors="ignore")
+    except (OSError, ValueError):
+        return None
+    return token if token in tail else None
+
+
 def classify_resident_state(
     beats: Mapping[str, object] | Sequence[Mapping[str, object]],
     *,
     now: float,
     window_s: float = 600.0,
 ) -> str:
-    """Binary work判定: WORKING or DEAD, no intermediate states.
+    """Binary work verdict: WORKING or DEAD, no intermediate states.
 
     OPERATOR ORDERS 2026-10-07 (CCT 4276/4289/4291/4299/4305/4309): an
     agent is either WORKING or DEAD. The verdict reads ONLY the two
@@ -385,7 +465,10 @@ __all__ = [
     "issue_challenge_nonce",
     "nonce_echo_confirms",
     "read_card_lease",
+    "read_challenge_nonce",
+    "scan_session_echo",
     "select_federated_heartbeats",
     "validate_heartbeat",
     "write_card_lease",
+    "write_challenge_nonce",
 ]
