@@ -132,13 +132,16 @@ class TestBuildChildArgv:
         # Assert
         assert "alpha" in argv
 
-    def test_force_flag_propagated_when_set(self):
+    def test_start_rejects_process_replacement(self):
         # Arrange
-        # (force toggled on below)
+        refusal = ""
         # Act
-        argv = _argv(force=True)
+        try:
+            _argv(force=True)
+        except ValueError as exc:
+            refusal = str(exc)
         # Assert
-        assert "--force" in argv
+        assert "use sac agents restart" in refusal
 
     def test_session_mode_propagated_when_set(self):
         # Arrange

@@ -259,33 +259,15 @@ def _add_list_command(grp, group: str) -> None:
 
 
 def _adoption_options(verb: str):
-    """``--adopt`` / ``--force``, attached ONLY to the verb that has them.
+    """Offer ``--adopt`` only when installing a supervisor.
 
-    Both are real options on ``scitex-dev ecosystem timer install`` and on
-    nothing else in the group. Declaring them unconditionally would let
-    ``sac dev timer uninstall --force`` parse here and then fail downstream
-    on a command that has no such option — trading one misleading message
-    for another.
-
-    They exist at all because scitex-dev's refusal names them. MEASURED
-    2026-08-20: ``install`` on an existing unit prints "Use --adopt to keep
-    the existing supervisor (writes nothing), or --force to overwrite", and
-    following that advice returned ``Error: No such option '--force'``. The
-    wrapper forwarded the message and not the flags.
+    Adoption preserves the existing supervisor without writing it. SAC does
+    not expose scitex-dev's generic overwrite option.
     """
 
     def decorate(fn):
         if verb != "install":
             return fn
-        fn = click.option(
-            "--force",
-            is_flag=True,
-            default=False,
-            help=(
-                "Overwrite even when another supervisor exists. Forwarded "
-                "to scitex-dev, which reports loudly what it replaced."
-            ),
-        )(fn)
         fn = click.option(
             "--adopt",
             is_flag=True,
@@ -320,7 +302,7 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
         help="Confirm. Forwarded to scitex-dev.",
     )
     @_adoption_options(verb)
-    def _bulk(name, dry_run, yes, adopt=False, force=False, _verb=verb):
+    def _bulk(name, dry_run, yes, adopt=False, _verb=verb):
         _announce_deprecation(group)
         jobs = _jobs_or_degrade(group)
         if name is not None:
@@ -343,7 +325,7 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
                 # elements to seven and break assertions about a call shape
                 # this change does not alter.
                 adopt=adopt,
-                force=force,
+                force=False,
             )
             rc = rc or code
         raise SystemExit(rc)

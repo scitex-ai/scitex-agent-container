@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -108,7 +109,9 @@ def test_restart_unrelated_caller_returns_403(pg_schema: str, client, isolated_e
     assert response.status_code == 403
 
 
-def test_restart_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
+def test_restart_unrelated_caller_body_has_kind_acl_deny(
+    pg_schema: str, client, isolated_env
+):
     # Arrange
     # Act
     response = client.post(
@@ -134,6 +137,31 @@ def test_restart_with_host_bearer_does_not_403(client, isolated_env):
     response = client.post("/agents/ghost/restart", headers=_host_headers())
     # Assert
     assert response.status_code != 403
+
+
+@pytest.mark.parametrize("force", [True, False, "yes"])
+def test_restart_rejects_legacy_force_before_spawning(client, isolated_env, force):
+    # Arrange
+    # Act
+    response = client.post(
+        "/agents/ghost/restart", headers=_host_headers(), json={"force": force}
+    )
+    # Assert
+    assert (
+        response.status_code == 400
+        and "force is unsupported" in response.json()["error"]
+    )
+
+
+def test_detached_restart_retains_the_requested_drain_timeout():
+    # Arrange
+    # Act
+    argv = _build_detached_restart_argv(
+        _SAC, "agent-x", fresh=True, delay_s=3, log_path=_LOG, drain_timeout_s=12.5
+    )
+    inner = shlex.split(argv[3])
+    # Assert
+    assert "--drain-timeout" in inner and "12.5" in inner and "--force" not in inner
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +199,9 @@ def test_build_detached_argv_starts_with_setsid():
     # Arrange — non-fresh (resume) bounce for agent-x.
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
     # Assert — detachment is via setsid (child survives the caller's death).
     assert argv[0] == "setsid"
 
@@ -180,35 +210,45 @@ def test_build_detached_argv_is_setsid_sh_dash_c():
     # Arrange
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
     # Assert — the deferred command is carried as a single sh -c program.
     assert argv[:3] == ["setsid", "sh", "-c"]
 
 
-def test_build_detached_argv_nonfresh_forces_start_without_fresh():
+def test_build_detached_argv_nonfresh_restarts_without_fresh():
     # Arrange — non-fresh (resume) bounce.
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
     # Assert — `agents start --force` (spec-policy session == plain restart),
     # NO --fresh: the resuming restart is preserved.
-    assert "agents start agent-x --force --json" in argv[-1] and "--fresh" not in argv[-1]
+    assert (
+        "agents restart agent-x --yes --json" in argv[-1] and "--fresh" not in argv[-1]
+    )
 
 
 def test_build_detached_argv_fresh_appends_fresh_flag():
     # Arrange — fresh (no-resume) bounce.
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=True, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=True, delay_s=3, log_path=_LOG
+    )
     # Assert
-    assert "agents start agent-x --force --fresh --json" in argv[-1]
+    assert "agents restart agent-x --yes --fresh --json" in argv[-1]
 
 
 def test_build_detached_argv_defers_by_the_delay():
     # Arrange
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=5, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=5, log_path=_LOG
+    )
     # Assert — sleeps FIRST so THIS handler's 202 flushes to the caller.
     assert argv[-1].startswith("sleep 5;")
 
@@ -217,7 +257,9 @@ def test_build_detached_argv_logs_to_file_not_devnull():
     # Arrange
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
     # Assert — post-hoc debuggable: appended to the log, never /dev/null.
     assert _LOG in argv[-1] and "/dev/null" not in argv[-1]
 
@@ -226,9 +268,11 @@ def test_build_detached_argv_names_the_agent_in_the_bounce():
     # Arrange
     name = "agent-x"
     # Act
-    argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
     # Assert — the forced bounce targets exactly this agent.
-    assert "start agent-x --force" in argv[-1]
+    assert "restart agent-x --yes" in argv[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +345,7 @@ def test_self_restart_spawns_detached_setsid_bounce(client, isolated_env):
         client.post("/agents/alice/restart", headers=headers, json=_as_node("alice"))
     argv = recorder.calls[0][0]
     # Assert — a detached (setsid) forced bounce naming the agent was spawned.
-    assert argv[0] == "setsid" and "agents start alice --force --json" in argv[-1]
+    assert argv[0] == "setsid" and "agents restart alice --yes --json" in argv[-1]
 
 
 def test_self_restart_fresh_bounce_carries_fresh_flag(client, isolated_env):
@@ -316,7 +360,7 @@ def test_self_restart_fresh_bounce_carries_fresh_flag(client, isolated_env):
             json={**_as_node("alice"), "fresh": True},
         )
     # Assert
-    assert "agents start alice --force --fresh --json" in recorder.calls[0][0][-1]
+    assert "agents restart alice --yes --fresh --json" in recorder.calls[0][0][-1]
 
 
 def test_self_restart_bounce_env_strips_apptainer_marker(client, isolated_env):
@@ -327,10 +371,13 @@ def test_self_restart_bounce_env_strips_apptainer_marker(client, isolated_env):
     os.environ["APPTAINER_CONTAINER"] = "/some/parent.sif"
     try:
         # Act
-        with _swap("sac_binary", lambda: "/fake/sac"), _swap(
-            "_spawn_detached", recorder
+        with (
+            _swap("sac_binary", lambda: "/fake/sac"),
+            _swap("_spawn_detached", recorder),
         ):
-            client.post("/agents/alice/restart", headers=headers, json=_as_node("alice"))
+            client.post(
+                "/agents/alice/restart", headers=headers, json=_as_node("alice")
+            )
     finally:
         os.environ.pop("APPTAINER_CONTAINER", None)
     # Assert
@@ -357,7 +404,9 @@ def test_admin_restart_caller_none_does_not_self_schedule(client, isolated_env):
     assert recorder.calls == [] and "self_restart" not in body
 
 
-def test_node_caller_restarting_peer_does_not_self_schedule(pg_schema: str, client, isolated_env):
+def test_node_caller_restarting_peer_does_not_self_schedule(
+    pg_schema: str, client, isolated_env
+):
     # Arrange — neurovista restarts scitex-todo (mesh-allowed, caller != name):
     # the self-restart branch must be skipped, sync path taken.
     record_comms_policy(name="neurovista", group_name="researcher")

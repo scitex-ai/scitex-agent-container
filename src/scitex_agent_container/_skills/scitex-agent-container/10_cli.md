@@ -89,10 +89,10 @@ sac listen start --print-token            # Echo the bearer token & exit (does n
 sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
 sac listen stop                           # Stop the daemon (idempotent — exit 0 if already down)
-sac listen stop --force                   # SIGKILL the daemon + any wedged port holder immediately
+sac listen stop                          # stop the daemon
 sac listen stop --json                    # Machine-readable result envelope
 sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
-sac listen restart --force                # SIGKILL the daemon + any wedged port holder immediately
+sac listen restart                       # stop, wait, then relaunch
 ```
 
 Options may be given on the verb (`sac listen start --bind …`) or on the

@@ -1,8 +1,8 @@
-"""Provision and gate agent-owned worktrees through the neutral policy CLI.
+"""Provision and gate agent-owned worktrees through SAC's packaged policy CLI.
 
-SAC owns lifecycle mechanics only. Every allow/deny decision is delegated to
-the operator-owned ``scitex-worktree-policy`` executable; no policy rule is
-implemented here.
+The policy checker ships with SAC. Host policy configuration lives under
+``~/.scitex/agent-container/worktree-policy``; this lifecycle adapter delegates
+all allow/deny decisions to the same checker used by ``sac worktree policy``.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -29,8 +30,12 @@ __all__ = [
     "worktree_policy_artifact",
 ]
 
+PolicyCLI = Path | str | tuple[str, ...]
 DEFAULT_WORKTREE_POLICY_CLI = (
-    Path.home() / ".dotfiles" / "src" / ".bin" / "scitex-worktree-policy"
+    sys.executable,
+    str(
+        Path(__file__).resolve().parent.parent / "_worktree_policy_cli" / "__main__.py"
+    ),
 )
 _SHA256_LENGTH = 64
 _OWNER_FILE = "worktree-owner.json"
@@ -73,10 +78,11 @@ def _diagnostic(stderr: str) -> str:
     return stderr.strip() or "no diagnostic on stderr"
 
 
-def _invoke(cli: Path, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+def _invoke(cli: PolicyCLI, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+    command = list(cli) if isinstance(cli, tuple) else [str(Path(cli).expanduser())]
     try:
         result = subprocess.run(
-            [str(cli), *args],
+            [*command, *args],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -297,7 +303,7 @@ def _worktree_add_argv(plan: WorktreePlan, *, branch_exists: bool) -> list[str]:
 
 
 def _authorize_create(
-    cli: Path, plan: WorktreePlan, *, branch_exists: bool, timeout_s: float
+    cli: PolicyCLI, plan: WorktreePlan, *, branch_exists: bool, timeout_s: float
 ) -> None:
     command = shlex.join(_worktree_add_argv(plan, branch_exists=branch_exists))
     result = _invoke(
@@ -318,13 +324,13 @@ def plan_task_worktree(
     config: Any,
     *,
     provision: bool,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: PolicyCLI = DEFAULT_WORKTREE_POLICY_CLI,
     timeout_s: float = 10.0,
 ) -> WorktreePlan | None:
     """Resolve, optionally provision, and select the task's linked worktree."""
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
+    cli = cli_path
     authored = Path(str(config.expanded_workdir)).expanduser().resolve()
     info = _invoke(cli, ["inspect", "--repo", str(authored)], timeout_s=timeout_s)
     surface = _text(info, "surface")
@@ -419,13 +425,13 @@ def enforce_task_worktree_policy(
     config: Any,
     *,
     provision: bool = True,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: PolicyCLI = DEFAULT_WORKTREE_POLICY_CLI,
     timeout_s: float = 10.0,
 ) -> WorktreePolicyProof | None:
     """Provision/reuse and approve a write-capable agent task."""
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
+    cli = cli_path
     projection = _invoke(cli, ["check-projections"], timeout_s=timeout_s)
     if projection.get("decision") != "current":
         raise WorktreePolicyError("worktree policy projections were not current")

@@ -19,6 +19,7 @@ from scitex_agent_container.runtimes._apptainer_inner_argv_tui import (
 from scitex_agent_container.runtimes._hermes_profile import (
     validate_hermes_tui_profile,
 )
+from scitex_agent_container.runtimes._hermes_sac_runtime import sac_installation
 from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
@@ -328,7 +329,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         True,
         "postgresql://scitex-primary:55432/scitex",
         "operator__business",
-        "/home/agent/.sac-pgpass",
+        "/home/agent/.scitex/agent-container/runtime/pgpass",
     )
 
 
@@ -382,6 +383,11 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
 
     # Act: this is the production config -> runtime -> profile -> argv seam.
     config = load_config(spec_path)
+    # Explicitly expose the compiling installation and every interpreter
+    # alias, just as a fleet's existing home/scratch binds do in production.
+    for path in sac_installation(config).required_paths:
+        if path.is_dir():
+            config.apptainer.binds.append(f"{path}:{path}:ro")
     select_engine_at_start(config, None, log=False)
     runtime = _get_runtime(config)
     home = runtime.materialize_workspace(config)
@@ -395,14 +401,14 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
     validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
     profile = yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
     cards_env = profile["mcp_servers"]["scitex-cards"]["env"]
-    generated_passfile = home / ".sac-pgpass"
+    generated_passfile = home / ".scitex" / "agent-container" / "runtime" / "pgpass"
     rendered_argv = " ".join(argv)
 
     # Assert
     assert (
         isinstance(runtime, HermesTuiSessionRuntime)
         and cards_env["PGUSER"] == "operator__scitex-hub"
-        and cards_env["PGPASSFILE"] == "/home/agent/.sac-pgpass"
+        and cards_env["PGPASSFILE"] == "/home/agent/.scitex/agent-container/runtime/pgpass"
         and cards_env["SCITEX_STORE_DSN"] == "postgresql://scitex-primary:55432/scitex"
         and generated_passfile.read_text(encoding="utf-8")
         == "scitex-primary:55432:scitex:operator__scitex-hub:correct\n"

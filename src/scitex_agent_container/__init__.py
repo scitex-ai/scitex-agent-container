@@ -115,8 +115,7 @@ def __getattr__(name: str):
         if name not in _LAZY:
             from scitex_agent_container import _api as _api_mod
 
-            for _n in _API_NAMES:
-                _LAZY[_n] = getattr(_api_mod, _n)
+            _LAZY[name] = getattr(_api_mod, name)
         return _LAZY[name]
     if name == "peer":
         if "peer" not in _LAZY:
@@ -147,6 +146,11 @@ def __getattr__(name: str):
             _LAZY["validate_config"] = _vc
         return _LAZY[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Advertise the public API for discovery without resolving lazy imports."""
+    return sorted(set(__all__) | set(globals()))
 
 
 # EOF

@@ -1,20 +1,9 @@
-"""One login-expired auto-restart pass, end to end, with real state.
+"""Unproven auth banners cannot restart or spend budget in the real pass.
 
-Detection (the real ``evaluate_agents`` corroboration) runs against injected
-panes; the ONE irreversible act (the restart) is a recording callable, and the
-budget/history/event-log are real on-disk state. No mocks of anything under
-test.
-
-The load-bearing safety property is that a persistently-failing agent is
-RECORDED, never bounced forever: these tests pin the debounce, the hourly cap,
-and the durable record that replaces an infinite restart loop.
-
-The second load-bearing property is that a pass cannot report a clean fleet it
-did not look at. An agent whose pane will not capture, and a registered agent
-with no session at all, must both leave a VISIBLE report and drive the exit
-code to could-not-determine — while still never being restarted, because an
-unread pane is no evidence of a wedge. Exit 0 is reserved for a roster fully
-accounted for.
+Detection uses real captured panes and history/events use real temporary
+files. A recording restart callable is evidence that even --apply cannot
+bypass the positional/liveness admission contract. Unreadable roster/pane
+reports stay visible, while sessionless registrations delegate to reconcile.
 """
 
 from __future__ import annotations
@@ -58,25 +47,25 @@ def _verdict(outcome, name: str) -> Verdict:
     return next(r.verdict for r in outcome.reports if r.name == name)
 
 
-# --- the happy path: a corroborated wedge is restarted --------------------
+# --- even an identical trailing auth banner is report-only ---------------
 
 
-def test_corroborated_login_expired_agent_is_restarted(history, events):
+def test_frozen_banner_does_not_authorize_a_restart(history, events):
     # Arrange — one frozen-banner agent, empty history (first sight).
     rec = Recorder()
     # Act
     _run(stuck("hpc"), history, events, rec)
-    # Assert — the single irreversible act happened, exactly once, for it.
-    assert rec.names == ["hpc"]
+    # Assert — pane-only evidence never enters destructive restart admission.
+    assert rec.names == []
 
 
-def test_corroborated_agent_reports_restarted(history, events):
+def test_frozen_banner_reports_unproven(history, events):
     # Arrange
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), history, events, rec)
     # Assert
-    assert _verdict(outcome, "hpc") == Verdict.RESTARTED
+    assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
 # --- the safety gate: a transient / single-run flag is NOT restarted ------
@@ -103,13 +92,13 @@ def test_check_mode_does_not_restart(history, events):
     assert rec.names == []
 
 
-def test_check_mode_reports_would_restart(history, events):
+def test_check_mode_reports_unproven(history, events):
     # Arrange
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), history, events, rec, apply=False)
     # Assert
-    assert _verdict(outcome, "hpc") == Verdict.WOULD_RESTART
+    assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
 # --- the debounce bound: a just-restarted agent is left to boot ------------
@@ -126,14 +115,14 @@ def test_agent_inside_the_debounce_is_not_restarted_again(history, events):
     assert rec.names == []
 
 
-def test_agent_inside_the_debounce_reports_cooling_down(history, events):
+def test_recent_restart_does_not_turn_a_banner_into_admission(history, events):
     # Arrange
     _seed_history(history, {"hpc": [NOW - 100]})
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), history, events, rec)
     # Assert
-    assert _verdict(outcome, "hpc") == Verdict.COOLING_DOWN
+    assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
 # --- the hourly cap: persistently failing → record, NOT an infinite bounce -
@@ -155,17 +144,17 @@ def test_agent_over_the_hourly_cap_is_not_restarted(history, events):
     assert rec.names == []
 
 
-def test_agent_over_the_hourly_cap_reports_over_budget(history, events):
+def test_spent_budget_does_not_turn_a_banner_into_admission(history, events):
     # Arrange
     _seed_history(history, {"hpc": [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100]})
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), history, events, rec)
     # Assert
-    assert _verdict(outcome, "hpc") == Verdict.OVER_BUDGET
+    assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
-def test_over_budget_agent_is_recorded_as_degraded(history, events):
+def test_unproven_banner_does_not_record_confirmed_degradation(history, events):
     # Arrange — the whole point of the cap: instead of bouncing forever, the
     # agent that cannot be healed leaves a durable record in sac's own log.
     # This is the ONE test here that lets the recording rail run (the rest
@@ -174,9 +163,10 @@ def test_over_budget_agent_is_recorded_as_degraded(history, events):
     rec = Recorder()
     # Act
     _run(stuck("hpc"), history, events, rec, alarm=True)
-    # Assert — exactly one degraded record, for this agent.
+    # Assert — no unproven banner is recorded as confirmed degradation.
     degraded = read_events(events, subsystem=SUBSYSTEM, event=SUBJECT_DEGRADED)
-    assert [e.subject for e in degraded] == ["hpc"]
+    assert degraded == []
+    assert rec.names == []
 
 
 # --- can't read our own memory → refuse, never a blind loop ---------------
@@ -193,13 +183,13 @@ def test_unreadable_budget_refuses_to_restart(denied_history, events):
     assert rec.names == []
 
 
-def test_unreadable_budget_reports_budget_unknown(denied_history, events):
+def test_unproven_banner_does_not_consult_restart_budget(denied_history, events):
     # Arrange
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), denied_history, events, rec)
     # Assert
-    assert _verdict(outcome, "hpc") == Verdict.BUDGET_UNKNOWN
+    assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
 # --- an agent we did NOT read is REPORTED, never silently dropped ----------

@@ -1,10 +1,22 @@
 # Harness-neutral worktree policy gate
 
-SAC does not own worktree policy. It delegates every decision to the
-operator-owned `~/.dotfiles/src/.bin/scitex-worktree-policy` executable and
-records the returned manifest/projection identity. The executable schema and
-runtime configuration are authoritative; this page documents only SAC's
-tested lifecycle adapter.
+SAC ships its harness-neutral policy checker and default manifest in the Python
+package. `sac worktree policy` runs that checker from an installed wheel without
+requiring a source checkout, dotfiles, or a host helper script.
+
+The checker is an installed private package. Lifecycle invokes its absolute
+`__main__.py` path with the current Python interpreter, so changing the working
+directory or `PYTHONPATH` cannot select a different SAC checkout. The CLI imports
+the same checker; Git context, shell evaluation, and policy configuration each
+have a separate module.
+
+An optional host manifest lives at
+`~/.scitex/agent-container/worktree-policy/worktree-policy.json`, with its
+projections in the adjacent `generated/` directory. `SCITEX_AGENT_CONTAINER_HOME`
+selects a different SAC root. An existing invalid manifest or stale projection
+refuses launch; the bundled defaults apply only when no host manifest exists.
+Run `sac worktree policy generate-projections` after an intentional manifest change and
+`sac worktree policy check-projections` to verify it.
 
 ## Launch behavior
 
@@ -17,8 +29,27 @@ Before a write-capable `kind: Agent` task starts, SAC:
 4. changes the in-memory runtime workdir to that linked worktree; and
 5. asks the CLI to authorize edit context there immediately before launch.
 
-The linked path and branch are deterministic for the agent identity. Ownership
-is recorded at
+`spec.workdir` is the authored project path. When it names the primary checkout,
+SAC chooses the topic branch automatically from the agent name; there is no
+branch-name field in the spec. The slug lowercases the name, replaces groups of
+non-alphanumeric characters with `-`, strips edge hyphens, and keeps at most 48
+characters. SAC appends the first eight hexadecimal characters of SHA-256 of
+the original name:
+
+- Folder: `<spec.workdir>/.worktrees/sac-<slug>-<name-hash>`.
+- Branch: `feature/sac-<slug>-<name-hash>`.
+
+For `scitex-infrastructure-lead`, these become
+`.worktrees/sac-scitex-infrastructure-lead-68bd473b` and
+`feature/sac-scitex-infrastructure-lead-68bd473b`.
+
+To choose an existing topic branch explicitly, set `spec.workdir` to its linked
+worktree path. The checker must approve that branch, and SAC records ownership
+of a clean explicitly selected worktree. A dirty unowned linked worktree is
+refused. An existing automatically selected target without SAC ownership is
+also refused, even if clean; SAC does not silently adopt it.
+
+Ownership is recorded at
 `~/.scitex/agent-container/runtime/<agent>/worktree-owner.json`, including the
 spec, session/resume, and incarnation identity. A subsequent incarnation of
 the same agent reuses the owned worktree, including unfinished changes, and
@@ -36,7 +67,7 @@ Dry-run and explain execute the same projection checks and render the authored
 workdir, planned resolved workdir, branch, action, and hashes without creating
 the worktree. A dry-run plan is evidence, not reusable permission. Production
 launch repeats validation and obtains edit authorization against the created or
-reused worktree. A forced restart is checked before the old process is stopped;
+reused worktree. A restart is checked before the old process is stopped;
 a supervisor restart repeats the gate.
 
 Any missing executable, timeout, denial, stale generated projection, malformed
@@ -72,7 +103,7 @@ checkout, then perform the ordinary launch preflight. Restoring committed
 branch content cannot recover absent uncommitted files.
 
 The SAC suite uses a subprocess protocol fixture for hermetic mechanics tests.
-To run its additional cross-repository contract against the actual neutral CLI,
+To run its additional cross-repository contract against an explicitly configured policy CLI,
 set `SCITEX_WORKTREE_POLICY_TEST_CLI` to its reviewed executable and run
 `tests/scitex_agent_container/_lifecycle/test__worktree_restore.py`; the neutral
 repository independently tests all approval and refusal shapes with real Git.
@@ -99,7 +130,7 @@ agent harness.
 
 | Surface | Responsibility |
 | --- | --- |
-| CLI + manifest | Sole executable decision contract and policy identity. |
+| Packaged CLI + selected manifest | Sole executable decision contract and policy identity. |
 | SAC lifecycle | Resolve ownership, invoke the CLI, fail closed, and persist evidence. |
 | MCP | Transport only; it must call the CLI rather than reproduce decisions. |
 | Hooks | Harness event adapters, never cross-harness authority. |

@@ -67,10 +67,14 @@ def parse_selection(text: str) -> frozenset[str]:
     and the file form parse identically — one grammar, not two.
     """
     out: set[str] = set()
-    for raw in text.replace(",", "\n").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            out.add(line)
+    for raw in text.splitlines():
+        # A comment owns the rest of its original line, including commas.
+        # Splitting commas first can accidentally select a commented job.
+        line = raw.split("#", 1)[0]
+        for value in line.split(","):
+            value = value.strip()
+            if value:
+                out.add(value)
     return frozenset(out)
 
 
@@ -79,19 +83,38 @@ def selection_path(home: Path) -> Path:
     return home / SELECTION_FILE
 
 
-def selection(*, env: dict[str, str], home: Path) -> frozenset[str] | None:
+def selection(
+    *,
+    env: dict[str, str],
+    home: Path,
+    root: Path | None = None,
+    strict: bool = False,
+) -> frozenset[str] | None:
     """Which jobs are selected to run here, or ``None`` when UNSTATED.
 
     Precedence: the env override, then the file, then unstated. An
-    unreadable file reads as unstated rather than as empty, for the reason
-    in the module docstring.
+    Legacy migration callers retain their unreadable-as-unstated behavior.
+    The live provider uses ``strict=True``: an unreadable declared pause must
+    never silently re-arm recovery. ``root`` supplies the canonical SAC root
+    while historical home-only callers retain their existing path contract.
     """
     raw = env.get(SELECTION_ENV)
     if raw is not None and raw.strip():
         return parse_selection(raw)
     try:
-        body = selection_path(home).read_text(encoding="utf-8")
-    except OSError:  # stx-allow: fallback (reason: an absent or unreadable selection file means UNSTATED, a third state the caller must be able to tell from "empty")
+        path = root / "jobs-enabled.txt" if root is not None else selection_path(home)
+        body = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if strict and path.is_symlink():
+            raise RuntimeError(
+                "SAC jobs-enabled.txt has a broken symlink; refusing job discovery"
+            ) from None
+        return None
+    except OSError:  # stx-allow: fallback (reason: legacy migration keeps its existing UNSTATED result, while the live executor explicitly requests strict refusal so an unreadable pause cannot re-arm jobs)
+        if strict:
+            raise RuntimeError(
+                "cannot read SAC jobs-enabled.txt; refusing job discovery"
+            ) from None
         return None
     return parse_selection(body)
 

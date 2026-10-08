@@ -4,9 +4,10 @@ Split out of :mod:`._jobs_plugin` (at the per-file cap). They are one concern
 divided three ways, and each one's scope is defined by what the others handle:
 
 * ``fleet-reconcile`` restarts CORPSES — no tmux session, so no context to lose.
-* ``restart-login-expired-agents`` restarts the LIVE-BUT-WEDGED half — tmux is
-  up and the pane is frozen behind an auth banner — which fleet-reconcile
-  deliberately will not touch.
+* ``restart-login-expired-agents`` audits LIVE auth-banner candidates. Its
+  positional/liveness auditors stay report-only because a frozen banner can
+  remain on a healthy idle agent. It does not restart native Hermes from
+  Claude pane text; fleet-reconcile handles missing sessions separately.
 * ``resume-rate-limited-agents`` RESUMES the LIVE-BUT-PAUSED half — tmux is up
   and the pane is frozen behind a provider rate wall — which the other two
   BOTH decline, each for a good reason, which is how the gap stayed invisible
@@ -145,20 +146,18 @@ def liveness_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # history is persisted per restart, so the next tick still honours
             # the debounce for anything bounced.
             command=(
-                f"/usr/bin/timeout 300 {sac} agents restart-login-expired --apply"
+                f"/usr/bin/timeout 300 {sac} agents restart-login-expired --check"
             ),
             description=(
-                "Restarts LIVE agents wedged behind a frozen 'Login expired' "
-                "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
-                "leaves alone. Detection is READ-ONLY + 2-run-corroborated (a "
-                "banner that moved between the two captures = working, never "
-                "restarted); the restart runs through the pool-loading start "
-                "path (cannot strip CCT tokens) and is rate-limited (30min/agent "
-                "debounce, <=2/agent/hour, <=10/pass). As with fleet-reconcile "
-                "that hourly cap is a ROLLING window: an agent still wedged "
-                "after it is RECORDED as degraded and retried at 2/hour, not "
-                "given up on. DEPLOY GATE: do NOT enable until the host's "
-                "auth-heal.py scan_tui cron is retired (double-supervisor risk)."
+                "REPORT-ONLY audit of LIVE agents showing auth banners. "
+                "A frozen banner can remain on a healthy idle agent, so "
+                "positional and liveness auditors currently refuse restart "
+                "admission, including with legacy --apply. Unproven candidates "
+                "remain visible as UNOBSERVED and exit 2. Native Hermes needs "
+                "session/turn evidence of assigned work and actual failure, "
+                "not Claude pane text or successor credential health. Run "
+                "through ONE ecosystem supervisor; retire duplicate leaf "
+                "timers/cron after its execution receipts are verified."
             ),
             # Same taxonomy note as the jobs above: kind must be one of
             # {"service","timer","cron"} (scitex-dev #153); a periodic
@@ -185,9 +184,7 @@ def liveness_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # the resume history is persisted per resume, not at the end, so
             # the next tick still honours the debounce for anything already
             # woken.
-            command=(
-                f"/usr/bin/timeout 600 {sac} agents resume-rate-limited --apply"
-            ),
+            command=(f"/usr/bin/timeout 600 {sac} agents resume-rate-limited --apply"),
             description=(
                 "Resumes LIVE agents parked behind a provider rate wall whose "
                 "published reset has PASSED — the shape the other two liveness "

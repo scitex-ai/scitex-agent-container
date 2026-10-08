@@ -375,14 +375,14 @@ def test_listen_stop_failure_surfaces_the_real_cause(tmp_path) -> None:
     assert "survived SIGKILL" in result.output
 
 
-def test_listen_stop_forwards_force_flag_to_stop_listen(tmp_path) -> None:
+def test_listen_stop_rejects_force_before_teardown(tmp_path) -> None:
     # Arrange
     recorder = _StopRecorder()
     # Act
     with _stop_harness(tmp_path, recorder):
-        CliRunner().invoke(listen, ["stop", "--force"])
+        result = CliRunner().invoke(listen, ["stop", "--force"])
     # Assert
-    assert recorder.calls[0]["force"] is True
+    assert (result.exit_code, recorder.calls) == (2, [])
 
 
 def test_listen_stop_forwards_grace_secs_to_stop_listen(tmp_path) -> None:

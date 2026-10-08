@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import stat
 from types import SimpleNamespace
@@ -60,9 +61,11 @@ def test_materialized_passfile_is_private_and_project_role_filtered(tmp_path):
     assert (
         stat.S_IMODE(result.stat().st_mode),
         result.read_text(encoding="utf-8"),
+        result == home / ".scitex" / "agent-container" / "runtime" / "pgpass",
     ) == (
         0o600,
         f"scitex-primary:55432:scitex:{role}:project-secret\n",
+        True,
     )
 
 
@@ -151,6 +154,53 @@ def test_missing_credential_removes_stale_materialized_secret(tmp_path):
     assert (destination.exists(), "stale-secret" in message) == (False, False)
 
 
+def test_successful_publication_retires_only_owned_legacy_passfile(tmp_path):
+    # Arrange
+    role = f"{getpass.getuser()}__scitex-hub"
+    source = tmp_path / "host.pgpass"
+    source.write_text(f"*:*:*:{role}:project-secret\n", encoding="utf-8")
+    source.chmod(0o600)
+    home = tmp_path / "home"
+    home.mkdir()
+    legacy = home / ".sac-pgpass"
+    legacy.write_text("old-generated-secret\n")
+    marker = legacy.with_name(f".{legacy.name}.sha256")
+    marker.write_text(hashlib.sha256(legacy.read_bytes()).hexdigest())
+    # Act
+    [published] = materialize_project_pgpass(
+        _config(),
+        home_backings=[home],
+        servers=_servers(),
+        host_environ={"PGPASSFILE": str(source)},
+        fleet_defaults=_DEFAULTS,
+    )
+    # Assert
+    assert published.exists() and not legacy.exists() and not marker.exists()
+
+
+def test_legacy_operator_replacement_survives_successful_publication(tmp_path):
+    # Arrange
+    role = f"{getpass.getuser()}__scitex-hub"
+    source = tmp_path / "host.pgpass"
+    source.write_text(f"*:*:*:{role}:project-secret\n", encoding="utf-8")
+    source.chmod(0o600)
+    home = tmp_path / "home"
+    home.mkdir()
+    legacy = home / ".sac-pgpass"
+    legacy.write_text("operator-managed-credential\n")
+    legacy.with_name(f".{legacy.name}.sha256").write_text("old-generated-hash")
+    # Act
+    [published] = materialize_project_pgpass(
+        _config(),
+        home_backings=[home],
+        servers=_servers(),
+        host_environ={"PGPASSFILE": str(source)},
+        fleet_defaults=_DEFAULTS,
+    )
+    # Assert
+    assert published.exists() and legacy.read_text() == "operator-managed-credential\n"
+
+
 def test_explicit_passfile_wins_and_removes_prior_sac_copy(tmp_path):
     # Arrange
     home = tmp_path / "home"
@@ -200,7 +250,7 @@ def test_explicit_reserved_path_does_not_delete_operator_replacement(tmp_path):
     # Act
     result = materialize_project_pgpass(
         config,
-        home_backings=[destination.parent],
+        home_backings=[tmp_path / "home"],
         servers=_servers(),
         fleet_defaults=_DEFAULTS,
     )
@@ -228,7 +278,7 @@ def test_removing_postgres_mcp_cleans_managed_passfile(tmp_path):
     # Act
     result = materialize_project_pgpass(
         config,
-        home_backings=[destination.parent],
+        home_backings=[tmp_path / "home"],
         servers={},
         fleet_defaults=_DEFAULTS,
     )
@@ -244,8 +294,13 @@ def test_marker_publication_failure_rolls_back_generated_secret(tmp_path):
     source.chmod(0o600)
     home = tmp_path / "home"
     home.mkdir()
-    destination = home / ".sac-pgpass"
-    destination.with_name(f".{destination.name}.sha256").mkdir()
+    destination = home / ".scitex" / "agent-container" / "runtime" / "pgpass"
+    destination.with_name(f".{destination.name}.sha256").mkdir(parents=True)
+    legacy = home / ".sac-pgpass"
+    legacy.write_text("previous-generated-credential\n")
+    legacy.with_name(f".{legacy.name}.sha256").write_text(
+        hashlib.sha256(legacy.read_bytes()).hexdigest()
+    )
     # Act
     try:
         materialize_project_pgpass(
@@ -260,7 +315,11 @@ def test_marker_publication_failure_rolls_back_generated_secret(tmp_path):
     else:  # pragma: no cover - assertion reports missing rollback
         refused = False
     # Assert
-    assert (refused, destination.exists()) == (True, False)
+    assert (refused, destination.exists(), legacy.read_text()) == (
+        True,
+        False,
+        "previous-generated-credential\n",
+    )
 
 
 def test_errors_and_compiled_identity_metadata_never_contain_password(tmp_path):

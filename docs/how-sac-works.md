@@ -62,7 +62,7 @@ SAC verifies the projected bytes and passes them through Hermes'
 | `state.md`                | `$HOME/state.md`                | marker-protected append |
 | `.claude/{commands,skills,hooks}/` | `$HOME/.claude/*/`     | recursive copy         |
 
-Every launch writes `$HOME/.sac/prompt-projections.json` from the executable
+Every launch writes `$HOME/.scitex/agent-container/runtime/prompt-projections.json` from the executable
 materializer. It records SHA-256 provenance for the explicit startup prompts,
 declared instruction/skill sources, and effective runtime projections. Source
 changes during assembly or a projection that no longer matches the manifest

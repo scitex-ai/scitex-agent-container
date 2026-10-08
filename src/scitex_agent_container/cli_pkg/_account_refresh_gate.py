@@ -25,8 +25,8 @@ path had been correctly skipping that very account every ten minutes
 on the bulk path and absent on the path a human reaches for while
 debugging — which is the path where the blast radius is least expected.
 
-So the gate is now the SAME on every path, and ``--force`` is the single
-documented way past it. Each function here takes its inputs explicitly
+The gate now applies to every path and has no force bypass.
+Each function here takes its inputs explicitly
 (including ``now``) so the gate can be unit-tested on its own — a gate
 that can only be tested through the command it guards is the shape that
 let the original bug ship.
@@ -77,7 +77,7 @@ def needs_refresh(
 
     The rule, identical for a single named account and for ``--all``:
 
-    * ``force`` -> always rotate (the explicit override).
+    * ``force=True`` -> refuse the removed override.
     * unknown/absent expiry -> rotate (we cannot prove it is fresh).
     * otherwise rotate only when less than ``min_ttl_hours`` remain.
 
@@ -86,7 +86,7 @@ def needs_refresh(
     the signature no longer offers a way to express it.
     """
     if force:
-        return True
+        raise ValueError("account refresh cannot bypass the expiry gate with force")
     remaining = hours_left(expires_ms, now)
     if remaining is None:
         return True
@@ -107,14 +107,12 @@ def refusal_message(
     *,
     is_pinned: bool,
 ) -> str:
-    """Explain why a NAMED account was not rotated, and how to override.
+    """Explain why a named account is not eligible for rotation yet.
 
     A named account held back by the gate is a REFUSAL TO ACT: the caller
     asked for a rotation and got none, so silence would read as success.
     The message names the account, its actual expiry, the threshold that
-    held it back, the cost the rotation would have carried, and the exact
-    flag that overrides — an error that only says what broke is half
-    written.
+    held it back, and the cost the rotation would have carried.
 
     ``is_pinned`` says whether a running LOCAL agent is pinned to this
     account (see ``_account_refresh_skip._collect_pinned_running_accounts``).
@@ -136,7 +134,7 @@ def refusal_message(
         f"--min-ttl-hours={min_ttl_hours:g}h).\n"
         f"A refresh ROTATES the single-use refresh_token, which invalidates "
         f"the access token every agent holding it is using — {strands}.\n"
-        f"If you meant to rotate it anyway, re-run with --force."
+        f"Wait for the active users to finish before rotating this credential."
     )
 
 

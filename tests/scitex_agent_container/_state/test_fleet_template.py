@@ -204,10 +204,14 @@ def test_expand_overwrite_true_replaces_existing(
     assert target.is_file()
 
 
-def test_render_one_writes_single_instance_with_substitutions(tmp_path: Path):
+def test_render_one_writes_single_instance_with_substitutions(
+    tmp_path: Path, env_save_restore
+):
     # Arrange
     template = tmp_path / "t.yaml"
     _write(template, "spec:\n  workdir: /tmp/${name}-${TASK}\n")
+    runtime = tmp_path / "runtime"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     # Act
     p = render_one(
         template,
@@ -216,7 +220,10 @@ def test_render_one_writes_single_instance_with_substitutions(tmp_path: Path):
         name="ad-hoc-1",
     )
     # Assert
-    assert p.read_text().strip() == "spec:\n  workdir: /tmp/ad-hoc-1-smoke"
+    assert (
+        p.read_text().strip() == "spec:\n  workdir: /tmp/ad-hoc-1-smoke"
+        and list((runtime / "tmp").iterdir()) == []
+    )
 
 
 def test_find_unsubstituted_vars_lists_unique_names_sorted():

@@ -15,9 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import click
-
-from ..._logging import render_rich
+from ..._logging import get_logger, render_rich
 
 
 def classify_targets(
@@ -57,16 +55,14 @@ def resolve_session_shorthand(
     resolved ``session_mode``.
     """
     if continue_session and fresh_session:
-        click.echo("Error: --continue and --fresh are mutually exclusive.", err=True)
+        get_logger(__name__).error("--continue and --fresh are mutually exclusive.")
         sys.exit(2)
     shorthand = "continue" if continue_session else ("fresh" if fresh_session else None)
     if shorthand is None:
         return session_mode
     if session_mode is not None and session_mode.lower() != shorthand:
-        click.echo(
-            f"Error: --{shorthand} contradicts --session {session_mode}; "
-            "pass only one.",
-            err=True,
+        get_logger(__name__).error(
+            f"--{shorthand} contradicts --session {session_mode}; pass only one.",
         )
         sys.exit(2)
     return shorthand
@@ -88,19 +84,15 @@ def expand_params_targets(
     ``targets`` tuple on success.
     """
     if len(targets) != 1:
-        click.echo(
-            "Error: --params-file requires exactly one TARGET (the "
+        get_logger(__name__).error(
+            "--params-file requires exactly one TARGET (the "
             "template yaml). Got "
             f"{len(targets)} targets.",
-            err=True,
         )
         sys.exit(2)
     template_path = Path(targets[0]).expanduser()
     if not template_path.is_file():
-        click.echo(
-            f"Error: --params-file template not found: {template_path}",
-            err=True,
-        )
+        get_logger(__name__).error(f"--params-file template not found: {template_path}")
         sys.exit(2)
     out_dir = (params_out or Path("params-fleet-out")).expanduser()
     from ..._state.fleet_template import expand_params_file
@@ -113,7 +105,7 @@ def expand_params_targets(
             overwrite=params_overwrite,
         )
     except (ValueError, FileExistsError) as exc:
-        click.echo(f"Error: {exc}", err=True)
+        get_logger(__name__).error(str(exc))
         sys.exit(2)
     if not as_json:
         render_rich(f"[bold]--params-file[/bold]  expanded "

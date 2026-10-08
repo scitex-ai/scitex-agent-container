@@ -1,31 +1,12 @@
-"""A real pass leaves an auth-event trail that can DISAGREE with the pass.
+"""Unproven banners emit no confirmed auth failures or restart attempts.
 
-This is the suite the whole PR exists for. It drives the production
-:func:`auth_heal_pass` over real captured panes, a real temp history file and a
-real temp registry — the only injected seam is the restart itself, a
-:class:`Recorder` with the production ``(name) -> bool`` signature — and then
-reads the real JSONL bytes back off disk.
-
-WHAT IT PROVES, AND WHY THAT WAS NOT PROVABLE BEFORE
-    ``auth-heal.log`` recorded 169 ``-> auto-restart`` lines over seven days
-    whose ``age=`` field never reset. Every line stated an INTENT in the
-    grammar of an EFFECT, and no record existed that could contradict one. The
-    decisive test here is
-    :func:`test_a_restart_that_does_not_take_effect_is_visible_as_unresolved`:
-    a restart is attempted, it does NOT take, and the log must be readable as
-    attempt-without-successful-outcome.
-
-MUTATION-PROOF
-    Collapse the two emissions in ``_pass._perform`` into one combined
-    "restarted" event and these tests go red — the attempt/outcome pair
-    disappears and ``unresolved_attempts`` can no longer see the failure. That
-    is the intended failure mode: the test is pinned to the SEPARATION, not to
-    the fact that something was written.
+The private execution rail keeps its attempt/outcome contract independently;
+these tests invoke it directly, without granting pane-only restart admission.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
+
+import pytest
 
 from scitex_agent_container._authevents import (
     AUTH_FAILURE_OBSERVED,
@@ -34,32 +15,21 @@ from scitex_agent_container._authevents import (
     read_auth_events,
     unresolved_attempts,
 )
-from scitex_agent_container._authheal._pass import auth_heal_pass
+from scitex_agent_container._authheal._pass import _perform, auth_heal_pass
+from scitex_agent_container._reconcile._budget import Budget
+from scitex_agent_container._reconcile._rule import Verdict
 
 from ._helpers import NOW, Recorder, stuck
 
 
-def _events(path: Path, kind: str) -> list:
-    return [e for e in read_auth_events(path) if e.event == kind]
-
-
-def test_a_restart_that_does_not_take_effect_is_visible_as_unresolved(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """THE test: a restart that ran and did not work must be refutable.
-
-    The recorder returns False — the production signature's way of saying the
-    restart reported failure — so the pass really does attempt a restart that
-    really does not take. The log must show the attempt AND an outcome that
-    contradicts it, and the refutation query must surface it.
-    """
-    # Arrange
+@pytest.mark.parametrize("apply", [False, True])
+def test_unproven_banner_leaves_no_auth_failure_or_attempt(
+    tmp_path, history, events, apply
+):
     event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=False)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
+    recorder = Recorder()
+    outcome = auth_heal_pass(
+        apply=apply,
         now=NOW,
         history_file=history,
         events_path=events,
@@ -68,330 +38,114 @@ def test_a_restart_that_does_not_take_effect_is_visible_as_unresolved(
         capture_fn=lambda: stuck("figrecipe"),
         event_log=event_log,
     )
+    assert recorder.names == []
+    assert read_auth_events(event_log) == []
+    assert outcome.exit_code() == 2
+    assert outcome.reports[0].reason == "auth-banner-unproven"
+    assert not history.exists()
 
-    # Assert
-    unresolved = unresolved_attempts(read_auth_events(event_log))
-    assert [e.agent for e in unresolved] == ["figrecipe"]
 
-
-def test_the_attempt_and_the_outcome_are_two_separate_records(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """Conflating them is the exact defect this rail exists to prevent.
-
-    One restart, two records. If ``_perform`` ever writes a single combined
-    event this assertion is the one that catches it.
-    """
-    # Arrange
+@pytest.mark.parametrize("ok", [False, True])
+def test_execution_rail_records_distinct_attempt_and_outcome(tmp_path, ok):
     event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=False)
-
-    # Act
-    auth_heal_pass(
+    recorder = Recorder(ok=ok)
+    report = _perform(
+        "figrecipe",
+        budget=Budget({}),
         apply=True,
         now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
         restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
+        budget_detail="",
         event_log=event_log,
     )
+    rows = read_auth_events(event_log)
+    assert [r.event for r in rows] == [RESTART_ATTEMPTED, RESTART_OUTCOME]
+    assert rows[0].attempt_id == rows[1].attempt_id
+    assert rows[1].succeeded is ok
+    assert not any(r.event == AUTH_FAILURE_OBSERVED for r in rows)
+    assert report.verdict is (Verdict.RESTARTED if ok else Verdict.FAILED)
+    assert bool(unresolved_attempts(rows)) is (not ok)
 
-    # Assert
-    attempts = _events(event_log, RESTART_ATTEMPTED)
-    outcomes = _events(event_log, RESTART_OUTCOME)
-    assert (len(attempts), len(outcomes)) == (1, 1)
 
-
-def test_the_failed_outcome_records_that_it_did_not_succeed(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """The outcome must carry the refutation explicitly, not by omission."""
-    # Arrange
+def test_raising_execution_still_has_refutable_failed_outcome(tmp_path):
     event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=False)
-
-    # Act
-    auth_heal_pass(
+    recorder = Recorder(boom=RuntimeError("tmux unavailable"))
+    report = _perform(
+        "figrecipe",
+        budget=Budget({}),
         apply=True,
         now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
         restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
+        budget_detail="",
         event_log=event_log,
     )
+    rows = read_auth_events(event_log)
+    assert [r.event for r in rows] == [RESTART_ATTEMPTED, RESTART_OUTCOME]
+    assert rows[-1].succeeded is False
+    assert report.verdict is Verdict.FAILED
+    assert [r.agent for r in unresolved_attempts(rows)] == ["figrecipe"]
 
-    # Assert
-    assert _events(event_log, RESTART_OUTCOME)[0].succeeded is False
 
-
-def test_a_successful_restart_leaves_nothing_unresolved(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """The refutation query must be able to come back clean.
-
-    Without this, the failing test above would pass under a rail that reports
-    EVERY restart as unresolved — which would measure nothing at all.
-    """
-    # Arrange
+def test_independent_execution_attempts_keep_distinct_ids(tmp_path):
     event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    assert unresolved_attempts(read_auth_events(event_log)) == []
-
-
-def test_the_attempt_is_recorded_before_the_outcome(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """Order is load-bearing: intent is written BEFORE the act it describes.
-
-    A restart that hangs or takes the process down with it must still leave its
-    intent behind — otherwise the most interesting failures are the ones that
-    write nothing.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    restart_events = [
-        e.event
-        for e in read_auth_events(event_log)
-        if e.event in (RESTART_ATTEMPTED, RESTART_OUTCOME)
-    ]
-    assert restart_events == [RESTART_ATTEMPTED, RESTART_OUTCOME]
-
-
-def test_a_raising_restart_still_leaves_an_attempt_and_a_failed_outcome(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """An exception is an outcome too, and a failed one.
-
-    The recorder raises for real; nothing is patched. A restart that blew up
-    must not read as a restart that never happened.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(boom=RuntimeError("tmux is gone"))
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    assert _events(event_log, RESTART_OUTCOME)[0].succeeded is False
-
-
-def test_the_wedge_is_observed_before_any_restart_decision(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """What we SAW is recorded first, and separately from what we DID.
-
-    The sighting owes nothing to the restarter's claims about itself, which is
-    what lets a series of sightings establish that a wedge outlived its remedy.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    assert read_auth_events(event_log)[0].event == AUTH_FAILURE_OBSERVED
-
-
-def test_a_check_run_observes_the_wedge_but_attempts_no_restart(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """Observing is not acting. A dry run that saw a wedge really did see it.
-
-    It must therefore record the sighting — and must NOT record an attempt,
-    because it did not make one. Writing an attempt here would put phantom
-    restarts in the log of a run whose entire promise is that it changed
-    nothing.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
-
-    # Act
-    auth_heal_pass(
-        apply=False,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    kinds = [e.event for e in read_auth_events(event_log)]
-    assert kinds == [AUTH_FAILURE_OBSERVED]
-
-
-def test_each_wedged_agent_gets_its_own_attempt_id(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """Six agents dying together must be six traceable stories, not one blur.
-
-    Shared ids would let one agent's recovery appear to account for another's,
-    which is the failure the 2026-07-18 incident would have been misread as.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=False)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe", "crossref-local"),
-        event_log=event_log,
-    )
-
-    # Assert
-    ids = [e.attempt_id for e in _events(event_log, RESTART_ATTEMPTED)]
-    assert len(set(ids)) == 2
-
-
-def test_an_unresolvable_account_is_recorded_as_null_not_guessed(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """The registry here is empty, so the account is genuinely undeterminable.
-
-    It must read as ``null``. Guessing the host's current account would put a
-    plausible value into the field an investigator joins rotations against —
-    and a wrong account is worse than a missing one, because it is believed.
-    """
-    # Arrange
-    event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
-
-    # Act
-    auth_heal_pass(
-        apply=True,
-        now=NOW,
-        history_file=history,
-        events_path=events,
-        alarm=False,
-        restart_fn=recorder,
-        capture_fn=lambda: stuck("figrecipe"),
-        event_log=event_log,
-    )
-
-    # Assert
-    observed = _events(event_log, AUTH_FAILURE_OBSERVED)[0]
-    assert "account" in observed.raw and observed.account is None
-
-
-def test_an_unwritable_event_log_does_not_stop_the_restart(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """FAIL-OPEN, proved end to end against a really read-only directory.
-
-    The observability rail must never cost us the recovery it observes. The
-    evidence is the recorder: the restart still happened.
-    """
-    # Arrange
-    readonly = tmp_path / "readonly"
-    readonly.mkdir()
-    readonly.chmod(0o555)
-    recorder = Recorder(ok=True)
-
-    # Act
-    try:
-        auth_heal_pass(
+    for name in ("figrecipe", "crossref-local"):
+        _perform(
+            name,
+            budget=Budget({}),
             apply=True,
             now=NOW,
-            history_file=history,
-            events_path=events,
-            alarm=False,
-            restart_fn=recorder,
-            capture_fn=lambda: stuck("figrecipe"),
-            event_log=readonly / "auth-events.jsonl",
+            restart_fn=Recorder(ok=False),
+            budget_detail="",
+            event_log=event_log,
         )
-    finally:
-        readonly.chmod(0o755)
-
-    # Assert
-    assert recorder.names == ["figrecipe"]
+    attempts = [r for r in read_auth_events(event_log) if r.event == RESTART_ATTEMPTED]
+    assert len({r.attempt_id for r in attempts}) == 2
+    assert all(r.account is None for r in attempts)
 
 
-def test_a_healthy_fleet_writes_no_auth_events(
-    tmp_path: Path, history: Path, events: Path
-) -> None:
-    """Silence means nothing was seen — the log must not invent activity.
-
-    A rail that writes on every tick regardless would drown the one line that
-    matters, and would make "the log is quiet" meaningless.
-    """
-    # Arrange
+def test_private_execution_check_is_never_recorded_as_an_attempt(tmp_path):
     event_log = tmp_path / "auth-events.jsonl"
-    recorder = Recorder(ok=True)
+    recorder = Recorder()
+    report = _perform(
+        "figrecipe",
+        budget=Budget({}),
+        apply=False,
+        now=NOW,
+        restart_fn=recorder,
+        budget_detail="",
+        event_log=event_log,
+    )
+    assert recorder.names == []
+    assert read_auth_events(event_log) == []
+    assert report.verdict is Verdict.WOULD_RESTART
 
-    # Act
-    auth_heal_pass(
+
+def test_real_healthy_idle_specimen_is_never_restarted(tmp_path, history, events):
+    specimen = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "pane_states"
+        / "specimen_grant_20260718_alive_false_positive.log"
+    ).read_text()
+    start = specimen.index("\n", specimen.index("--- pane capture")) + 1
+    pane = specimen[start : specimen.index("--- state.db row ---")]
+    recorder = Recorder()
+    event_log = tmp_path / "auth-events.jsonl"
+    before = b'{"restarts":{},"schema_version":1}\n'
+    history.write_bytes(before)
+    outcome = auth_heal_pass(
         apply=True,
         now=NOW,
         history_file=history,
         events_path=events,
-        alarm=False,
+        alarm=True,
         restart_fn=recorder,
-        capture_fn=dict,
+        capture_fn=lambda: {"grant": (pane, pane)},
         event_log=event_log,
     )
-
-    # Assert
+    assert recorder.names == []
     assert read_auth_events(event_log) == []
+    assert history.read_bytes() == before
+    assert outcome.reports[0].reason == "historical-auth-banner"
+    assert "report-only" in outcome.reports[0].detail
+    assert outcome.exit_code() == 2

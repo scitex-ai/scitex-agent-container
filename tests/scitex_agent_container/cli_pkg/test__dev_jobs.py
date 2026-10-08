@@ -71,6 +71,13 @@ from scitex_agent_container.cli_pkg._dev_jobs import (  # noqa: E402
 from scitex_agent_container.cli_pkg.dev_group import dev_group  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_job_catalog(tmp_path, monkeypatch):
+    """Exercise the catalog independently of an operator's live pause file."""
+    monkeypatch.setenv("SCITEX_DIR", str(tmp_path / "ecosystem-root"))
+    monkeypatch.delenv("SAC_JOBS_ENABLED", raising=False)
+
+
 def _declared(kind: str) -> list[str]:
     """Canonical names of the jobs sac really declares for ``kind``."""
     return [j.name for j in provide_jobs() if j.kind == kind]

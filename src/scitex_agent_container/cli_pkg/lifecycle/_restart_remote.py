@@ -89,7 +89,7 @@ def log_restart_decision(**entry: Any) -> None:
 
 
 def remote_restart_argv(
-    name: str, engine: str | None = None, *, drain_timeout_s: float = 0.0
+    name: str, engine: str | None = None, *, drain_timeout_s: float = 0.0, fresh: bool = False
 ) -> list[str]:
     """The argv the peer runs for a cross-host restart.
 
@@ -116,6 +116,8 @@ def remote_restart_argv(
         argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
     if engine:
         argv += ["--engine", engine]
+    if fresh:
+        argv.append("--fresh")
     return argv
 
 
@@ -126,6 +128,7 @@ def _dispatch_remote_restart(
     name: str,
     engine: str | None = None,
     drain_timeout_s: float = 0.0,
+    fresh: bool = False,
 ) -> dict:
     """SSH into ``peer`` and run ``sac agents restart <name> --yes --json``.
 
@@ -146,9 +149,12 @@ def _dispatch_remote_restart(
     # login=True: the peer's login profile carries the fleet secrets the
     # restart needs (the engine's auth_token_env among them); a bare ssh
     # command sees none of them and the peer refuses the engine as "unset".
+    restart_options = {"drain_timeout_s": drain_timeout_s}
+    if fresh:
+        restart_options["fresh"] = True
     ssh_argv = build_ssh_argv(
         peer,
-        remote_restart_argv(name, engine, drain_timeout_s=drain_timeout_s),
+        remote_restart_argv(name, engine, **restart_options),
         peers,
         login=True,
     )
@@ -263,7 +269,7 @@ def _restart_via_host_bypass(
     Mirrors the spawn broker (``agent_spawn`` → ``request_spawn``): the
     in-SIF client POSTs to ``{SAC_LISTEN_BASE_URL}/agents/<name>/restart``
     and the host runs ``sac agents restart <name> --yes`` (or, when
-    ``fresh``, ``sac agents start <name> --force --fresh``) on the bare host
+    ``fresh``, ``sac agents restart <name> --fresh``) on the bare host
     (manage-gated by ``check_lineage_acl``). A :class:`RestartRequestError`
     (missing base URL / transport / 401 / 403 / 5xx) propagates so the
     CLI's outer ``except`` surfaces it fail-loud.

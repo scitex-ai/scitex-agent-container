@@ -67,7 +67,7 @@ def render_already_running(
         (
             f"{name} is already running{found} [{evidence}] — nothing launched",
             f"  - restart it:          sac agents restart {name} -y",
-            f"  - force a fresh start: sac agents start {name} --force",
+            f"  - start a new session: sac agents restart {name} --fresh -y",
             f"  - stop, then start:    sac agents stop {name} "
             f"&& sac agents start {name}",
         )

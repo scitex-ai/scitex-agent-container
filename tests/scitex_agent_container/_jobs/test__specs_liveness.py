@@ -34,6 +34,7 @@ def test_fleet_reconcile_job_name_is_package_prefixed() -> None:
     # Assert
     assert job.name == "scitex-agent-container-fleet-reconcile"
 
+
 def test_fleet_reconcile_job_kind_is_timer() -> None:
     # Arrange — a periodic systemd --user timer, so kind="timer". A wrong
     # kind raises at construction and `ecosystem up` then silently DROPS
@@ -43,6 +44,7 @@ def test_fleet_reconcile_job_kind_is_timer() -> None:
     job = _job("scitex-agent-container-fleet-reconcile")
     # Assert
     assert job.kind == "timer"
+
 
 def test_fleet_reconcile_command_is_the_applying_form() -> None:
     # Arrange — THIS JOB IS THE MECHANISM. `restart.policy` in ~93 specs is
@@ -56,6 +58,7 @@ def test_fleet_reconcile_command_is_the_applying_form() -> None:
     bound, _payload, rest = _split_command(job.command)
     assert (bound, rest) == ("/usr/bin/timeout 300", "agents reconcile --apply")
 
+
 def test_fleet_reconcile_cadence_is_five_minutes() -> None:
     # Arrange — the cadence IS the window a dead agent stays dead. A no-op
     # pass is one batched `tmux list-sessions` plus a spec read each, so it
@@ -64,6 +67,7 @@ def test_fleet_reconcile_cadence_is_five_minutes() -> None:
     job = _job("scitex-agent-container-fleet-reconcile")
     # Assert
     assert job.on_unit_active_sec == "5min"
+
 
 def test_fleet_reconcile_timeout_outlives_a_capped_pass() -> None:
     # Arrange — the pathological pass restarts `--limit` agents, each a
@@ -81,12 +85,14 @@ def test_fleet_reconcile_timeout_outlives_a_capped_pass() -> None:
     # Assert
     assert job.command.startswith("/usr/bin/timeout 300 ")
 
+
 def test_restart_login_expired_job_name_is_package_prefixed() -> None:
     # Arrange — the auto-restarter for auth-dead-but-live agents.
     # Act
     job = _job("scitex-agent-container-restart-login-expired-agents")
     # Assert
     assert job.name == "scitex-agent-container-restart-login-expired-agents"
+
 
 def test_restart_login_expired_job_kind_is_timer() -> None:
     # Arrange — a periodic systemd --user timer, so kind="timer". A wrong kind
@@ -98,6 +104,7 @@ def test_restart_login_expired_job_kind_is_timer() -> None:
     # Assert
     assert job.kind == "timer"
 
+
 def test_restart_login_expired_command_is_the_applying_form() -> None:
     # Arrange — a scheduled DRY-RUN would detect wedged agents and heal none.
     # The whole point is `--apply`. Detection stays read-only; the restart is
@@ -106,7 +113,11 @@ def test_restart_login_expired_command_is_the_applying_form() -> None:
     job = _job("scitex-agent-container-restart-login-expired-agents")
     # Assert
     bound, _payload, rest = _split_command(job.command)
-    assert (bound, rest) == ("/usr/bin/timeout 300", "agents restart-login-expired --apply")
+    assert (bound, rest) == (
+        "/usr/bin/timeout 300",
+        "agents restart-login-expired --check",
+    )
+
 
 def test_restart_login_expired_cadence_is_five_minutes() -> None:
     # Arrange — the cadence IS the window a login-expired agent stays wedged,
@@ -115,6 +126,7 @@ def test_restart_login_expired_cadence_is_five_minutes() -> None:
     job = _job("scitex-agent-container-restart-login-expired-agents")
     # Assert
     assert job.on_unit_active_sec == "5min"
+
 
 def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
     # Arrange — construction must not raise (a bad field would drop the whole

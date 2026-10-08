@@ -128,3 +128,15 @@ def test_a_restarted_agent_is_never_suppressed():
     skipped = already_summarised_by_count(report)
     # Assert
     assert skipped is False
+
+
+def test_help_discloses_apply_cannot_bypass_report_only_admission():
+    result = CliRunner().invoke(agent_group, ["restart-login-expired", "--help"])
+    assert "REPORT-ONLY" in result.output
+    assert "positional" in result.output
+    assert "Native Hermes" in result.output
+
+
+def test_unproven_banner_report_is_never_hidden_by_count():
+    report = _FakeReport(Verdict.UNOBSERVED, "auth-banner-unproven")
+    assert already_summarised_by_count(report) is False

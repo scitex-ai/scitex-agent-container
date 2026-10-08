@@ -74,20 +74,8 @@ from ._account_refresh_skip import (
         "always refreshed). Fresh tokens are left untouched — this is the "
         "rotate-only-when-stale gate, which avoids needlessly rotating a "
         "single-use refresh_token and stranding every agent holding the "
-        "current access token. Applies to a single named account too; use "
-        "--force to rotate a still-fresh one deliberately."
-    ),
-)
-@click.option(
-    "--force",
-    "force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Ignore --min-ttl-hours and refresh even a still-fresh token. "
-        "Required to rotate a single named account before its TTL gate "
-        "opens — rotation invalidates the access token every running agent "
-        "pinned to that account is currently using."
+        "current access token. Applies to a single named account too. "
+        "Active users must finish before credential rotation."
     ),
 )
 @click.option(
@@ -134,7 +122,6 @@ def account_refresh(
     skip_active: bool,
     include_active: bool,
     min_ttl_hours: float,
-    force: bool,
     sync_active_login_flag: bool,
     push_to: str | None,
     as_json: bool,
@@ -165,7 +152,7 @@ def account_refresh(
     ``--min-ttl-hours`` makes the refresh a rotate-only-when-stale gate: an
     account whose snapshot access token still has more than the threshold
     left is skipped (no network call, no refresh_token rotation), a token
-    with unknown/absent expiry is always refreshed. ``--force`` bypasses
+    with unknown/absent expiry is always refreshed. The internal refresh API bypasses
     the gate.
 
     The gate applies to a SINGLE NAMED ACCOUNT exactly as it does under
@@ -180,7 +167,7 @@ def account_refresh(
     fresh. The safe default belonged on both paths, and the DEBUGGING path
     is the one a human reaches for under pressure. A named account whose
     token is still fresh is now REFUSED with exit code 2 and a message
-    naming what the rotation would strand; ``--force`` is the way past.
+    naming what the rotation would strand; wait for those users to finish.
 
     ``--sync-active-login`` (with --all) additionally keeps the operator's
     live ``~/.claude/.credentials.json`` in sync: before refreshing, the
@@ -216,6 +203,7 @@ def account_refresh(
       $ sac accounts refresh --all --push-to spartan    # keep a peer fresh
       $ sac accounts refresh --all --json
     """
+    force = False
     import json as _json
 
     from .._account._rotation_audit import fingerprint_token, log_rotation_event

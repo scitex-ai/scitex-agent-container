@@ -123,8 +123,7 @@ def run_remote_bake(
         host,
         "bash -l -s -- "
         f"--layer {layer} --lease-name '{lease_name}' "
-        f"--workdir '{remote_workdir}' --branch '{branch}' --retain {retain}"
-        + (" --force" if force else ""),
+        f"--workdir '{remote_workdir}' --branch '{branch}' --retain {retain}",
     ]
     with script.open("rb") as fh:
         proc = core._run(
@@ -222,7 +221,6 @@ def run_remote_bake(
 @click.option(
     "--bake-only", is_flag=True, help="Remote bake + rotate only; no pull/swap."
 )
-@click.option("--force", is_flag=True, help="Rebake even if the source is unchanged.")
 @click.option(
     "--ssh-timeout",
     default=7200,
@@ -245,7 +243,6 @@ def image_bake_remote(
     retain: int,
     containers_dir: Path | None,
     bake_only: bool,
-    force: bool,
     ssh_timeout: int,
     yes: bool,
 ) -> None:
@@ -257,6 +254,7 @@ def image_bake_remote(
     One layer, no local publish:
       $ sac image bake-remote --layer scitex --bake-only --yes
     """
+    force = False
     if not yes:
         click.echo("Refusing to bake remotely without --yes/-y.", err=True)
         raise SystemExit(2)

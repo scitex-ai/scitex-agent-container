@@ -51,6 +51,31 @@ def test_fleet_offers_forget_to_operator(client, loopback, env_save_restore):
     assert "/alpha/forget" in html and ">Forget</button>" in html
 
 
+def test_fleet_does_not_offer_a_force_override(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    html = _seeded_fleet_html(client, "op1")
+    # Assert
+    assert 'name="force"' not in html
+
+
+def test_forget_rejects_legacy_force_before_store_mutation(
+    client, loopback, env_save_restore, audit_log
+):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act
+    response = client.post("/alpha/forget", {"force": "on"})
+    # Assert
+    assert (
+        response.status_code == 400
+        and "force is unsupported" in response.json()["error"]
+    )
+
+
 def test_fleet_offers_delete_to_operator(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "op1")

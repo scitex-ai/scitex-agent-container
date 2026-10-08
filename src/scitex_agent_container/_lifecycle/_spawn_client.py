@@ -217,25 +217,8 @@ def request_spawn(
         human-at-a-TTY default-refuse safety net — it only lets the
         brokered/automated path assert consent that was already given.
     force
-        Forwarded as ``force: true`` in the POST body when set. The host
-        listen's ``/agents`` handler appends ``--force`` to its inner
-        ``sac agents start`` argv, so a still-running agent is TORN DOWN
-        and replaced instead of hitting the idempotent "already running →
-        no-op" branch.
-
-        Silent-degradation fix (incident 2026-07-12, scitex-storage): a
-        RESTART issued from inside a SIF reaches ``agent_start(force=True)``,
-        which brokers to the host — and before this field existed, ``force``
-        was DROPPED at that boundary. The host then ran a plain
-        ``sac agents start <name>``, saw the agent already up, no-op'd,
-        printed "SUCC: <name> started" and exited 0. The restart reported
-        success while nothing whatsoever cycled: same process, same pid,
-        same stale credentials. Because no NEW container was launched, no
-        ``apptainer_pid`` file appeared either, which is what tripped the
-        listen's ``post_ack_no_apptainer_pid`` probe.
-
-        Back-compat: only emitted when truthy, so a pre-fix host simply
-        ignores the absent force field and behaves exactly as before.
+        Obsolete compatibility argument. A true value is refused before any
+        network request; use the dedicated agent restart endpoint.
 
     session
         Optional explicit continuity policy: continue, resume, fresh, or the
@@ -259,6 +242,11 @@ def request_spawn(
         (including 403 ACL deny), or malformed-but-otherwise-OK body
         the server itself would reject.
     """
+    if force:
+        raise SpawnRequestError(
+            "force is unsupported; start cannot replace a running agent; "
+            "use sac agents restart"
+        )
     if timeout_s is None:
         timeout_s = client_timeout_for()
 
@@ -297,14 +285,6 @@ def request_spawn(
     # one_shot above — pre-fix brokers simply ignore an absent field.
     if assume_yes:
         body["assume_yes"] = True
-    # Silent-degradation fix (incident 2026-07-12): carry the caller's
-    # ``force`` across the broker boundary. Dropping it turned an in-SIF
-    # RESTART into a plain host-side start that no-op'd over the live agent
-    # and still reported success. Same truthy-only back-compat rationale as
-    # the fields above.
-    if force:
-        body["force"] = True
-
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"
     headers = {"Content-Type": "application/json", "Accept": "application/json"}

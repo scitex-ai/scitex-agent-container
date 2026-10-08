@@ -77,7 +77,6 @@ RETAIN=3
 MIN_FREE_GB=40
 MIN_FREE_INODES=100000
 CPUS=8
-FORCE=0
 MODULES="slurm/default GCCcore/11.3.0 Apptainer/1.3.3"
 
 while [ $# -gt 0 ]; do
@@ -90,7 +89,6 @@ while [ $# -gt 0 ]; do
         --retain) RETAIN="$2"; shift 2 ;;
         --min-free-gb) MIN_FREE_GB="$2"; shift 2 ;;
         --cpus) CPUS="$2"; shift 2 ;;
-        --force) FORCE=1; shift ;;
         --modules) MODULES="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
@@ -220,7 +218,7 @@ if [ "$LAYER" = "scitex" ]; then
     BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"
 fi
 STATE_KEY="$HEAD_SHA:$BASE_KEY"
-if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
+if [ -f "$STATE_FILE" ]; then
     read -r LAST_KEY LAST_SIF < "$STATE_FILE" || true
     if [ "${LAST_KEY:-}" = "$STATE_KEY" ] && [ -f "${LAST_SIF:-/nonexistent}" ]; then
         echo "skip: source unchanged since last successful bake ($STATE_KEY)"

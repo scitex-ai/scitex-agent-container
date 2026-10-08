@@ -1,10 +1,10 @@
-"""Auto-restart LIVE agents wedged behind a frozen "Login expired" banner.
+"""Report-only audit of LIVE agents showing auth banners.
 
 The sibling of :mod:`.._reconcile`: fleet-reconcile restarts DEAD (no tmux
-session) agents; this restarts LIVE-session-but-auth-dead ones — the case
+session) agents; this reports LIVE-session auth-banner candidates — the case
 fleet-reconcile explicitly leaves alone. Detection is READ-ONLY and
-2-run-corroborated (:mod:`._detect`); the restart is rate-limited and escalates
-to a board card instead of an infinite bounce (:mod:`._pass`, :mod:`._alarm`).
+2-run-corroborated (:mod:`._detect`); the pass honors the positional/liveness auditors' report-only admission.
+Unproven banners are visible UNOBSERVED reports and never automatic restarts.
 
 Surfaced as ``sac agents restart-login-expired`` and the federated
 ``sac.restart-login-expired-agents`` timer job. READ THE DEPLOY GATE in
@@ -33,7 +33,8 @@ THE BANNER DETECTORS HERE PRODUCE FALSE POSITIVES — READ THIS FIRST
     :mod:`._positional` is the proposed replacement (the operator's rule): a
     banner ABOVE the last startup marker is HISTORY, one BELOW it is CURRENT.
     :mod:`._liveness` adds the only non-invasive positive evidence of life — did
-    the pane change. Both are REPORT-ONLY, surfaced as ``sac agents auth-audit``.
+    the pane change. Both are REPORT-ONLY, applied by the scheduled pass as well as
+    ``sac agents auth-audit``.
 
     NO AUTOMATED RESTARTER SHIPS FROM THIS PACKAGE until that audit is clean
     across the fleet AND a true-positive pane has been captured. ``auth-heal``

@@ -12,6 +12,8 @@ differs. Untracked files never count as dirty (matches fleet_sync.sh).
 
 from __future__ import annotations
 
+from .._logging import render_content
+
 import json
 import subprocess
 from pathlib import Path
@@ -126,7 +128,7 @@ def emit_collect(sac_version: str | None) -> int:
         checkouts=state["checkouts"],
         errors=state["errors"],
     )
-    print(json.dumps(manifest, indent=2))
+    render_content(json.dumps(manifest, indent=2))
     return 0 if not state["errors"] else 2
 
 

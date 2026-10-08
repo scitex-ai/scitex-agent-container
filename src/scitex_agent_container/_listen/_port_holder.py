@@ -262,7 +262,7 @@ def diagnose_unhealthy(
             f"never answered within {deadline_secs}s — the daemon is UP but "
             f"NOT SERVING (wedged on the socket). This is the silent-outage "
             f"mode `_lifecycle/_bind_watchdog.py` alarms on. Retry "
-            f"`sac listen restart --force` to SIGKILL PID {who}."
+            f"`sac listen restart` to SIGKILL PID {who}."
         )
     return (
         f"ERROR: bind failed — nothing is listening on {host}:{port} after "

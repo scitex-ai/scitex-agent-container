@@ -23,9 +23,9 @@ def assert_explicit_engine_noop_safe(
 ) -> None:
     """Allow an idempotent no-op only when it proves the requested engine is live.
 
-    ``sac agents start`` intentionally leaves a live process untouched unless
-    ``--force`` is present. That contract cannot silently swallow
-    ``--engine``: finding *some* live process does not prove that the selected
+    ``sac agents start`` leaves a live process untouched; internal restart
+    cleanup may replace it. An idempotent start cannot silently swallow
+    ``--engine``: finding a live process does not prove that the selected
     backend was applied. Observe the live process using the same engine census
     as ``sac agents health``. A mismatch or an incomplete observation refuses
     without changing either the process or its conversation.
@@ -54,6 +54,6 @@ def assert_explicit_engine_noop_safe(
         f"agent {config.name!r} is already running, so --engine {selected!r} "
         f"would be a no-op; {evidence}. No process or conversation was "
         "changed. To apply the selected engine while retaining Hermes session "
-        f"history, run: sac agents start {config.name} --force --continue "
+        f"history, run: sac agents restart {config.name} "
         f"--engine {selected} -y"
     )

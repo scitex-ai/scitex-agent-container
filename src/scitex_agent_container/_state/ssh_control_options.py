@@ -20,7 +20,7 @@ shell-quoted twin) and prepend the result to their ssh argv.
 The module is intentionally tiny + self-contained so the per-package
 cli-startup budget (`_skills/.../21_cli-startup-budget.md`) isn't
 affected — ``host_config`` re-exports the symbols, but the heavy
-imports (``tempfile``, ``shlex``) are deferred to call time.
+imports (runtime path resolution, ``shlex``) are deferred to call time.
 """
 
 from __future__ import annotations
@@ -39,10 +39,12 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
       * ``ControlMaster=auto`` — first ssh becomes master; siblings reuse.
       * ``ControlPersist=60s`` — master lingers 60s after the last client
         exits so a sub-second burst of sac calls shares one TCP handshake.
-      * ``ControlPath=<dir>/%C`` — ``%C`` is the SHA256 hash of
+      * ``ControlPath=<dir>/%C`` — ``%C`` is OpenSSH's 40-character hash of
         ``(user,host,port)``; collision-free across targets and short
         enough to stay inside the Unix-domain-socket 108-byte name limit
-        even when ``<dir>`` is long.
+        when the selected directory fits within that limit. An oversized
+        generated default disables multiplexing; explicit directory pins
+        remain the caller's responsibility.
 
     The control_dir is created on call (``mkdir -p`` semantics).
     Resolution order:
@@ -50,8 +52,7 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
       1. ``control_dir`` argument — explicit pin (tests, callers that
          already have a writable scratch dir).
       2. ``$SAC_SSH_CONTROL_DIR`` env override.
-      3. ``${TMPDIR:-/tmp}/.sac-ssh-cm`` via :func:`tempfile.gettempdir`
-         (writable inside apptainer SIFs by default).
+      3. ``<SAC runtime>/ssh-cm`` inside the canonical SAC state namespace.
 
     Set ``SAC_SSH_CONTROL_MASTER=0`` (or ``no``/``false``/``off``) to opt
     out entirely; the function returns ``[]`` so each sac-emitted ssh
@@ -78,9 +79,16 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
             # Lazy import — keeps `sac --help` startup cost off the
             # `_state` package import (see
             # `_skills/.../21_cli-startup-budget.md`).
-            import tempfile
+            from .._runtime_paths import runtime_base_dir
 
-            control_dir = os.path.join(tempfile.gettempdir(), ".sac-ssh-cm")
+            control_dir = runtime_base_dir() / "ssh-cm"
+            # OpenSSH expands %C to 40 hexadecimal characters. Linux's
+            # sockaddr_un permits 107 path bytes plus its terminating NUL.
+            # Runtime roots on HPC scratch can be longer than the normal
+            # canonical home anchor; do not create an unusable socket dir.
+            expanded_path = os.fspath(control_dir) + "/" + "0" * 40
+            if len(os.fsencode(expanded_path)) >= 108:
+                return []
     try:
         Path(control_dir).mkdir(parents=True, exist_ok=True)
     except OSError:

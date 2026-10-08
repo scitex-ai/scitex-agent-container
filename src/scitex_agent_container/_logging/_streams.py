@@ -1,53 +1,66 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Caller-owned stream writes — the PS-220 content-transport primitive.
+"""SciTeX logging adapters for human output and caller-owned protocol streams.
 
-PS-220 forbids a bare ``print`` in shippable SciTeX source because a caller
-importing the module cannot silence, redirect or capture it: there is no flag,
-no handler and no level. The rule spares exactly three *mechanically provable*
-transports, and one of them is a **caller-owned required stream** — a ``print``
-whose ``file=`` is a REQUIRED parameter of the enclosing function, so the
-CALLER, not this module, owns the destination.
-
-``write_stream`` is that transport, factored out so the call sites that must
-honour a caller-supplied stream (a captured ``io.StringIO`` in tests, a
-redirected CLI stream, a cron job's own log sink) do not each re-derive it.
-The stream is a REQUIRED parameter: this module never chooses a destination, so
-nothing here is "library code writing unconditionally to stdout".
-
-This is deliberately NOT a general ``print`` escape hatch. Routing a
-caller-directed payload through a logger would be wrong, not merely noisy:
-scitex-logging writes every console record to STDERR, which would corrupt a
-machine-readable payload the caller asked to receive on its own stream.
+Human output carries its logging level. Protocol transports use SciTeX's plain
+writer to preserve JSON, shell completion, and caller-supplied stream contracts
+independently of diagnostic thresholds. No writer uses raw print().
 """
 
 from __future__ import annotations
 
+import logging
+import re
+from threading import RLock
 from typing import TextIO
 
 __all__ = ["render_content", "render_rich", "write_stream"]
 
+_STREAM_LOCK = RLock()
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _RedirectAwareFormatter(logging.Formatter):
+    """Keep SciTeX's human format while removing colors from redirected output."""
+
+    def __init__(
+        self, formatter: logging.Formatter, handler: logging.StreamHandler
+    ) -> None:
+        super().__init__()
+        self._formatter = formatter
+        self._handler = handler
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = self._formatter.format(record)
+        try:
+            is_terminal = self._handler.stream.isatty()
+        except (AttributeError, OSError, ValueError):
+            is_terminal = False
+        # Older SciTeX formatters honor a process-wide force-color flag even
+        # when redirected. Adapt only this SAC console's destination; retain
+        # the configured prefix, continuation lines, and real-terminal color.
+        return formatted if is_terminal else _ANSI_SGR.sub("", formatted)
+
 
 def render_content(content: str) -> None:
-    """Print caller-supplied, already-rendered content verbatim to stdout.
+    """Emit protocol content through SciTeX's unfiltered stdout writer."""
+    import scitex_logging
+    import sys
 
-    This is the *explicit content-rendering contract* PS-220 recognises
-    structurally: the enclosing API is an output operation that emits its
-    caller-supplied content unchanged. It exists for the handful of product
-    outputs whose exact bytes are a published contract — ``sac-statusline``
-    (consumed by Claude Code as the pane contents), a shell completion
-    script that gets ``source``d — where a logging level prefix or a hop to
-    stderr would corrupt the payload rather than clarify it.
-
-    It is NOT a general ``print`` hatch: human-facing status and diagnostics
-    belong on ``scitex_logging.getConsole``/``getLogger``, which carry the
-    level, the aligned prefix and the searchable record the mandate exists
-    for.
-    """
-    print(content)
+    with _STREAM_LOCK:
+        try:
+            plain = scitex_logging.getPlainConsole(__name__)
+        except AttributeError:
+            # scitex-logging<0.2.1 has no plain console; mirror the
+            # released contract (own stdout, trailing newline) directly.
+            sys.stdout.write(content + "\n")
+        else:
+            plain.emit(content)
 
 
-def render_rich(renderable, name: str, *, level: str = "info", width: int | None = None) -> None:
+def render_rich(
+    renderable, name: str, *, level: str = "info", width: int | None = None
+) -> None:
     """Render a Rich renderable through the SciTeX stdout console.
 
     Rich's ``Console.print`` is forbidden in shippable source (PS-220) and has
@@ -55,8 +68,10 @@ def render_rich(renderable, name: str, *, level: str = "info", width: int | None
     no aligned prefix and no searchable record. So the renderable (a ``Table``,
     a markup string) is rendered with Rich's own renderer to text — the console
     stream is never written to — and that text is emitted as ONE levelled
-    record. The table a reader sees is byte-identical; the operator gains the
-    level.
+    record. The table layout is preserved and the output carries its level.
+    SAC keeps redirected output free of color escapes even when SciTeX's
+    process-wide force-color setting is enabled. A terminal destination keeps
+    SciTeX's configured colors; other SciTeX consoles are unaffected.
 
     Parameters
     ----------
@@ -80,7 +95,15 @@ def render_rich(renderable, name: str, *, level: str = "info", width: int | None
     console = Console(width=width) if width else Console()
     lines = console.render_lines(renderable, console.options, pad=False)
     text = "\n".join("".join(segment.text for segment in line) for line in lines)
-    getattr(slogging.getConsole(name), level)(text.rstrip("\n"))
+    with _STREAM_LOCK:
+        logger = slogging.getConsole(f"{name}.console", level=slogging.get_level())
+        for handler in logger.handlers:
+            formatter = handler.formatter
+            if formatter is not None and not isinstance(
+                formatter, _RedirectAwareFormatter
+            ):
+                handler.setFormatter(_RedirectAwareFormatter(formatter, handler))
+        getattr(logger, level)(text.rstrip("\n"))
 
 
 def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
@@ -102,4 +125,27 @@ def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
     -------
     None
     """
-    print(text, file=stream, flush=flush)
+    import scitex_logging
+
+    # Keep transport frames serialized without changing diagnostic loggers or
+    # taking ownership of the caller's stream.
+    with _STREAM_LOCK:
+        try:
+            plain = scitex_logging.getPlainConsole(__name__)
+        except AttributeError:
+            # scitex-logging<0.2.1 has no plain console; mirror the
+            # released contract onto the caller's stream directly.
+            stream.write(text + "\n")
+            if flush:
+                stream.flush()
+            return
+        try:
+            # scitex-logging>=0.2.3 caller-stream support; older releases
+            # only accept the message and always target their own stdout.
+            plain.emit(text, stream=stream, flush=flush)
+        except TypeError:
+            # Released emit() targets its own stdout with a trailing
+            # newline; mirror that contract onto the caller's stream.
+            stream.write(text + "\n")
+            if flush:
+                stream.flush()

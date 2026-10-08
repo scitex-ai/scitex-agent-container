@@ -119,7 +119,7 @@ def _dispatch_remote_start(
             f"peer's copy of these files differs from the lead's:\n"
             + "\n".join(f"  {rel}" for rel in plan.changed)
             + "\n\nResolve manually then re-run, "
-            + "or pass --force to overwrite peer-side from lead. "
+            + "then retry the start. "
             + "See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
         )
 
@@ -130,7 +130,7 @@ def _dispatch_remote_start(
         elif plan.first_launch:
             status = "first launch"
         elif plan.changed:
-            status = "drift overridden by --force"
+            status = "peer drift reconciled"
         else:
             status = "new files only"
         click.echo(
