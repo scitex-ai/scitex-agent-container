@@ -137,6 +137,28 @@ def test_canonical_hermes_harness_entry_is_accepted():
     assert errors == []
 
 
+def test_canonical_hermes_goal_fields_are_accepted():
+    # Arrange
+    entry = _hermes_entry()
+    entry["max_turns"] = 99999
+    entry["goals"] = {
+        "max_turns": 99999,
+        "judge_engine": "opencode-go-muse-spark-1.3-contributor",
+    }
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert not any("unknown fields" in error for error in errors)
+
+
 def test_canonical_hermes_compression_is_accepted():
     # Arrange
     entry = _hermes_entry()
