@@ -1,0 +1,17 @@
+{
+  "_comment_deny_swallowed_exit_code_hook": "PreToolUse Bash-matcher wiring for deny_swallowed_exit_code.sh. APPEND the single hook entry below into the EXISTING `PreToolUse` `Bash` matcher's `hooks` list in the baseline <agents_dir>/_shared/to_home/.claude/settings.json (next to enforce_heavy_job_demotion.sh) -- do NOT add a second Bash matcher block. The script body lives next to this fragment (src/scitex_agent_container/_baseline_assets/exit_code_hooks/) and must be deployed to $HOME/.claude/hooks/pre-tool-use/ via to_home materialization; it is self-contained (decision engine embedded as python3) and FAILS OPEN (allow) if python3 is unavailable or the payload does not parse, because a broken guard must not wedge the agent's Bash tool. This fragment is the LEGACY/manual wiring path and is kept so the bundle stays installable by hand; the sanctioned path is the `scitex_dev.hooks` entry-point declared in scitex_agent_container/_claude_hooks_plugin.py, which scitex-dev discovers and applies centrally. The hook refuses ONLY provable exit-code hiding -- a pipeline without `set -o pipefail` (or an explicit PIPESTATUS check), or `|| true` / `|| :` / `|| exit 0` / trailing `; true` swallows; quoted pipes, real `||` handlers, and `cmd && true` pass through untouched. Overrides: SAC_ALLOW_SWALLOWED_EXIT_CODE=1 or an inline `# hook-bypass: swallowed-exit-code` marker. Rationale is documented in the sibling README.md.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-tool-use/deny_swallowed_exit_code.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

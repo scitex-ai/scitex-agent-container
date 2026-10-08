@@ -39,6 +39,7 @@ _PROVIDER = "scitex-agent-container"
 #: i.e. ``importlib.resources.files("scitex_agent_container") / <script>``.
 _BUNDLE = "_baseline_assets/image_build_hooks"
 _PROCESS_WAIT_BUNDLE = "_baseline_assets/process_wait_hooks"
+_EXIT_CODE_BUNDLE = "_baseline_assets/exit_code_hooks"
 
 #: Absolute on-disk path to the same bundle, for callers that already have
 #: the package imported and do not want to go through importlib.resources.
@@ -48,6 +49,7 @@ DENY_RAW_APPTAINER_BUILD = f"{_BUNDLE}/deny_raw_apptainer_build.sh"
 DENY_SELF_MATCHING_PGREP_WAIT = (
     f"{_PROCESS_WAIT_BUNDLE}/deny_self_matching_pgrep_wait.sh"
 )
+DENY_SWALLOWED_EXIT_CODE = f"{_EXIT_CODE_BUNDLE}/deny_swallowed_exit_code.sh"
 
 
 def provide_hooks() -> "tuple[HookRule, ...]":
@@ -112,6 +114,35 @@ def provide_hooks() -> "tuple[HookRule, ...]":
             matches=("Bash",),
             provider=_PROVIDER,
             script=DENY_SELF_MATCHING_PGREP_WAIT,
+        ),
+        HookRule(
+            id="sac.no-swallowed-exit-code",
+            rule=(
+                "Refuse a Bash command that hides its own exit code: a "
+                "pipeline without `set -o pipefail` (or an explicit "
+                "`${PIPESTATUS}` check), or an `|| true` / `|| :` / "
+                "`|| exit 0` / trailing `; true` swallow."
+            ),
+            reason=(
+                "Operator order CCT 4552: terminal calls must surface real "
+                "exit codes. A pipeline's exit status is its last command's, "
+                "so `pytest | tail` reports success whenever `tail` succeeds "
+                "even when every test failed; `|| true` converts failure "
+                "into success unconditionally, so CI verdicts, retry loops, "
+                "and delivery gates key on the wrong signal. Neither failure "
+                "fails loudly -- it surfaces weeks later as a green run that "
+                "never gated anything. The guard is deliberately narrower "
+                "than an `||` ban: quoted pipes, real `||` handlers "
+                "(`|| echo`, `|| exit 1`), `cmd && true`, and bare "
+                "`2>/dev/null` keep working, because a guard that blocks "
+                "legitimate commands gets disabled and then the real rule "
+                "is gone with it."
+            ),
+            event="pre-tool-use",
+            severity="deny",
+            matches=("Bash",),
+            provider=_PROVIDER,
+            script=DENY_SWALLOWED_EXIT_CODE,
         ),
     )
 
