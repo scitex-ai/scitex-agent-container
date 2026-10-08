@@ -10,19 +10,6 @@ from pathlib import Path
 from .._logging import get_logger
 
 logger = get_logger(__name__)
-
-try:
-    from scitex_genai.availability import probe_provider_key, provider_route
-except ImportError:
-    provider_route = None
-    probe_provider_key = None
-
-
-def availability_probe_available() -> bool:
-    """True when scitex-genai exposes the availability surface (>=0.2.3)."""
-    return provider_route is not None and probe_provider_key is not None
-
-
 _ERROR_FIELDS = (
     "last_status",
     "last_status_at",
@@ -45,11 +32,8 @@ def probe_spec(plan, compiled: dict) -> dict:
     headers.update(custom.get("extra_headers", {}))
     provider = compiled["model"]["provider"]
     if protocol.startswith("hermes-native:"):
-        if provider_route is None:
-            raise RuntimeError(
-                "hermes-native endpoint resolution requires scitex-genai>=0.2.3 "
-                "(scitex_genai.availability is not importable)"
-            )
+        from ._availability import provider_route
+
         provider = protocol.split(":", 1)[1]
         route = provider_route(provider, plan.engine.model_id)
         protocol, url = route.protocol, route.endpoint_url
@@ -65,12 +49,9 @@ def probe_spec(plan, compiled: dict) -> dict:
 
 
 def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
-    """Adapt GenAI's native status result to Hermes' persistent pool state."""
-    if probe_provider_key is None:
-        raise RuntimeError(
-            "credential availability probing requires scitex-genai>=0.2.3 "
-            "(scitex_genai.availability is not importable)"
-        )
+    """Adapt the local availability result to Hermes' persistent pool state."""
+    from ._availability import probe_provider_key
+
     result = probe_provider_key(
         spec["provider"],
         spec["model"],
@@ -93,6 +74,17 @@ def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
     )
     if result.available is True:
         return {"last_status": "ok", "last_status_at": now}
+    if result.available is None:
+        # Unknown is absence of evidence: skip temporarily, never reject.
+        return {
+            "last_status": "exhausted",
+            "last_status_at": now,
+            "last_error_code": None,
+            "last_error_reason": status.kind,
+            "last_error_message": result.check.detail,
+            "last_error_reset_at": now + 60,
+            "failure_reason": "transient",
+        }
     code = status.code if status.kind == "http" else None
     detail = result.check.detail.lower()
     billing = code == 402 or any(
@@ -120,13 +112,6 @@ def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
 def preflight_pools(rendered: dict, pools: dict, profiles: list[Path]) -> None:
     """Select the first proven route, preserving rejected keys and quota resets."""
     if not pools:
-        return
-    if not availability_probe_available():
-        logger.warning(
-            "scitex-genai availability surface is not importable "
-            "(need scitex-genai>=0.2.3); keeping declared Hermes pools "
-            "without availability verification"
-        )
         return
     from ._hermes_failover import materialize_pools
 
