@@ -6,7 +6,7 @@ from scitex_agent_container.runtimes import _hermes_key_probe as probe
 
 
 def test_upstream_error_detail_is_not_logged_or_persisted(monkeypatch):
-    import scitex_genai.availability as availability
+    from scitex_agent_container.runtimes import _availability as availability
 
     token = "synthetic-private-sentinel"
     result = SimpleNamespace(

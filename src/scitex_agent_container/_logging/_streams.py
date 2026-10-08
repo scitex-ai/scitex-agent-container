@@ -122,4 +122,15 @@ def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
     # Keep transport frames serialized without changing diagnostic loggers or
     # taking ownership of the caller's stream.
     with _STREAM_LOCK:
-        scitex_logging.getPlainConsole(__name__).emit(text, stream=stream, flush=flush)
+        try:
+            # scitex-logging>=0.2.3 caller-stream support; older releases
+            # only accept the message and always target their own stdout.
+            scitex_logging.getPlainConsole(__name__).emit(
+                text, stream=stream, flush=flush
+            )
+        except TypeError:
+            # Released emit() targets its own stdout with a trailing
+            # newline; mirror that contract onto the caller's stream.
+            stream.write(text + "\n")
+            if flush:
+                stream.flush()
