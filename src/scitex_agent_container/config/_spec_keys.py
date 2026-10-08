@@ -92,6 +92,11 @@ _KNOWN_SPEC_KEYS = frozenset(
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         "delegation",  # harness-neutral child concurrency/isolation policy
+        # Declared secret NAMES (never values): env names the launcher
+        # resolves from host credential stores into the 0600 env-file at
+        # start. OPTIONAL, documentation-first: a spec that omits it still
+        # loads. Values must never appear here — only names.
+        "secrets",
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),
