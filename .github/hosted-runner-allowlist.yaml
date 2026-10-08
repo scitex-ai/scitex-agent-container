@@ -50,6 +50,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 allow:
+  - workflow: ci-watch.yml
+    jobs:
+      - poll
+    approved_by: operator
+    approved_on: 2026-10-08
+    # Standing design decision of the ci-watch draft (PR #1602):
+    # docs/adr/watcher-placement.md on the same branch. The host-load leg
+    # in the same file stays self-hosted (it must ssh the LAN); ONLY the
+    # poll job is hosted. Reviewable in the PR, as this file requires.
+    reason: >-
+      INDEPENDENCE: the poll job is the observer that must outlive what it
+      observes. On the self-hosted pool it dies with the pool (共倒れ) —
+      same runners, same hosts, same outage — so a dead pool would read as
+      "no verdict" instead of being observed failing. docs/adr/watcher-placement.md
+      verifies all four self-hosted runners busy while the GitHub-hosted
+      poll still recorded its row. The job is cron/dispatch only, gates
+      nothing, runs only first-party code, and touches only the append-only
+      ledger branch: no untrusted trigger, no secret beyond GITHUB_TOKEN.
+      DO NOT "FIX" BY MIGRATING poll TO SELF-HOSTED — that re-couples the
+      observer to the observed and defeats the watcher.
   - workflow: nightly-python-matrix-on-github-hosted.yml
     jobs:
       - test

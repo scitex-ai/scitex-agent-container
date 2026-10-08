@@ -20,9 +20,14 @@ import pytest
 from scitex_agent_container._lifecycle._ci_watcher import (
     DoneRefused,
     assert_done_allowed,
+    fetch_host_loads,
     fetch_run_jobs,
     health,
+    idle_while_queued,
+    parse_host_probe,
+    poll_host_loads_once,
     poll_once,
+    read_latest_host_load,
     record_snapshot,
     roll_up_status,
     watch_forever,
@@ -339,3 +344,115 @@ def test_done_allowed_when_required_ci_green(tmp_path):
     row = assert_done_allowed(ledger, repo="o/r", run_id=7, now_fn=lambda: T0)
     # Assert
     assert row["status"] == "success"
+
+
+# --- host load: probe parsing ------------------------------------------------
+
+
+def test_probe_output_parses_load_and_process_counts():
+    # Arrange — one host's four probe lines (loadavg + 3 counts).
+    # Act
+    snap = parse_host_probe("0.50 0.52 0.44 1/1245 3038435\n2\n15\n0\n")
+    # Assert
+    assert (snap["load1"], snap["runner"], snap["apptainer"], snap["pytest"]) == (
+        0.50,
+        2,
+        15,
+        0,
+    )
+
+
+def test_low_load_without_pytest_reads_idle():
+    # Arrange — load 0.5, no test procs (compute-02 shape, 2026-10-08).
+    # Act
+    snap = parse_host_probe("0.50 0.52 0.44 1/1245 1\n2\n15\n0\n")
+    # Assert
+    assert snap["idle"] is True
+
+
+def test_running_pytest_is_not_idle_despite_low_load():
+    # Arrange — load 1.4 but test procs present (compute-04 shape).
+    # Act
+    snap = parse_host_probe("1.42 1.53 1.45 2/1544 1\n4\n26\n11\n")
+    # Assert
+    assert snap["idle"] is False
+
+
+def test_garbage_probe_is_error_never_idle():
+    # Arrange — ssh printed nothing usable.
+    # Act
+    snap = parse_host_probe("not a probe\n")
+    # Assert
+    assert snap.get("idle") is not True and "error" in snap
+
+
+def test_ssh_failure_records_error_never_idle():
+    # Arrange — the ssh seam explodes instead of returning.
+    def boom(host, cmd):
+        raise OSError("no route to host")
+
+    # Act
+    snaps = fetch_host_loads(["scitex-compute-02"], ssh=boom)
+    # Assert
+    assert "error" in snaps["scitex-compute-02"]
+
+
+# --- host load: idle-while-queued flag ---------------------------------------
+
+
+def test_flag_true_when_queued_and_all_hosts_idle():
+    # Arrange — queued work exists; every probed host idle.
+    hosts = {"h2": {"idle": True}, "h3": {"idle": True}}
+    # Act
+    result = idle_while_queued(hosts, True)
+    # Assert
+    assert result is True
+
+
+def test_flag_false_without_queued_work():
+    # Arrange — idle fleet but nothing queued.
+    hosts = {"h2": {"idle": True}, "h3": {"idle": True}}
+    # Act
+    result = idle_while_queued(hosts, False)
+    # Assert
+    assert result is False
+
+
+def test_flag_false_when_one_host_busy():
+    # Arrange — queued work, but one host runs tests.
+    hosts = {"h2": {"idle": True}, "h4": {"idle": False}}
+    # Act
+    result = idle_while_queued(hosts, True)
+    # Assert
+    assert result is False
+
+
+def test_host_poll_records_own_ledger_row_with_flag(tmp_path):
+    # Arrange — a canned fleet: one idle host, queued work waiting.
+    ledger = tmp_path / "ci-watch-host-load.jsonl"
+
+    def ssh(host, cmd):
+        return "0.50 0.52 0.44 1/10 1\n2\n15\n0\n"
+
+    # Act
+    row = poll_host_loads_once(
+        ledger, queued=True, hosts=["h2"], ssh=ssh, now_fn=lambda: T0
+    )
+    # Assert
+    assert (row["type"], row["idle_while_queued"]) == ("host-load", True)
+
+
+def test_latest_host_row_is_readable_back(tmp_path):
+    # Arrange — one recorded host-load poll.
+    ledger = tmp_path / "ci-watch-host-load.jsonl"
+
+    def ssh(host, cmd):
+        return "0.50 0.52 0.44 1/10 1\n2\n15\n0\n"
+
+    poll_host_loads_once(
+        ledger, queued=True, hosts=["h2"], ssh=ssh, now_fn=lambda: T0
+    )
+    # Act
+    latest = read_latest_host_load(ledger)
+    # Assert
+    assert latest is not None and latest["hosts"]["h2"]["idle"] is True
