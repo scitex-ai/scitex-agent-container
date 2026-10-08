@@ -1,0 +1,39 @@
+[2026-10-08T07:06:41Z] BLOCK pipe :: | :: pytest tests/ -q | tail -5
+[2026-10-08T07:06:41Z] BLOCK pipe :: | :: make build 2>&1 | tee build.log
+[2026-10-08T07:06:41Z] BLOCK pipe :: | :: cat log | grep ERROR | head -20
+[2026-10-08T07:06:42Z] BLOCK swallow :: || true :: grep foo file || true
+[2026-10-08T07:06:42Z] BLOCK swallow :: || true :: grep foo file||true
+[2026-10-08T07:06:42Z] BLOCK swallow :: || : :: grep foo file || :
+[2026-10-08T07:06:42Z] BLOCK swallow :: || exit 0 :: grep foo file || exit 0
+[2026-10-08T07:06:42Z] BLOCK swallow :: || /bin/true :: grep foo file || /bin/true
+[2026-10-08T07:06:42Z] BLOCK swallow :: ; true :: run_tests; true
+[2026-10-08T07:06:42Z] BLOCK swallow :: ; exit 0 :: run_tests; exit 0
+[2026-10-08T07:06:42Z] BLOCK swallow :: || true :: (build || true)
+[2026-10-08T07:07:34Z] BLOCK pipe :: | :: pytest tests/ -q | tail -5
+[2026-10-08T07:07:34Z] BLOCK pipe :: | :: make build 2>&1 | tee build.log
+[2026-10-08T07:07:34Z] BLOCK pipe :: | :: cat log | grep ERROR | head -20
+[2026-10-08T07:07:34Z] BLOCK swallow :: || true :: grep foo file || true
+[2026-10-08T07:07:34Z] BLOCK swallow :: || true :: grep foo file||true
+[2026-10-08T07:07:34Z] BLOCK swallow :: || : :: grep foo file || :
+[2026-10-08T07:07:34Z] BLOCK swallow :: || exit 0 :: grep foo file || exit 0
+[2026-10-08T07:07:34Z] BLOCK swallow :: || /bin/true :: grep foo file || /bin/true
+[2026-10-08T07:07:34Z] BLOCK swallow :: ; true :: run_tests; true
+[2026-10-08T07:07:34Z] BLOCK swallow :: ; exit 0 :: run_tests; exit 0
+[2026-10-08T07:07:34Z] BLOCK swallow :: || true :: (build || true)
+[2026-10-08T07:07:35Z] BLOCK pipe :: | :: pytest tests/ -q | tail -5
+[2026-10-08T07:07:35Z] BLOCK swallow :: || true :: grep foo file || true
+[2026-10-08T07:07:35Z] BLOCK swallow :: ; true :: run_tests; true
+[2026-10-08T07:08:10Z] BLOCK pipe :: | :: pytest tests/ -q | tail -5
+[2026-10-08T07:08:10Z] BLOCK pipe :: | :: make build 2>&1 | tee build.log
+[2026-10-08T07:08:10Z] BLOCK pipe :: | :: cat log | grep ERROR | head -20
+[2026-10-08T07:08:11Z] BLOCK swallow :: || true :: grep foo file || true
+[2026-10-08T07:08:11Z] BLOCK swallow :: || true :: grep foo file||true
+[2026-10-08T07:08:11Z] BLOCK swallow :: || : :: grep foo file || :
+[2026-10-08T07:08:11Z] BLOCK swallow :: || exit 0 :: grep foo file || exit 0
+[2026-10-08T07:08:11Z] BLOCK swallow :: || /bin/true :: grep foo file || /bin/true
+[2026-10-08T07:08:11Z] BLOCK swallow :: ; true :: run_tests; true
+[2026-10-08T07:08:11Z] BLOCK swallow :: ; exit 0 :: run_tests; exit 0
+[2026-10-08T07:08:11Z] BLOCK swallow :: || true :: (build || true)
+[2026-10-08T07:08:12Z] BLOCK pipe :: | :: pytest tests/ -q | tail -5
+[2026-10-08T07:08:12Z] BLOCK swallow :: || true :: grep foo file || true
+[2026-10-08T07:08:12Z] BLOCK swallow :: ; true :: run_tests; true
