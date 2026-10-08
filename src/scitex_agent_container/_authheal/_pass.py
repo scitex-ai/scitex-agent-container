@@ -241,7 +241,7 @@ def _perform(
         now=now,
         extra={"source": "sac.restart-login-expired"},
     )
-    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the wedged fleet still needs recovering; the failure is carded and reported)
+    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the wedged fleet still needs recovering; the attempt and its outcome are recorded in the auth event log)
     try:
         ok = restart_fn(name)
     except Exception as exc:
@@ -396,7 +396,7 @@ def auth_heal_pass(
                 )
 
     if apply and budget is not None:
-        # stx-allow: fallback (reason: the end-of-pass write is housekeeping; its failure is already reported per-restart above and must not crash a pass that has done its work)
+        # stx-allow: fallback (reason: the end-of-pass write is housekeeping; its failure is already recorded per-restart in the auth event log above and must not crash a pass that has done its work)
         try:
             save_history(history_file, budget.history, now=now)
         except OSError:

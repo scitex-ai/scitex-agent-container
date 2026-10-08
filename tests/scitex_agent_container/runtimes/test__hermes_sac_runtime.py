@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from scitex_agent_container.config import AgentConfig
@@ -187,9 +189,20 @@ def test_global_unbound_prefix_does_not_fall_back_to_image_cli(installed_sac):
         )
 
 
-def test_missing_console_entrypoint_has_install_hint(installed_sac):
+def test_missing_console_entrypoint_has_install_hint(installed_sac, tmp_path):
+    # Arrange
     installed_sac.binary.unlink()
-    with pytest.raises(
-        runtime.HermesSacRuntimeError, match="install scitex-agent-container"
-    ):
-        runtime.sac_installation(_config())
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    previous_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(empty)
+    try:
+        # Act
+        call = lambda: runtime.sac_installation(_config())  # noqa: E731
+        # Assert
+        with pytest.raises(
+            runtime.HermesSacRuntimeError, match="install scitex-agent-container"
+        ):
+            call()
+    finally:
+        os.environ["PATH"] = previous_path

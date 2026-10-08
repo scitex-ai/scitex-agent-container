@@ -134,8 +134,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_account/openai_usage.py:407",
         "scitex_agent_container/_account/refresh_alarm.py:76",
         "scitex_agent_container/_agentstate/_journal.py:226",
-        "scitex_agent_container/_authheal/_pass.py:284",
-        "scitex_agent_container/_authheal/_pass.py:429",
         # _birth_certificate.py LEFT THIS SET 2026-08-20 — the reason now
         # names its sink (journald via sac-listen.service for a brokered
         # start, the caller's stderr for a direct one) and carries the

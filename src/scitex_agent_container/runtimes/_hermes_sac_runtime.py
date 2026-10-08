@@ -10,6 +10,7 @@ visible through the finalized explicit binds.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import sysconfig
 from dataclasses import dataclass
@@ -65,13 +66,32 @@ def _symlink_hops(path: Path) -> tuple[Path, ...]:
 
 
 def sac_installation(config: Any) -> SacInstallation:
-    """Resolve standard installed scripts, accepting same-installation aliases."""
-    binary = Path(sysconfig.get_path("scripts")) / "sac"
+    """Resolve standard installed scripts, accepting same-installation aliases.
+
+    The launching installation's scripts directory wins when it carries an
+    executable ``sac``. Otherwise the ``sac`` on ``PATH`` is accepted: the
+    SIF test driver installs the checkout with ``pip --target`` (no console
+    scripts) and exposes exactly this checkout through a ``sac`` shim, so
+    requiring the scripts directory would refuse the genuine installation.
+    """
+    candidates = [Path(sysconfig.get_path("scripts")) / "sac"]
+    located = shutil.which("sac")
+    if located:
+        candidates.append(Path(located))
+    binary = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.is_file() and os.access(candidate, os.X_OK)
+        ),
+        None,
+    )
     python = Path(sys.executable)
-    if not binary.is_file() or not os.access(binary, os.X_OK):
+    if binary is None:
         raise HermesSacRuntimeError(
             "Hermes requires sac in the launching Python installation's scripts "
-            "directory; install scitex-agent-container with that Python first"
+            "directory or on PATH; install scitex-agent-container with that "
+            "Python first"
         )
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
