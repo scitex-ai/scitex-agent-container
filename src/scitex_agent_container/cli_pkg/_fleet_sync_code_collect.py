@@ -126,7 +126,7 @@ def emit_collect(sac_version: str | None) -> int:
         checkouts=state["checkouts"],
         errors=state["errors"],
     )
-    print(json.dumps(manifest, indent=2))
+    print(json.dumps(manifest, indent=2))  # stx-allow: STX-SAC005
     return 0 if not state["errors"] else 2
 
 
