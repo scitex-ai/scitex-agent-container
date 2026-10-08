@@ -1,0 +1,10 @@
+plugins: anyio-4.15.1, cov-7.1.0, platformdirs-4.12.4, scitex-dev-0.62.3, asyncio-1.4.0, xdist-3.8.0, timeout-2.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+../../../../../scitex-agent-container/.worktrees/subagent-sa-0-5b415209/tests/scitex_agent_container/_lifecycle/test__ci_watcher.py::test_failed_run_is_recorded_with_agent_stopped PASSED [ 25%]
+../../../../../scitex-agent-container/.worktrees/subagent-sa-0-5b415209/tests/scitex_agent_container/_lifecycle/test__ci_watcher.py::test_stale_success_is_stalled_not_healthy PASSED [ 50%]
+../../../../../scitex-agent-container/.worktrees/subagent-sa-0-5b415209/tests/scitex_agent_container/_lifecycle/test__ci_watcher.py::test_done_refused_while_ci_failing PASSED [ 75%]
+../../../../../scitex-agent-container/.worktrees/subagent-sa-0-5b415209/tests/scitex_agent_container/_lifecycle/test__ci_watcher.py::test_done_allowed_when_required_ci_green PASSED [100%]
+
+============================== 4 passed in 0.09s ===============================
