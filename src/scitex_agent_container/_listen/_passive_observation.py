@@ -34,13 +34,7 @@ from ._observation_contract import (
 )
 
 _PRODUCER_EPOCH = uuid.uuid4().hex
-_COUNTERS = (
-    "turns_accepted",
-    "turns_completed",
-    "tools_started",
-    "tools_completed",
-    "tools_inflight",
-)
+_COUNTERS: tuple[str, ...] = ()
 
 
 class UnsupportedObservationAdapter(CodexActivityError):
@@ -107,8 +101,8 @@ def _threshold(value):
 
 def runtime_observation(heartbeat, authority, *, now, progress_stale_s=None):
     """Publish measured clocks separately from work and process liveness."""
-    threshold = _threshold(progress_stale_s)
-    unknown = RuntimeObservation(progress_stale_s=threshold)
+    _ = progress_stale_s  # accepted for call-site compatibility only
+    unknown = RuntimeObservation()
     if (
         not isinstance(heartbeat, dict)
         or heartbeat.get("activity_source_id") != authority.source.identity
@@ -161,28 +155,43 @@ def runtime_observation(heartbeat, authority, *, now, progress_stale_s=None):
         lease_expires_at=deadline,
         lease_remaining_s=deadline - now,
         lease_expired=now > deadline,
-        progress_stale_s=threshold,
     )
     progress = _time(resident["progress_at"])
-    if progress is not None and progress <= now and resident["progress_seq"] > 0:
-        result.progress_at = progress
-        result.progress_age_s = now - progress
-        result.progress_seq = resident["progress_seq"]
-        result.progress_is_stale = (
-            result.progress_age_s > threshold if threshold is not None else None
-        )
+    session_delta = resident.get("session_jsonl_delta_bytes")
+    subagent_delta = resident.get("subagent_jsonl_delta_bytes")
+    for delta in (session_delta, subagent_delta):
+        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+            continue
+        if delta > 0 and progress is not None and progress <= now:
+            result.session_jsonl_delta_bytes = float(session_delta) if isinstance(session_delta, (int, float)) and not isinstance(session_delta, bool) else None
+            result.subagent_jsonl_delta_bytes = float(subagent_delta) if isinstance(subagent_delta, (int, float)) and not isinstance(subagent_delta, bool) else None
+            result.progress_at = progress
+            result.progress_age_s = now - progress
+            break
     if now > deadline:
         return result
-    counts = [heartbeat.get(key) for key in _COUNTERS]
-    if not all(type(value) is int and value >= 0 for value in counts):
+    # Binary verdict inputs only: deltas + nonce pair. A positive delta
+    # inside the lease marks the resident observed; resident_state reads
+    # the binary WORKING-or-DEAD vocabulary (CCT 4276/4299/4309).
+    session_delta = resident.get("session_jsonl_delta_bytes")
+    subagent_delta = resident.get("subagent_jsonl_delta_bytes")
+    deltas = [
+        float(value)
+        for value in (session_delta, subagent_delta)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    if not any(value > 0 for value in deltas):
+        result.resident_state = "dead"
         return result
-    accepted, completed, started, finished, inflight = counts
-    if completed > accepted or finished > started or inflight > started - finished:
-        return result
+    challenge = resident.get("nonce_challenge")
+    if isinstance(challenge, str) and len(challenge) == 16 and challenge.isdigit():
+        from .._state.authoritative_heartbeat import nonce_echo_confirms
+
+        if not nonce_echo_confirms(resident):
+            result.resident_state = "dead"
+            return result
     result.state = "observed"
-    result.resident_state = resident["state"]
-    for key, value in zip(_COUNTERS, counts):
-        setattr(result, key, value)
+    result.resident_state = "working"
     return result
 
 
@@ -293,7 +302,7 @@ def annotate_observation_rows(
                 progress_stale_s=progress_stale_s,
             )
             if authority is not None and valid_clock
-            else RuntimeObservation(progress_stale_s=_threshold(progress_stale_s))
+            else RuntimeObservation()
         )
         observation = AgentObservation(
             authority=authority, frame=frame, handshake=handshake, runtime=runtime

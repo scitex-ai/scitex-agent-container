@@ -49,25 +49,25 @@ _VERDICT_COLOUR = {
 
 
 def heartbeat_health_state(resident_state: str) -> str:
-    """Project resident evidence without collapsing disconnection to death."""
-    if resident_state in {"idle", "active", "blocked"}:
+    """Project the binary work verdict onto health (CCT 4276/4299)."""
+    if resident_state == "working":
         return "healthy"
-    if resident_state in {"dead", "stalled"}:
+    if resident_state == "dead":
         return "unhealthy"
     return "unknown"
 
 
 def status_health_state(status: dict) -> str:
     """Project typed health from the process dimension of a status snapshot."""
-    resident_state = str(status.get("resident_state") or "unknown")
-    if resident_state == "stalled":
-        return "unhealthy"
     process_state = str(
         ((status.get("observation") or {}).get("process") or {}).get("state")
         or "unknown"
     )
     if process_state == "alive":
         return "healthy"
+    resident_state = str(status.get("resident_state") or "unknown")
+    if resident_state == "dead":
+        return "unhealthy"
     if process_state in {"absent", "exited"}:
         return "unhealthy"
     return "unknown"
