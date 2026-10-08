@@ -478,6 +478,8 @@ def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
 
 
 def _apply_verified_route(rendered: dict, selection: dict) -> None:
+    authored = rendered.get("model")
+    authored_default = authored.get("default") if isinstance(authored, dict) else None
     for key in (
         "model",
         "providers",
@@ -494,7 +496,17 @@ def _apply_verified_route(rendered: dict, selection: dict) -> None:
             provider["key_env"] = ""
             provider.pop("api_key", None)
     judge = rendered.get("auxiliary", {}).get("goal_judge")
-    if judge:
+    verified = selection.get("model")
+    verified_default = verified.get("default") if isinstance(verified, dict) else None
+    if (
+        judge
+        and authored_default is not None
+        and verified_default is not None
+        and verified_default != authored_default
+    ):
+        # The verified fallback moved the model: the authored judge must
+        # follow within its lane. An unchanged route keeps the authored
+        # judge (notably the operator-pinned Muse judge on non-Muse lanes).
         from .._lifecycle._hermes_restart_preflight import same_goal_model
 
         actual = rendered["model"]["default"]

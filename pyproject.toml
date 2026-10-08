@@ -86,10 +86,10 @@ dependencies = [
     # publishes the inner boot symlink the round trip previously left
     # stale. See cli_pkg/_image_repro_build.py.
     "scitex-container>=0.4.0",
-    # Caller-stream emit kwargs need scitex-logging>=0.2.3 (unreleased;
-    # PyPI max is 0.2.2). _logging._streams shims the difference, so the
-    # floor stays at the released API this code actually requires.
-    "scitex-logging>=0.1.5",
+    # _logging._streams calls scitex_logging.getPlainConsole, which first
+    # shipped in 0.2.1; write_stream additionally shims the unreleased
+    # 0.2.3 caller-stream emit kwargs (PyPI max is 0.2.2).
+    "scitex-logging>=0.2.1",
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
