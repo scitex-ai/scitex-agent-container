@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Host-side, digest-fenced wrapper for the supported in-SIF drivers.
 set -euo pipefail
-umask 077
 INNER="${1:?inner script required}"; shift
 case "$INNER" in ''|*/*|*..*) echo '::error::invalid inner script' >&2; exit 1 ;; esac
 [ -f ".github/ci/$INNER" ] && [ ! -L ".github/ci/$INNER" ] || exit 1
@@ -80,7 +79,10 @@ echo "exec-in-sif: verified image=$SIF own HOME=$CI_HOME scratch=$SAC_CI_TMPDIR_
     set +m
     trap 'sleep 3' INT TERM
     group="$BASHPID"; birth="$(ci_pid_birth "$group")"
-    printf '%s|%s\n' "$group" "$birth" > "$CI_RUNTIME/run.identity"
+    # The birth record is mode-gated on read (owner 600): create it
+    # restrictively regardless of the ambient umask, exactly like the
+    # ownership marker in ci_tmpdir_prepare.
+    (umask 077; printf '%s|%s\n' "$group" "$birth" > "$CI_RUNTIME/run.identity")
     CI_ENV+=("APPTAINERENV_SAC_CI_GROUP_PID=$group" "APPTAINERENV_SAC_CI_GROUP_START=$birth")
     ci_clean_exec "$APPTAINER" "${APPTAINER_ARGV[@]}" "$SIF" bash ".github/ci/$INNER" "$@" &
     child=$!; child_status=0; wait "$child" || child_status=$?; exit "$child_status"

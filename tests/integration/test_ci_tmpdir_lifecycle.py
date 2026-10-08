@@ -131,6 +131,23 @@ def _mkdir(root: Path, name: str, *, age_s: int = 0, kind: str = "job") -> Path:
     return d
 
 
+def _mkdir_live_group(root: Path, name: str, pid: int, *, age_s: int = 0) -> Path:
+    """Prepare a group-owned fake scratch dir for ``pid``'s process group.
+
+    Unlike :func:`_mkdir` (which records the preparing shell itself), the
+    group here is an external live process, which is what makes the leftover
+    prune-refusable: only group death grants deletion authority.
+    """
+    d = root / name
+    res = _bash(f'SAC_CI_GROUP_PID={pid} ci_tmpdir_prepare "{d}"', root)
+    assert res.returncode == 0, f"prepare {d}: {res.stderr}"
+    (d / "site").mkdir(parents=True, exist_ok=True)
+    if age_s:
+        when = time.time() - age_s
+        os.utime(d, (when, when))
+    return d
+
+
 def _mutated_lib(tmp_path: Path, clause: str) -> Path:
     """A COPY of the library with one prune guard stripped out."""
     src = _LIB.read_text(encoding="utf-8")
@@ -486,15 +503,10 @@ def test_prune_spares_a_live_group_from_another_run_even_when_old(root: Path):
     # Arrange
     sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
     try:
-        old = root / "ci-scitex_agent_container-99990000-1-3.12"
-        res = _bash(
-            f'SAC_CI_GROUP_PID={sleeper.pid} ci_tmpdir_prepare "{old}"',
-            root,
+        old = _mkdir_live_group(
+            root, "ci-scitex_agent_container-99990000-1-3.12", sleeper.pid,
+            age_s=_ANCIENT_S,
         )
-        assert res.returncode == 0, res.stderr
-        (old / "site").mkdir(parents=True)
-        when = time.time() - _ANCIENT_S
-        os.utime(old, (when, when))
         # Act
         _bash("ci_tmpdir_prune", root)
         # Assert

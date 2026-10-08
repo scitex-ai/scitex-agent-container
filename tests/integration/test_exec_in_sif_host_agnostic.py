@@ -37,6 +37,7 @@ not a stand-in for any decision the shim makes.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _CI = _REPO / ".github" / "ci"
 _EXEC = _CI / "exec-in-sif.sh"
 _LIB = _CI / "tmpdir-lib.sh"
+_SIF_LIB = _CI / "sif-runtime-lib.sh"
 
 _GPFS = "/data/gpfs/projects/punim0264"
 
@@ -60,12 +62,19 @@ _NEEDED_TOOLS = (
     "dirname",
     "find",
     "grep",
+    "id",
     "mkdir",
     "pkill",
+    "ps",
+    "realpath",
     "rm",
     "sed",
+    "sha256sum",
+    "sleep",
     "sort",
     "stat",
+    "timeout",
+    "wc",
 )
 
 # Resolved from the REAL PATH at import. The sandbox deliberately hands the shim
@@ -121,6 +130,8 @@ class _Sandbox:
         # collects on develop cannot gate it.
         if _LIB.exists():
             shutil.copy2(_LIB, self.ci / "tmpdir-lib.sh")
+        if _SIF_LIB.exists():
+            shutil.copy2(_SIF_LIB, self.ci / "sif-runtime-lib.sh")
         (self.ci / "inner.sh").write_text("#!/usr/bin/env bash\necho inner ran\n")
 
         # The shim only checks `[ -f "$SIF" ]`; it never opens the image.
@@ -266,6 +277,17 @@ def _case(root, shim, *, gpfs=None, apptainer="recorder", on_path=False, sif=Non
     env = sb.env(apptainer=resolved, path_apptainer=on_path)
     if sif is not None:
         env["SCITEX_CI_SIF"] = sif
+    # The shim digest-fences the image before anything else: hand it the real
+    # digest of the sandbox SIF so the run reaches the error site under test.
+    # A deliberately missing SIF gets a well-formed dummy digest so the
+    # failure names the path it looked at instead of the digest format.
+    image = env["SCITEX_CI_SIF"]
+    if Path(image).is_file():
+        env["SCITEX_CI_SIF_SHA256"] = hashlib.sha256(
+            Path(image).read_bytes()
+        ).hexdigest()
+    else:
+        env["SCITEX_CI_SIF_SHA256"] = "0" * 64
     return _run(sb, env, gpfs=gpfs)
 
 

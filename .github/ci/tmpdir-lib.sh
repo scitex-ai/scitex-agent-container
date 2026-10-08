@@ -138,7 +138,7 @@ ci_tmpdir_prepare() {
     }
     uid="$(id -u)"
     job="${GITHUB_JOB:-none}"
-    case "$job" in ''|*[!a-zA-Z0-9_-]*) return 1 ;; esac
+    case "$job" in ''|*[!a-zA-Z0-9_.-]*) return 1 ;; esac
     pid="${SAC_CI_OWNER_PID:-$BASHPID}"
     start="$(_ci_tmpdir_pid_start "$pid")" || return 1
     [ "$start" = "${SAC_CI_OWNER_START:-$start}" ] || return 1

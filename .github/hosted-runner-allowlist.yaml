@@ -102,19 +102,6 @@ allow:
       control. DO NOT "FIX" THIS BY MIGRATING IT — that is the exact bug this
       allowlist exists to prevent.
 
-  - workflow: pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
-    jobs: [runner-admission, test, verdict]
-    approved_by: operator
-    approved_on: 2026-10-03
-    reason: >-
-      Organization membership and same-origin PR identity must be confirmed by
-      the published runner-admission gate before native hardware is selected.
-      Outsider, unavailable or unknown membership receives the same complete
-      all/dev test suite on disposable hosted hardware, with a terminal test
-      and verdict context. The hosted verdict receives no company Store role
-      and never checks out or executes the native feedback rail. Native writes
-      retain the control-plane label and execute only a trusted base checkout.
-
   - workflow: pypi-publish-and-github-release-on-tag.yml
     jobs: [runner-admission, preflight, build, publish, release]
     approved_by: operator

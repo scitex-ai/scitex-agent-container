@@ -59,13 +59,20 @@ def _ci_pytest_report_flag() -> str:
     description that agrees with itself.
     """
     text = _CI_SCRIPT.read_text()
+    # CI builds its pytest argv in a PYTEST_ARGS array (so suites can append
+    # coverage flags) and execs it on the final line; either spelling carries
+    # the -r flag. Match the single line that sets reporting, whichever form
+    # the script uses, so trimming the flag turns these tests red instead of
+    # leaving a description that agrees with itself.
     invocation = [
         line
         for line in text.splitlines()
-        if "python -m pytest tests/" in line and not line.lstrip().startswith("#")
+        if not line.lstrip().startswith("#")
+        and re.search(r"(?<!\S)-(r[a-zA-Z]+)(?!\S)", line)
+        and ("pytest" in line or "PYTEST_ARGS" in line)
     ]
     assert len(invocation) == 1, (
-        f"expected exactly one uncommented pytest invocation in {_CI_SCRIPT}, "
+        f"expected exactly one pytest reporting line in {_CI_SCRIPT}, "
         f"found {len(invocation)}: {invocation!r}"
     )
     found = re.findall(r"(?<!\S)-(r[a-zA-Z]+)(?!\S)", invocation[0])
