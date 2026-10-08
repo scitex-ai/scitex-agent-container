@@ -16,10 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from ._worktree_policy import (
-    DEFAULT_WORKTREE_POLICY_CLI,
     WorktreePolicyError,
+    _dispatch,
     _git,
-    _invoke,
     _owner_path,
     _read_owner,
     _sha256,
@@ -33,7 +32,7 @@ def _digest(value: dict[str, Any]) -> str:
 
 
 def _approval(config, expected_tip, cli, timeout_s):
-    projection = _invoke(cli, ["check-projections"], timeout_s=timeout_s)
+    projection = _dispatch(cli, ["check-projections"], timeout_s=timeout_s)
     owner = _owner_path(config).absolute()
     record = _read_owner(owner)
     if record is None:
@@ -46,7 +45,7 @@ def _approval(config, expected_tip, cli, timeout_s):
         raise WorktreePolicyError(
             "configured workdir differs from the recorded repository and owned checkout"
         )
-    result = _invoke(
+    result = _dispatch(
         cli,
         [
             "check-owned-restore",
@@ -106,7 +105,7 @@ def _approval(config, expected_tip, cli, timeout_s):
 def _verify(receipt, cli, timeout_s):
     repo = Path(receipt["repo_root"])
     target = Path(receipt["worktree"])
-    info = _invoke(cli, ["inspect", "--repo", str(target)], timeout_s=timeout_s)
+    info = _dispatch(cli, ["inspect", "--repo", str(target)], timeout_s=timeout_s)
     status = _git(repo, *receipt["primary_status_argv"]).stdout.strip()
     unchanged = (
         hashlib.sha256(Path(receipt["owner_file"]).read_bytes()).hexdigest()
@@ -148,8 +147,11 @@ def restore_owned_task_worktree(
     Apply serializes official restores and repeats full neutral approval just
     before Git. Git's ordinary no-force add handles path/branch contention.
     A failed postverification leaves evidence intact for explicit review.
+
+    ``cli_path=None`` (default) decides in-process; pass an executable path
+    to keep using an external policy CLI.
     """
-    cli = Path(cli_path or DEFAULT_WORKTREE_POLICY_CLI).expanduser()
+    cli = Path(cli_path).expanduser() if cli_path else None
     if apply and not receipt_sha256:
         raise WorktreePolicyError("apply requires the exact dry-run receipt SHA256")
     approval = _approval(config, expected_tip, cli, timeout_s)

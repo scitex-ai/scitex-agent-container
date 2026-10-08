@@ -1,8 +1,9 @@
-"""Provision and gate agent-owned worktrees through the neutral policy CLI.
+"""Provision and gate agent-owned worktrees through the in-process policy engine.
 
-SAC owns lifecycle mechanics only. Every allow/deny decision is delegated to
-the operator-owned ``scitex-worktree-policy`` executable; no policy rule is
-implemented here.
+SAC owns lifecycle mechanics and the worktree policy itself: every
+allow/deny decision is computed by :mod:`._worktree_policy_engine` from the
+bundled manifest plus real Git inspection. An explicit external CLI path
+remains supported for operators who keep their own policy executable.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .._runtime_paths import runtime_base_dir
+from ._worktree_policy_engine import WorktreePolicyError
+from ._worktree_policy_engine import invoke as _engine_invoke
 
 __all__ = [
     "DEFAULT_WORKTREE_POLICY_CLI",
@@ -29,15 +32,15 @@ __all__ = [
     "worktree_policy_artifact",
 ]
 
+# Legacy external-CLI location, kept as an explicit opt-in for operators who
+# maintain their own policy executable. The default path is the in-process
+# engine; nothing resolves this constant unless a caller passes it as
+# ``cli_path``.
 DEFAULT_WORKTREE_POLICY_CLI = (
     Path.home() / ".dotfiles" / "src" / ".bin" / "scitex-worktree-policy"
 )
 _SHA256_LENGTH = 64
 _OWNER_FILE = "worktree-owner.json"
-
-
-class WorktreePolicyError(RuntimeError):
-    """A write-capable task has no valid external policy approval."""
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,15 @@ def _invoke(cli: Path, args: list[str], *, timeout_s: float) -> dict[str, Any]:
             "worktree policy CLI exited successfully without an explicit allow"
         )
     return payload
+
+
+def _dispatch(
+    cli: Path | None, args: list[str], *, timeout_s: float
+) -> dict[str, Any]:
+    """Run one policy verb: in-process engine by default, external CLI if given."""
+    if cli is None:
+        return _engine_invoke(args)
+    return _invoke(cli, args, timeout_s=timeout_s)
 
 
 def _git(
@@ -297,10 +309,10 @@ def _worktree_add_argv(plan: WorktreePlan, *, branch_exists: bool) -> list[str]:
 
 
 def _authorize_create(
-    cli: Path, plan: WorktreePlan, *, branch_exists: bool, timeout_s: float
+    cli: Path | None, plan: WorktreePlan, *, branch_exists: bool, timeout_s: float
 ) -> None:
     command = shlex.join(_worktree_add_argv(plan, branch_exists=branch_exists))
-    result = _invoke(
+    result = _dispatch(
         cli,
         ["check-shell", "--cwd", plan.repo_root, "--command", command],
         timeout_s=timeout_s,
@@ -318,15 +330,19 @@ def plan_task_worktree(
     config: Any,
     *,
     provision: bool,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: Path | str | None = None,
     timeout_s: float = 10.0,
 ) -> WorktreePlan | None:
-    """Resolve, optionally provision, and select the task's linked worktree."""
+    """Resolve, optionally provision, and select the task's linked worktree.
+
+    ``cli_path=None`` (default) decides in-process; pass an executable path
+    to keep using an external policy CLI.
+    """
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
+    cli = Path(cli_path).expanduser() if cli_path is not None else None
     authored = Path(str(config.expanded_workdir)).expanduser().resolve()
-    info = _invoke(cli, ["inspect", "--repo", str(authored)], timeout_s=timeout_s)
+    info = _dispatch(cli, ["inspect", "--repo", str(authored)], timeout_s=timeout_s)
     surface = _text(info, "surface")
     if surface == "linked-worktree":
         primary_repo_root = _primary_root_from_linked_context(info, authored)
@@ -362,7 +378,7 @@ def plan_task_worktree(
         _apply_runtime_workdir(config, plan)
         return plan
 
-    _invoke(
+    _dispatch(
         cli,
         ["assert-context", "--repo", str(authored), "--intent", "read"],
         timeout_s=timeout_s,
@@ -390,7 +406,7 @@ def plan_task_worktree(
         )
     if target.exists():
         _assert_owner(config, plan, allow_missing=False)
-        target_info = _invoke(
+        target_info = _dispatch(
             cli, ["inspect", "--repo", str(target)], timeout_s=timeout_s
         )
         if (
@@ -419,14 +435,18 @@ def enforce_task_worktree_policy(
     config: Any,
     *,
     provision: bool = True,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: Path | str | None = None,
     timeout_s: float = 10.0,
 ) -> WorktreePolicyProof | None:
-    """Provision/reuse and approve a write-capable agent task."""
+    """Provision/reuse and approve a write-capable agent task.
+
+    ``cli_path=None`` (default) decides in-process; pass an executable path
+    to keep using an external policy CLI.
+    """
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
-    projection = _invoke(cli, ["check-projections"], timeout_s=timeout_s)
+    cli = Path(cli_path).expanduser() if cli_path is not None else None
+    projection = _dispatch(cli, ["check-projections"], timeout_s=timeout_s)
     if projection.get("decision") != "current":
         raise WorktreePolicyError("worktree policy projections were not current")
     policy_sha = _sha256(projection, "policy_sha256")
@@ -437,14 +457,14 @@ def enforce_task_worktree_policy(
     assert plan is not None
     target = Path(plan.resolved_workdir)
     if target.exists():
-        context = _invoke(
+        context = _dispatch(
             cli,
             ["assert-context", "--repo", str(target), "--intent", "edit"],
             timeout_s=timeout_s,
         )
     else:
         context = {
-            **_invoke(
+            **_dispatch(
                 cli,
                 ["inspect", "--repo", plan.repo_root],
                 timeout_s=timeout_s,

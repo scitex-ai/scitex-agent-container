@@ -28,6 +28,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Worktree policy is now decided in-process; no operator-side executable
+  required.** The retired `~/.dotfiles/src/.bin/scitex-worktree-policy` CLI is
+  ported into SAC as `_lifecycle/_worktree_policy_engine.py` with the manifest
+  bundled at `_baseline_assets/worktree_policy/worktree-policy.json` (plus
+  generated harness projections). Starts, dry-runs, explain, and
+  restore-worktree use the engine by default, so hosts without the dotfiles
+  executable no longer fail closed at `check-projections`. An explicit
+  `cli_path` still selects an external policy executable, and
+  `SAC_WORKTREE_POLICY_PATH` / `SAC_WORKTREE_POLICY_PROJECTION_DIR` override
+  the bundled manifest and projections without code changes.
+
 ### Fixed
 - **Lifecycle spec authority now fails closed instead of warning through
   provenance uncertainty.** Starts refuse non-git/unreachable sources, dirty
