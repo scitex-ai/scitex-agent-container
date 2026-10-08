@@ -103,3 +103,5 @@ tests/results/
 # The fleet-wide move-aside trashbin. Nothing is ever deleted in this fleet;
 # displaced files land in .old/<timestamp>/ and must never be committed back.
 .old/
+# Hook self-test / block-audit logs (written next to the hook on deny)
+src/scitex_agent_container/_baseline_assets/*/*.log
