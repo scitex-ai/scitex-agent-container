@@ -335,7 +335,11 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
 
 
 def preflight_from_config_path(
-    config_path: str, *, opener: Any = None, engine_override: str | None = None,
+    config_path: str,
+    *,
+    opener: Any = None,
+    engine_override: str | None = None,
+    session_override: str | None = None,
 ) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
@@ -361,7 +365,27 @@ def preflight_from_config_path(
     # The successor's requested engine owns auth, not the stored default.
     # The caller's separate engine check retains any requested live probe.
     select_engine_at_start(config, engine_override, probe=False, log=False)
+    if config.harness == "hermes":
+        from ._hermes_restart_preflight import prepare_hermes_successor
+
+        # Restart preserves its conversation unless explicitly requested fresh.
+        config.claude.session = session_override or "continue"
+        return prepare_hermes_successor(config)
     # Resolve the SAME successor account the launch will pick. NoHealthyAccountError
     # propagates as an abort-before-stop (better than stop-then-fail today).
     _rotate_to_healthy_account(config, log_stream=io.StringIO())
     assert_successor_auth_usable(config, opener=opener)
+
+
+def preflight_workspace_from_config_path(
+    config_path, *, engine_override=None, cli_path=None
+):
+    """Refuse an inadmissible successor workspace without provisioning it."""
+    from ..config import load_config
+    from ._engine_select import select_engine_at_start
+    from ._worktree_policy import enforce_task_worktree_policy
+
+    successor = load_config(config_path)
+    select_engine_at_start(successor, engine_override, probe=False, log=False)
+    options = {} if cli_path is None else {"cli_path": cli_path}
+    enforce_task_worktree_policy(successor, provision=False, **options)

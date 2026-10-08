@@ -101,6 +101,12 @@ dependencies = [
     # public durable poll/confirm API and confirms only after terminal-visible
     # delivery.  This is a runtime dependency, not an optional MCP tool.
     "scitex-cards>=0.53.4",
+    # Skip-dead Hermes failover proves declared credential slots with a
+    # native inference probe before launch
+    # (``runtimes/_hermes_key_probe.py`` -> ``scitex_genai.availability``).
+    # The availability surface only exists from 0.2.3 — a lower floor would
+    # ImportError at preflight time instead of at install time.
+    "scitex-genai>=0.2.3",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
