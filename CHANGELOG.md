@@ -38,7 +38,9 @@ versioning follows [SemVer](https://semver.org/).
   executable no longer fail closed at `check-projections`. An explicit
   `cli_path` still selects an external policy executable, and
   `SAC_WORKTREE_POLICY_PATH` / `SAC_WORKTREE_POLICY_PROJECTION_DIR` override
-  the bundled manifest and projections without code changes.
+  the selected manifest and projections without code changes (without
+  overrides, the per-host `~/.scitex/agent-container/worktree-policy/` copy
+  wins over the bundle when present).
 
 ### Fixed
 - **Lifecycle spec authority now fails closed instead of warning through

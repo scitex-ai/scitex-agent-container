@@ -1,9 +1,11 @@
 # Harness-neutral worktree policy gate
 
 SAC owns worktree policy. It decides every allow/deny in-process
-(`_lifecycle/_worktree_policy_engine.py`) from the bundled
-`_baseline_assets/worktree_policy/worktree-policy.json` manifest plus real
-Git inspection, and records the manifest/projection identity on the launch.
+(`_lifecycle/_worktree_policy_engine.py`) from the selected manifest plus
+real Git inspection, and records the manifest/projection identity on the
+launch. Resolution order: `SAC_WORKTREE_POLICY_PATH`, else the per-host
+state copy at `~/.scitex/agent-container/worktree-policy/` when present,
+else the bundled `_baseline_assets/worktree_policy/worktree-policy.json`.
 No operator-side executable is required. Operators who keep their own policy
 executable can still pass its path as `cli_path`; the engine schema and this
 page document the contract it must honor.

@@ -14,8 +14,11 @@ tool, not policy.
 
 Operators can override the manifest and the generated projection directory
 without code changes via ``SAC_WORKTREE_POLICY_PATH`` and
-``SAC_WORKTREE_POLICY_PROJECTION_DIR``. After editing an override manifest,
-regenerate its projections with :func:`generate_projections`.
+``SAC_WORKTREE_POLICY_PROJECTION_DIR``. Without overrides the engine
+prefers the per-host state copy at
+``~/.scitex/agent-container/worktree-policy/`` when present, falling back
+to the bundled defaults. After editing any manifest, regenerate its
+projections with :func:`generate_projections`.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ __all__ = [
     "HARNESS_NAMES",
     "WorktreePolicyError",
     "assert_context",
+    "bundled_manifest_path",
     "check_projections",
     "check_shell",
     "generate_projections",
@@ -56,23 +60,49 @@ _BUNDLED_MANIFEST = (
     / "worktree-policy.json"
 )
 
+# Per-host operator copy. Preferred over the bundle when present so a host
+# can own its policy without code changes; the bundle stays the versioned
+# fallback (and the seed for new hosts). Resolved through ``~`` so tests
+# can redirect it with ``HOME``.
+_STATE_MANIFEST = ".scitex/agent-container/worktree-policy/worktree-policy.json"
+
+
+def _state_manifest() -> Path:
+    return Path(os.path.expanduser(os.path.join("~", _STATE_MANIFEST)))
+
+
+def _selected_manifest() -> Path:
+    override = os.environ.get(_MANIFEST_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+    state = _state_manifest()
+    if state.is_file():
+        return state
+    return _BUNDLED_MANIFEST
+
+
+def bundled_manifest_path() -> Path:
+    """Versioned fallback manifest shipped with SAC (seed for new hosts)."""
+    return _BUNDLED_MANIFEST
+
 
 class WorktreePolicyError(RuntimeError):
     """A write-capable task has no valid policy approval."""
 
 
 def manifest_path() -> Path:
-    """Bundled manifest, unless an operator override is configured."""
-    override = os.environ.get(_MANIFEST_ENV, "").strip()
-    return Path(override).expanduser() if override else _BUNDLED_MANIFEST
+    """Selected manifest: ``$SAC_WORKTREE_POLICY_PATH``, else the per-host
+    state copy when present, else the bundled default."""
+    return _selected_manifest()
 
 
 def projection_dir() -> Path:
-    """Generated-projection directory, unless an operator override applies."""
+    """Projection directory paired with the selected manifest, unless the
+    ``$SAC_WORKTREE_POLICY_PROJECTION_DIR`` override applies."""
     override = os.environ.get(_PROJECTION_ENV, "").strip()
     if override:
         return Path(override).expanduser()
-    return manifest_path().parent / "generated"
+    return _selected_manifest().parent / "generated"
 
 
 def load_policy(path: Path | None = None) -> tuple[dict[str, Any], str]:

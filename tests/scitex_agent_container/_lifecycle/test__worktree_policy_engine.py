@@ -27,6 +27,15 @@ from scitex_agent_container.config import AgentConfig
 
 
 @pytest.fixture
+def home_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect ``~`` so state-copy resolution stays hermetic."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture
 def runtime_dir(tmp_path: Path) -> Iterator[Path]:
     """Isolated real runtime directory with environment restoration."""
     key = "SCITEX_AGENT_CONTAINER_RUNTIME_DIR"
@@ -84,11 +93,30 @@ def _captured_error(call) -> str:
 
 
 def test_bundled_projections_match_bundled_manifest() -> None:
-    record = engine.check_projections()
+    manifest = engine.bundled_manifest_path()
+    policy, sha = engine.load_policy(manifest)
+    record = engine.check_projections(
+        output_dir=manifest.parent / "generated",
+        policy=policy,
+        source_hash=sha,
+    )
     assert record["decision"] == "current"
+    assert record["policy_sha256"] == sha
 
 
-def test_projection_hash_covers_all_harness_files() -> None:
+def test_state_copy_preferred_when_present(home_dir: Path) -> None:
+    state = home_dir / ".scitex/agent-container/worktree-policy"
+    state.mkdir(parents=True)
+    manifest = engine.bundled_manifest_path()
+    (state / "worktree-policy.json").write_bytes(manifest.read_bytes())
+    assert engine.manifest_path() == state / "worktree-policy.json"
+
+
+def test_bundled_fallback_without_state_copy(home_dir: Path) -> None:
+    assert engine.manifest_path() == engine.bundled_manifest_path()
+
+
+def test_projection_hash_covers_all_harness_files(home_dir: Path) -> None:
     assert engine.projection_hash() == engine.check_projections()["projection_sha256"]
 
 
