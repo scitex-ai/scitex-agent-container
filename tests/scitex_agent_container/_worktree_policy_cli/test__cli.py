@@ -141,9 +141,18 @@ def test_absolute_checker_path_ignores_other_checkout(tmp_path, facet, expected)
     (package / "__init__.py").write_text("raise RuntimeError('wrong checkout')\n")
     # Act
     result = _run(tmp_path, "check-projections", extra_env={"PYTHONPATH": str(other)})
+    try:
+        decision = json.loads(result.stdout)["decision"]
+    except json.JSONDecodeError:
+        raise AssertionError(
+            "checker stdout was not JSON: "
+            f"rc={result.returncode} "
+            f"stdout={result.stdout[-2000:]!r} "
+            f"stderr={result.stderr[-2000:]!r}"
+        )
     observed = {
         "exit_code": result.returncode,
-        "decision": json.loads(result.stdout)["decision"],
+        "decision": decision,
     }
     # Assert
     assert observed[facet] == expected, result.stderr

@@ -45,9 +45,17 @@ class _RedirectAwareFormatter(logging.Formatter):
 def render_content(content: str) -> None:
     """Emit protocol content through SciTeX's unfiltered stdout writer."""
     import scitex_logging
+    import sys
 
     with _STREAM_LOCK:
-        scitex_logging.getPlainConsole(__name__).emit(content)
+        try:
+            plain = scitex_logging.getPlainConsole(__name__)
+        except AttributeError:
+            # scitex-logging<0.2.1 has no plain console; mirror the
+            # released contract (own stdout, trailing newline) directly.
+            sys.stdout.write(content + "\n")
+        else:
+            plain.emit(content)
 
 
 def render_rich(
@@ -123,11 +131,18 @@ def write_stream(text: str, stream: TextIO, *, flush: bool = False) -> None:
     # taking ownership of the caller's stream.
     with _STREAM_LOCK:
         try:
+            plain = scitex_logging.getPlainConsole(__name__)
+        except AttributeError:
+            # scitex-logging<0.2.1 has no plain console; mirror the
+            # released contract onto the caller's stream directly.
+            stream.write(text + "\n")
+            if flush:
+                stream.flush()
+            return
+        try:
             # scitex-logging>=0.2.3 caller-stream support; older releases
             # only accept the message and always target their own stdout.
-            scitex_logging.getPlainConsole(__name__).emit(
-                text, stream=stream, flush=flush
-            )
+            plain.emit(text, stream=stream, flush=flush)
         except TypeError:
             # Released emit() targets its own stdout with a trailing
             # newline; mirror that contract onto the caller's stream.
