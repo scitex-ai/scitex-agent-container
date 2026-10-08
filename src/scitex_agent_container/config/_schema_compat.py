@@ -187,7 +187,19 @@ def canonical_surface_errors(raw: object) -> list[str]:
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
             allowed.update(
-                {"background_review", "compression", "failover", "run_budget_seconds"}
+                {
+                    "background_review",
+                    "compression",
+                    "failover",
+                    "run_budget_seconds",
+                    # Operator order: goal budget + judge engine live in the
+                    # hermes harness entry (specs carry goals.max_turns 99999
+                    # + judge_engine). The validator must accept what specs
+                    # declare, or every restart red-fails.
+                    "goals",
+                    "max_turns",
+                    "judge_engine",
+                }
             )
         elif family == "opencode":
             allowed.update({"approval_policy", "run_budget_seconds", "serve"})
