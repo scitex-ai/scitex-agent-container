@@ -46,3 +46,45 @@ jobs:
           git add ci-watch.jsonl
           git commit -m "ci-watch: poll ${{ inputs.run_id }}" || exit 0
           for i in 1 2 3; do git pull --rebase origin ci-watch-ledger && git push origin HEAD:ci-watch-ledger && break || sleep 15; done
+  host-load:
+    # LAN-bound observer: ssh to scitex-compute-02/03/04 is unreachable from
+    # GitHub-hosted runners, so this leg MUST run self-hosted. It never gates
+    # anything (continue-on-error, no `needs` edge either way): the
+    # agent-independent poll above survives a dead runner pool and vice versa.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+      - uses: actions/checkout@v4
+        with:
+          ref: ci-watch-ledger
+          path: ledger
+      - name: Probe compute-host load and append ledger row
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ inputs.repo }}
+          PYTHONPATH: src
+        run: |
+          repo="${REPO:-scitex-ai/scitex-agent-container}"
+          queued=false
+          for st in queued in_progress; do
+            n=$(gh api "repos/$repo/actions/runs?per_page=1&status=$st" --jq '.total_count' 2>/dev/null)
+            [ "${n:-0}" -gt 0 ] && queued=true
+          done
+          export QUEUED="$queued"
+          python3 -c "
+          from scitex_agent_container._lifecycle import _ci_watcher as w
+          import os
+          row = w.poll_host_loads_once('ledger/ci-watch-host-load.jsonl', queued=os.environ['QUEUED'] == 'true')
+          print('hosts:', {h: (s.get('idle', 'error') if isinstance(s, dict) else 'error') for h, s in row['hosts'].items()})
+          print('idle_while_queued:', row['idle_while_queued'], row['recorded_at'])
+          "
+      - name: Push host-load row
+        run: |
+          cd ledger
+          git config user.name "ci-watch" && git config user.email "ci-watch@scitex.ai"
+          git add ci-watch-host-load.jsonl
+          git commit -m "ci-watch: host-load" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ci-watch-ledger && git push origin HEAD:ci-watch-ledger && break || sleep 15; done

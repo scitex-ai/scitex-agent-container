@@ -397,3 +397,180 @@ def watch_forever(
         if stop_after is not None and ticks >= stop_after:
             return polls
         sleep(interval_s)
+
+
+# --- host load -----------------------------------------------------------
+#
+# Companion leg to the CI-run poll above: while CI is queued, are the
+# self-hosted compute hosts actually working? Each poll ssh-probes
+# scitex-compute-02/03/04 for 1-min load plus Runner/apptainer/pytest
+# process counts and records one row in its OWN ledger file. The file is
+# separate on purpose: CI rows gate DONE via ``read_latest()``, and a
+# host-load row must never be mistaken for a CI verdict.
+#
+# Observed idle 2026-10-08: 1-min loads 0.6-2.0 with no test procs while
+# CI had queued work — the ``idle_while_queued`` flag names exactly that.
+
+#: Compute hosts sampled by the host-load leg.
+HOST_LOAD_HOSTS = ("scitex-compute-02", "scitex-compute-03", "scitex-compute-04")
+
+#: A host with 1-min load below this AND no pytest procs reads idle.
+IDLE_LOAD1_BELOW = 2.0
+
+#: One ssh per host prints four lines: /proc/loadavg, then Runner.,
+#: apptainer, and pytest process counts. Bracket-trick patterns (``[R]``)
+#: so the probing grep never counts itself.
+_HOST_PROBE_CMD = (
+    "cat /proc/loadavg; "
+    "ps -eo args= | grep -c '[R]unner\\.'; "
+    "ps -eo args= | grep -c '[a]pptainer'; "
+    "ps -eo args= | grep -c '[p]ytest'"
+)
+
+
+def _default_ssh(host: str, remote_cmd: str) -> str:
+    """Run ``ssh <host> <remote_cmd>`` and return stdout (empty on failure)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                host,
+                remote_cmd,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return ""
+    return proc.stdout or ""
+
+
+def parse_host_probe(output: str) -> dict:
+    """Parse one host's probe output into a snapshot dict.
+
+    Never raises: garbage in yields an ``{"error": ...}`` entry, never an
+    idle verdict — idle-while-queued must not fire on data nobody has.
+    """
+    try:
+        lines = (output or "").strip().splitlines()
+        load1, load5, load15 = (float(x) for x in lines[0].split()[:3])
+        runner = int(lines[1].strip())
+        apptainer = int(lines[2].strip())
+        pytest_n = int(lines[3].strip())
+    except (ValueError, IndexError):
+        return {"error": "unparseable probe output"}
+    snap = {
+        "load1": load1,
+        "load5": load5,
+        "load15": load15,
+        "runner": runner,
+        "apptainer": apptainer,
+        "pytest": pytest_n,
+    }
+    snap["idle"] = bool(load1 < IDLE_LOAD1_BELOW and pytest_n == 0)
+    return snap
+
+
+def fetch_host_loads(
+    hosts: Any = HOST_LOAD_HOSTS,
+    *,
+    ssh: Callable[[str, str], str] = _default_ssh,
+) -> dict:
+    """Probe every host; return ``{host: snapshot}``.
+
+    An ssh failure records an ``{"error": ...}`` entry (never idle): one
+    unreachable host must not read as an idle fleet.
+    """
+    snapshots: dict = {}
+    for host in hosts or ():
+        try:
+            snapshots[str(host)] = parse_host_probe(ssh(str(host), _HOST_PROBE_CMD))
+        except Exception:
+            snapshots[str(host)] = {"error": "ssh failed"}
+    return snapshots
+
+
+def idle_while_queued(hosts_snapshot: Any, queued: bool) -> bool:
+    """True only when runs are queued/in-progress AND every probed host is idle.
+
+    Fail-closed: no queued work, empty input, any error entry, or any
+    non-idle host → False.
+    """
+    if not queued or not isinstance(hosts_snapshot, dict) or not hosts_snapshot:
+        return False
+    return all(
+        isinstance(snap, dict) and snap.get("idle") is True
+        for snap in hosts_snapshot.values()
+    )
+
+
+def record_host_loads(
+    ledger: str | Path,
+    *,
+    queued: bool,
+    hosts: dict | None = None,
+    now_fn: Callable[[], float] | None = None,
+) -> dict:
+    """Append one host-load row to its own JSONL ledger; return the row."""
+    recorded_at, _ = _utcnow_iso(now_fn)
+    hosts = dict(hosts or {})
+    row = {
+        "type": "host-load",
+        "recorded_at": recorded_at,
+        "queued": bool(queued),
+        "hosts": {h: dict(s) for h, s in hosts.items()},
+        "idle_while_queued": idle_while_queued(hosts, queued),
+    }
+    path = Path(ledger)
+    if path.parent != Path(".") and str(path.parent):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row) + "\n")
+    return row
+
+
+def read_latest_host_load(ledger: str | Path) -> dict | None:
+    """Return the newest host-load row, or ``None`` when there is none."""
+    path = Path(ledger)
+    if not path.exists():
+        return None
+    latest: dict | None = None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get("type") == "host-load":
+                latest = row
+    return latest
+
+
+def poll_host_loads_once(
+    ledger: str | Path,
+    *,
+    queued: bool = False,
+    hosts: Any = HOST_LOAD_HOSTS,
+    ssh: Callable[[str, str], str] = _default_ssh,
+    now_fn: Callable[[], float] | None = None,
+) -> dict:
+    """Probe all hosts once and record the outcome; return the row.
+
+    One poll = one row, always — including error entries when a host
+    cannot be read. ``queued`` (runs queued/in-progress per the Actions
+    API) is supplied by the caller; the flag logic stays a pure function
+    of that plus the snapshots.
+    """
+    return record_host_loads(
+        ledger, queued=queued, hosts=fetch_host_loads(hosts, ssh=ssh), now_fn=now_fn
+    )
