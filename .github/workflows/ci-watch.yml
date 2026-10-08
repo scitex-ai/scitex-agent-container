@@ -1,0 +1,48 @@
+# Draft only — land in scitex-agent-container/.github/workflows/ci-watch.yml
+# after _ci_watcher merges to develop. Runs GitHub-hosted, never self-hosted.
+name: ci-watch
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "owner/repo to poll"
+        default: "scitex-ai/scitex-agent-container"
+        required: true
+      run_id:
+        description: "workflow run id to poll"
+        required: true
+permissions:
+  contents: write # to append the ledger branch
+jobs:
+  poll:
+    runs-on: ubuntu-latest # GitHub-hosted: independent of self-hosted runners AND agents
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+      - uses: actions/checkout@v4
+        with:
+          ref: ci-watch-ledger
+          path: ledger
+      - name: Poll target run and append ledger row
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ inputs.repo }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          python3 -c "
+          from scitex_agent_container._lifecycle import _ci_watcher as w
+          import os
+          row = w.poll_once('ledger/ci-watch.jsonl', repo=os.environ['REPO'], run_id=os.environ['RUN_ID'])
+          print('recorded:', row['run_id'], row['status'], row['recorded_at'])
+          print('health:', w.health('ledger/ci-watch.jsonl', repo=os.environ['REPO'], run_id=os.environ['RUN_ID']))
+          "
+      - name: Push ledger row
+        run: |
+          cd ledger
+          git config user.name "ci-watch" && git config user.email "ci-watch@scitex.ai"
+          git add ci-watch.jsonl
+          git commit -m "ci-watch: poll ${{ inputs.run_id }}" || exit 0
+          for i in 1 2 3; do git pull --rebase origin ci-watch-ledger && git push origin HEAD:ci-watch-ledger && break || sleep 15; done
