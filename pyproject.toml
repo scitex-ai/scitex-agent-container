@@ -261,6 +261,12 @@ dev = [
     # ~285 MB native wheel to a bare `[dev]` install. Floor kept in step
     # with the `[codex-sdk]` extra above.
     "openai-codex>=0.144.4",
+    # PS-210 §2 (dev-extras-incomplete): the skip-dead Hermes failover
+    # probes slots via ``scitex_genai.availability`` (function-level import
+    # with degrade-to-assume-live, so no importorskip — the degrade path
+    # itself is tested). A fresh `pip install -e .[dev]` must run the full
+    # suite, so `[dev]` carries the same floor as the extra above.
+    "scitex-genai>=0.2.1",
     # Historical scitex-dev floor evidence; the runtime requirement is now
     # declared in project.dependencies above, not in this maintainer extra.
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
