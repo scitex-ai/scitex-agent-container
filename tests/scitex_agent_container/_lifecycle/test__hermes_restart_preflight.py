@@ -25,6 +25,7 @@ import pytest
 from scitex_agent_container._lifecycle._hermes_restart_preflight import (
     prepare_hermes_successor,
     reset_probe_cache,
+    same_goal_model,
 )
 from scitex_agent_container._lifecycle._restart_preflight import (
     RestartPreflightAbort,
@@ -215,3 +216,69 @@ def test_preflight_skips_a_slot_without_an_installed_secret(tmp_path):
 
     # Assert
     assert prepared.provider_key == _LIVE
+
+
+def test_same_goal_model_accepts_identical_names() -> None:
+    # Arrange
+    name = "meta/muse-spark-1.3-contributor"
+
+    # Act
+    verdict = same_goal_model(name, name)
+
+    # Assert
+    assert verdict is True
+
+
+def test_same_goal_model_accepts_wire_and_bare_alias() -> None:
+    # Arrange
+    pair = ("meta/muse-spark-1.3-contributor", "muse-spark-1.3-contributor")
+
+    # Act
+    verdict = same_goal_model(*pair)
+
+    # Assert
+    assert verdict is True
+
+
+def test_same_goal_model_accepts_wire_and_named_custom_alias() -> None:
+    # Arrange
+    pair = ("meta/muse-spark-1.3-contributor", "meta-muse-spark-1.3-contributor")
+
+    # Act
+    verdict = same_goal_model(*pair)
+
+    # Assert
+    assert verdict is True
+
+
+def test_same_goal_model_accepts_bare_and_named_custom_alias() -> None:
+    # Arrange
+    pair = ("muse-spark-1.3-contributor", "meta-muse-spark-1.3-contributor")
+
+    # Act
+    verdict = same_goal_model(*pair)
+
+    # Assert
+    assert verdict is True
+
+
+def test_same_goal_model_refuses_different_models() -> None:
+    # Arrange
+    pair = ("meta/muse-spark-1.3-contributor", "meta/muse-spark-2.0-contributor")
+
+    # Act
+    verdict = same_goal_model(*pair)
+
+    # Assert
+    assert verdict is False
+
+
+def test_same_goal_model_refuses_non_muse_base() -> None:
+    # Arrange
+    pair = ("meta/other-model-1.0", "other-model-1.0")
+
+    # Act
+    verdict = same_goal_model(*pair)
+
+    # Assert
+    assert verdict is False
