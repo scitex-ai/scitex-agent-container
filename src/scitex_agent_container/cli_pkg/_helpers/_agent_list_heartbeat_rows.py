@@ -31,19 +31,8 @@ def heartbeat_lease_rows(
         process_alive = (
             process_evidence if isinstance(process_evidence, bool) else None
         )
-        resident_state = classify_resident_state(
-            beat,
-            now=observed_at,
-            process_alive=process_alive,
-            federation_connected=bool(beat.get("_federation_connected")),
-            progress_stale_s=120.0,
-        )
-        live = process_alive is True or resident_state in {
-            "idle",
-            "active",
-            "blocked",
-            "stalled",
-        }
+        resident_state = classify_resident_state(beat, now=observed_at)
+        live = process_alive is True or resident_state == "working"
         dead = resident_state == "dead"
         if running_only and not live:
             continue
@@ -110,13 +99,7 @@ def overlay_authoritative_heartbeats(
             elif row.get("status") == "stopped":
                 row_process_alive = False
         process_alive = row_process_alive
-        resident_state = classify_resident_state(
-            beat,
-            now=observed_at,
-            process_alive=process_alive,
-            federation_connected=bool(beat.get("_federation_connected")),
-            progress_stale_s=120.0,
-        )
+        resident_state = classify_resident_state(beat, now=observed_at)
         row["resident_state"] = resident_state
         if row_process_alive is True:
             row["status"] = "running"
@@ -124,7 +107,7 @@ def overlay_authoritative_heartbeats(
         elif row_process_alive is False:
             row["status"] = "stopped"
             row["liveness_unknown"] = False
-        elif resident_state in {"idle", "active", "blocked", "stalled"}:
+        elif resident_state == "working":
             row["status"] = "running"
             row["liveness_unknown"] = False
         elif resident_state == "dead":

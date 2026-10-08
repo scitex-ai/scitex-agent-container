@@ -19,7 +19,7 @@ def _config() -> AgentConfig:
     return config
 
 
-def _beat(*, process_alive: bool | None, connected: bool = True) -> dict:
+def _beat(*, session_delta: float = 0.0, subagent_delta: float = 0.0) -> dict:
     now = time.time()
     return {
         "agent_id": "remote-worker",
@@ -35,13 +35,12 @@ def _beat(*, process_alive: bool | None, connected: bool = True) -> dict:
         "monotonic_ns": 1,
         "observed_at": now,
         "progress_at": now,
-        "progress_seq": 1,
+        "session_jsonl_delta_bytes": session_delta,
+        "subagent_jsonl_delta_bytes": subagent_delta,
         "state": "idle",
         "lease_expires_at": now + 30,
         "card_id": "",
         "card_role": "",
-        "_process_alive": process_alive,
-        "_federation_connected": connected,
     }
 
 
@@ -160,9 +159,11 @@ def test_remote_instance_status_exposes_resolved_a2a_contract() -> None:
     )
 
 
-def test_remote_instance_direct_dead_outranks_active_row() -> None:
-    # Arrange
-    beat = _beat(process_alive=False)
+def test_remote_instance_zero_delta_row_reports_unknown_process() -> None:
+    # Arrange — binary verdict (CCT 4276/4299): a zero-delta beat reads
+    # DEAD work-wise, and a remote row is never a live process
+    # observation, so the process projection stays unknown.
+    beat = _beat()
     # Act
     result = status_module._remote_instance_status(
         "remote-worker",
@@ -175,17 +176,18 @@ def test_remote_instance_direct_dead_outranks_active_row() -> None:
     # Assert
     assert result is not None and (
         result["status"],
+        result["resident_state"],
         result["observation"]["process"]["state"],
-    ) == ("stopped", "exited")
+    ) == ("unknown", "dead", "unknown")
 
 
 def test_heartbeat_only_never_claims_aliveness_to_another_agent() -> None:
     # OPERATOR ORDER 2026-10-07 (CCT 4187): a heartbeat read by ANOTHER
     # agent must learn NOTHING about aliveness — only work evidence.
-    # Even with a directly-observed live process on the OWNER host and a
-    # connected federation, the cross-agent fallback reports unknown.
+    # Even with positive byte deltas, the cross-agent fallback reports
+    # unknown aliveness while surfacing the binary work verdict.
     # Arrange
-    beat = _beat(process_alive=True, connected=False)
+    beat = _beat(session_delta=1024.0)
     # Act
     result = status_module._heartbeat_only_status(
         "remote-worker", heartbeat_reader=lambda: [beat]
@@ -193,24 +195,25 @@ def test_heartbeat_only_never_claims_aliveness_to_another_agent() -> None:
     # Assert
     assert result is not None and (
         result["status"],
+        result["resident_state"],
         result["liveness"]["verdict"],
         result["observation"]["process"]["state"],
-    ) == ("unknown", "unknown", "unknown")
+    ) == ("unknown", "working", "unknown", "unknown")
 
 
-def test_heartbeat_only_surfaces_work_state_vocabulary() -> None:
-    # The work-state vocabulary (idle/active/blocked/stalled) stays
-    # visible — it describes what the agent is DOING, not whether it
-    # is alive — while every aliveness verdict reads unknown.
+def test_heartbeat_only_surfaces_binary_work_verdict() -> None:
+    # The binary work vocabulary (working/dead) stays visible — it
+    # describes what the agent is DOING, not whether it is alive —
+    # while every aliveness verdict reads unknown.
     # Arrange
-    beat = _beat(process_alive=None)
+    beat = _beat()
     # Act
     result = status_module._heartbeat_only_status(
         "remote-worker", heartbeat_reader=lambda: [beat]
     )
     # Assert
     assert result is not None
-    assert result["resident_state"] == "idle"
+    assert result["resident_state"] == "dead"
     assert (
         result["status"],
         result["liveness"]["verdict"],

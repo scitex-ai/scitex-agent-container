@@ -128,10 +128,7 @@ def _assert_monotonic(previous: dict | None, fields: dict) -> None:
     for key in (
         "codex_activity_at",
         "codex_event_seq",
-        "turns_accepted",
-        "turns_completed",
-        "tools_started",
-        "tools_completed",
+        "session_jsonl_delta_bytes",
     ):
         before = previous.get(key)
         if (
@@ -194,7 +191,10 @@ def promote_codex_activity(
         observed_at=now_fn(),
         expected_file_identity=binding.rollout_identity,
     )
-    turn_active = observed.turns_accepted > observed.turns_completed
+    from .._runners._heartbeat_fields import heartbeat_jsonl_fields
+
+    jsonl_fields = heartbeat_jsonl_fields(state_dir, observed.observed_at)
+    session_delta = jsonl_fields.get("session_jsonl_delta_bytes", 0)
     card_id, card_role = read_card_lease(state_dir, now=observed.observed_at)
     fields = {
         **identity,
@@ -203,26 +203,16 @@ def promote_codex_activity(
         "activity_source_id": _activity_source_id(binding),
         "activity_instance_id": binding.instance_id,
         "progress_at": observed.activity_at,
-        "progress_seq": observed.event_seq,
+        "session_jsonl_delta_bytes": session_delta,
+        "subagent_jsonl_delta_bytes": jsonl_fields.get("subagent_jsonl_delta_bytes", 0),
         "engine_incarnation_id": f"{binding.boot_id}:{binding.thread_id}",
         "codex_thread_id": binding.thread_id,
         "codex_event_seq": observed.event_seq,
         "codex_activity_at": observed.activity_at,
-        "turns_accepted": observed.turns_accepted,
-        "turns_completed": observed.turns_completed,
-        "tools_started": observed.tools_started,
-        "tools_completed": observed.tools_completed,
-        "tools_inflight": observed.tools_inflight,
-        "codex_tools_inflight": list(observed.inflight_tool_ids),
-        "last_event_type": observed.last_event_type,
-        "last_turn_status": observed.last_turn_status,
-        "last_error_code": observed.last_error_code,
         # Generic Claude sidecars/text do not measure native provider capacity.
         "capacity_status": "unknown",
         "capped": None,
-        "current_phase": "blocked"
-        if observed.last_turn_status == "error" and not turn_active
-        else "",
+        "current_phase": "",
         "card_id": card_id,
         "card_role": card_role,
     }
@@ -240,7 +230,7 @@ def promote_codex_activity(
         assert_codex_binding_current(binding, current_record)
 
     assert_owner()
-    busy = turn_active or observed.tools_inflight > 0
+    busy = session_delta > 0 if isinstance(session_delta, (int, float)) else False
     try:
         write_fn(
             state_dir,

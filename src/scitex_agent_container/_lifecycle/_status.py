@@ -208,17 +208,7 @@ def _remote_instance_status(
         if beat is not None:
             from .._state.authoritative_heartbeat import classify_resident_state
 
-            process_evidence = beat.get("_process_alive")
-            process_alive = (
-                process_evidence if isinstance(process_evidence, bool) else None
-            )
-            resident_state = classify_resident_state(
-                beat,
-                now=time.time(),
-                process_alive=process_alive,
-                federation_connected=bool(beat.get("_federation_connected")),
-                progress_stale_s=120.0,
-            )
+            resident_state = classify_resident_state(beat, now=time.time())
             result.update(
                 {
                     "model": beat.get("model") or "unknown",
@@ -232,7 +222,7 @@ def _remote_instance_status(
             )
         from .._state.observation import DefinitionState, build_agent_observation
 
-        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
+        heartbeat_alive = resident_state == "working"
         process_verdict = (
             "dead"
             if process_alive is False
@@ -312,23 +302,13 @@ def _heartbeat_only_status(
         )
         if beat is None:
             return None
-        process_evidence = beat.get("_process_alive")
-        process_alive = (
-            process_evidence if isinstance(process_evidence, bool) else None
-        )
-        resident_state = classify_resident_state(
-            beat,
-            now=time.time(),
-            process_alive=process_alive,
-            federation_connected=bool(beat.get("_federation_connected")),
-            progress_stale_s=120.0,
-        )
-        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
+        resident_state = classify_resident_state(beat, now=time.time())
+        heartbeat_alive = resident_state == "working"
         # CCT 4187: no local process probe exists on this path (the local
         # agent has a registry entry and never reaches this fallback), so
         # the reader learns NOTHING about aliveness. running/dead collapse
-        # to unknown; the heartbeat's work evidence (progress_seq, session
-        # movement) is still surfaced on the row.
+        # to unknown; the heartbeat's work evidence (session-jsonl deltas)
+        # is still surfaced on the row.
         running = False
         dead = False
         process_verdict = "unknown"
@@ -657,7 +637,7 @@ def agent_status(
 
             local_resident = dict(local_heartbeat["authoritative_heartbeat"])
             result["heartbeat"] = local_resident
-            result["resident_state"] = "disconnected"
+            result["resident_state"] = "dead"
             shared = next(
                 (
                     beat
@@ -667,19 +647,9 @@ def agent_status(
                 None,
             )
             if shared is not None:
-                process_evidence = shared.get("_process_alive")
-                process_alive = (
-                    process_evidence if isinstance(process_evidence, bool) else None
-                )
                 result["heartbeat"] = shared
                 result["resident_state"] = classify_resident_state(
-                    shared,
-                    now=time.time(),
-                    process_alive=process_alive,
-                    federation_connected=bool(
-                        shared.get("_federation_connected")
-                    ),
-                    progress_stale_s=120.0,
+                    shared, now=time.time()
                 )
     except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
         pass

@@ -7,6 +7,8 @@ import pytest
 from scitex_agent_container._state.authoritative_heartbeat import (
     AuthoritativeHeartbeatError,
     classify_resident_state,
+    issue_challenge_nonce,
+    nonce_echo_confirms,
     read_card_lease,
     select_federated_heartbeats,
     validate_heartbeat,
@@ -154,30 +156,130 @@ def test_stable_identity_cannot_change_inside_one_boot() -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload", "process_alive", "connected", "expected"),
+    ("payload", "expected"),
     [
-        (_beat(state="idle"), True, True, "idle"),
-        (_beat(state="active"), True, True, "active"),
-        (_beat(state="blocked"), True, True, "blocked"),
-        (_beat(state="active", progress_at=50.0), True, True, "stalled"),
-        (_beat(lease_expires_at=90.0), True, False, "disconnected"),
-        (_beat(lease_expires_at=90.0), False, False, "dead"),
+        # Positive session delta in window → WORKING.
+        (_beat(session_jsonl_delta_bytes=512), "working"),
+        # Positive subagent/tasks delta alone → WORKING.
+        (_beat(subagent_jsonl_delta_bytes=2048), "working"),
+        # Zero deltas = no work evidence → DEAD (never idle/ready).
+        (_beat(session_jsonl_delta_bytes=0, subagent_jsonl_delta_bytes=0), "dead"),
+        # Idle beat (no delta keys at all) → DEAD.
+        (_beat(), "dead"),
+        # Negative deltas clamp to zero → DEAD.
+        (
+            _beat(session_jsonl_delta_bytes=-10, subagent_jsonl_delta_bytes=-5),
+            "dead",
+        ),
+        # Non-numeric deltas read as zero → DEAD.
+        (
+            _beat(session_jsonl_delta_bytes="lots", subagent_jsonl_delta_bytes=None),
+            "dead",
+        ),
     ],
 )
-def test_resident_state_classification(
-    payload, process_alive, connected, expected
-) -> None:
-    # Arrange
+def test_resident_state_classification(payload, expected) -> None:
+    # Arrange — the default _beat() fixture carries state="active" with
+    # progress_seq=4; the verdict must ignore counters/phase entirely.
     # Act
-    state = classify_resident_state(
-        payload,
-        now=101.0,
-        process_alive=process_alive,
-        federation_connected=connected,
-        progress_stale_s=30.0,
-    )
+    state = classify_resident_state(payload, now=101.0)
     # Assert
     assert state == expected
+
+
+def test_resident_state_window_sums_deltas() -> None:
+    # Arrange — beats fire ~60s; the 10-minute window sums deltas: one
+    # zero-delta latest with a positive older in-window beat is WORKING.
+    # Act
+    state = classify_resident_state(
+        [
+            _beat(observed_at=90.0, session_jsonl_delta_bytes=300),
+            _beat(
+                observed_at=100.0,
+                seq=8,
+                monotonic_ns=800,
+                session_jsonl_delta_bytes=0,
+            ),
+        ],
+        now=101.0,
+    )
+    # Assert
+    assert state == "working"
+
+
+def test_resident_state_out_of_window_deltas_are_dead() -> None:
+    # Arrange — positive deltas older than the window do not count.
+    # Act
+    state = classify_resident_state(
+        _beat(observed_at=90.0, session_jsonl_delta_bytes=9000), now=101.0, window_s=5.0
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_nonce_match_plus_delta_is_working() -> None:
+    # Arrange — dual confirmation (CCT 4309): challenge + byte-exact echo.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+            nonce_echo="1234567890123456",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "working"
+
+
+def test_nonce_mismatch_is_dead_despite_positive_delta() -> None:
+    # Arrange — failed echo confirmation kills even with byte evidence.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+            nonce_echo="9999999999999999",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_nonce_missing_echo_is_dead_despite_positive_delta() -> None:
+    # Arrange — challenge with no reflected echo = failed confirmation.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_nonce_protocol_helpers() -> None:
+    # Arrange
+    # Act
+    challenge_a = issue_challenge_nonce()
+    challenge_b = issue_challenge_nonce()
+    # Assert — 16-digit zero-padded tokens; confirm rules.
+    assert len(challenge_a) == 16 and challenge_a.isdigit()
+    assert len(challenge_b) == 16 and challenge_b.isdigit()
+    assert (
+        nonce_echo_confirms(
+            {"nonce_challenge": challenge_a, "nonce_echo": challenge_a}
+        )
+        is True
+    )
+    assert (
+        nonce_echo_confirms({"nonce_challenge": challenge_a, "nonce_echo": "0" * 16})
+        is False
+    )
+    assert nonce_echo_confirms({}) is None
 
 
 def test_card_lease_role_is_bounded() -> None:
