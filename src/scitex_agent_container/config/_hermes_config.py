@@ -150,6 +150,12 @@ def compile_hermes_config(
         "model": model_block,
         "providers": providers_block,
         "fallback_providers": [],
+        # Operator order 2026-10-06: the Hermes default goal budget (20
+        # turns) stalls fleet agents mid-work. The SAC autonomous loop is
+        # the spend backstop; the goal budget must not be the tighter one.
+        # Operator CCT 3820: every running agent gets goals.max_turns 99999
+        # on the running config immediately.
+        "goals": {"max_turns": 99999},
         "toolsets": ["hermes-cli"],
         "agent": agent,
         "delegation": {
@@ -197,6 +203,23 @@ def compile_hermes_config(
         "auxiliary": {
             "title_generation": {"enabled": False},
             "background_review": {"enabled": background_review},
+            # Operator rule: the goal judge runs on the same Muse route as
+            # the agent itself (muse-spark-1.3-contributor via the primary
+            # custom provider). An undefined goal_judge falls back to Hermes
+            # defaults, which left fleet agents' goal loops dying on
+            # unreachable-judge pauses — the definition (spec + generated
+            # profile) must show everything, no implicit behavior.
+            "goal_judge": {
+                # Same lane the agent itself runs on (native name or the
+                # named-custom identity — never a Hermes default).
+                # Operator order 2026-10-06: judge model is
+                # meta-muse-spark-1.3-contributor, always xhigh.
+                "provider": model_block["provider"],
+                "model": "meta-muse-spark-1.3-contributor",
+                "reasoning_effort": "xhigh",
+                "timeout": 60,
+                "max_tokens": 4096,
+            },
         },
     }
 

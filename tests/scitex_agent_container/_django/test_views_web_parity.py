@@ -94,7 +94,7 @@ def test_fleet_quick_actions_hidden_on_cross_host_for_local_only(
 
 
 def test_fleet_quick_actions_shown_on_cross_host_for_operator(
-    client, loopback, env_save_restore
+    client, loopback, env_save_restore, audit_log
 ):
     # Arrange — op1 is in BOTH lists, so the cross-host row gate opens.
     env_save_restore.set(IDENTITY_ENV, "op1")
