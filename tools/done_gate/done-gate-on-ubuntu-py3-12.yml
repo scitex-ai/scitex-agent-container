@@ -1,0 +1,36 @@
+# Merge-ready for scitex-agent-container/.github/workflows/.
+# Keeps ADR-0032 DONE-refusal green in CI: the gate's own tests plus a
+# live claim-only regression probe (a .claim-only DONE must ALWAYS fail).
+name: done-gate-on-ubuntu-py3-12
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'tools/done_gate/**'
+      - '.github/workflows/done-gate-on-ubuntu-py3-12.yml'
+  pull_request:
+    paths:
+      - 'tools/done_gate/**'
+  schedule:
+    - cron: '17 3 * * *' # daily: refusal must stay green unattended
+
+jobs:
+  done-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pytest
+        run: pip install pytest
+      - name: Gate self-tests (ADR-0032 criteria 1-4)
+        run: python -m pytest tools/done_gate/test_done_gate.py -v
+      - name: Regression probe — claim-only DONE must be REFUSED
+        run: |
+          echo '{"card":"probe","step":"claim-only must never pass"}' > /tmp/probe_claim.json
+          if python tools/done_gate/done_gate.py /tmp/probe_claim.json; then
+            echo "GATE BROKEN: claim-only passed" && exit 1
+          fi
+          echo "OK: claim-only refused (exit=$?)"
