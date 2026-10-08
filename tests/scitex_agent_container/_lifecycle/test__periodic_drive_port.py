@@ -34,7 +34,9 @@ def _delivered(agent: str = "peer") -> DeliveryState:
 
 
 def test_cct_kind_is_distinct_from_periodic_drive_kind():
-    # Arrange / Act / Assert
+    # Arrange
+    # Act
+    # Assert
     assert CCT_DRIVE_KIND != ENVELOPE_KIND
 
 

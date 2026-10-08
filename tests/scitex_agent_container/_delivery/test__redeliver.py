@@ -321,7 +321,9 @@ def test_unsubmitted_remedy_is_enter_not_resend():
 
 
 def test_negative_max_retries_rejected():
-    # Arrange / Act / Assert
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(ValueError):
         RedeliveryPolicy(max_retries=-1)
 
