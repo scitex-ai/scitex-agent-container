@@ -153,8 +153,7 @@ def test_preflight_does_not_reprobe_a_known_dead_slot(tmp_path):
     prepared, calls = _prepare(config, tokens, live={_LIVE}, tmp_path=tmp_path, previous_rows=[dead_row])
 
     # Assert
-    assert _DEAD not in calls
-    assert prepared.provider_key == _LIVE
+    assert (_DEAD not in calls, prepared.provider_key) == (True, _LIVE)
 
 
 def test_preflight_does_not_reprobe_an_unexpired_exhausted_slot(tmp_path):
@@ -173,8 +172,7 @@ def test_preflight_does_not_reprobe_an_unexpired_exhausted_slot(tmp_path):
     prepared, calls = _prepare(config, tokens, live={_LIVE}, tmp_path=tmp_path, previous_rows=[spent_row])
 
     # Assert
-    assert _OTHER not in calls
-    assert prepared.provider_key == _LIVE
+    assert (_OTHER not in calls, prepared.provider_key) == (True, _LIVE)
 
 
 def test_preflight_reprobes_an_exhausted_slot_past_its_cooldown(tmp_path):
@@ -201,7 +199,8 @@ def test_preflight_aborts_only_when_no_slot_is_live(tmp_path):
     config = _config(["GO_DEAD", "GO_SPENT"])
     tokens = {"GO_DEAD": _DEAD, "GO_SPENT": _OTHER}
 
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(RestartPreflightAbort):
         _prepare(config, tokens, live=set(), tmp_path=tmp_path)
 
