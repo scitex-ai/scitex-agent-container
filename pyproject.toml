@@ -104,9 +104,11 @@ dependencies = [
     # Skip-dead Hermes failover proves declared credential slots with a
     # native inference probe before launch
     # (``runtimes/_hermes_key_probe.py`` -> ``scitex_genai.availability``).
-    # The availability surface only exists from 0.2.3 — a lower floor would
-    # ImportError at preflight time instead of at install time.
-    "scitex-genai>=0.2.3",
+    # The availability surface only exists from 0.2.3, which is not yet
+    # published — the floor stays at the latest released line and the
+    # preflight keeps declared pools unverified (with a warning) until
+    # ``scitex_genai.availability`` becomes importable.
+    "scitex-genai>=0.2.1",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
