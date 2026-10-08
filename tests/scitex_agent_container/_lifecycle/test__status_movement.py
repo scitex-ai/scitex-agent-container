@@ -272,12 +272,18 @@ def test_status_payload_existing_keys_remain_after_movement_enrichment(
     assert set(("name", "status", "hooks_configured", "listen")) <= set(result)
 
 
-def test_fresh_heartbeat_repairs_stopped_projection_when_spec_no_longer_loads(
+def test_unloadable_spec_with_fresh_heartbeat_reports_unknown_not_running(
     tmp_path: Path, isolated_runtime: Path, isolated_registry, env_save_restore
 ):
     # Arrange — this is the live Hub incident shape: the process predates a
     # schema migration, so its registered spec no longer loads, while the
     # listen-side observer continues to publish positive heartbeat evidence.
+    # OPERATOR ORDER 2026-10-07 (CCT 4187): without a loadable spec there is
+    # no local process probe, so the heartbeat repair cannot fire — the
+    # reader learns NOTHING about aliveness. status is unknown (never a
+    # false running), while the liveness verdict still records the fresh
+    # beat's byte-delta work evidence via heartbeat_signal's work-evidence
+    # gate.
     missing_spec = tmp_path / "retired-authority-snapshot" / "spec.yaml"
     isolated_registry.add("hub", str(missing_spec), "cld-hub")
     # Liveness deliberately resolves its observer-owned heartbeat from HOME,
@@ -286,7 +292,9 @@ def test_fresh_heartbeat_repairs_stopped_projection_when_spec_no_longer_loads(
     state_dir = tmp_path / ".scitex" / "agent-container" / "runtime" / "hub"
     state_dir.mkdir(parents=True)
     (state_dir / "heartbeat.json").write_text(
-        json.dumps({"ts": time.time(), "pid": 0, "state": "running"}),
+        json.dumps({"ts": time.time(), "pid": 0, "state": "running",
+                    "session_jsonl_delta_bytes": 64,
+                    "subagent_jsonl_delta_bytes": 0}),
         encoding="utf-8",
     )
     from scitex_agent_container._lifecycle._status import agent_status
@@ -296,6 +304,6 @@ def test_fresh_heartbeat_repairs_stopped_projection_when_spec_no_longer_loads(
 
     # Assert
     assert (result["status"], result["liveness"]["verdict"]) == (
-        "running",
+        "unknown",
         "alive",
     )

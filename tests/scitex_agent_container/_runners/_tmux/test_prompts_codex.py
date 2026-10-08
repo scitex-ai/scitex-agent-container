@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from scitex_agent_container._runners._tmux.prompts import PROMPT_HANDLERS, is_ready
+from scitex_agent_container._runners._tmux.prompts import (
+    PROMPT_HANDLERS,
+    detect_and_respond,
+    is_ready,
+)
 
 _TRUST_SCREEN = """
   Welcome to Codex, OpenAI's command-line coding agent
@@ -38,13 +42,13 @@ def test_codex_trust_picker_is_detected():
     assert seen is True
 
 
-def test_codex_trust_picker_is_answered_with_enter_alone():
-    # Arrange -- the cursor already sits on "1. Yes, continue".
-    handler = _handler("codex-dir-trust")
+def test_codex_trust_picker_requires_reviewed_authority_without_keys():
+    # Arrange
+    sent = []
     # Act
-    keys = handler.keys
+    detect_and_respond(_TRUST_SCREEN, set(), sent.append)
     # Assert
-    assert keys == ["Enter"]
+    assert sent == []
 
 
 def test_codex_trust_screen_is_not_ready():
@@ -85,13 +89,13 @@ def test_codex_hooks_review_picker_is_detected():
     assert seen is True
 
 
-def test_codex_hooks_review_picker_trusts_all():
-    # Arrange -- option 3 would run the agent without its hooks, silently.
-    handler = _handler("codex-hooks-review")
+def test_codex_hooks_review_picker_does_not_approve_unknown_hooks():
+    # Arrange
+    sent = []
     # Act
-    keys = handler.keys
+    detect_and_respond(_HOOKS_SCREEN, set(), sent.append)
     # Assert
-    assert keys == ["2", "Enter"]
+    assert sent == []
 
 
 def test_codex_hooks_review_screen_is_not_ready():

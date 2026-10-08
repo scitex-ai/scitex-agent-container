@@ -167,6 +167,12 @@ def drain_modals_until_ready(
         pane = capture_fn(name)
         if pane.strip():
             last_pane = pane
+        if _prompts.codex_blocking_modal(pane):
+            log.error(
+                "Native boot for %s is blocked by a review/login/limit prompt; no keys sent",
+                name,
+            )
+            return False
         if _MARKER in pane or _prompts.is_ready(pane):
             return True
         modal = _prompts.detect(pane)
@@ -207,6 +213,11 @@ def drain_modals_until_ready(
         )
         if settled.strip():
             last_pane = settled
+        if _prompts.codex_blocking_modal(settled):
+            log.error(
+                "Native boot for %s became blocked while settling; no keys sent", name
+            )
+            return False
         if _MARKER in settled or _prompts.is_ready(settled):
             return True
         modal_after = _prompts.detect(settled)
@@ -288,6 +299,10 @@ def wait_until_input_ready(
     last_pane = ""
     while time_fn() < deadline:
         last_pane = capture_fn(name)
+        if _prompts.codex_blocking_modal(last_pane):
+            raise TuiInputNotReadyError(
+                f"Native input for {name!r} requires reviewed modal authority; no keys sent"
+            )
         if _MARKER in last_pane or _prompts.is_ready(last_pane):
             return True
         modal = _prompts.detect(last_pane)
@@ -304,6 +319,10 @@ def wait_until_input_ready(
                 time_fn=time_fn,
             )
             last_pane = settled
+            if _prompts.codex_blocking_modal(settled):
+                raise TuiInputNotReadyError(
+                    f"Native input for {name!r} became blocked while settling; no keys sent"
+                )
             if _MARKER in settled or _prompts.is_ready(settled):
                 return True
             modal_after = _prompts.detect(settled)

@@ -927,7 +927,9 @@ def test_prune_without_a_config_keeps_the_pre_spec_aware_behaviour(
     assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
 
 
-def test_stale_env_file_token_refreshed_from_declared_pool_slot(tmp_path):
+def test_stale_env_file_token_refreshed_from_declared_pool_slot(
+    tmp_path, secrets_envrc,
+):
     """A truncated token left by an earlier deploy must not pin the agent.
 
     Regression (2026-09-23): three lead agents carried 23-char truncated
@@ -935,35 +937,18 @@ def test_stale_env_file_token_refreshed_from_declared_pool_slot(tmp_path):
     their DECLARED slots; every start failed bot_token_valid because the
     .env value won and was never refreshed.
     """
-    from scitex_agent_container.runtimes import _cct_token_pool as pool_mod
-    from scitex_agent_container.runtimes._cct_token_pool import ensure_cct_bot_token
-
+    # Arrange
     dest = tmp_path / "home"
     dest.mkdir()
     (dest / ".env").write_text("CCT_BOT_TOKEN=1111111111:SHORTSTALE\n")
 
     full = "2222222222:" + "A" * 35
-    assert len(full) == 46
-
-    class FakePool:
-        env = {"CCT_BOT_TOKEN_APPS_LEAD": full}
-        trusted = True
-
-    class FakeClaude:
-        channels = ["server:claude-code-telegrammer"]
-
-    class FakeConfig:
-        name = "scitex-apps-lead"
-        workdir = "/home/ywatanabe/proj/scitex-apps-lead"
-        claude = FakeClaude()
-        env = {"CCT_BOT_TOKEN_SLOT": "APPS_LEAD"}
-
-    real_read_pool = pool_mod.read_pool
-    pool_mod.read_pool = lambda: FakePool()
-    try:
-        ensure_cct_bot_token(FakeConfig(), dest)
-    finally:
-        pool_mod.read_pool = real_read_pool
-
+    _pool_file(tmp_path, f"export CCT_BOT_TOKEN_ZZ_STALE_FIXTURE={full}\n")
+    config = _cfg(
+        "zz-stale-fixture", env={"CCT_BOT_TOKEN_SLOT": "ZZ_STALE_FIXTURE"}
+    )
+    # Act
+    ensure_cct_bot_token(config, dest)
     body = (dest / ".env").read_text()
+    # Assert
     assert f"CCT_BOT_TOKEN={full}" in body

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -30,8 +32,8 @@ def complete(sid, name, args, payload):
 def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
-        "https://github.com/ywatanabe1989/hermes-agent.git",
-        "9ca9b7e5b9092465d37e4af0c2132aed188af5dd",
+        "https://github.com/scitex-ai/hermes-agent.git",
+        "17c5fde5a3f3642262003cd6aa09d54cf4d11de3",
     )
 
     # Act
@@ -107,6 +109,29 @@ def test_heartbeat_instrumentation_fails_closed_when_an_anchor_drifts(tmp_path):
         source._patch_hermes_lifecycle_instrumentation(staged)
 
 
+@pytest.mark.parametrize("gate_count", [1, 3])
+def test_instrumented_fork_rejects_missing_or_extra_lifecycle_gate(
+    tmp_path, gate_count
+):
+    # Arrange
+    staged = tmp_path / "hermes-agent-src"
+    module = staged / "tui_gateway" / "tool_progress.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "def _emit_tool_lifecycle(event, sid, name, args, payload):\n"
+        "    if not _connector_tool_lifecycle(name, args):\n"
+        "        return _emit(event, sid, payload)\n"
+        + "    if True:  # SAC heartbeat instrumentation is display-independent\n"
+        * gate_count,
+        encoding="utf-8",
+    )
+
+    # Act
+    # Assert
+    with pytest.raises(source.HermesSourceError, match="gate drifted"):
+        source._patch_hermes_lifecycle_instrumentation(staged)
+
+
 def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
     # Arrange
     repository = tmp_path / "repository"
@@ -122,6 +147,30 @@ def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
     tool_progress = repository / "tui_gateway" / "tool_progress.py"
     tool_progress.parent.mkdir()
     tool_progress.write_text(PINNED_TOOL_PROGRESS_ANCHORS, encoding="utf-8")
+    # The complete staging contract includes the deployed quota patch. Seed
+    # its tracked preimages from the same immutable pin, without executing
+    # any credential code or depending on the cache's working branch.
+    pinned_repository = source.resolve_hermes_repo()
+    quota_patch = Path(source.__file__).with_name("_hermes_quota_failover.patch")
+    sections = quota_patch.read_text().split("diff --git ")[1:]
+    for section in sections:
+        if "\nnew file mode " in section:
+            continue
+        name = re.match(r"a/(\S+) b/", section).group(1)
+        preimage = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(pinned_repository),
+                "show",
+                f"{source.HERMES_COMMIT}:{name}",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
+        destination = repository / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(preimage)
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
     commit = subprocess.run(

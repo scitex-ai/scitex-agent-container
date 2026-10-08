@@ -45,14 +45,13 @@ import os
 from typing import Callable, Iterable
 
 
-def _pid_alive(pid: int) -> bool:
-    """Return True iff ``pid`` is a live process on this host.
+def _pid_alive(pid: int) -> bool | None:
+    """Resolve local PID existence without treating an unknown error as death.
 
     ``os.kill(pid, 0)`` raises ``ProcessLookupError`` for a dead PID
     and ``PermissionError`` for a live PID owned by another user
-    (still proof of life). Any other ``OSError`` → treat as
-    indeterminate → "not alive" so the row gets cleared rather than
-    pinned forever.
+    (still proof of life). Other ``OSError`` values are indeterminate and
+    cannot authorize retiring an ownership record.
     """
     if pid <= 0:
         return False
@@ -65,10 +64,7 @@ def _pid_alive(pid: int) -> bool:
         # Live process owned by a different uid — still proof of life.
         return True
     except OSError:
-        # stx-allow: fallback (reason: indeterminate kernel error —
-        # degrade to "not alive" so a stuck lease does not block a
-        # legitimate restart)
-        return False
+        return None
 
 
 def clear_stale_instance_lease(
@@ -76,7 +72,8 @@ def clear_stale_instance_lease(
     *,
     instances_oracle: Callable[[], Iterable[dict]] | None = None,
     stop_writer: Callable[[str, str], bool] | None = None,
-    pid_alive_fn: Callable[[int], bool] = _pid_alive,
+    pid_alive_fn: Callable[[int], bool | None] = _pid_alive,
+    host_reader: Callable[[], str] | None = None,
 ) -> int:
     """Close ``instances`` rows for ``name`` whose recorded PID is dead.
 
@@ -98,11 +95,24 @@ def clear_stale_instance_lease(
       with the caller so this helper stays a pure
       "verify-pid + close" primitive.
     """
+    if host_reader is None:
+        from .._state.state_store import _resolve_host
+
+        def host_reader() -> str:
+            return _resolve_host(None)
+
+    try:
+        local_host = host_reader()
+    except Exception:  # stx-allow: fallback (unknown host cannot authorize local PID evidence or marker cleanup)
+        return 0
+    if not isinstance(local_host, str) or not local_host.strip():
+        return 0
+
     if instances_oracle is None:
         from .._state.state_store import list_active_instances as _list
 
         def instances_oracle():  # type: ignore[no-redef]
-            return _list(host=None)
+            return _list(host=local_host)
 
     if stop_writer is None:
         from .._state.state_store import record_instance_stop as _stop
@@ -120,7 +130,9 @@ def clear_stale_instance_lease(
 
     cleared = 0
     for row in rows:
-        if row.get("name") != name:
+        # PID namespaces are host-local. Even an injected or mis-scoped oracle
+        # must never let this host probe or retire another host's incarnation.
+        if row.get("name") != name or row.get("host") != local_host:
             continue
         pid = row.get("pid")
         if pid is None:
@@ -133,7 +145,9 @@ def clear_stale_instance_lease(
             pid_int = int(pid)
         except (TypeError, ValueError):
             continue
-        if pid_alive_fn(pid_int):
+        if isinstance(pid, bool) or pid_int <= 0:
+            continue
+        if pid_alive_fn(pid_int) is not False:
             continue
         row_id = row.get("id")
         if not row_id:

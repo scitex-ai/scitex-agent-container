@@ -262,3 +262,63 @@ def test_pinned_agent_with_absent_store_raises(_isolate_home: Path) -> None:
     # Assert
     with ctx:
         _rotate_to_healthy_account(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Non-Claude launches — rotation is a no-op.
+# sac-harness-credential-gate-ignores-harness-20260928: launch ran the
+# Claude OAuth pool/account rotation for agents that never touch Claude,
+# so an expired pinned snapshot blocked a start the agent's own auth
+# never needed. API-key / openai-harness launches have no OAuth
+# credential to rotate — the same early-out the restart preflight
+# (resolve_successor_credential) and the bind (credentials_file_bind)
+# already carry. Hermes, Codex and OpenCode use their own selected backend
+# auth; an available Claude fallback must not activate its OAuth pool.
+# ---------------------------------------------------------------------------
+
+
+def test_openai_harness_with_expired_pin_is_not_blocked(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — openai harness + expired pinned Claude snapshot.
+    cfg = _make_config("opencode-agent", account="stale-acct")
+    cfg.harness = "openai"
+    _write_snapshot(_isolate_home, "stale-acct", _past_ms())
+    # Act — must NOT raise NoHealthyAccountError.
+    _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
+    # Assert — pin untouched.
+    assert cfg.claude.account == "stale-acct"
+
+
+def test_openai_harness_pool_with_no_healthy_snapshot_is_not_blocked(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — openai harness + credentials_files pool, all expired.
+    home = _isolate_home
+    _write_snapshot(home, "stale-acct", _past_ms(60))
+    cfg = AgentConfig(name="opencode-pool")
+    cfg.harness = "openai"
+    cfg.claude.credentials_files = [
+        str(
+            home / ".scitex" / "agent-container" / "accounts"
+            / "stale-acct" / ".credentials.json"
+        )
+    ]
+    # Act — must NOT raise NoHealthyAccountError.
+    _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
+    # Assert — pool untouched.
+    assert cfg.claude.credentials_file == ""
+
+
+@pytest.mark.parametrize("harness", ["hermes", "codex", "opencode"])
+def test_non_claude_harness_ignores_an_expired_claude_pin(
+    _isolate_home: Path, harness: str,
+) -> None:
+    # Arrange — the selected harness never consumes this Claude snapshot.
+    cfg = _make_config("other-harness", account="stale-acct")
+    cfg.harness = harness
+    _write_snapshot(_isolate_home, "stale-acct", _past_ms())
+    # Act
+    _rotate_to_healthy_account(cfg, log_stream=io.StringIO())
+    # Assert
+    assert cfg.claude.account == "stale-acct"

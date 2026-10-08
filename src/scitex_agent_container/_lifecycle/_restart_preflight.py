@@ -137,7 +137,8 @@ def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]
 
     Returns ``(None, "")`` — pre-flight is a NO-OP — for:
 
-      * provider / openai-family backends (API key, no OAuth to probe), and
+      * provider-backed Claude and non-Anthropic harnesses (no Claude
+        OAuth to probe), and
       * pure-unpinned host-live agents (no account / credentials_file /
         credentials_files). Their account NEVER swaps on restart, so the
         swap-to-a-stale-snapshot mechanism does not apply, and probing would
@@ -150,13 +151,10 @@ def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]
     abort-BEFORE-stop (strictly better than today's stop-then-fail, where
     the same error tears down a running agent it then cannot restart).
     """
-    from ..runtimes._apptainer_provider import (
-        openai_harness_active,
-        provider_active,
-    )
+    from ..runtimes._apptainer_provider import anthropic_oauth_active
 
-    # API-key backends have no OAuth credential to probe.
-    if provider_active(config) or openai_harness_active(config):
+    # Resolve auth only for the selected harness and backend.
+    if not anthropic_oauth_active(config):
         return None, ""
 
     claude_spec = getattr(config, "claude", None)
@@ -336,13 +334,20 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
     )
 
 
-def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
+def preflight_from_config_path(
+    config_path: str,
+    *,
+    opener: Any = None,
+    engine_override: str | None = None,
+    session_override: str | None = None,
+) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
     ``agent_restart`` holds a spec PATH (not a loaded config) and stops the
     agent BEFORE the successor ``agent_start`` loads + rotates it. So this
-    entry reproduces the launch's account resolution itself — load the spec,
-    run the SAME :func:`_lifecycle._start_preflight._rotate_to_healthy_account`
+    entry reproduces the launch's engine and account resolution — load the
+    spec, fold this restart's requested engine, then run the SAME
+    :func:`_lifecycle._start_preflight._rotate_to_healthy_account`
     pick (which may itself raise :class:`_creds.NoHealthyAccountError`, a
     legit abort-before-stop) — then probes the resolved successor credential.
 
@@ -353,10 +358,34 @@ def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
     import io
 
     from ..config import load_config
+    from ._engine_select import select_engine_at_start
     from ._start_preflight import _rotate_to_healthy_account
 
     config = load_config(config_path)
+    # The successor's requested engine owns auth, not the stored default.
+    # The caller's separate engine check retains any requested live probe.
+    select_engine_at_start(config, engine_override, probe=False, log=False)
+    if config.harness == "hermes":
+        from ._hermes_restart_preflight import prepare_hermes_successor
+
+        # Restart preserves its conversation unless explicitly requested fresh.
+        config.claude.session = session_override or "continue"
+        return prepare_hermes_successor(config)
     # Resolve the SAME successor account the launch will pick. NoHealthyAccountError
     # propagates as an abort-before-stop (better than stop-then-fail today).
     _rotate_to_healthy_account(config, log_stream=io.StringIO())
     assert_successor_auth_usable(config, opener=opener)
+
+
+def preflight_workspace_from_config_path(
+    config_path, *, engine_override=None, cli_path=None
+):
+    """Refuse an inadmissible successor workspace without provisioning it."""
+    from ..config import load_config
+    from ._engine_select import select_engine_at_start
+    from ._worktree_policy import enforce_task_worktree_policy
+
+    successor = load_config(config_path)
+    select_engine_at_start(successor, engine_override, probe=False, log=False)
+    options = {} if cli_path is None else {"cli_path": cli_path}
+    enforce_task_worktree_policy(successor, provision=False, **options)

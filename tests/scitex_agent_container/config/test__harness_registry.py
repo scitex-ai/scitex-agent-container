@@ -24,6 +24,7 @@ from scitex_agent_container.config._harness_registry import (
     HARNESS_DESCRIPTORS,
     HERMES_TUI,
     OPENAI_AGENTS,
+    OPENCODE_TUI,
     UnmappableHarnessError,
     host_probed_runtime_spellings,
     known_harnesses,
@@ -287,6 +288,9 @@ def test_registry_has_exactly_the_six_real_entries():
     # deliberately allowed to break when a row is added: the break is
     # the review prompt asking whether the new entry was intended.
     # CODEX_TUI joined on 2026-09-05 (the operator's move off Claude Code).
+    # OPENCODE_TUI joined on branch feat/opencode-gateway-probe as the
+    # second gateway harness; its launch stays guard-refused until the
+    # opencode pilot passes.
     expected = {
         CLAUDE_CODE_TUI,
         CLAUDE_AGENT_SDK,
@@ -294,6 +298,7 @@ def test_registry_has_exactly_the_six_real_entries():
         CODEX_SDK,
         CODEX_TUI,
         HERMES_TUI,
+        OPENCODE_TUI,
     }
     # Act
     keys = set(HARNESS_DESCRIPTORS)
@@ -604,8 +609,9 @@ def test_sdk_heartbeat_loop_skip_set_derives_from_the_registry():
 
 
 def test_known_harnesses_lists_the_four_families_sorted():
-    # Arrange — "codex" joined the axis with the fourth registry row.
-    expected = ("anthropic", "codex", "hermes", "openai")
+    # Arrange — "codex" joined the axis with the fourth registry row;
+    # "opencode" with the seventh (second gateway harness, launch-gated).
+    expected = ("anthropic", "codex", "hermes", "openai", "opencode")
     # Act
     harnesses = known_harnesses()
     # Assert

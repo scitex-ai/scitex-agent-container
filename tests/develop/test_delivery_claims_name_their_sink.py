@@ -125,14 +125,17 @@ _ESCAPE_HATCH = re.compile(r"stx-allow:")
 FROZEN_UNNAMED_CLAIMS = frozenset(
     {
         "scitex_agent_container/_account/claude_usage.py:381",
-        "scitex_agent_container/_account/claude_usage.py:540",
+        # The per-credential usage handler LEFT THIS SET 2026-10-03. Its
+        # contract returns result['error']; it does not promise operator
+        # delivery. The account-list caller can discard that error and use
+        # cached data, so claiming a log or stdout sink would be false.
         "scitex_agent_container/_account/interactive_login.py:262",
         "scitex_agent_container/_account/openai_usage.py:333",
         "scitex_agent_container/_account/openai_usage.py:407",
-        "scitex_agent_container/_account/refresh_alarm.py:75",
+        "scitex_agent_container/_account/refresh_alarm.py:76",
         "scitex_agent_container/_agentstate/_journal.py:226",
-        "scitex_agent_container/_authheal/_pass.py:283",
-        "scitex_agent_container/_authheal/_pass.py:431",
+        "scitex_agent_container/_authheal/_pass.py:284",
+        "scitex_agent_container/_authheal/_pass.py:429",
         # _birth_certificate.py LEFT THIS SET 2026-08-20 — the reason now
         # names its sink (journald via sac-listen.service for a brokered
         # start, the caller's stderr for a direct one) and carries the
@@ -148,7 +151,7 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # because the frozen list is keyed on a line number that only moves when
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
-        "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
+        "scitex_agent_container/_lifecycle/_in_sif_http_client.py:142",
         # _instances.py LEFT THIS SET 2026-08-28. Its claim was frozen at
         # :263 as an unnamed one, and it was twice RE-PINNED (:265, then :267
         # by the a2a-ports migration, whose added comment moved it again) on
@@ -164,21 +167,21 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # because a claim that names its sink is not this gate's business at
         # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
-        "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
+        "scitex_agent_container/_lifecycle/_prune_runtime.py:81",
         "scitex_agent_container/_lifecycle/_relocate_transcript.py:172",
-        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:188",
-        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:289",
-        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:328",
-        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:206",
-        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:230",
-        "scitex_agent_container/_listen/_deploy_freshness.py:227",
-        "scitex_agent_container/_listen/_liveness_tick.py:123",
+        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:189",
+        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:290",
+        "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:329",
+        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:207",
+        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:231",
+        "scitex_agent_container/_listen/_deploy_freshness.py:229",
+        "scitex_agent_container/_listen/_liveness_tick.py:124",
         # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason
         # now names where the tolerated non-JSON body goes (the a2a response
         # the sender receives) instead of claiming it is "surfaced".
-        "scitex_agent_container/_maintenance/_install_integrity_pointers.py:193",
-        "scitex_agent_container/_maintenance/_install_integrity_pointers.py:226",
-        "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
+        "scitex_agent_container/_maintenance/_install_integrity_pointers.py:194",
+        "scitex_agent_container/_maintenance/_install_integrity_pointers.py:227",
+        "scitex_agent_container/_maintenance/_venv_dist_assertion.py:121",
         # THESE FOUR MOVED, they did not change. The dispatch-ledger port to
         # PostgreSQL (2026-08-28) added prose above each of them, so the
         # coordinates shifted 107->115, 329->331, 46->62 and 59->79. The
@@ -192,22 +195,18 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # `logging.getLogger(__name__)`; where that lands for a container
         # agent is a survey nobody has done, so naming it here would be a
         # guess wearing a receipt.
-        "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
-        "scitex_agent_container/_network/_peer_dispatch.py:62",
-        "scitex_agent_container/_network/_peer_dispatch.py:79",
+        "scitex_agent_container/_mcp/_channel_reaction_ack.py:116",
+        "scitex_agent_container/_network/_peer_dispatch.py:63",
+        "scitex_agent_container/_network/_peer_dispatch.py:80",
         "scitex_agent_container/_network/probe.py:457",
         "scitex_agent_container/_reconcile/_budget.py:164",
-        "scitex_agent_container/_reconcile/_pass.py:370",
-        "scitex_agent_container/_reconcile/_pass.py:428",
-        "scitex_agent_container/_reconcile/_perform.py:96",
-        "scitex_agent_container/_runners/_codex_turn_driver.py:169",
-        "scitex_agent_container/_runners/_openai_turn_driver.py:240",
-        "scitex_agent_container/_runners/_session_completion.py:183",
-        "scitex_agent_container/_runners/_session_conversation.py:262",
-        "scitex_agent_container/_runners/_session_hooks.py:225",
-        "scitex_agent_container/_runners/_tmux/claude_code.py:516",
-        "scitex_agent_container/_state/_acl_broker_client.py:130",
-        "scitex_agent_container/_state/snapshot/_io.py:411",
+        "scitex_agent_container/_reconcile/_pass.py:371",
+        "scitex_agent_container/_reconcile/_pass.py:429",
+        "scitex_agent_container/_runners/_session_conversation.py:269",
+        "scitex_agent_container/_runners/_session_hooks.py:226",
+        "scitex_agent_container/_runners/_tmux/claude_code.py:518",
+        "scitex_agent_container/_state/_acl_broker_client.py:131",
+        "scitex_agent_container/_state/snapshot/_io.py:412",
         "scitex_agent_container/a2a/executors/_base.py:97",
         "scitex_agent_container/cli_pkg/_account_refresh_push.py:99",
 
@@ -222,8 +221,7 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # ~/.scitex/agent-container/runtime/logs/ — that one holds
         # shell-redirect logs (creds-watch.log, host_exec.log, build logs) and
         # is the directory I would have named had I guessed from the tree.
-        "scitex_agent_container/runtimes/_apptainer_auth_bind.py:296",
-        "scitex_agent_container/runtimes/_cct_rail_alarm.py:198",
+        "scitex_agent_container/runtimes/_cct_rail_alarm.py:199",
         "scitex_agent_container/runtimes/_cct_rail_verdict.py:242",
         # _openai_sdk_common.py:179 LEFT THIS SET 2026-08-29, by DELETION
         # rather than by naming a sink. The claim was "surfaced by
@@ -236,7 +234,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # leave the list, or it becomes a blessed coordinate for whatever
         # drifts into position 179.
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
-        "scitex_agent_container/runtimes/_tui_inject.py:92",
     }
 )
 

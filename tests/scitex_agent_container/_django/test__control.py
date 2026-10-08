@@ -325,7 +325,7 @@ def test_message_route_requires_exactly_one_action(client, loopback, env_save_re
     assert response.status_code == 302 and "state=refused" in response["Location"]
 
 
-def test_message_route_refuses_a_made_up_control_key(client, loopback, env_save_restore):
+def test_message_route_refuses_a_made_up_control_key(client, loopback, env_save_restore, audit_log):
     # Arrange
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 

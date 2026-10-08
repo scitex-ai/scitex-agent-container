@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._validation &mdash; scitex-agent-container v0.24.19</title>
+  <title>scitex_agent_container.config._validation &mdash; scitex-agent-container v0.29.5</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
+      <script src="../../../_static/documentation_options.js?v=a4b8ebc0"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -71,7 +71,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#harness-session">Harness session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
 </ul>
@@ -87,7 +87,12 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-claude-code-account"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-key-compression-hermes-only"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-background-review"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-run-budget-seconds"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-comms-harness-neutral-communication"><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../spec-reference.html#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
 </ul>
 </li>
@@ -171,6 +176,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#builtin-layers">Builtin layers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#build">Build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#distributing-one-verified-artifact-to-a-fleet">Distributing one verified artifact to a fleet</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
 </ul>
 </li>
@@ -182,7 +188,18 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engines"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engines</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engine_key"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engine_key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">AgentConfig.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.service_tier"><code class="docutils literal notranslate"><span class="pre">AgentConfig.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">AgentConfig.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -197,12 +214,19 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
@@ -217,9 +241,11 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.delegation"><code class="docutils literal notranslate"><span class="pre">AgentConfig.delegation</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home_layers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home_layers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
@@ -241,7 +267,6 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
@@ -249,14 +274,30 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec"><code class="docutils literal notranslate"><span class="pre">DelegationSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.max_concurrent_children"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.max_concurrent_children</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.worktree_isolation"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.worktree_isolation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.__init__"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError"><code class="docutils literal notranslate"><span class="pre">EngineDefaultError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineError"><code class="docutils literal notranslate"><span class="pre">EngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec"><code class="docutils literal notranslate"><span class="pre">EngineSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.key"><code class="docutils literal notranslate"><span class="pre">EngineSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.harness"><code class="docutils literal notranslate"><span class="pre">EngineSpec.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.model"><code class="docutils literal notranslate"><span class="pre">EngineSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider_declared"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider_declared</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_account"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">EngineSpec.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.service_tier"><code class="docutils literal notranslate"><span class="pre">EngineSpec.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">EngineSpec.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.env"><code class="docutils literal notranslate"><span class="pre">EngineSpec.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.is_default"><code class="docutils literal notranslate"><span class="pre">EngineSpec.is_default</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.__init__"><code class="docutils literal notranslate"><span class="pre">EngineSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
@@ -279,6 +320,24 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.target_ratio"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.target_ratio</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.tail_mode"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.tail_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.in_place"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.in_place</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetBudgetError"><code class="docutils literal notranslate"><span class="pre">HermesFleetBudgetError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.usable_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.usable_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.reserved_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.reserved_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.agent_count"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.agent_count</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.__init__"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.__init__()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
@@ -296,9 +355,11 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.extra_headers"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.extra_headers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.hermes_provider"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.hermes_provider</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -341,6 +402,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError"><code class="docutils literal notranslate"><span class="pre">UnknownEngineError</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
@@ -350,10 +412,13 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.select_engine"><code class="docutils literal notranslate"><span class="pre">select_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
 </ul>
@@ -381,6 +446,13 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust"><code class="docutils literal notranslate"><span class="pre">_detect_codex_dir_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review"><code class="docutils literal notranslate"><span class="pre">_detect_codex_hooks_review()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._CODEX_COMPOSER_MARKERS"><code class="docutils literal notranslate"><span class="pre">_CODEX_COMPOSER_MARKERS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane"><code class="docutils literal notranslate"><span class="pre">_codex_usage_limit_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal"><code class="docutils literal notranslate"><span class="pre">codex_blocking_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done"><code class="docutils literal notranslate"><span class="pre">_detect_codex_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier"><code class="docutils literal notranslate"><span class="pre">_detect_hermes_contributor_tier()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
@@ -421,13 +493,20 @@
            <div itemprop="articleBody">
              
   <h1>Source code for scitex_agent_container.config._validation</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;YAML config validation.</span>
+<span></span><span class="sd">"""YAML config validation.</span>
 
-<span class="sd">Sac is SDK-only and container-only since the CLI/TUI runtime cleanup.</span>
-<span class="sd">Accepted ``spec.runtime`` values are ``docker``, ``podman``, ``apptainer``</span>
-<span class="sd">— each backend wraps the same long-running Claude Agent SDK runner.</span>
+<span class="sd">Sac is SDK-only and container-only. The container ENGINE is not a spec</span>
+<span class="sd">decision at all: apptainer is the only one, unconditionally (see</span>
+<span class="sd">``_container_engine``), and ``spec.container.runtime`` — the field that</span>
+<span class="sd">used to pretend otherwise — is REMOVED and rejected on sight.</span>
+
+<span class="sd">``spec.runtime`` is a different axis with an unfortunate shared name: it</span>
+<span class="sd">selects the HARNESS LAUNCH MODE (``tui`` / ``claude-agent-sdk``, plus the</span>
+<span class="sd">legacy ``apptainer`` alias) and is derived from the harness registry.</span>
+<span class="sd">Both launch modes run inside apptainer.</span>
+
 <span class="sd">Communication with the agent uses the HTTP A2A surface, never panes.</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
@@ -443,14 +522,25 @@
 <span class="c1"># back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._claude_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">_VALID_MODEL_RE</span> <span class="k">as</span> <span class="n">_VALID_MODEL_RE</span>  <span class="c1"># noqa: F401</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._claude_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_claude</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._container_engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">container_runtime_removed_error</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._engine_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_engine_pin</span><span class="p">,</span> <span class="n">validate_engines</span>
+
+<span class="c1"># spec.harness (TOP-LEVEL: which agent SDK runs the session), plus its</span>
+<span class="c1"># DEPRECATED alias spec.provider — distinct from spec.claude.provider</span>
+<span class="c1"># (the inference backend, validated inside validate_claude via</span>
+<span class="c1"># _provider_validation). See config._harness_types.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._harness_registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">valid_runtime_spellings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._harness_types</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">HARNESS_KEY</span><span class="p">,</span>
+    <span class="n">LEGACY_HARNESS_KEY</span><span class="p">,</span>
+    <span class="n">harness_key_conflict_error</span><span class="p">,</span>
+    <span class="n">is_known_harness</span><span class="p">,</span>
+    <span class="n">list_harnesses</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._labels_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_labels</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._placement_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_placement</span>
-
-<span class="c1"># spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1</span>
-<span class="c1"># foundation) — distinct from spec.claude.provider (validated inside</span>
-<span class="c1"># validate_claude via _provider_validation). See the naming-collision</span>
-<span class="c1"># note in config._provider_types.AgentProvider.</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">is_known_agent_provider</span><span class="p">,</span> <span class="n">list_agent_providers</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._reserved_names</span><span class="w"> </span><span class="kn">import</span> <span class="n">reserved_spec_path_errors</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._residency_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">residency_coupling_error</span><span class="p">,</span> <span class="n">residency_value_error</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._shape_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_autonomous</span><span class="p">,</span> <span class="n">validate_proxy_coupling</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._startup_command_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_startup_commands</span>
 
@@ -458,108 +548,44 @@
 <span class="c1"># ``_claude_validation`` alongside the rest of the claude-block checks;</span>
 <span class="c1"># re-exported at the top of this module for back-compat.</span>
 
-<span class="n">_VALID_API_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;scitex-agent-container/v3&quot;</span><span class="p">,)</span>
+<span class="n">_VALID_API_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"scitex-agent-container/v3"</span><span class="p">,)</span>
 
-<span class="n">_KNOWN_TOP_LEVEL_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;apiVersion&quot;</span><span class="p">,</span> <span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="s2">&quot;spec&quot;</span><span class="p">})</span>
+<span class="n">_KNOWN_TOP_LEVEL_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"apiVersion"</span><span class="p">,</span> <span class="s2">"kind"</span><span class="p">,</span> <span class="s2">"metadata"</span><span class="p">,</span> <span class="s2">"spec"</span><span class="p">})</span>
 
 <span class="c1"># v3 ``kind`` discriminator. ``Agent`` = SDK runner (claude_session);</span>
 <span class="c1"># ``AgentProxy`` = HTTP forwarder (a2a_proxy) with NO SDK. Anything</span>
 <span class="c1"># else is rejected at parse time.</span>
-<span class="n">_VALID_KINDS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;Agent&quot;</span><span class="p">,</span> <span class="s2">&quot;AgentProxy&quot;</span><span class="p">})</span>
+<span class="n">_VALID_KINDS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"Agent"</span><span class="p">,</span> <span class="s2">"AgentProxy"</span><span class="p">})</span>
 
 <span class="c1"># spec.runtime — LAUNCH-MODE selector (operator directive 12870, lead</span>
 <span class="c1"># a2a b58dd5d3). Repurposed from the legacy container-engine selector</span>
-<span class="c1"># (degenerate since sac became apptainer-only on 2026-05-13). ``&quot;&quot;``</span>
-<span class="c1"># and ``&quot;apptainer&quot;`` are accepted as back-compat and mapped to</span>
-<span class="c1"># ``&quot;claude-agent-sdk&quot;`` at dispatch — see ``_lifecycle/_runtime_select``.</span>
-<span class="n">_VALID_RUNTIMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;claude-agent-sdk&quot;</span><span class="p">,</span> <span class="s2">&quot;tui&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">})</span>
+<span class="c1"># (degenerate since sac became apptainer-only on 2026-05-13). ``""``</span>
+<span class="c1"># and ``"apptainer"`` are accepted as back-compat and mapped to</span>
+<span class="c1"># ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.</span>
+<span class="c1"># DERIVED from the harness registry (v4 step 4): the accepted spellings</span>
+<span class="c1"># are whatever the descriptor entries claim, so a new harness's runtime</span>
+<span class="c1"># spelling is one registry entry, not an edit here. The name is kept —</span>
+<span class="c1"># it is imported elsewhere (e.g. ``_lifecycle/_relocate_probe_shell``).</span>
+<span class="n">_VALID_RUNTIMES</span> <span class="o">=</span> <span class="n">valid_runtime_spellings</span><span class="p">()</span>
 
-<span class="c1"># spec.container.runtime — every value here must have a working engine</span>
-<span class="c1"># behind it. docker/podman were ripped out 2026-05-13.</span>
-<span class="n">VALID_CONTAINER_RUNTIMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">})</span>
+<span class="c1"># ``VALID_CONTAINER_RUNTIMES`` is GONE, and deliberately not replaced by a</span>
+<span class="c1"># one-member frozenset: a set of one is still a menu, and the menu is what</span>
+<span class="c1"># 2026-08-14 abolished. The engine is ``_container_engine.CONTAINER_ENGINE``.</span>
 
 
-<span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:scitex&quot;</span>
+<span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">"scitex-agent-container:scitex"</span>
 
-
-<span class="c1"># All spec keys read by load_v3, parsers, or a2a/_server.py.</span>
-<span class="c1"># Unknown keys are rejected at parse time so typos surface at boot.</span>
-<span class="c1"># Intentional extension data belongs under spec.extensions.</span>
-<span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
-    <span class="p">{</span>
-        <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;provider&quot;</span><span class="p">,</span>  <span class="c1"># agent SDK family: anthropic (default) | openai — see</span>
-        <span class="c1"># config._provider_types.AgentProvider for the naming-collision</span>
-        <span class="c1"># note against the unrelated, nested spec.claude.provider.</span>
-        <span class="s2">&quot;access&quot;</span><span class="p">,</span>  <span class="c1"># host-access posture: full (default) | capsule</span>
-        <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;container&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;screen&quot;</span><span class="p">,</span>  <span class="c1"># legacy: agent metadata (screen_name) — no longer drives a multiplexer</span>
-        <span class="s2">&quot;claude&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;health&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;watchdog&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;restart&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;hooks&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;startup_commands&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;startup_prompts&quot;</span><span class="p">,</span>  <span class="c1"># v3-realign: separate from startup_commands (§3)</span>
-        <span class="s2">&quot;startup&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;context_management&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;listen&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;extensions&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;mcp_servers&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;host&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;hosts&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;session&quot;</span><span class="p">,</span>  <span class="c1"># shortcut alias for spec.claude.session</span>
-        <span class="s2">&quot;scheduling&quot;</span><span class="p">,</span>  <span class="c1"># rejected with a specific actionable message below</span>
-        <span class="s2">&quot;a2a&quot;</span><span class="p">,</span>  <span class="c1"># A2A sidecar config read by a2a/_server.py</span>
-        <span class="s2">&quot;proxy&quot;</span><span class="p">,</span>  <span class="c1"># AgentProxy upstream forwarder block (kind: AgentProxy only)</span>
-        <span class="s2">&quot;autonomous&quot;</span><span class="p">,</span>  <span class="c1"># F-CS3 — drive-until-done block</span>
-        <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span>  <span class="c1"># F-CS18 — apptainer-specific build extension</span>
-        <span class="s2">&quot;user&quot;</span><span class="p">,</span>  <span class="c1"># container user: &quot;host&quot; | &quot;uid:gid&quot; | &quot;&quot; (image default)</span>
-        <span class="s2">&quot;to_home&quot;</span><span class="p">,</span>  <span class="c1"># ADR-0006 — directory mirrored into container $HOME</span>
-        <span class="s2">&quot;comms&quot;</span><span class="p">,</span>  <span class="c1"># Phase-3 ACL: outbound/inbound + a2a listen toggle</span>
-        <span class="s2">&quot;lineage&quot;</span><span class="p">,</span>  <span class="c1"># Phase-3 ACL: group=solitary + may_spawn</span>
-        <span class="c1"># v3 removed (rejected explicitly below with relocation hints):</span>
-        <span class="c1"># image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),</span>
-        <span class="c1"># env (→ spec.apptainer.env), model (→ spec.claude.model),</span>
-        <span class="c1"># skills, remote.</span>
-    <span class="p">}</span>
+<span class="c1"># The spec-key inventory (_KNOWN_SPEC_KEYS + the v3 relocated/removed</span>
+<span class="c1"># tables) lives in the sibling ``_spec_keys`` module under the per-file</span>
+<span class="c1"># line cap; re-exported so existing imports keep resolving.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._spec_keys</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>  <span class="c1"># noqa: E402</span>
+    <span class="n">_KNOWN_SPEC_KEYS</span><span class="p">,</span>
+    <span class="n">_V3_RELOCATED_FIELDS</span><span class="p">,</span>
+    <span class="n">_V3_REMOVED_FIELDS</span><span class="p">,</span>
 <span class="p">)</span>
 
-
-<span class="c1"># v3-realign: top-level fields that moved into engine blocks. Reject</span>
-<span class="c1"># loudly with a hint pointing to the new home (§3 Removed from v3).</span>
-<span class="n">_V3_RELOCATED_FIELDS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;image&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.image&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;mounts&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.binds&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;env&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.apptainer.env&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;spec.claude.model&quot;</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="c1"># v3-realign: fields removed outright (no relocation — different owners).</span>
-<span class="n">_V3_REMOVED_FIELDS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;skills&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.skills is no longer accepted; skills now live under &quot;</span>
-        <span class="s2">&quot;to_home/.claude/skills/ (§3 Removed).&quot;</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;dot_claude&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.dot_claude is no longer accepted; the dot_claude/ layout &quot;</span>
-        <span class="s2">&quot;was removed (see ADR-0006). Use spec.to_home and a &#39;to_home/&#39; dir &quot;</span>
-        <span class="s2">&quot;next to spec.yaml, with the $HOME-relative layout &quot;</span>
-        <span class="s2">&quot;to_home/{CLAUDE.md,.mcp.json,.env,.claude/{hooks,skills}}.&quot;</span>
-    <span class="p">),</span>
-    <span class="s2">&quot;remote&quot;</span><span class="p">:</span> <span class="p">(</span>
-        <span class="s2">&quot;spec.remote is no longer accepted in scitex-agent-container/v3. &quot;</span>
-        <span class="s2">&quot;Use spec.host: &lt;peer&gt; (singleton on one peer) or &quot;</span>
-        <span class="s2">&quot;spec.hosts: [peer1, peer2] (multi-instance). &quot;</span>
-        <span class="s1">&#39;See docs/spec-reference.md &quot;Top-level shape&quot; for the cross-host fields.&#39;</span>
-    <span class="p">),</span>
-<span class="p">}</span>
-
-
 <span class="c1"># ---------------------------------------------------------------------------</span>
-<span class="c1"># Required author-facing fields. The 2026-06-23 &quot;no hidden defaults&quot; subset</span>
+<span class="c1"># Required author-facing fields. The 2026-06-23 "no hidden defaults" subset</span>
 <span class="c1"># (runtime/workdir/apptainer.{image,binds}/health/restart/claude.model) was</span>
 <span class="c1"># SUPERSEDED by the 2026-07-21 red-start ruling: EVERY spec field must be</span>
 <span class="c1"># written explicitly, an omitted field is a load error, and the hint lists</span>
@@ -576,43 +602,53 @@
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_raw</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate raw YAML dict. Returns list of error strings (empty means valid).&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Validate raw YAML dict. Returns list of error strings (empty means valid)."""</span>
     <span class="n">errors</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;Config file is not a YAML mapping: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"Config file is not a YAML mapping: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
+
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._schema_compat</span><span class="w"> </span><span class="kn">import</span> <span class="n">canonical_surface_errors</span><span class="p">,</span> <span class="n">normalize_document</span>
+
+    <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">canonical_surface_errors</span><span class="p">(</span><span class="n">raw</span><span class="p">))</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">normalize_document</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+
+    <span class="c1"># dir-as-SSoT: the agent name is the spec's parent directory, so a</span>
+    <span class="c1"># reserved name (the host-process role slot) is refused by PATH here —</span>
+    <span class="c1"># this runs under check, list-discovery, AND every load_config/start.</span>
+    <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">reserved_spec_path_errors</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
 
     <span class="c1"># Unknown top-level keys</span>
     <span class="n">unknown_top</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span> <span class="o">-</span> <span class="n">_KNOWN_TOP_LEVEL_KEYS</span>
     <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">unknown_top</span><span class="p">):</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;Unknown top-level field &#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;Valid keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_TOP_LEVEL_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="sa">f</span><span class="s2">"Unknown top-level field '</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">'. "</span>
+            <span class="sa">f</span><span class="s2">"Valid keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_TOP_LEVEL_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
         <span class="p">)</span>
 
     <span class="c1"># apiVersion</span>
-    <span class="n">api_version</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apiVersion&quot;</span><span class="p">)</span>
+    <span class="n">api_version</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"apiVersion"</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">api_version</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_VALID_API_VERSIONS</span><span class="p">:</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;apiVersion must be one of </span><span class="si">{</span><span class="n">_VALID_API_VERSIONS</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">api_version</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+            <span class="sa">f</span><span class="s2">"apiVersion must be one of </span><span class="si">{</span><span class="n">_VALID_API_VERSIONS</span><span class="si">}</span><span class="s2">, got '</span><span class="si">{</span><span class="n">api_version</span><span class="si">}</span><span class="s2">'"</span>
         <span class="p">)</span>
 
     <span class="c1"># kind</span>
-    <span class="n">kind</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;kind&quot;</span><span class="p">)</span>
+    <span class="n">kind</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"kind"</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">kind</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_VALID_KINDS</span><span class="p">:</span>
-        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;kind must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_KINDS</span><span class="p">)</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"kind must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_KINDS</span><span class="p">)</span><span class="si">}</span><span class="s2">, got '</span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
 
     <span class="c1"># metadata (optional dict — agent name comes from parent dir, not from</span>
     <span class="c1"># metadata.name; the field is no longer accepted)</span>
-    <span class="n">metadata</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">)</span>
+    <span class="n">metadata</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"metadata"</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">metadata</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;metadata, if present, must be a mapping&quot;</span><span class="p">)</span>
-    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;name&quot;</span> <span class="ow">in</span> <span class="n">metadata</span><span class="p">:</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"metadata, if present, must be a mapping"</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">"name"</span> <span class="ow">in</span> <span class="n">metadata</span><span class="p">:</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-            <span class="s2">&quot;metadata.name is no longer accepted; the agent name is &quot;</span>
-            <span class="s2">&quot;derived from the parent directory (dir-as-SSoT). Remove &quot;</span>
-            <span class="s2">&quot;the metadata.name field and ensure the YAML lives at &quot;</span>
-            <span class="s2">&quot;&lt;name&gt;/&lt;name&gt;.yaml.&quot;</span>
+            <span class="s2">"metadata.name is no longer accepted; the agent name is "</span>
+            <span class="s2">"derived from the parent directory (dir-as-SSoT). Remove "</span>
+            <span class="s2">"the metadata.name field and ensure the YAML lives at "</span>
+            <span class="s2">"&lt;name&gt;/&lt;name&gt;.yaml."</span>
         <span class="p">)</span>
 
     <span class="c1"># metadata.labels — abolished classification fields (``tags``, removed</span>
@@ -620,17 +656,17 @@
     <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_labels</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">path</span><span class="p">))</span>
 
     <span class="c1"># spec</span>
-    <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span>
+    <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"spec"</span><span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec is required and must be a mapping&quot;</span><span class="p">)</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"spec is required and must be a mapping"</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># v3-realign — fields that moved into engine blocks: reject with</span>
         <span class="c1"># a relocation hint so the operator knows the new home.</span>
         <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">new_home</span> <span class="ow">in</span> <span class="n">_V3_RELOCATED_FIELDS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
             <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
                 <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> is no longer accepted at the top level; &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;move it to </span><span class="si">{</span><span class="n">new_home</span><span class="si">}</span><span class="s2"> (v3 spec realignment §3).&quot;</span>
+                    <span class="sa">f</span><span class="s2">"spec.</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> is no longer accepted at the top level; "</span>
+                    <span class="sa">f</span><span class="s2">"move it to </span><span class="si">{</span><span class="n">new_home</span><span class="si">}</span><span class="s2"> (v3 spec realignment §3)."</span>
                 <span class="p">)</span>
         <span class="c1"># v3-realign — fields removed outright (different owner / shape).</span>
         <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">_V3_REMOVED_FIELDS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
@@ -639,7 +675,7 @@
 
         <span class="c1"># Unknown spec keys (excluding the v3-relocated/removed set, which</span>
         <span class="c1"># already have a more specific message above — listing them as</span>
-        <span class="c1"># &quot;unknown&quot; would be misleading).</span>
+        <span class="c1"># "unknown" would be misleading).</span>
         <span class="n">unknown_spec</span> <span class="o">=</span> <span class="p">(</span>
             <span class="nb">set</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
             <span class="o">-</span> <span class="n">_KNOWN_SPEC_KEYS</span>
@@ -648,9 +684,9 @@
         <span class="p">)</span>
         <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">unknown_spec</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;Unknown spec field &#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&#39;. &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;Use spec.extensions for custom data; &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+                <span class="sa">f</span><span class="s2">"Unknown spec field '</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">'. "</span>
+                <span class="sa">f</span><span class="s2">"Use spec.extensions for custom data; "</span>
+                <span class="sa">f</span><span class="s2">"known keys: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_KNOWN_SPEC_KEYS</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.runtime — LAUNCH-MODE selector (operator directive 12870,</span>
@@ -658,82 +694,140 @@
         <span class="c1"># selector (degenerate since sac became apptainer-only on</span>
         <span class="c1"># 2026-05-13). See _VALID_RUNTIMES + _runtime_select for the</span>
         <span class="c1"># accepted values + back-compat mapping.</span>
-        <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
+        <span class="n">runtime</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"runtime"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_VALID_RUNTIMES</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_RUNTIMES</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &#39;tui&#39; (default, &#39;&#39; maps here) = &quot;</span>
-                <span class="s2">&quot;interactive in-apptainer Claude TUI; &#39;claude-agent-sdk&#39; &quot;</span>
-                <span class="s2">&quot;= headless SDK runner; &#39;apptainer&#39; = back-compat for the &quot;</span>
-                <span class="s2">&quot;pre-2026-06-13 container-engine field, mapped to &quot;</span>
-                <span class="s2">&quot;&#39;claude-agent-sdk&#39; at dispatch.&quot;</span>
+                <span class="sa">f</span><span class="s2">"spec.runtime must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_RUNTIMES</span><span class="p">)</span><span class="si">}</span><span class="s2"> "</span>
+                <span class="sa">f</span><span class="s2">"(got '</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">'). 'tui' (default, '' maps here) = "</span>
+                <span class="s2">"interactive in-apptainer Claude TUI; 'claude-agent-sdk' "</span>
+                <span class="s2">"= headless SDK runner; 'apptainer' = back-compat for the "</span>
+                <span class="s2">"pre-2026-06-13 container-engine field, mapped to "</span>
+                <span class="s2">"'claude-agent-sdk' at dispatch."</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.provider — AGENT SDK FAMILY selector (openai-compat-1</span>
-        <span class="c1"># foundation). Distinct from spec.claude.provider (ProviderSpec,</span>
-        <span class="c1"># validated inside validate_claude) — see the naming-collision</span>
-        <span class="c1"># note in config._provider_types.AgentProvider. Presence is</span>
-        <span class="c1"># enforced by the explicit-fields map (red-start ruling</span>
-        <span class="c1"># 2026-07-21); this check only owns the VALUE diagnostic.</span>
-        <span class="n">provider</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;provider&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">provider</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">is_known_agent_provider</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">provider</span><span class="p">)):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.provider must be one of </span><span class="si">{</span><span class="n">list_agent_providers</span><span class="p">()</span><span class="si">}</span><span class="s2"> &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">provider</span><span class="si">}</span><span class="s2">&#39;). &#39;anthropic&#39; (default) = &quot;</span>
-                <span class="s2">&quot;claude-agent-sdk, the only implemented family today; &quot;</span>
-                <span class="s2">&quot;&#39;openai&#39; is accepted by the schema but has no runner yet &quot;</span>
-                <span class="s2">&quot;(openai-compat-2).&quot;</span>
+        <span class="c1"># spec.harness — WHICH AGENT SDK runs the session. Distinct from</span>
+        <span class="c1"># spec.claude.provider (ProviderSpec: the inference backend,</span>
+        <span class="c1"># validated inside validate_claude). Presence is enforced by the</span>
+        <span class="c1"># explicit-fields map (red-start ruling 2026-07-21); this check</span>
+        <span class="c1"># owns the CONFLICT and VALUE diagnostics.</span>
+        <span class="c1">#</span>
+        <span class="c1"># A STATED disagreement between the two keys is its own error,</span>
+        <span class="c1"># and its message names both values — see _harness_types.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">harness_key_conflict_error</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
+        <span class="c1"># The VALUE check runs per WRITTEN key (not on the resolved</span>
+        <span class="c1"># value) so the error names the line the operator has to edit,</span>
+        <span class="c1"># and so an illegal value is caught in either spelling.</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="n">HARNESS_KEY</span><span class="p">,</span> <span class="n">LEGACY_HARNESS_KEY</span><span class="p">):</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">is_known_harness</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"spec.</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2"> must be one of </span><span class="si">{</span><span class="n">list_harnesses</span><span class="p">()</span><span class="si">}</span><span class="s2"> "</span>
+                    <span class="sa">f</span><span class="s2">"(got '</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">'). 'anthropic' (default) = the "</span>
+                    <span class="s2">"claude-agent-sdk harness; 'openai' = the "</span>
+                    <span class="s2">"openai-agents SDK harness; 'codex' = the "</span>
+                    <span class="s2">"openai-codex (Codex SDK) harness. ('provider' is "</span>
+                    <span class="s2">"the DEPRECATED alias of 'harness'; neither is "</span>
+                    <span class="s2">"spec.claude.provider, which selects an "</span>
+                    <span class="s2">"Anthropic-compatible inference backend — note "</span>
+                    <span class="s2">"'codex' is a legal value of BOTH, and they mean "</span>
+                    <span class="s2">"different things: as a HARNESS the codex agent "</span>
+                    <span class="s2">"program runs the loop, as spec.claude.provider it "</span>
+                    <span class="s2">"is an inference gateway with Claude Code still "</span>
+                    <span class="s2">"driving.)"</span>
+                <span class="p">)</span>
+
+        <span class="c1"># The runtime spelling is global, but each harness owns only a subset</span>
+        <span class="c1"># of it. Validate the PAIR as well as the two individual axes so a</span>
+        <span class="c1"># TUI-only harness cannot load as a headless spec and fail much later</span>
+        <span class="c1"># in argv construction.</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">runtime</span> <span class="ow">or</span> <span class="n">runtime</span> <span class="ow">in</span> <span class="n">_VALID_RUNTIMES</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">all</span><span class="p">(</span>
+            <span class="ow">not</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="ow">or</span> <span class="n">is_known_harness</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)))</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="n">HARNESS_KEY</span><span class="p">,</span> <span class="n">LEGACY_HARNESS_KEY</span><span class="p">)</span>
+        <span class="p">):</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">._harness_registry</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+                <span class="n">UnmappableHarnessError</span><span class="p">,</span>
+                <span class="n">resolve_harness_key</span><span class="p">,</span>
             <span class="p">)</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">._harness_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">HarnessKeyConflictError</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">resolve_harness_key</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+            <span class="k">except</span> <span class="n">UnmappableHarnessError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+            <span class="k">except</span> <span class="n">HarnessKeyConflictError</span><span class="p">:</span>
+                <span class="k">pass</span>  <span class="c1"># the dedicated conflict validator above owns this error</span>
+
+        <span class="c1"># spec.residency — DOES THE DAEMON OUTLIVE ITS WORK (v4 step 6):</span>
+        <span class="c1"># resident (default) parks awaiting more turns; one-shot exits</span>
+        <span class="c1"># cleanly (ExitRecord reason oneshot-complete) when the</span>
+        <span class="c1"># conversation completes. Absence is the resident default — the</span>
+        <span class="c1"># live corpus predates the axis — but an ILLEGAL value and the</span>
+        <span class="c1"># unsupported couplings (externally hosted TUI harness, kind:</span>
+        <span class="c1"># AgentProxy) fail loud. Both checks live with the axis in</span>
+        <span class="c1"># _residency_types.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">residency_value_error</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">residency_coupling_error</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="p">))</span>
 
         <span class="c1"># spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).</span>
         <span class="c1"># The knob silently injected a whole-home bind, a ``/work`` alias and</span>
         <span class="c1"># a ``--pwd`` rewrite, so a reader of the spec could not tell what</span>
         <span class="c1"># actually mounted. Fail LOUD with the exact replacement rather than</span>
         <span class="c1"># silently honour or ignore it.</span>
-        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;access&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">workdir</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;workdir&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&lt;your workdir&gt;&quot;</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"access"</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">workdir</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"workdir"</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"&lt;your workdir&gt;"</span>
             <span class="n">home</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">())</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.access has been REMOVED — host access + cwd are now &quot;</span>
-                <span class="s2">&quot;declared explicitly (single source of truth). Delete the &quot;</span>
-                <span class="s2">&quot;`access:` line and instead:</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;  * FULL host reach → add to apptainer.binds:  - </span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:rw</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;    and set `workdir: </span><span class="si">{</span><span class="n">workdir</span><span class="si">}</span><span class="s2">` (a path under it; it is the --pwd).</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="s2">&quot;  * CAPSULE (restricted) → add ONLY the binds you want &quot;</span>
-                <span class="s2">&quot;(e.g. `- &lt;writable&gt;:/work:rw` plus data mounts) and set &quot;</span>
-                <span class="s2">&quot;`workdir: /work`.</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="s2">&quot;Whatever apptainer.binds lists is exactly what mounts; &quot;</span>
-                <span class="s2">&quot;workdir is only the --pwd.&quot;</span>
+                <span class="s2">"spec.access has been REMOVED — host access + cwd are now "</span>
+                <span class="s2">"declared explicitly (single source of truth). Delete the "</span>
+                <span class="s2">"`access:` line and instead:</span><span class="se">\n</span><span class="s2">"</span>
+                <span class="sa">f</span><span class="s2">"  * FULL host reach → add to apptainer.binds:  - </span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:rw</span><span class="se">\n</span><span class="s2">"</span>
+                <span class="sa">f</span><span class="s2">"    and set `workdir: </span><span class="si">{</span><span class="n">workdir</span><span class="si">}</span><span class="s2">` (a path under it; it is the --pwd).</span><span class="se">\n</span><span class="s2">"</span>
+                <span class="s2">"  * CAPSULE (restricted) → add ONLY the binds you want "</span>
+                <span class="s2">"(e.g. `- &lt;writable&gt;:/work:rw` plus data mounts) and set "</span>
+                <span class="s2">"`workdir: /work`.</span><span class="se">\n</span><span class="s2">"</span>
+                <span class="s2">"Whatever apptainer.binds lists is exactly what mounts; "</span>
+                <span class="s2">"workdir is only the --pwd."</span>
             <span class="p">)</span>
 
         <span class="c1"># apptainer.container_workdir — REMOVED with `access`. The workdir is</span>
         <span class="c1"># now mounted by an EXPLICIT bind and `spec.workdir` is the --pwd, so</span>
         <span class="c1"># an in-container alias field no longer does anything. Loud, not inert.</span>
-        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apptainer&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container_workdir&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"apptainer"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"container_workdir"</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;apptainer.container_workdir has been REMOVED — declare the &quot;</span>
-                <span class="s2">&quot;mount explicitly in apptainer.binds (e.g. &quot;</span>
-                <span class="s2">&quot;`- &lt;host-src&gt;:/work:rw`) and set `workdir: /work` as the &quot;</span>
-                <span class="s2">&quot;--pwd. The spec&#39;s binds are the single source of truth.&quot;</span>
+                <span class="s2">"apptainer.container_workdir has been REMOVED — declare the "</span>
+                <span class="s2">"mount explicitly in apptainer.binds (e.g. "</span>
+                <span class="s2">"`- &lt;host-src&gt;:/work:rw`) and set `workdir: /work` as the "</span>
+                <span class="s2">"--pwd. The spec's binds are the single source of truth."</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.image — moved to spec.apptainer.image in v3 (handled by the</span>
         <span class="c1"># relocation rejection above). Type-check the new home instead.</span>
-        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="n">ap_image</span> <span class="o">=</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;image&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"apptainer"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">ap_image</span> <span class="o">=</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"image"</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="n">ap_image</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_image</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.apptainer.image must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">ap_image</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">"spec.apptainer.image must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">ap_image</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span>
             <span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_image</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">..runtimes._apptainer_image_ref</span><span class="w"> </span><span class="kn">import</span> <span class="n">legacy_managed_image_name</span>
+
+            <span class="n">logical</span> <span class="o">=</span> <span class="n">legacy_managed_image_name</span><span class="p">(</span><span class="n">ap_image</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">logical</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">"spec.apptainer.image must not name a SAC image filesystem "</span>
+                    <span class="sa">f</span><span class="s2">"artifact (</span><span class="si">{</span><span class="n">ap_image</span><span class="si">!r}</span><span class="s2">); use the portable logical image "</span>
+                    <span class="sa">f</span><span class="s2">"name </span><span class="si">{</span><span class="n">logical</span><span class="si">!r}</span><span class="s2">. The incarnation birth certificate records "</span>
+                    <span class="s2">"the exact resolved path and SHA-256."</span>
+                <span class="p">)</span>
 
         <span class="c1"># spec.dockerfile dropped 2026-05-13 with the docker ripout.</span>
         <span class="c1"># Keep type check around for one minor version so explicit</span>
         <span class="c1"># use surfaces a clear error rather than silently disappearing.</span>
-        <span class="n">dockerfile</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dockerfile&quot;</span><span class="p">)</span>
+        <span class="n">dockerfile</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"dockerfile"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">dockerfile</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.dockerfile must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">"spec.dockerfile must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span>
             <span class="p">)</span>
 
         <span class="c1"># spec.claude block (model alias / provider / account exclusivity /</span>
@@ -741,72 +835,71 @@
         <span class="c1"># module (keeps this orchestrator under the per-file cap).</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_claude</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
-        <span class="c1"># container.runtime — apptainer is the only implemented engine</span>
-        <span class="c1"># (docker/podman ripout 2026-05-13).</span>
-        <span class="n">container</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="n">cr</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">cr</span> <span class="ow">and</span> <span class="n">cr</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">VALID_CONTAINER_RUNTIMES</span><span class="p">:</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.container.runtime must be &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;|&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">VALID_CONTAINER_RUNTIMES</span><span class="p">))</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">cr</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
-            <span class="p">)</span>
+        <span class="c1"># container.runtime — REMOVED 2026-08-14: the container ENGINE is</span>
+        <span class="c1"># not a spec decision. Keyed on key PRESENCE (not truthiness), so a</span>
+        <span class="c1"># ``runtime:`` written empty or null is caught too — the previous</span>
+        <span class="c1"># ``if cr and cr not in ...`` shape let exactly those through</span>
+        <span class="c1"># unexamined. See _container_engine for the ruling and the message.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">container_runtime_removed_error</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
+
+        <span class="n">container</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"container"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
 
         <span class="c1"># container.mount_host_claude (opt-in; default False)</span>
-        <span class="n">mhc</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mount_host_claude&quot;</span><span class="p">)</span>
+        <span class="n">mhc</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mount_host_claude"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">mhc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mhc</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.container.mount_host_claude must be a boolean, got &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">mhc</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="s2">"spec.container.mount_host_claude must be a boolean, got "</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">mhc</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span>
             <span class="p">)</span>
 
         <span class="c1"># container.network</span>
-        <span class="n">network</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;network&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">network</span> <span class="ow">and</span> <span class="n">network</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;host&quot;</span><span class="p">,</span> <span class="s2">&quot;bridge&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">):</span>
+        <span class="n">network</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"network"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">network</span> <span class="ow">and</span> <span class="n">network</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"host"</span><span class="p">,</span> <span class="s2">"bridge"</span><span class="p">,</span> <span class="s2">"none"</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.container.network must be host|bridge|none, got &#39;</span><span class="si">{</span><span class="n">network</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="sa">f</span><span class="s2">"spec.container.network must be host|bridge|none, got '</span><span class="si">{</span><span class="n">network</span><span class="si">}</span><span class="s2">'"</span>
             <span class="p">)</span>
 
         <span class="c1"># restart.policy</span>
-        <span class="n">restart</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;restart&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="n">policy</span> <span class="o">=</span> <span class="n">restart</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;policy&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">policy</span> <span class="ow">and</span> <span class="n">policy</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;never&quot;</span><span class="p">,</span> <span class="s2">&quot;on-failure&quot;</span><span class="p">,</span> <span class="s2">&quot;always&quot;</span><span class="p">):</span>
+        <span class="n">restart</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"restart"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">policy</span> <span class="o">=</span> <span class="n">restart</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"policy"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">policy</span> <span class="ow">and</span> <span class="n">policy</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"never"</span><span class="p">,</span> <span class="s2">"on-failure"</span><span class="p">,</span> <span class="s2">"always"</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.restart.policy must be never|on-failure|always, got &#39;</span><span class="si">{</span><span class="n">policy</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="sa">f</span><span class="s2">"spec.restart.policy must be never|on-failure|always, got '</span><span class="si">{</span><span class="n">policy</span><span class="si">}</span><span class="s2">'"</span>
             <span class="p">)</span>
         <span class="c1"># restart.prune_on_stop — inode-hygiene opt-in (bool only).</span>
-        <span class="n">prune_on_stop</span> <span class="o">=</span> <span class="n">restart</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;prune_on_stop&quot;</span><span class="p">)</span>
+        <span class="n">prune_on_stop</span> <span class="o">=</span> <span class="n">restart</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"prune_on_stop"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">prune_on_stop</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">prune_on_stop</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.restart.prune_on_stop must be a boolean, got &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">prune_on_stop</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="s2">"spec.restart.prune_on_stop must be a boolean, got "</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">prune_on_stop</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span>
             <span class="p">)</span>
 
-        <span class="c1"># health.method — sole supported probe is the SDK runner&#39;s</span>
+        <span class="c1"># health.method — sole supported probe is the SDK runner's</span>
         <span class="c1"># /healthz / heartbeat-file check (see runtimes/_sdk_common.py).</span>
-        <span class="n">health</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;health&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="n">method</span> <span class="o">=</span> <span class="n">health</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;method&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">method</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;sdk-alive&quot;</span><span class="p">,):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.health.method must be &#39;sdk-alive&#39;, got &#39;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+        <span class="n">health</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"health"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">method</span> <span class="o">=</span> <span class="n">health</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"method"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">method</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"sdk-alive"</span><span class="p">,):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"spec.health.method must be 'sdk-alive', got '</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
 
         <span class="c1"># spec.mounts moved to spec.apptainer.binds in v3 — rejected</span>
         <span class="c1"># by the relocation block above. No further validation needed.</span>
 
         <span class="c1"># spec.user — container user. Three accepted shapes:</span>
-        <span class="c1">#   * &quot;&quot;              (default) → image&#39;s USER (typically `agent`)</span>
-        <span class="c1">#   * &quot;host&quot;          → run as host operator&#39;s UID:GID</span>
-        <span class="c1">#   * &quot;&lt;uid&gt;:&lt;gid&gt;&quot;   → explicit numeric, e.g. &quot;1000:1000&quot;</span>
+        <span class="c1">#   * ""              (default) → image's USER (typically `agent`)</span>
+        <span class="c1">#   * "host"          → run as host operator's UID:GID</span>
+        <span class="c1">#   * "&lt;uid&gt;:&lt;gid&gt;"   → explicit numeric, e.g. "1000:1000"</span>
         <span class="c1"># Pair with spec.mounts and (optionally) spec.env.HOME to give an</span>
         <span class="c1"># agent host-shaped paths + ownership without any special flags.</span>
-        <span class="n">user_val</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">)</span>
+        <span class="n">user_val</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"user"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">user_val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">user_val</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
                 <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.user must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">user_val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="sa">f</span><span class="s2">"spec.user must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">user_val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span>
                 <span class="p">)</span>
-            <span class="k">elif</span> <span class="n">user_val</span> <span class="ow">and</span> <span class="n">user_val</span> <span class="o">!=</span> <span class="s2">&quot;host&quot;</span> <span class="ow">and</span> <span class="s2">&quot;:&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">user_val</span><span class="p">:</span>
+            <span class="k">elif</span> <span class="n">user_val</span> <span class="ow">and</span> <span class="n">user_val</span> <span class="o">!=</span> <span class="s2">"host"</span> <span class="ow">and</span> <span class="s2">":"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">user_val</span><span class="p">:</span>
                 <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s1">&#39;spec.user must be &quot;&quot;, &quot;host&quot;, or &quot;&lt;uid&gt;:&lt;gid&gt;&quot;; &#39;</span>
-                    <span class="sa">f</span><span class="s2">&quot;got &#39;</span><span class="si">{</span><span class="n">user_val</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                    <span class="sa">f</span><span class="s1">'spec.user must be "", "host", or "&lt;uid&gt;:&lt;gid&gt;"; '</span>
+                    <span class="sa">f</span><span class="s2">"got '</span><span class="si">{</span><span class="n">user_val</span><span class="si">}</span><span class="s2">'"</span>
                 <span class="p">)</span>
 
         <span class="c1"># host / hosts — placement. Exactly one is REQUIRED and they are</span>
@@ -817,6 +910,15 @@
         <span class="c1"># coupling rules — sibling ``_shape_validation`` module.</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_autonomous</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
         <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_proxy_coupling</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="p">))</span>
+        <span class="c1"># spec.engines — the MULTI-backend surface. Everything decidable</span>
+        <span class="c1"># from the spec TEXT (two defaults, no default, unknown harness,</span>
+        <span class="c1"># malformed provider, a legacy single-backend block that</span>
+        <span class="c1"># DISAGREES with the default engine) is a load error here; the</span>
+        <span class="c1"># host-dependent half (unset $API_KEY, an endpoint that will not</span>
+        <span class="c1"># answer) refuses on the START path instead. See</span>
+        <span class="c1"># config._engine_validation for why that split is load-bearing.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_engines</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="p">))</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_engine_pin</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="p">))</span>
 
         <span class="c1"># spec.startup_commands destructive-command guard — REJECT an</span>
         <span class="c1"># unguarded recursive-force ``rm`` on a variable target (the</span>
@@ -832,11 +934,11 @@
         <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_phase3_acl</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
         <span class="c1"># Reject the old `scheduling:` block — replaced by host/hosts.</span>
-        <span class="k">if</span> <span class="s2">&quot;scheduling&quot;</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
+        <span class="k">if</span> <span class="s2">"scheduling"</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.scheduling block is no longer accepted. Use spec.host &quot;</span>
-                <span class="s2">&quot;(singleton, optionally with fallback list) or spec.hosts &quot;</span>
-                <span class="s2">&quot;(multi-instance, &#39;all&#39; or list).&quot;</span>
+                <span class="s2">"spec.scheduling block is no longer accepted. Use spec.host "</span>
+                <span class="s2">"(singleton, optionally with fallback list) or spec.hosts "</span>
+                <span class="s2">"(multi-instance, 'all' or list)."</span>
             <span class="p">)</span>
 
         <span class="c1"># Red-start explicit-fields ruling (2026-07-21): EVERY spec field</span>
@@ -854,7 +956,7 @@
 <div class="viewcode-block" id="validate_config">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate a config file and return list of errors (empty = valid).&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Validate a config file and return list of errors (empty = valid)."""</span>
     <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
@@ -862,11 +964,11 @@
     <span class="k">except</span> <span class="p">(</span>
         <span class="ne">FileNotFoundError</span>
     <span class="p">):</span>  <span class="c1"># stx-allow: fallback (reason: file may not exist on first use)</span>
-        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;File not found: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"File not found: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
     <span class="k">except</span> <span class="p">(</span>
         <span class="n">yaml</span><span class="o">.</span><span class="n">YAMLError</span>
     <span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: expected failure — see inline comment)</span>
-        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;YAML parse error: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"YAML parse error: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
 
     <span class="k">return</span> <span class="n">validate_raw</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">))</span></div>
 

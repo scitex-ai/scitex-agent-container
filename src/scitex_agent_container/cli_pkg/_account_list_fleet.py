@@ -279,7 +279,7 @@ def run_fleet_account_list(
         # treating a partial fleet as the whole one.
         payload["stored"] = listing.agents
         payload["accounts"] = build_provider_accounts_json(
-            listing.agents, openai_accounts or []
+            listing.agents, openai_accounts or [], payload.get("provider_usage")
         )
         payload["hosts"] = hosts_payload(listing)
         click.echo(json_mod.dumps(payload, ensure_ascii=False, indent=2))

@@ -64,21 +64,10 @@ def usage_for_account(
 
     ``passive=True`` READS AND NOTHING ELSE — the cache, never the network.
 
-    That mode exists because THIS FUNCTION CAN ROTATE A CREDENTIAL. The
-    ``fetch_usage_for_credentials`` call below refreshes the OAuth token when it
-    is expired (and again on a 401), and that refresh rewrites the account's
-    ``.credentials.json`` in place. The refresh token is SINGLE USE: the server
-    invalidates the previous one, so every agent still holding the old access
-    token — on this host and on every other host that binds the same snapshot —
-    starts getting 401s. That is INCIDENT 2026-08-09, written up in
-    :mod:`._account_refresh_gate`, whose ``needs_refresh`` gate guards
-    ``sac accounts refresh`` and never guarded this path.
-
-    A LISTING MUST NOT ROTATE ANYTHING, and a listing that fans out across the
-    fleet must not do it N times at once, which is why the fleet view passes
-    ``passive=True`` for every host including this one. The local single-host
-    view keeps its historical behaviour so nothing an operator relies on
-    changes silently.
+    A listing must not rotate a single-use OAuth credential. The live
+    fetch below therefore sets ``allow_refresh=False``; expired/401 auth
+    becomes unknown usage for this row, without revoking another host's token.
+    The fleet view also sets ``passive=True``, so it reads cached usage only.
 
     The snapshot lives at
     ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
@@ -107,10 +96,7 @@ def usage_for_account(
     if not name:
         return None
     if passive:
-        # The ONLY statement on this branch, deliberately: everything below can
-        # reach the network and can rewrite the credential. Returning here makes
-        # the passivity a property of the control flow rather than a promise in
-        # prose that a later edit could quietly break.
+        # Return before the live usage path; the fleet never queries quota here.
         return read_account_usage_cache(name)
     store = _store_path(None, Path.home())
     creds_path = store / name / ".credentials.json"
@@ -127,7 +113,7 @@ def usage_for_account(
             pass
     # stx-allow: fallback (reason: fetch_usage_for_credentials is documented never-raise, but defence-in-depth so one bad row never crashes `account list`)
     try:
-        result = fetch_usage_for_credentials(creds_path)
+        result = fetch_usage_for_credentials(creds_path, allow_refresh=False)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return read_account_usage_cache(name)
     if result.get("error") or result.get("used_pct_5h") is None:
@@ -372,7 +358,7 @@ def build_openai_rows(accounts: list[dict]) -> list[AccountRow]:
 
 
 def build_provider_accounts_json(
-    stored: list[dict], openai_meta: dict | list[dict]
+    stored: list[dict], openai_meta: dict | list[dict], provider_usage: list[dict] | None = None
 ) -> list[dict]:
     """Build the collision-free cross-provider identity list for JSON users."""
     accounts = [dict(item) for item in stored]
@@ -388,8 +374,21 @@ def build_provider_accounts_json(
                 "qualified_id": f"openai:{name}",
                 "active": True,
                 "metadata": dict(meta),
+                "account_type": "subscription" if meta.get("auth_mode") == "chatgpt" else "api",
+                "selection": {"provider": "openai", "account": f"openai:{name}"},
+                "capabilities": {"explicit_selection": True, "automatic_rotation": "not-implemented"},
             }
         )
+    for row in provider_usage or []:
+        if row["provider"] != "openai":
+            accounts.append({
+                "provider": row["provider"], "name": row["name"],
+                "qualified_id": row["qualified_id"], "aliases": row["aliases"],
+                "usage": dict(row),
+                "account_type": row.get("account_type", "api"),
+                "selection": row.get("selection", {"provider": row["provider"], "account": row["qualified_id"]}),
+                "capabilities": row.get("capabilities", {"explicit_selection": True, "automatic_rotation": "not-implemented"}),
+            })
     return accounts
 
 

@@ -34,6 +34,8 @@ so the same mapping serves the start and the resume path.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 from typing import Any, Sequence
@@ -46,6 +48,7 @@ __all__ = [
     "SAC_CODEX_MODEL_ENV",
     "SAC_CODEX_MODEL_PROVIDER_ENV",
     "SAC_CODEX_CONFIG_OVERRIDES_ENV",
+    "SAC_CODEX_CONFIG_OVERRIDES_B64_ENV",
     "SAC_CODEX_SANDBOX_ENV",
     "build_codex_config",
     "resolve_sandbox",
@@ -58,6 +61,7 @@ SAC_CODEX_MODEL_ENV = "SAC_CODEX_MODEL"
 SAC_CODEX_MODEL_PROVIDER_ENV = "SAC_CODEX_MODEL_PROVIDER"
 SAC_CODEX_SANDBOX_ENV = "SAC_CODEX_SANDBOX"
 SAC_CODEX_CONFIG_OVERRIDES_ENV = "SAC_CODEX_CONFIG_OVERRIDES_JSON"
+SAC_CODEX_CONFIG_OVERRIDES_B64_ENV = "SAC_CODEX_CONFIG_OVERRIDES_B64"
 
 #: Accepted ``sandbox`` spellings → the ``Sandbox`` enum member NAME.
 #: Both the wire value ("read-only") and the python spelling
@@ -95,6 +99,17 @@ def build_codex_config(codex_mod: Any, **kwargs: Any) -> Any:
     overrides: Sequence[str] = kwargs.get("config_overrides") or ()
     if not overrides:
         raw_overrides = _env(SAC_CODEX_CONFIG_OVERRIDES_ENV)
+        encoded_overrides = _env(SAC_CODEX_CONFIG_OVERRIDES_B64_ENV)
+        if encoded_overrides:
+            try:
+                raw_overrides = base64.b64decode(
+                    encoded_overrides, validate=True
+                ).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(
+                    f"{SAC_CODEX_CONFIG_OVERRIDES_B64_ENV} must encode UTF-8 JSON; "
+                    "refusing malformed provider routing"
+                ) from exc
         if raw_overrides:
             from pydantic import TypeAdapter, ValidationError
 

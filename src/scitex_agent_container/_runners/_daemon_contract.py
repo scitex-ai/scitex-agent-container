@@ -46,6 +46,7 @@ def make_daemon_state_fn(
     *,
     stop: asyncio.Event,
     convo_ref: dict,
+    route: str | None = None,
 ) -> Callable[[], str]:
     """Build the per-beat resident-state decider: busy | ready | stopping.
 
@@ -62,7 +63,14 @@ def make_daemon_state_fn(
     marker a moment after the daemon boots, and the bind-once cache
     makes the retries free after adoption.
     """
-    from ._session_beat import STATE_BUSY, STATE_READY, STATE_STOPPING, read_heartbeat
+    from ._quota_incident import blocked_routes
+    from ._session_beat import (
+        STATE_BLOCKED,
+        STATE_BUSY,
+        STATE_READY,
+        STATE_STOPPING,
+        read_heartbeat,
+    )
 
     def _daemon_state() -> str:
         try_bind_incarnation(state_dir)
@@ -72,13 +80,23 @@ def make_daemon_state_fn(
         if task is not None and task.done():
             return STATE_STOPPING
         if task is not None:
+            # The durable incident file is authoritative and read FIRST:
+            # a live incident reports BLOCKED even when a foreign writer
+            # overwrote the beat, and a stale BLOCKED beat from before a
+            # verified clear must NOT survive recovery. Only an in-flight
+            # turn (BUSY beat) is preserved from testimony.
+            live = blocked_routes(state_dir)
+            if live and (route is None or route in live or "*" in live):
+                return STATE_BLOCKED
             prev = read_heartbeat(state_dir)
             if (
                 prev is not None
-                and prev.get("state") == STATE_BUSY
                 and prev.get("writer") == WRITER_TURN_DRIVER
+                and prev.get("state") == STATE_BUSY
             ):
-                return STATE_BUSY
+                # BUSY is a turn in flight. The periodic loop preserves it
+                # rather than overwriting it with READY.
+                return prev["state"]
         return STATE_READY
 
     return _daemon_state

@@ -29,6 +29,8 @@ from pathlib import Path
 # Per-writer-unique atomic text write (unique tmp name) so two processes
 # sharing one state dir never collide on a fixed ``<name>.tmp`` sibling.
 from ._atomic import atomic_write_text
+from ._hermes_owned_session import SessionEvidenceError as SessionEvidenceError
+from ._hermes_owned_session import read_owned_hermes_session_id
 
 
 def _session_id_history_path(state_dir: Path) -> Path:
@@ -92,14 +94,31 @@ def write_session_id(state_dir: Path, session_id: str) -> None:
 
 
 def read_session_id(state_dir: Path) -> str | None:
-    """Return the persisted session id, or None if absent."""
+    """Read the SDK marker first, or a proven current Hermes-owned session.
+
+    An existing but unproven candidate raises instead of authorizing a fresh
+    session. The append-only SDK history retains its existing audit semantics.
+    """
     p = state_dir / "session_id"
-    if not p.is_file():
-        return None
     try:
-        return p.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
+        p.lstat()
+    except FileNotFoundError:
+        return read_owned_hermes_session_id(state_dir)
+    except OSError as error:
+        raise SessionEvidenceError(
+            "Session evidence unavailable: SDK marker cannot be inspected"
+        ) from error
+    try:
+        value = p.read_text(encoding="utf-8").strip() if p.is_file() else ""
+    except (OSError, UnicodeError) as error:
+        raise SessionEvidenceError(
+            "Session evidence unavailable: SDK marker cannot be read"
+        ) from error
+    if not value:
+        raise SessionEvidenceError(
+            "Session evidence unavailable: existing SDK marker is empty or nonregular"
+        )
+    return value
 
 
 def clear_session_id(state_dir: Path) -> bool:

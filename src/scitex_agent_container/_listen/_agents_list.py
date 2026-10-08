@@ -38,8 +38,10 @@ def annotate_runtime_rows(
     birth_reader: Callable[[tuple[str, ...]], dict[str, dict]] | None = None,
     config_loader: Callable[[str], Any] | None = None,
     runtime_probe: Callable[[Any], bool] | None = None,
-    evidence_reader: Callable[[str, Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    evidence_reader: Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
+    | None = None,
     local_host: str | None = None,
+    observation_annotator: Callable | None = None,
 ) -> list[dict]:
     """Attach liveness and launch identity with one instances/birth batch."""
     from .._lifecycle._runtime_identity import (
@@ -74,7 +76,9 @@ def annotate_runtime_rows(
             try:
                 cfg = load_fn(config_path)
                 running = probe(cfg)
-            except Exception:  # stx-allow: fallback (unreadable config/probe is unknown)
+            except (
+                Exception
+            ):  # stx-allow: fallback (unreadable config/probe is unknown)
                 cfg = None
                 running = None
         if running is True:
@@ -130,8 +134,33 @@ def annotate_runtime_rows(
                     }
                 ],
             }
+        else:
+            # No config, no local observation possible. A row that declares a
+            # DIFFERENT host is not \"unknown\" — it lives elsewhere and its
+            # liveness is owned by that host's daemon. Say so explicitly so a
+            # blank status is never read as \"the fleet is gone\".
+            declared = row.get("host")
+            if isinstance(declared, str) and declared and declared != host:
+                out["status"] = "remote"
+                out["liveness"] = {
+                    "verdict": "remote",
+                    "evidence": [
+                        {
+                            "source": "runtime",
+                            "verdict": "remote",
+                            "detail": (
+                                f"declared on {declared}; liveness is owned "
+                                "by that host"
+                            ),
+                        }
+                    ],
+                }
         enriched.append(out)
-    return enriched
+    from ._passive_observation import annotate_observation_rows
+
+    return (observation_annotator or annotate_observation_rows)(
+        enriched, active=active, births=births, local_host=host
+    )
 
 
 def _resolved_store() -> str:
@@ -226,7 +255,9 @@ async def list_agents(request: Request) -> JSONResponse:
     _ports = port_claims_map()
     try:
         _active = list_active_instances(host=None)
-    except Exception:  # stx-allow: fallback (store outage leaves endpoints/identity unknown)
+    except (
+        Exception
+    ):  # stx-allow: fallback (store outage leaves endpoints/identity unknown)
         _active = []
     _local_host = _resolve_host(None)
     _endpoints: dict[str, tuple[int | None, str | None]] = {}

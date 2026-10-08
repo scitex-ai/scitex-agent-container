@@ -232,7 +232,7 @@ def test_narrow_details_strip_terminal_controls_from_external_values() -> None:
     _assert_no_terminal_controls(rendered)
 
 
-def test_fleet_header_strips_controls_and_renders_external_values_literally() -> None:
+def test_fleet_header_strips_controls_and_renders_external_values_literally(capsys) -> None:
     # Arrange
     value = "[/]" + _controlled("fleet")
     listing = FleetListing(
@@ -246,11 +246,13 @@ def test_fleet_header_strips_controls_and_renders_external_values_literally() ->
         ],
         resolutions=((value, value),),
     )
-    sink = Console(record=True, width=1000)
 
-    # Act
-    print_fleet_header(sink, listing)
-    rendered = sink.export_text()
+    # Act — the header renders through the logging-routed render_rich, so
+    # a passed Console captures nothing; assert on stdout like the
+    # sibling table tests. The console argument is unused by the
+    # implementation (PS-220: no Console.print in shippable source).
+    print_fleet_header(Console(width=1000), listing)
+    rendered = capsys.readouterr().out
 
     # Assert
     assert "[/]fleetclickredc1" in rendered

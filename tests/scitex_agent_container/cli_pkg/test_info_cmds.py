@@ -341,6 +341,103 @@ def test_tail_session_aggregates_exit_status_to_one(tmp_registry):
 
 
 # ===========================================================================
+# Opencode tail (owned serve gateway, no session.jsonl)
+# ===========================================================================
+
+
+def _stub_opencode_messages(records):
+    """Start a stub serve answering one session's message list."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path.startswith("/session/ses_stub1/message"):
+                body = json.dumps(records).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def _write_opencode_state(home_dir: Path, name: str, base_url: str) -> Path:
+    """Write serve + session-map state for ``name`` under a fake ``$HOME``."""
+    state_dir = home_dir / ".scitex" / "agent-container" / "runtime" / name
+    state_dir.mkdir(parents=True)
+    (state_dir / "opencode-serve.json").write_text(json.dumps({"url": base_url}))
+    (state_dir / "opencode-sessions.json").write_text(
+        json.dumps({f"sac:{name}": "ses_stub1"})
+    )
+    return state_dir
+
+
+def test_tail_one_opencode_renders_gateway_transcript(tmp_registry, tmp_home):
+    # Arrange
+    _register(tmp_registry, "oc")
+    server = _stub_opencode_messages(
+        [
+            {"info": {"role": "user"}, "parts": [{"type": "text", "text": "hi"}]},
+            {
+                "info": {"role": "assistant"},
+                "parts": [{"type": "text", "text": "hello"}],
+            },
+        ]
+    )
+    try:
+        _write_opencode_state(tmp_home, "oc", f"http://127.0.0.1:{server.server_port}")
+        # Act
+        ok = _tail_one(
+            "oc", lines=10, show_tools=False, as_json=False, prefix=False
+        )
+    finally:
+        server.shutdown()
+    # Assert
+    assert ok is True
+
+
+def test_tail_one_opencode_as_json_returns_true(tmp_registry, tmp_home):
+    # Arrange
+    _register(tmp_registry, "oc")
+    server = _stub_opencode_messages(
+        [{"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "hi"}]}]
+    )
+    try:
+        _write_opencode_state(tmp_home, "oc", f"http://127.0.0.1:{server.server_port}")
+        # Act
+        ok = _tail_one("oc", lines=10, show_tools=False, as_json=True, prefix=False)
+    finally:
+        server.shutdown()
+    # Assert
+    assert ok is True
+
+
+def test_tail_one_opencode_without_session_returns_false(tmp_registry, tmp_home):
+    # Arrange -- serve state exists but the agent never submitted a turn.
+    _register(tmp_registry, "oc")
+    state_dir = tmp_home / ".scitex" / "agent-container" / "runtime" / "oc"
+    state_dir.mkdir(parents=True)
+    (state_dir / "opencode-serve.json").write_text(
+        json.dumps({"url": "http://127.0.0.1:1"})
+    )
+    # Act
+    ok = _tail_one("oc", lines=10, show_tools=False, as_json=False, prefix=False)
+    # Assert
+    assert ok is False
+
+
+# ===========================================================================
 # Cross-host tail dispatch (state.db row on a peer → ssh + remote tail)
 # ===========================================================================
 

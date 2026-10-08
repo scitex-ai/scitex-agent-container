@@ -11,7 +11,7 @@ import traceback
 from typing import Any, Callable, Optional
 
 from .._state.registry import Registry
-from ..config import AgentConfig, load_config
+from ..config import AgentConfig, load_config, resolve_config
 from ._runtime_select import _fallback_workdir, _get_runtime
 
 
@@ -208,17 +208,7 @@ def _remote_instance_status(
         if beat is not None:
             from .._state.authoritative_heartbeat import classify_resident_state
 
-            process_evidence = beat.get("_process_alive")
-            process_alive = (
-                process_evidence if isinstance(process_evidence, bool) else None
-            )
-            resident_state = classify_resident_state(
-                beat,
-                now=time.time(),
-                process_alive=process_alive,
-                federation_connected=bool(beat.get("_federation_connected")),
-                progress_stale_s=120.0,
-            )
+            resident_state = classify_resident_state(beat, now=time.time())
             result.update(
                 {
                     "model": beat.get("model") or "unknown",
@@ -232,7 +222,7 @@ def _remote_instance_status(
             )
         from .._state.observation import DefinitionState, build_agent_observation
 
-        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
+        heartbeat_alive = resident_state == "working"
         process_verdict = (
             "dead"
             if process_alive is False
@@ -286,7 +276,15 @@ def _heartbeat_only_status(
     *,
     heartbeat_reader: Callable[[], list[dict]] | None = None,
 ) -> dict | None:
-    """Resolve a fleet-visible resident from its current host lease alone."""
+    """Resolve a fleet-visible resident from its current host lease alone.
+
+    OPERATOR ORDER 2026-10-07 (CCT 4187): a heartbeat read by ANOTHER
+    agent (which is every reader of this fallback — the local agent has
+    a registry entry and never reaches here) must NOT yield a liveness
+    verdict. Presence without a local process probe is UNKNOWN, always.
+    Work evidence (session-jsonl byte deltas) is surfaced; aliveness
+    is not claimed.
+    """
     try:
         from .._state.authoritative_heartbeat import classify_resident_state
         if heartbeat_reader is None:
@@ -304,34 +302,17 @@ def _heartbeat_only_status(
         )
         if beat is None:
             return None
-        process_evidence = beat.get("_process_alive")
-        process_alive = (
-            process_evidence if isinstance(process_evidence, bool) else None
-        )
-        resident_state = classify_resident_state(
-            beat,
-            now=time.time(),
-            process_alive=process_alive,
-            federation_connected=bool(beat.get("_federation_connected")),
-            progress_stale_s=120.0,
-        )
-        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
-        running = process_alive is True or heartbeat_alive
-        dead = process_alive is False or resident_state == "dead"
-        process_verdict = (
-            "alive"
-            if process_alive is True
-            else "dead"
-            if process_alive is False
-            else "unknown"
-        )
-        liveness_verdict = (
-            process_verdict
-            if process_verdict != "unknown"
-            else "alive"
-            if heartbeat_alive
-            else "unknown"
-        )
+        resident_state = classify_resident_state(beat, now=time.time())
+        heartbeat_alive = resident_state == "working"
+        # CCT 4187: no local process probe exists on this path (the local
+        # agent has a registry entry and never reaches this fallback), so
+        # the reader learns NOTHING about aliveness. running/dead collapse
+        # to unknown; the heartbeat's work evidence (session-jsonl deltas)
+        # is still surfaced on the row.
+        running = False
+        dead = False
+        process_verdict = "unknown"
+        liveness_verdict = "unknown"
         result = {
             "name": name,
             "config": "",
@@ -356,12 +337,17 @@ def _heartbeat_only_status(
                     {
                         "source": "process",
                         "verdict": process_verdict,
-                        "detail": "host process evidence from authoritative projection",
+                        "detail": "no local process probe on the heartbeat-only path — aliveness unknown by construction (CCT 4187)",
                     },
                     {
                         "source": "heartbeat",
-                        "verdict": "alive" if heartbeat_alive else "unknown",
-                        "detail": f"authoritative heartbeat resident state: {resident_state}",
+                        # CCT 4187: the heartbeat carries WORK evidence, never
+                        # aliveness, to another agent. resident_state stays
+                        # visible as binary work-state vocabulary
+                        # (working/dead), but the verdict is unknown:
+                        # presence is not aliveness.
+                        "verdict": "unknown",
+                        "detail": f"authoritative heartbeat work state: {resident_state} (presence only, not aliveness)",
                     }
                 ],
             },
@@ -422,6 +408,9 @@ def agent_status(
     registry: Registry | None = None,
     *,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
+    instance_reader: Callable[[], list[dict]] | None = None,
+    heartbeat_reader: Callable[[], list[dict]] | None = None,
+    process_probe: Callable[[AgentConfig, Any], Any] | None = None,
 ) -> dict:
     """Get detailed status for an agent.
 
@@ -429,20 +418,41 @@ def agent_status(
         name: Agent name.
         registry: Optional registry instance.
         runtime_factory: Real runtime factory (default :func:`_get_runtime`).
+        instance_reader: Active placement reader for unregistered names.
+        heartbeat_reader: Fleet fallback reader when no local spec exists.
+        process_probe: Local process observation for discovered definitions.
     """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
+        # An on-disk definition does not need a launch registration. Resolve
+        # it before foreign placement, and catch only a true discovery miss:
+        # ambiguity and a selected invalid/unreadable spec must stay loud.
+        try:
+            path = resolve_config(name)
+        except FileNotFoundError:
+            path = None
+        if path is not None:
+            from ._status_definition import defined_status
+
+            return defined_status(
+                name, path, load_config(path),
+                runtime_factory=runtime_factory or _get_runtime,
+                instance_reader=instance_reader,
+                process_probe=process_probe,
+            )
         # Cross-host fallback (sac-agent-spawn design, Rule B/F): a
         # remote-dispatched agent has no LOCAL file-registry entry — its
         # row lives in the ``instances`` table written by the cross-host
         # dispatcher. Resolve status from there so ``sac agents status
         # <remote>`` reports host + bound_port + remote + spawned_by
         # instead of raising "not found in registry".
-        remote_status = _remote_instance_status(name)
+        remote_status = _remote_instance_status(
+            name, instance_reader=instance_reader, heartbeat_reader=heartbeat_reader
+        )
         if remote_status is not None:
             return remote_status
-        heartbeat_status = _heartbeat_only_status(name)
+        heartbeat_status = _heartbeat_only_status(name, heartbeat_reader=heartbeat_reader)
         if heartbeat_status is not None:
             return heartbeat_status
         raise RuntimeError(f"Agent '{name}' not found in registry")
@@ -627,7 +637,7 @@ def agent_status(
 
             local_resident = dict(local_heartbeat["authoritative_heartbeat"])
             result["heartbeat"] = local_resident
-            result["resident_state"] = "disconnected"
+            result["resident_state"] = "dead"
             shared = next(
                 (
                     beat
@@ -637,19 +647,9 @@ def agent_status(
                 None,
             )
             if shared is not None:
-                process_evidence = shared.get("_process_alive")
-                process_alive = (
-                    process_evidence if isinstance(process_evidence, bool) else None
-                )
                 result["heartbeat"] = shared
                 result["resident_state"] = classify_resident_state(
-                    shared,
-                    now=time.time(),
-                    process_alive=process_alive,
-                    federation_connected=bool(
-                        shared.get("_federation_connected")
-                    ),
-                    progress_stale_s=120.0,
+                    shared, now=time.time()
                 )
     except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
         pass

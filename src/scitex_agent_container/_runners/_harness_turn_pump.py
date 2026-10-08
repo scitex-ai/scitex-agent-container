@@ -42,7 +42,14 @@ import scitex_logging as slogging
 
 from ._harness_session import Message
 from ._incarnation import WRITER_TURN_DRIVER
+from ._quota_incident import (
+    QuotaBlockedError,
+    notify_quota_incident_once,
+    quota_admits,
+    record_quota_incident,
+)
 from ._session_state import (
+    STATE_BLOCKED,
     STATE_BUSY,
     STATE_READY,
     accumulate_quota,
@@ -77,6 +84,25 @@ async def drive_harness_turn(
     error records, so a mixed-harness state dir stays readable; it is
     presentation only and never branches behaviour.
     """
+    route = harness or "codex-sdk"
+    if not quota_admits(state_dir, route):
+        # Admission gate for direct callers and restarts: a latched route
+        # refuses the turn WITHOUT touching the backend. The envelope
+        # fails honestly rather than hanging its producer.
+        if not env.response.done():
+            env.response.set_exception(
+                QuotaBlockedError(f"{route} route has a live quota incident")
+            )
+        if not stop.is_set():
+            write_heartbeat(
+                state_dir,
+                pid=pid,
+                state=STATE_BLOCKED,
+                name=name,
+                host=host,
+                writer=WRITER_TURN_DRIVER,
+            )
+        return
     write_heartbeat(
         state_dir,
         pid=pid,
@@ -134,20 +160,66 @@ async def drive_harness_turn(
                 )
             elif event.kind == "error":
                 error_detail = str(event.error)
+                if isinstance(event.raw, dict):
+                    codex_error_info = event.raw.get(
+                        "codex_error_info", event.raw.get("codexErrorInfo")
+                    )
+                else:
+                    codex_error_info = getattr(event.raw, "codex_error_info", None)
+                    if codex_error_info is None:
+                        codex_error_info = getattr(event.raw, "codexErrorInfo", None)
+                codex_error_info = getattr(codex_error_info, "value", codex_error_info)
+                is_codex_usage_cap = (
+                    harness == "codex-sdk"
+                    and codex_error_info == "usageLimitExceeded"
+                )
+                error_kind = "codex_usage_limit" if is_codex_usage_cap else "harness_turn"
+                error_cause = "quota-exhausted" if is_codex_usage_cap else "harness-turn"
                 logger.error(
                     "%s turn failed for %s: %s", harness or "harness", name, error_detail
                 )
                 append_session_message(
                     state_dir,
-                    {"type": "error", "kind": "harness_turn", "detail": error_detail},
+                    {
+                        "type": "error",
+                        "kind": error_kind,
+                        "codex_error_info": codex_error_info if is_codex_usage_cap else None,
+                        "detail": error_detail,
+                    },
                 )
-                if host:
+                if host and not is_codex_usage_cap:
+                    # Non-quota turn errors report here directly. A quota
+                    # cap is delivered exactly once via the incident
+                    # notifier below (accepted result only) — never here
+                    # as well, so the operator is not double-notified.
                     report_sdk_error(
                         name=name,
                         host=host,
-                        cause="harness-turn",
+                        cause=error_cause,
                         detail=error_detail,
                     )
+                if is_codex_usage_cap:
+                    # Durable admission BEFORE the failed turn resolves: later
+                    # turns for this route are refused until explicitly
+                    # cleared, and the beat says BLOCKED rather than READY.
+                    # The diary write above stays the per-turn record; the
+                    # once-only notification below is the incident ledger.
+                    record_quota_incident(
+                        state_dir, route=route, detail=error_detail
+                    )
+                    if host:
+
+                        def _notify_quota(record: dict) -> Any:
+                            return report_sdk_error(
+                                name=name,
+                                host=host,
+                                cause=error_cause,
+                                detail=error_detail,
+                            )
+
+                        notify_quota_incident_once(
+                            state_dir, route=route, notify=_notify_quota
+                        )
                 break
         if error_detail is not None and not env.response.done():
             env.response.set_exception(RuntimeError(error_detail))
@@ -158,7 +230,9 @@ async def drive_harness_turn(
             write_heartbeat(
                 state_dir,
                 pid=pid,
-                state=STATE_READY,
+                state=STATE_BLOCKED
+                if not quota_admits(state_dir, route)
+                else STATE_READY,
                 name=name,
                 host=host,
                 writer=WRITER_TURN_DRIVER,

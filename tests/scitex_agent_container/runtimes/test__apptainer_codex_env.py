@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes._apptainer_codex_env import (
+    _codex_sdk_routing_flags,
     preflight_subscription,
     sync_subscription_auth,
 )
@@ -43,11 +48,34 @@ def test_selected_subscription_account_is_copied_to_private_codex_home(
     ) == (destination_home / "auth.json", b'{"auth_mode":"chatgpt"}', 0o600)
 
 
+def test_headless_subscription_preserves_model_provider_and_reasoning_effort() -> None:
+    # Arrange
+    config = AgentConfig(name="native", harness="codex", runtime="headless")
+    config.model = "gpt-6.1-sol"
+    config.claude.model = "gpt-6.1-sol"
+    config.subscription_provider = "openai"
+    config.subscription_account = "openai:account-one"
+    config.reasoning_effort = "xhigh"
+    # Act
+    flags = _codex_sdk_routing_flags(config)
+    env = dict(value.split("=", 1) for value in flags[1::2])
+    overrides = json.loads(base64.b64decode(env["SAC_CODEX_CONFIG_OVERRIDES_B64"]))
+    # Assert
+    assert (
+        env["SAC_CODEX_MODEL"],
+        env["SAC_CODEX_MODEL_PROVIDER"],
+        'model_provider="openai"' in overrides,
+        'model="gpt-6.1-sol"' in overrides,
+        'model_reasoning_effort="xhigh"' in overrides,
+    ) == ("gpt-6.1-sol", "openai", True, True, True)
+
+
 def test_preflight_executes_the_exact_declared_model_with_selected_auth(
     tmp_path: Path, env_save_restore
 ) -> None:
     # Arrange
     env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("CODEX_HOME", str(tmp_path / "state" / "codex-home"))
     source = (
         tmp_path
         / ".scitex"
@@ -63,6 +91,9 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
     config.claude.model = "gpt-5.6-sol"
     config.subscription_provider = "openai"
     config.subscription_account = "openai:account-one"
+    config.reasoning_effort = "ultra"
+    config.service_tier = "fast"
+    config.max_context_tokens = 196000
     seen: list[tuple[list[str], str]] = []
 
     def run(argv, **kwargs):
@@ -76,8 +107,42 @@ def test_preflight_executes_the_exact_declared_model_with_selected_auth(
         which=lambda name: "/usr/bin/codex",
         run=run,
     )
+    argv = seen[0][0]
+    overrides = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
     # Assert
-    assert (seen[0][0][seen[0][0].index("-m") + 1], seen[0][1]) == (
+    assert (
+        argv[argv.index("-m") + 1], seen[0][1], overrides,
+        argv[argv.index("-s") + 1],
+    ) == (
         "gpt-5.6-sol",
         str(tmp_path / "state" / "codex-home"),
+        [
+            'model_provider="openai"', 'service_tier="fast"',
+            'model_context_window=196000', 'model_reasoning_effort="ultra"',
+        ],
+        "read-only",
     )
+
+
+def test_preflight_fixture_preserves_an_inherited_external_auth_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a synthetic inherited profile stands in for the agent's own.
+    external_home = tmp_path / "external-codex-home"
+    external_home.mkdir()
+    external_auth = external_home / "auth.json"
+    sentinel = b'{"external_fixture":"preserve"}'
+    external_auth.write_bytes(sentinel)
+    child_env = dict(os.environ)
+    child_env["CODEX_HOME"] = str(external_home)
+    target = (
+        f"{Path(__file__).resolve()}::"
+        "test_preflight_executes_the_exact_declared_model_with_selected_auth"
+    )
+    # Act — exercise the real fixture in a child, never the current profile.
+    subprocess.run(
+        [sys.executable, "-m", "pytest", target, "-q", "--no-header"],
+        env=child_env, capture_output=True, check=True, timeout=5,
+    )
+    # Assert
+    assert external_auth.read_bytes() == sentinel

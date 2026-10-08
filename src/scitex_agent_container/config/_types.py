@@ -21,7 +21,11 @@ from ._delegation_types import DelegationSpec  # noqa: E402,F401
 from ._engine_types import EngineSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_failover import HermesFailoverSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
+from ._opencode_approval import DEFAULT_OPENCODE_APPROVAL_POLICY
+from ._opencode_run_budget import DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
+from ._opencode_serve import DEFAULT_OPENCODE_SERVE_PORT
 
 # ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
 # ``from ...config._types import ProviderSpec`` is an existing import path.
@@ -296,6 +300,7 @@ class AgentConfig:
     # nothing new. Empty / None = the engine states no opinion. Delivered
     # to the container by ``runtimes._apptainer_provider.engine_env_flags``.
     reasoning_effort: str = ""
+    service_tier: str = ""
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
@@ -335,10 +340,15 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hermes_background_review: bool = False
+    hermes_failover: HermesFailoverSpec = field(default_factory=HermesFailoverSpec)
+    hermes_yolo: bool = False
     hermes_run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )
+    opencode_approval_policy: str = DEFAULT_OPENCODE_APPROVAL_POLICY
+    opencode_run_budget_seconds: int | None = DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
+    opencode_serve_port: int | None = DEFAULT_OPENCODE_SERVE_PORT
     apptainer: ApptainerSpec = field(default_factory=ApptainerSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)

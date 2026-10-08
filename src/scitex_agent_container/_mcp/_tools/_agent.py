@@ -9,9 +9,9 @@ The lifecycle verbs (``agent_start``/``stop``/``restart``) are
 re-implemented here as JSON-friendly thin wrappers rather than
 re-using ``_lifecycle.lifecycle.agent_start`` — the lifecycle
 function takes a ``Registry | None`` parameter that fastmcp's pydantic
-schema generator can't introspect. The wrappers go through
-``invoke_cli_text`` so they share the same ``sac agents <verb>``
-codepath the CLI runs.
+schema generator can't introspect. Local wrappers use ``invoke_cli_text`` and
+the public CLI. Container start and prompt dispatch reach the authenticated
+host first; it owns the selected spec, account, harness, and lifecycle checks.
 
 The CLI group was renamed ``agent`` → ``agents`` (plural); every argv
 prefix below targets the current ``agents`` group. Tools whose
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._agent_fork import agent_fork
 from ._agent_twin import agent_twin
 from ._helpers import invoke_cli_json, invoke_cli_text
 
@@ -189,6 +190,12 @@ def agent_start(
                     "fresh|continue|resume (or the alias new-session)."
                 ),
             }
+    from ...cli_pkg._send_host import host_authority_declared
+
+    if host_authority_declared():
+        from ._agent_host import start_on_host
+
+        return start_on_host(name, foreground=foreground, session=session)
     return invoke_cli_text(argv)
 
 
@@ -299,14 +306,14 @@ def agent_send(
 ) -> dict[str, Any]:
     """Dispatch one prompt (or control key) to ``name``'s live session.
 
-    NON-BLOCKING by default. An MCP tool call cannot be backgrounded by
-    the caller, so a synchronous send would hang the lead's whole turn
-    until the target agent finishes processing. By default this tool
-    therefore validates that the agent is reachable and returns PROMPTLY
-    with ``status="dispatched"`` plus a backgroundable ``track_command``
-    — the equivalent ``sac agents send ...`` CLI the caller runs in a
-    background shell to deliver the prompt and stream the reply. Pass
-    ``wait=True`` to block inline and get the reply in ``response_text``.
+    Container prompts submit once through the authenticated host send route.
+    A validated HTTP202 exchange returns ``status="pending"`` even when
+    ``wait=True``; poll its authored exchange to establish completion. There
+    is no local credential or transport fallback after a host refusal.
+
+    On a bare host without a declared host listener, ``wait=False`` validates
+    reachability and returns ``status="dispatched"`` with a backgroundable
+    ``track_command``. ``wait=True`` waits for that runner's reply.
 
     Library-grade dispatch to the agent's A2A sidecar. Unlike the
     other ``agent_*`` tools this does NOT go through the CLI runner
@@ -317,14 +324,16 @@ def agent_send(
 
     Returns the helper's dict verbatim. ``status`` is one of:
 
-      * ``"dispatched"`` — (default, ``wait=False``) reachability
+      * ``"pending"`` — host queued the canonical exchange; admission and
+        completion remain unproven
+      * ``"dispatched"`` — (bare host, ``wait=False``) reachability
         validated; ``track_command`` carries the backgroundable
         ``sac agents send ...`` CLI to deliver + await the reply
       * ``"ok"`` — (``wait=True``) reply received; ``response_text``
         populated
       * ``"error"`` — agent not running / no a2a_port / sidecar
         unreachable / HTTP failure
-      * ``"creds-expired"`` — lead/peer OAuth token expired
+      * ``"creds-expired"`` — selected local Claude credential expired
       * ``"timeout"`` — (``wait=True``) no response in ``timeout_seconds``
 
     ``prompt`` and ``key`` are mutually exclusive; passing both raises
@@ -469,6 +478,7 @@ def register_agent_tools(mcp) -> None:
         agent_start,
         agent_spawn,
         agent_twin,
+        agent_fork,
         agent_stop,
         agent_restart,
         agent_send,
@@ -489,6 +499,7 @@ __all__ = [
     "agent_start",
     "agent_spawn",
     "agent_twin",
+    "agent_fork",
     "agent_stop",
     "agent_restart",
     "agent_send",

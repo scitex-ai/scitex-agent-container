@@ -173,6 +173,7 @@ class _Config:
     name: str
     workdir: str = "/tmp"
     startup_prompts: list[str] = field(default_factory=list)
+    harness: str = ""
 
 
 def _builder(_config: _Config) -> list[str]:
@@ -256,6 +257,49 @@ def test_startup_prompt_inject_pastes_before_it_submits(
     first_paste = kinds.index("send_text_literal")
     first_enter = next(i for i, k in enumerate(kinds) if k == "send_keys")
     assert first_paste < first_enter
+
+
+def test_codex_receives_recovery_and_full_mandate_before_its_first_turn(mux):
+    # Arrange
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_builder)
+    config = _Config(
+        name="lead",
+        harness="codex",
+        startup_prompts=[
+            "Own infrastructure",
+            "Preserve old disks",
+            "Read the handoff",
+        ],
+    )
+    mux.start("tui-lead", "codex", "/tmp")
+    # Act
+    runtime._inject_startup_prompts(config)
+    pastes = _literal_calls(mux)
+    message = pastes[0][2]
+    # Assert
+    assert (
+        len(pastes),
+        "check your operator channel" in message,
+        message.index("Own infrastructure")
+        < message.index("Preserve old disks")
+        < message.index("Read the handoff"),
+        len(_enter_calls(mux)),
+    ) == (1, True, True, 1)
+
+
+def test_codex_boot_refuses_to_continue_when_its_mission_is_not_admitted(mux):
+    # Arrange
+    class _Unsubmitted(TuiSessionRuntime):
+        def _verify_submitted(self, *args, **kwargs):
+            return False
+
+    runtime = _Unsubmitted(multiplexer=mux, command_builder=_builder)
+    config = _Config(name="lead", harness="codex", startup_prompts=["mission"])
+    mux.start("tui-lead", "codex", "/tmp")
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="not admitted"):
+        runtime._inject_startup_prompts(config)
 
 
 def test_startup_prompt_inject_does_not_paste_when_input_never_ready(

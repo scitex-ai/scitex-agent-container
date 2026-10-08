@@ -1,9 +1,8 @@
 {% comment %}
-Shared Agents A2A content. Included by:
-  * a2a.html        (standalone: inside scitex_ui/standalone_shell.html)
-  * a2a_hub.html    (Hub: inside global_base.html — no second header)
+Shared Agents A2A content. Included by a2a.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 `url_base` is the app's mount prefix ("" at root, "/apps/agents" when
-mounted) so links and form actions are correct in both modes.
+mounted) so links and form actions are correct at any mount.
 
 Two halves, both projections of state the console already reads:
 

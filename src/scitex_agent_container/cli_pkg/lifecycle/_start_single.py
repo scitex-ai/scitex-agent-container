@@ -38,7 +38,8 @@ from ._resume_preflight import ResumePreflightError
 
 def should_preflight_claude_resume(config, resume_id: str | None) -> bool:
     """Use the Claude transcript preflight only for Claude-family IDs."""
-    return bool(resume_id) and str(getattr(config, "harness", "")).lower() != "hermes"
+    harness = str(getattr(config, "harness", "") or "anthropic").strip().lower()
+    return bool(resume_id) and harness in {"anthropic", "claude-code", "claude"}
 
 
 def should_preview_and_require_yes(
@@ -171,6 +172,10 @@ def run_single_targets(
             try:
                 config_path = resolve_with_prefix(raw_target)
                 config = load_config(config_path)
+                if engine:
+                    from ..._lifecycle._engine_select import select_engine_at_start
+
+                    select_engine_at_start(config, engine, probe=False, log=False)
                 try:
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
@@ -302,7 +307,11 @@ def run_single_targets(
                 # explicit — never a silent fresh start. Skipped on --no-preflight
                 # and dry-run.
                 if (
-                    should_preflight_claude_resume(config, resume_id)
+                    resume_id
+                    and (
+                        should_preflight_claude_resume(config, resume_id)
+                        or str(getattr(config, "harness", "")).lower() == "codex"
+                    )
                     and not no_preflight
                     and not dry_run
                 ):
@@ -320,12 +329,19 @@ def run_single_targets(
                     is_remote = is_remote_placement(
                         config.hosts_spec.host, current_host
                     )
-                    preflight_resume_id(
-                        config,
-                        resume_id,
-                        is_remote=is_remote,
-                        tail_lines=tail_lines,
-                    )
+                    if str(getattr(config, "harness", "")).lower() == "codex":
+                        from ._native_resume_preflight import preflight_native_resume_id
+
+                        preflight_native_resume_id(
+                            config, resume_id, is_remote=is_remote
+                        )
+                    else:
+                        preflight_resume_id(
+                            config,
+                            resume_id,
+                            is_remote=is_remote,
+                            tail_lines=tail_lines,
+                        )
                 # Wall-clock stamp taken BEFORE the launch — heartbeat
                 # freshness in the launch verdict is judged against it.
                 _launched_at = time.time()

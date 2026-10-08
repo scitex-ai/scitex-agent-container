@@ -18,6 +18,14 @@ Rule numbering is ``STX-SAC<NNN>``. Each rule corresponds to a real
 bug class we have shipped fixes for; the linter is how we prevent the
 next one of the same shape.
 
+Upstream mapping: STX-SAC005 is sac's leaf-side implementation of the
+operator-ordered scitex-dev audit check PA-3xx (CCT 4651/4653, refined
+by CCT 4656 to a PLUGIN rule the linter catches, not an audit-only
+check). When scitex-dev ships PA-3xx natively, this rule becomes a
+narrower sac-specific backstop and ``lookup("STX-SAC005")`` keeps
+resolving here — plugin rules win on id collision, so no rename is
+needed on either side.
+
 Adding a rule
 =============
 1. Append a ``Rule(...)`` below.
@@ -112,14 +120,45 @@ def get_plugin():
         ),
     )
 
+    SAC005 = Rule(
+        id="STX-SAC005",
+        # ERROR on purpose: this is a ban, not advice. Warnings do not
+        # gate ``scitex-dev ecosystem audit-all`` (only error-severity
+        # violations raise), so a warning would leave the prohibited
+        # shape mergeable. Unlike SAC004 — which fires zero times
+        # in-tree — this rule fires on pre-existing stdout chatter across
+        # sac's own cli_pkg/ today; that backlog is remediated
+        # incrementally (route diagnostics to ``err=True``, payloads stay
+        # on stdout), NOT by weakening the rule. New occurrences fail
+        # from day one.
+        severity="error",
+        category="cli",
+        message=(
+            "``click.echo`` / bare ``print`` writing to STDOUT. A CLI that "
+            "supports ``--json`` owns a machine-readable contract on "
+            "stdout: the payload — and ONLY the payload — may go there. "
+            "Every human-readable line on stdout is a latent payload-"
+            "pollution bug for the next ``--json`` consumer (CCT 4651/4653)."
+        ),
+        suggestion=(
+            "Diagnostics go to stderr (``click.echo(..., err=True)``), "
+            "explicit streams stay explicit (``print(..., file=...)``), "
+            "and the machine payload stays on stdout as an explicit JSON "
+            "emission (``click.echo(json.dumps(payload))``). If this line "
+            "IS the blessed sink or probe protocol, suppress explicitly "
+            "with ``# stx-allow: STX-SAC005``."
+        ),
+    )
+
     return {
-        "rules": [SAC001, SAC002, SAC004],
+        "rules": [SAC001, SAC002, SAC004, SAC005],
         "call_rules": {},
         "axes_hints": {},
         "checkers": [
             _SacCardChecker,
             _SacMethodChecker,
             _SacSpecSentinelChecker,
+            _SacOutputHygieneChecker,
         ],
     }
 
@@ -328,3 +367,117 @@ class _SacSpecSentinelChecker(ast.NodeVisitor):
 # checkers — no filepath. Until upstream propagates filepath, this rule
 # would either fire incorrectly on legitimate cases (false positives) or
 # be inactive everywhere. Defer until the upstream plumbing lands.
+
+
+class _SacOutputHygieneChecker(ast.NodeVisitor):
+    """SAC005 — ``click.echo`` / bare ``print`` writing to STDOUT.
+
+    The bug class (CCT 4651/4653): a CLI command that supports ``--json``
+    owns a machine-readable contract on stdout — the payload, and ONLY
+    the payload. A human-readable ``click.echo`` / ``print`` on stdout is
+    a latent payload-pollution bug for the next ``--json`` consumer.
+
+    Explicitly allowed (the "JSON-output paths" carve-out), because each
+    shape names its stream or its payload instead of spraying stdout:
+
+    * ``err=True`` — diagnostics routed to stderr (``click.echo``).
+    * ``file=...`` — an explicitly named stream (``print``).
+    * first positional arg is a ``*.dumps(...)`` call — an explicit JSON
+      payload emission (``click.echo(json.dumps(payload))``,
+      ``print(json.dumps(manifest))``). This is THE machine path the ban
+      exists to protect, so it is allowlisted by shape, not by file.
+    * ``# stx-allow: STX-SAC005`` — the blessed sink itself
+      (``_logging/_streams.py``) and probe-protocol scripts whose stdout
+      IS the interface carry an explicit suppression.
+
+    ``from click import echo`` / ``import click as c`` aliases are
+    tracked so the rule cannot be dodged with a rename; any other
+    ``X.echo(...)`` (not click) is left alone.
+    """
+
+    def __init__(self, source_lines, config):
+        self.source_lines = source_lines
+        self.config = config
+        self.issues: list = []
+        self._click_aliases: set = {"click"}
+        self._bare_echo_is_click: bool = False
+
+    # -- import tracking: ``import click as c`` / ``from click import echo``
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name == "click":
+                self._click_aliases.add(alias.asname or "click")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module == "click":
+            for alias in node.names:
+                if alias.name == "echo":
+                    self._bare_echo_is_click = True
+        self.generic_visit(node)
+
+    # -- call sites
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "echo":
+            base = func.value
+            if isinstance(base, ast.Name) and base.id in self._click_aliases:
+                self._flag_echo(node)
+        elif isinstance(func, ast.Name):
+            if func.id == "print":
+                self._flag_print(node)
+            elif func.id == "echo" and self._bare_echo_is_click:
+                self._flag_echo(node)
+        self.generic_visit(node)
+
+    # -- verdicts
+
+    @staticmethod
+    def _is_json_payload(node: ast.Call) -> bool:
+        """True iff the first positional arg is an explicit JSON emission.
+
+        ``json.dumps(...)``, ``json_mod.dumps(...)``, ``_json.dumps(...)``
+        — any ``*.dumps(...)`` attribute call. ``dump`` (file-writing) is
+        deliberately NOT included: ``click.echo(json.dump(...))`` echoes
+        the ``None`` return, which is chatter, not a payload.
+        """
+        if not node.args:
+            return False
+        first = node.args[0]
+        return (
+            isinstance(first, ast.Call)
+            and isinstance(first.func, ast.Attribute)
+            and first.func.attr == "dumps"
+        )
+
+    @staticmethod
+    def _has_kwarg(node: ast.Call, name: str) -> bool:
+        return any(kw.arg == name for kw in node.keywords)
+
+    def _flag_echo(self, node: ast.Call) -> None:
+        if self._has_kwarg(node, "err"):
+            return
+        if self._is_json_payload(node):
+            return
+        rule = _get_rule("STX-SAC005")
+        if rule is None:
+            return
+        src = _source_at(self.source_lines, node.lineno)
+        issue = _make_issue(rule, node.lineno, node.col_offset, src)
+        if issue is not None:
+            self.issues.append(issue)
+
+    def _flag_print(self, node: ast.Call) -> None:
+        if self._has_kwarg(node, "file"):
+            return
+        if self._is_json_payload(node):
+            return
+        rule = _get_rule("STX-SAC005")
+        if rule is None:
+            return
+        src = _source_at(self.source_lines, node.lineno)
+        issue = _make_issue(rule, node.lineno, node.col_offset, src)
+        if issue is not None:
+            self.issues.append(issue)

@@ -12,7 +12,12 @@ from ._provider_validation import validate_provider
 __all__ = ["validate_engine_entry"]
 
 _ENGINE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_REASONING_EFFORTS = ("none", "low", "medium", "high")
+# Go documents none/minimal/low/medium/high/xhigh/max; Hermes' ladder
+# carries the same set plus Hermes-internal ultra. sac admits xhigh
+# (fleet muse-spark runs at xhigh on Go since 2026-09-29); ultra is
+# accepted because the harness itself lists it (operator order
+# 2026-09-29); minimal/max stay out until a fleet engine needs them.
+_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "ultra")
 
 
 def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]:
@@ -62,6 +67,19 @@ def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]
         ]
 
     subscription = raw.get("subscription")
+    tier = raw.get("service_tier")
+    if tier is not None:
+        if tier != "fast":
+            errors.append(f"{path}.service_tier must be 'fast' or omitted.")
+        if (
+            not isinstance(subscription, Mapping)
+            or subscription.get("provider") != "openai"
+        ):
+            errors.append(
+                f"{path}.service_tier requires an explicit OpenAI subscription engine."
+            )
+        if harness is not None and harness != "codex":
+            errors.append(f"{path}.service_tier requires the Codex harness.")
     if subscription is not None:
         if not isinstance(subscription, Mapping):
             errors.append(f"{path}.subscription must be a mapping.")

@@ -198,6 +198,8 @@ def _beat_one(
     write_fn: Callable[..., None],
     hermes_observe_fn: Any = None,
     hermes_connect_fn: Any = None,
+    codex_promote_fn: Any = None,
+    birth_reader: Any = None,
 ) -> bool:
     """Write one TUI agent's heartbeat from the ALREADY-FETCHED fleet snapshot.
 
@@ -227,7 +229,32 @@ def _beat_one(
         return False
     try:
         config = agent.get("config")
-        if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
+        harness = str(getattr(config, "harness", "") or "").strip().lower()
+        if config is not None:
+            from .._state.state_store_hostname import resolve_host
+            from ..runtimes._codex_activity_projection import activity_harness
+
+            host = resolve_host(None)
+            harness = activity_harness(
+                Path(state_dir),
+                name,
+                host=host,
+                declared_harness=harness,
+                birth_reader=birth_reader,
+            )
+        if harness == "codex":
+            from ..runtimes._codex_activity_projection import promote_codex_activity
+
+            promoter = codex_promote_fn or promote_codex_activity
+            promoter(
+                Path(state_dir),
+                name,
+                host=host,
+                write_fn=write_fn,
+                birth_reader=birth_reader,
+            )
+            return True
+        if harness == "hermes":
             from .._state.authoritative_heartbeat import read_card_lease
             from .._state.state_store_hostname import resolve_host
             from ..runtimes._hermes_heartbeat_projection import (
@@ -269,6 +296,14 @@ def _beat_one(
             state=_TUI_HEARTBEAT_STATE,
             ts=float(activity),
             writer="listen-tui-observer",
+            authoritative_fields={
+                "work_state": "unknown",
+                "work_source": "typed-runtime-events-unavailable",
+                "pane_activity_at": float(activity),
+                "capacity_status": "unknown",
+                "capped": None,
+                "current_phase": "",
+            },
         )
         return True
     except Exception as exc:  # stx-allow: fallback (per-agent best-effort: one failure must not abort the tick — logged to stderr, skipped)
@@ -327,7 +362,9 @@ async def tui_heartbeat_loop(
     from ._off_loop import run_blocking_or
 
     check = tmux_check if tmux_check is not None else _tmux_available
-    if not await run_blocking_or(check, default=False, op="tmux preflight (which tmux)"):
+    if not await run_blocking_or(
+        check, default=False, op="tmux preflight (which tmux)"
+    ):
         logger.error(
             "tui_heartbeat_loop: `tmux` is not installed — TUI heartbeat "
             "writing DISABLED. TUI agents will show empty heartbeat_at on "

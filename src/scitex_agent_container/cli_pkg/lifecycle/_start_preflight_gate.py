@@ -57,6 +57,7 @@ def make_preflight_runner(
     bulk_yamls: list[str],
     no_redispatch: bool,
     broker_self: bool,
+    engine_override: str | None = None,
 ) -> Callable[[], None]:
     """Build the idempotent ("once per invocation") OAuth preflight runner.
 
@@ -81,6 +82,9 @@ def make_preflight_runner(
     agent is what took the whole fleet down on 2026-08-10: the lead token
     had lapsed, every declared pool credential was fresh, and every start
     on the host was refused anyway.
+
+    An explicit start-time engine is folded before this auth check: its
+    selected provider must not be gated on the stored default's OAuth pool.
 
     A spec that will not load is REFUSED HERE, naming the load error. It
     is no longer gated on the lead's ``~/.claude/.credentials.json``, and
@@ -114,6 +118,11 @@ def make_preflight_runner(
                         "parses. This is NOT a credential fault — sac does not "
                         "read ~/.claude/.credentials.json for agent starts."
                     )
+                if engine_override:
+                    from ..._lifecycle._engine_select import select_engine_at_start
+
+                    # Match this start's auth without adding a network probe.
+                    select_engine_at_start(cfg, engine_override, probe=False, log=False)
                 if not _target_needs_anthropic_oauth(cfg):
                     continue
                 check_spec_oauth_credentials(cfg)

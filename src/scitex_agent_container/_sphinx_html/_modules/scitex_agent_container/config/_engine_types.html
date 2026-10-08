@@ -1,0 +1,1053 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scitex_agent_container.config._engine_types &mdash; scitex-agent-container v0.29.5</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=a4b8ebc0"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            scitex-agent-container
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../installation.html#from-pypi">From PyPI</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../installation.html#from-source">From Source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../installation.html#requirements">Requirements</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../templates.html">Templates and Examples</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../templates.html#pattern-templates">Pattern Templates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../templates.html#instantiating-a-template">Instantiating a Template</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../status_and_hooks.html">Status and Hook Integration</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#rich-status">Rich Status</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#claude-code-hook-integration">Claude Code Hook Integration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../status_and_hooks.html#zero-coupling-design">Zero Coupling Design</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture &amp; Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../how-sac-works.html">How sac works</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../how-sac-works.html#launch-flow">Launch flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../how-sac-works.html#what-each-piece-does">What each piece does</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#harness-session">Harness session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../how-sac-works.html#restart-health">Restart / health</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../how-sac-works.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../spec-reference.html">YAML Spec Reference (v3)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#quick-links">Quick links</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#top-level-shape">Top-level shape</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#field-reference">Field reference</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-claude-code-account"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-key-compression-hermes-only"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-background-review"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-run-budget-seconds"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-comms-harness-neutral-communication"><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../spec-reference.html#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-health-spec-restart-spec-watchdog-spec-autonomous"><code class="docutils literal notranslate"><span class="pre">spec.health</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.restart</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.watchdog</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.autonomous</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-a2a-spec-listen-network-endpoints"><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#scitex-agent-container-config-yaml"><code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#skills">Skills</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-mcp-servers"><code class="docutils literal notranslate"><span class="pre">spec.mcp_servers</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-telegram-spec-hooks-spec-extensions"><code class="docutils literal notranslate"><span class="pre">spec.telegram</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.hooks</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.extensions</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#lifetime-session-selection">Lifetime / session selection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#kind-agentproxy-http-forwarder-agents"><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> — HTTP forwarder agents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-proxy-reference"><code class="docutils literal notranslate"><span class="pre">spec.proxy</span></code> reference</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#security-notes">Security notes</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../spec-reference.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../talking-to-agents.html">Talking to a Running Agent</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#send-a-turn">Send a turn</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#discover-the-agent">Discover the agent</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../talking-to-agents.html#one-shot-vs-follow-up">One-shot vs follow-up</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#cli-sac-agents-send-sac-agents-tail">2. CLI — <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">send</span></code> / <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">tail</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#sac-listen-host-level-http-control-plane">3. <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> — host-level HTTP control plane</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#cross-host-sac-on-peer">Cross-host: <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">--on</span> <span class="pre">&lt;peer&gt;</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#forwarding-to-external-a2a-kind-agentproxy">Forwarding to external A2A (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#picking-a-transport">Picking a transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../talking-to-agents.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../isolation.html">Container Isolation in sac</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../isolation.html#apptainers-default-leak-paths-10-categories">Apptainer’s default leak paths (10 categories)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#auto-bound-filesystem-paths">1. Auto-bound filesystem paths</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#environment-variable-inheritance">2. Environment variable inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#user-permission-inheritance">3. User / permission inheritance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#network-transparency">4. Network transparency</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#process-ipc-uts-namespaces">5. Process / IPC / UTS namespaces</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#sif-build-time-leaks-apptainer-specific">6. SIF build-time leaks (Apptainer-specific)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#overlay-state-persistence">7. Overlay state persistence</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#writable-vs-writable-tmpfs-confusion">8. <code class="docutils literal notranslate"><span class="pre">--writable</span></code> vs <code class="docutils literal notranslate"><span class="pre">--writable-tmpfs</span></code> confusion</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#indirect-leakage-via-bind-mounts">9. Indirect leakage via bind-mounts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#apptainer-version-differences">10. Apptainer version differences</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../isolation.html#sacs-hardened-defaults">sac’s hardened defaults</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../isolation.html#canonical-container-home-home-agent-d5">Canonical container HOME — <code class="docutils literal notranslate"><span class="pre">/home/agent</span></code> (D5)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../isolation.html#roadmap-for-sacs-isolation-surface">Roadmap for sac’s isolation surface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../isolation.html#one-line-summary-for-papers-readmes">One-line summary for papers / READMEs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../isolation.html#see-also">See also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../directories.html">Configuration and Runtime Directories</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../directories.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#fleet-hosts">Fleet hosts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#what-not-to-emit">What NOT to emit</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#safe-metadata-fields-whitelist">Safe metadata fields (whitelist)</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../images.html">Apptainer Images</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#builtin-layers">Builtin layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#build">Build</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#distributing-one-verified-artifact-to-a-fleet">Distributing one verified artifact to a fleet</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engines"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engines</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engine_key"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engine_key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">AgentConfig.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.service_tier"><code class="docutils literal notranslate"><span class="pre">AgentConfig.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">AgentConfig.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.python_venv"><code class="docutils literal notranslate"><span class="pre">AgentConfig.python_venv</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.env_files"><code class="docutils literal notranslate"><span class="pre">AgentConfig.env_files</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.screen_name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.screen_name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.labels"><code class="docutils literal notranslate"><span class="pre">AgentConfig.labels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.container"><code class="docutils literal notranslate"><span class="pre">AgentConfig.container</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.claude"><code class="docutils literal notranslate"><span class="pre">AgentConfig.claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.health"><code class="docutils literal notranslate"><span class="pre">AgentConfig.health</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.scheduling"><code class="docutils literal notranslate"><span class="pre">AgentConfig.scheduling</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.config_path"><code class="docutils literal notranslate"><span class="pre">AgentConfig.config_path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mounts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mounts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.user"><code class="docutils literal notranslate"><span class="pre">AgentConfig.user</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.delegation"><code class="docutils literal notranslate"><span class="pre">AgentConfig.delegation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home_layers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home_layers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.model"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.channels"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.channels</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.flags"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.flags</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.raw_options"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.raw_options</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.session"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.session</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.continue_max_age_minutes"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.continue_max_age_minutes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.mount_host_claude"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.mount_host_claude</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec"><code class="docutils literal notranslate"><span class="pre">DelegationSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.max_concurrent_children"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.max_concurrent_children</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.worktree_isolation"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.worktree_isolation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.__init__"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError"><code class="docutils literal notranslate"><span class="pre">EngineDefaultError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineError"><code class="docutils literal notranslate"><span class="pre">EngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec"><code class="docutils literal notranslate"><span class="pre">EngineSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.key"><code class="docutils literal notranslate"><span class="pre">EngineSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.harness"><code class="docutils literal notranslate"><span class="pre">EngineSpec.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.model"><code class="docutils literal notranslate"><span class="pre">EngineSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider_declared"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider_declared</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_account"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">EngineSpec.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.service_tier"><code class="docutils literal notranslate"><span class="pre">EngineSpec.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">EngineSpec.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.env"><code class="docutils literal notranslate"><span class="pre">EngineSpec.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.is_default"><code class="docutils literal notranslate"><span class="pre">EngineSpec.is_default</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.__init__"><code class="docutils literal notranslate"><span class="pre">EngineSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.enabled"><code class="docutils literal notranslate"><span class="pre">HealthSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.interval"><code class="docutils literal notranslate"><span class="pre">HealthSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.timeout"><code class="docutils literal notranslate"><span class="pre">HealthSpec.timeout</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.method"><code class="docutils literal notranslate"><span class="pre">HealthSpec.method</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HealthSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec"><code class="docutils literal notranslate"><span class="pre">HookSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_start"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_start</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.pre_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.pre_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.post_stop"><code class="docutils literal notranslate"><span class="pre">HookSpec.post_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_compact"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_compact</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_restart"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_restart</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.on_diff"><code class="docutils literal notranslate"><span class="pre">HookSpec.on_diff</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.counts"><code class="docutils literal notranslate"><span class="pre">HookSpec.counts()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.target_ratio"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.target_ratio</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.tail_mode"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.tail_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.in_place"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.in_place</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetBudgetError"><code class="docutils literal notranslate"><span class="pre">HermesFleetBudgetError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.usable_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.usable_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.reserved_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.reserved_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.agent_count"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.agent_count</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.__init__"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HostsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort"><code class="docutils literal notranslate"><span class="pre">ListenPort</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.port"><code class="docutils literal notranslate"><span class="pre">ListenPort.port</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.proto"><code class="docutils literal notranslate"><span class="pre">ListenPort.proto</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.path"><code class="docutils literal notranslate"><span class="pre">ListenPort.path</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.name"><code class="docutils literal notranslate"><span class="pre">ListenPort.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.owner"><code class="docutils literal notranslate"><span class="pre">ListenPort.owner</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort.__init__"><code class="docutils literal notranslate"><span class="pre">ListenPort.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.extra_headers"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.extra_headers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.hermes_provider"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.hermes_provider</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.upstream"><code class="docutils literal notranslate"><span class="pre">ProxySpec.upstream</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.trust"><code class="docutils literal notranslate"><span class="pre">ProxySpec.trust</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.redact"><code class="docutils literal notranslate"><span class="pre">ProxySpec.redact</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProxySpec.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec.timeout_s"><code class="docutils literal notranslate"><span class="pre">ProxySpec.timeout_s</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec"><code class="docutils literal notranslate"><span class="pre">RestartSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.policy"><code class="docutils literal notranslate"><span class="pre">RestartSpec.policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.max_retries"><code class="docutils literal notranslate"><span class="pre">RestartSpec.max_retries</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.mode"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.preferred_host"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.preferred_host</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.fallback_hosts"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.fallback_hosts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SchedulingSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec"><code class="docutils literal notranslate"><span class="pre">SkillsSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.required"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.required</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.available"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.available</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.injection_mode"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.injection_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_by"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_by</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.match_style"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.match_style</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SkillsSpec.__init__"><code class="docutils literal notranslate"><span class="pre">SkillsSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand"><code class="docutils literal notranslate"><span class="pre">StartupCommand</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.delay"><code class="docutils literal notranslate"><span class="pre">StartupCommand.delay</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.command"><code class="docutils literal notranslate"><span class="pre">StartupCommand.command</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError"><code class="docutils literal notranslate"><span class="pre">UnknownEngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_y_y_n"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_y_y_n</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.resp_waiting"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.resp_waiting</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.select_engine"><code class="docutils literal notranslate"><span class="pre">select_engine()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../api/scitex_agent_container.html#module-scitex_agent_container.runtimes.prompts">Runtimes</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler"><code class="docutils literal notranslate"><span class="pre">PromptHandler</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.name"><code class="docutils literal notranslate"><span class="pre">PromptHandler.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.detect"><code class="docutils literal notranslate"><span class="pre">PromptHandler.detect</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.keys"><code class="docutils literal notranslate"><span class="pre">PromptHandler.keys</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.priority"><code class="docutils literal notranslate"><span class="pre">PromptHandler.priority</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.PromptHandler.__init__"><code class="docutils literal notranslate"><span class="pre">PromptHandler.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_press_enter_continue"><code class="docutils literal notranslate"><span class="pre">_detect_press_enter_continue()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_file_trust_radio"><code class="docutils literal notranslate"><span class="pre">_detect_file_trust_radio()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_external_imports"><code class="docutils literal notranslate"><span class="pre">_detect_external_imports()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust"><code class="docutils literal notranslate"><span class="pre">_detect_codex_dir_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review"><code class="docutils literal notranslate"><span class="pre">_detect_codex_hooks_review()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._CODEX_COMPOSER_MARKERS"><code class="docutils literal notranslate"><span class="pre">_CODEX_COMPOSER_MARKERS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane"><code class="docutils literal notranslate"><span class="pre">_codex_usage_limit_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal"><code class="docutils literal notranslate"><span class="pre">codex_blocking_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done"><code class="docutils literal notranslate"><span class="pre">_detect_codex_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier"><code class="docutils literal notranslate"><span class="pre">_detect_hermes_contributor_tier()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">scitex-agent-container</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+          <li class="breadcrumb-item"><a href="../config.html">scitex_agent_container.config</a></li>
+      <li class="breadcrumb-item active">scitex_agent_container.config._engine_types</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for scitex_agent_container.config._engine_types</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""``spec.engines`` — SEVERAL declared backends, ONE picked at START.</span>
+
+<span class="sd">WHY THIS EXISTS — a spec can declare exactly ONE backend today</span>
+<span class="sd">(``spec.harness`` + ``spec.claude.model`` + ``spec.claude.provider``),</span>
+<span class="sd">so switching an agent between Claude and a local Qwen means EDITING the</span>
+<span class="sd">spec. The operator asked (Telegram 2026-09-03) for one spec to write</span>
+<span class="sd">several backends down and pick one at start:</span>
+
+<span class="sd">    sac agents restart &lt;agent&gt; --engine qwen38-27b</span>
+
+<span class="sd">FOUR OPERATOR ANSWERS this module implements, verbatim in intent:</span>
+
+<span class="sd">  Q1 VOCABULARY — the words are ENGINE and HARNESS. ``claude:`` was</span>
+<span class="sd">     already the wrong name the moment it held Qwen (a vendor name is a</span>
+<span class="sd">     claim about scope), so the multi-backend surface is ``engines:``</span>
+<span class="sd">     and each entry is an ENGINE: one named (harness, model, provider,</span>
+<span class="sd">     parameters) tuple.</span>
+<span class="sd">  Q2 GRANULARITY — START TIME ONLY (「起動時だけで大丈夫です」). There</span>
+<span class="sd">     is no per-turn escape hatch and no mid-session rebinding: the</span>
+<span class="sd">     selected engine is folded into the resolved ``AgentConfig`` before</span>
+<span class="sd">     the runtime is built and never consulted again.</span>
+<span class="sd">  Q3 UNHONOURABLE ENGINE — REFUSE TO START, naming what could not be</span>
+<span class="sd">     honoured (「勝手なフォールバックはしないと言うルールなので」).</span>
+<span class="sd">     The spec value is the default, ``--engine`` overrides it, and</span>
+<span class="sd">     NOTHING silently falls back — least of all onto the default when</span>
+<span class="sd">     an explicit ``--engine`` was given. The refusal itself lives on the</span>
+<span class="sd">     start path (:mod:`_lifecycle._engine_select`); this module owns the</span>
+<span class="sd">     static shape.</span>
+<span class="sd">  Q4 PARAMETERS — YES, per model, ``reasoning_effort`` above all (Qwen</span>
+<span class="sd">     is expected to run at low effort permanently).</span>
+
+<span class="sd">NO SECOND VOCABULARY. An engine entry carries the SAME fields the</span>
+<span class="sd">single-backend surface carries: ``harness`` resolves through</span>
+<span class="sd">:mod:`_harness_registry` (not a second list), ``provider`` folds through</span>
+<span class="sd">:func:`_provider_parse.parse_provider_value` (not a second dataclass),</span>
+<span class="sd">``model`` is the same model id. Only the two parameters</span>
+<span class="sd">(``reasoning_effort`` / ``max_context_tokens``) and the ``default:``</span>
+<span class="sd">marker are new words, because they name things the old surface could</span>
+<span class="sd">not say.</span>
+
+<span class="sd">MIGRATION, NOT RENAME — exactly the rule ``_harness_types`` already</span>
+<span class="sd">implements for ``harness``/``provider``, applied to a BLOCK instead of</span>
+<span class="sd">a key. 123 live specs on compute-04 alone are written with the legacy</span>
+<span class="sd">single-backend block, so a hard rename boot-reds every one of them:</span>
+
+<span class="sd">  * legacy block alone  → works unchanged, and SILENTLY. No deprecation</span>
+<span class="sd">    line: at ~123 specs a nudge-per-start is noise, and the operator</span>
+<span class="sd">    asked for "keeps working unchanged and silently".</span>
+<span class="sd">  * ``engines:`` alone  → the new path; the default engine is folded</span>
+<span class="sd">    into the config at LOAD time so every read surface (explain, birth</span>
+<span class="sd">    certificate, status) sees the effective backend.</span>
+<span class="sd">  * BOTH, agreeing      → accepted, silently. The author has migrated</span>
+<span class="sd">    and kept the legacy block for an older sac; nothing is ambiguous.</span>
+<span class="sd">  * BOTH, disagreeing   → HARD ERROR naming both values (see</span>
+<span class="sd">    :func:`legacy_conflict_messages`). Picking one silently would let a</span>
+<span class="sd">    spec claim one backend and run another.</span>
+
+<span class="sd">WHERE THE DIAGNOSTICS FIRE. Everything decidable from the spec text</span>
+<span class="sd">alone (two defaults, no default, unknown harness, malformed provider,</span>
+<span class="sd">legacy disagreement) is a VALIDATOR error — ``validate_raw``, at load,</span>
+<span class="sd">same as every other spec-shape error. Everything that depends on the</span>
+<span class="sd">HOST (is ``$QWEN_API_KEY`` exported? does the endpoint answer?) fires on</span>
+<span class="sd">the START path only, never in the loader: ``sac agents list`` loads</span>
+<span class="sd">every spec on the host, so a loader-side host probe would probe N</span>
+<span class="sd">endpoints for a command nobody asked a reachability question of, and a</span>
+<span class="sd">loader-side warning would print one line per spec and contaminate</span>
+<span class="sd">``--json``. That is the same ruling that placed</span>
+<span class="sd">``warn_if_legacy_harness_key`` and ``warn_if_legacy_apptainer_runtime``</span>
+<span class="sd">on the start path.</span>
+
+<span class="sd">THE MIGRATION HAS AN END, and this is it: when every deployed spec</span>
+<span class="sd">declares ``engines:`` (the roll-over is a separate dry-run-first sweep —</span>
+<span class="sd">this module ships the mechanism only), the legacy single-backend</span>
+<span class="sd">reading in :func:`legacy_backend` is deleted, ``spec.claude.model`` /</span>
+<span class="sd">``spec.claude.provider`` / ``spec.harness`` stop being read as a</span>
+<span class="sd">backend declaration, and :func:`legacy_conflict_messages` goes with</span>
+<span class="sd">them. Until that sweep completes the legacy block is not deprecated —</span>
+<span class="sd">it is the majority spelling.</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Mapping</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_parse</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_provider_value</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">"ENGINES_KEY"</span><span class="p">,</span>
+    <span class="s2">"ENGINE_PIN_KEY"</span><span class="p">,</span>
+    <span class="s2">"ENGINE_ENTRY_KEYS"</span><span class="p">,</span>
+    <span class="s2">"MIGRATION_END_CONDITION"</span><span class="p">,</span>
+    <span class="s2">"EngineDefaultError"</span><span class="p">,</span>
+    <span class="s2">"EngineError"</span><span class="p">,</span>
+    <span class="s2">"EngineSpec"</span><span class="p">,</span>
+    <span class="s2">"UnknownEngineError"</span><span class="p">,</span>
+    <span class="s2">"apply_default_engine"</span><span class="p">,</span>
+    <span class="s2">"apply_engine"</span><span class="p">,</span>
+    <span class="s2">"default_engine"</span><span class="p">,</span>
+    <span class="s2">"resolve_default"</span><span class="p">,</span>
+    <span class="s2">"legacy_backend"</span><span class="p">,</span>
+    <span class="s2">"legacy_conflict_messages"</span><span class="p">,</span>
+    <span class="s2">"parse_engines"</span><span class="p">,</span>
+    <span class="s2">"select_engine"</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="c1">#: The top-level spec key holding the named engines.</span>
+<span class="n">ENGINES_KEY</span> <span class="o">=</span> <span class="s2">"engines"</span>
+
+<span class="c1">#: THE WHOLE GRAMMAR CHANGE, one scalar: the top-level spec key that PINS</span>
+<span class="c1">#: which engine this agent runs (``spec.engine: qwen38-27b``). Spelled</span>
+<span class="c1">#: identically at the top of the fleet engine library, where it names the</span>
+<span class="c1">#: FLEET default, because it means the same thing in both places: "the</span>
+<span class="c1">#: engine to run when nothing more specific is stated". Flipping one</span>
+<span class="c1">#: agent onto another backend is this ONE line; flipping the whole fleet</span>
+<span class="c1">#: is this ONE line in the library.</span>
+<span class="n">ENGINE_PIN_KEY</span> <span class="o">=</span> <span class="s2">"engine"</span>
+
+<span class="c1">#: The keys ONE engine entry may carry. ``harness`` / ``model`` /</span>
+<span class="c1">#: ``provider`` are the single-backend surface's own words; the rest are</span>
+<span class="c1">#: the per-engine parameters (Q4).</span>
+<span class="c1">#:</span>
+<span class="c1">#: ``default`` is DEPRECATED — superseded by the top-level</span>
+<span class="c1">#: :data:`ENGINE_PIN_KEY` (``spec.engine: &lt;key&gt;``), which says the same</span>
+<span class="c1">#: thing without making the CHOICE a property of the CHOSEN. It stays</span>
+<span class="c1">#: accepted, silently, for the specs already written with it: a hard</span>
+<span class="c1">#: removal would boot-red them, and this axis exists to make switching</span>
+<span class="c1">#: backends cheap, not to make it a flag day. It is deleted in the same</span>
+<span class="c1">#: PR that deletes the legacy single-backend reading — see</span>
+<span class="c1">#: :data:`MIGRATION_END_CONDITION`.</span>
+<span class="c1">#:</span>
+<span class="c1">#: ``harness`` inside an entry is deprecated for the same window and for</span>
+<span class="c1">#: a sharper reason: after the split, an entry that states a harness is</span>
+<span class="c1">#: an ENGINE claiming ownership of the HARNESS axis, which is precisely</span>
+<span class="c1">#: the coupling this design removes. It survives only so a spec that</span>
+<span class="c1">#: already writes it keeps loading.</span>
+<span class="n">ENGINE_ENTRY_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
+    <span class="p">{</span>
+        <span class="s2">"harness"</span><span class="p">,</span>
+        <span class="s2">"model"</span><span class="p">,</span>
+        <span class="s2">"provider"</span><span class="p">,</span>
+        <span class="s2">"subscription"</span><span class="p">,</span>
+        <span class="s2">"default"</span><span class="p">,</span>
+        <span class="s2">"reasoning_effort"</span><span class="p">,</span>
+        <span class="s2">"service_tier"</span><span class="p">,</span>
+        <span class="s2">"max_context_tokens"</span><span class="p">,</span>
+        <span class="s2">"timeouts"</span><span class="p">,</span>
+        <span class="s2">"env"</span><span class="p">,</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+
+<span class="c1">#: What CLOSES this migration — stated so the compatibility window is a</span>
+<span class="c1">#: condition, not an open-ended "someday". See the module docstring.</span>
+<span class="n">MIGRATION_END_CONDITION</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">"every deployed spec declares spec.engines; then the legacy "</span>
+    <span class="s2">"single-backend reading (spec.harness + spec.claude.model + "</span>
+    <span class="s2">"spec.claude.provider as a BACKEND declaration) is deleted along "</span>
+    <span class="s2">"with legacy_conflict_messages()"</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="EngineError">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineError">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">EngineError</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Base class for ``spec.engines`` faults."""</span></div>
+
+
+
+<div class="viewcode-block" id="EngineDefaultError">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">EngineDefaultError</span><span class="p">(</span><span class="n">EngineError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""``spec.engines`` does not name exactly one default entry."""</span></div>
+
+
+
+<div class="viewcode-block" id="UnknownEngineError">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">UnknownEngineError</span><span class="p">(</span><span class="n">EngineError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""``--engine &lt;key&gt;`` named an engine the spec does not declare."""</span></div>
+
+
+
+<div class="viewcode-block" id="EngineSpec">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">EngineSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""ONE named backend an agent may start on.</span>
+
+<span class="sd">    Every field is the single-backend surface's own field, so an engine</span>
+<span class="sd">    entry reads as "the ``harness`` + ``claude`` block I would have</span>
+<span class="sd">    written, given a name". ``provider_declared`` keeps the RAW YAML</span>
+<span class="sd">    value beside the folded :class:`ProviderSpec` because the two carry</span>
+<span class="sd">    different information: the fold collapses both an unregistered name</span>
+<span class="sd">    and the ``anthropic`` sentinel to ``None``, and the refusal path has</span>
+<span class="sd">    to tell those apart to say WHAT could not be honoured.</span>
+
+<span class="sd">    THE HARNESS FIELD IS NULLABLE, AND THAT NULL IS THE WHOLE</span>
+<span class="sd">    HARNESS/ENGINE SPLIT. It used to default to</span>
+<span class="sd">    ``DEFAULT_AGENT_HARNESS``, which meant an entry that said nothing</span>
+<span class="sd">    about the harness SAID ANTHROPIC — and :func:`apply_engine` then</span>
+<span class="sd">    wrote that manufactured value over a spec that had declared</span>
+<span class="sd">    ``harness: codex``. One engine definition could therefore not serve</span>
+<span class="sd">    a Claude-Code agent and a Codex agent, which is exactly what a fleet</span>
+<span class="sd">    engine library has to do. ``None`` now means NO OPINION: the engine</span>
+<span class="sd">    names the model endpoint, the spec names the program that runs the</span>
+<span class="sd">    loop, and neither overwrites the other.</span>
+<span class="sd">    """</span>
+
+    <span class="n">key</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">harness</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="n">ProviderSpec</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">provider_declared</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">subscription_provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">subscription_account</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">reasoning_effort</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">service_tier</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">max_context_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">upstream_deadline_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">client_abandonment_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">is_default</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_stated</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""The STATED text of a YAML scalar, or ``None`` for "no opinion".</span>
+
+<span class="sd">    Same three-cases-are-one rule as ``_harness_types._stated``: absent,</span>
+<span class="sd">    null, and empty/whitespace all mean the author declared nothing.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">text</span> <span class="ow">or</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_entry_mapping</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">raw</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">)</span> <span class="k">else</span> <span class="p">{}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_parse_int</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">value</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">text</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="c1"># The validator owns the "must be a positive integer"</span>
+        <span class="c1"># diagnostic; degrading to None here keeps an unvalidated</span>
+        <span class="c1"># fixture path from crashing the loader.</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_engine_entry</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">raw</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EngineSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Fold ONE ``spec.engines.&lt;key&gt;`` mapping into an :class:`EngineSpec`.</span>
+
+<span class="sd">    Shape faults (non-mapping entry, unknown sub-key, bad types) are the</span>
+<span class="sd">    VALIDATOR's diagnostic — see :mod:`_engine_validation`. This parser</span>
+<span class="sd">    is deliberately total so a spec that is about to be rejected still</span>
+<span class="sd">    parses far enough for the error message to quote it.</span>
+<span class="sd">    """</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">_entry_mapping</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="n">harness</span> <span class="o">=</span> <span class="n">_stated</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"harness"</span><span class="p">))</span>
+    <span class="n">provider_declared</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"provider"</span><span class="p">)</span>
+    <span class="n">raw_subscription</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"subscription"</span><span class="p">)</span>
+    <span class="n">subscription</span> <span class="o">=</span> <span class="n">raw_subscription</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_subscription</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">)</span> <span class="k">else</span> <span class="p">{}</span>
+    <span class="n">raw_env</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"env"</span><span class="p">)</span>
+    <span class="n">raw_timeouts</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"timeouts"</span><span class="p">)</span>
+    <span class="n">timeouts</span> <span class="o">=</span> <span class="n">raw_timeouts</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_timeouts</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">)</span> <span class="k">else</span> <span class="p">{}</span>
+    <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_env</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="n">env</span> <span class="o">=</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">):</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">raw_env</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">}</span>
+    <span class="k">return</span> <span class="n">EngineSpec</span><span class="p">(</span>
+        <span class="n">key</span><span class="o">=</span><span class="n">key</span><span class="p">,</span>
+        <span class="n">harness</span><span class="o">=</span><span class="n">harness</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">if</span> <span class="n">harness</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">_stated</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">,</span>
+        <span class="n">provider</span><span class="o">=</span><span class="n">parse_provider_value</span><span class="p">(</span><span class="n">provider_declared</span><span class="p">),</span>
+        <span class="n">provider_declared</span><span class="o">=</span><span class="n">provider_declared</span><span class="p">,</span>
+        <span class="n">subscription_provider</span><span class="o">=</span><span class="n">_stated</span><span class="p">(</span><span class="n">subscription</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"provider"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">,</span>
+        <span class="n">subscription_account</span><span class="o">=</span><span class="n">_stated</span><span class="p">(</span><span class="n">subscription</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"account"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">,</span>
+        <span class="n">reasoning_effort</span><span class="o">=</span><span class="p">(</span><span class="n">_stated</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"reasoning_effort"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span>
+        <span class="n">service_tier</span><span class="o">=</span><span class="n">_stated</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"service_tier"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">,</span>
+        <span class="n">max_context_tokens</span><span class="o">=</span><span class="n">_parse_int</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"max_context_tokens"</span><span class="p">)),</span>
+        <span class="n">upstream_deadline_seconds</span><span class="o">=</span><span class="n">_parse_int</span><span class="p">(</span><span class="n">timeouts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"upstream_deadline_seconds"</span><span class="p">)),</span>
+        <span class="n">client_abandonment_seconds</span><span class="o">=</span><span class="n">_parse_int</span><span class="p">(</span>
+            <span class="n">timeouts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"client_abandonment_seconds"</span><span class="p">)</span>
+        <span class="p">),</span>
+        <span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">,</span>
+        <span class="n">is_default</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"default"</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_engines</span><span class="p">(</span><span class="n">spec</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Parse ``spec.engines`` into ``{key: EngineSpec}``, insertion-ordered.</span>
+
+<span class="sd">    Returns ``{}`` when the block is absent, null, or not a mapping — a</span>
+<span class="sd">    legacy-only spec parses to no engines and takes the unchanged path.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{}</span>
+    <span class="n">block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ENGINES_KEY</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{}</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">):</span> <span class="n">parse_engine_entry</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">block</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">default_engine</span><span class="p">(</span><span class="n">engines</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">EngineSpec</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""See :func:`_engine_precedence.default_engine`."""</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_precedence</span><span class="w"> </span><span class="kn">import</span> <span class="n">default_engine</span> <span class="k">as</span> <span class="n">_impl</span>
+
+    <span class="k">return</span> <span class="n">_impl</span><span class="p">(</span><span class="n">engines</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">resolve_default</span><span class="p">(</span><span class="n">engines</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">],</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""See :func:`_engine_precedence.resolve_default`."""</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_precedence</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_default</span> <span class="k">as</span> <span class="n">_impl</span>
+
+    <span class="k">return</span> <span class="n">_impl</span><span class="p">(</span><span class="n">engines</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="select_engine">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.select_engine">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">select_engine</span><span class="p">(</span>
+    <span class="n">engines</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">],</span> <span class="n">requested</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EngineSpec</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""The engine THIS start runs on.</span>
+
+<span class="sd">    ``requested`` is the ``--engine`` argument (``None`` = not given, so</span>
+<span class="sd">    the declared default wins). An unknown key raises</span>
+<span class="sd">    :class:`UnknownEngineError` LISTING the declared keys — it never</span>
+<span class="sd">    degrades to the default, because starting on a different backend</span>
+<span class="sd">    than the one the operator named is the silent fallback Q3 forbids.</span>
+<span class="sd">    """</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">requested</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">default_engine</span><span class="p">(</span><span class="n">engines</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">engines</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">UnknownEngineError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"--engine </span><span class="si">{</span><span class="n">key</span><span class="si">!r}</span><span class="s2"> was given but the spec declares no "</span>
+            <span class="sa">f</span><span class="s2">"`</span><span class="si">{</span><span class="n">ENGINES_KEY</span><span class="si">}</span><span class="s2">:` block, so there is no engine by that name "</span>
+            <span class="s2">"to select. Either declare the engine in the spec or drop "</span>
+            <span class="s2">"--engine to start on the spec's single declared backend."</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">engines</span><span class="p">:</span>
+        <span class="n">declared</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">engines</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">UnknownEngineError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"--engine </span><span class="si">{</span><span class="n">key</span><span class="si">!r}</span><span class="s2"> resolves to no engine. Resolvable engines "</span>
+            <span class="sa">f</span><span class="s2">"(this spec's own `</span><span class="si">{</span><span class="n">ENGINES_KEY</span><span class="si">}</span><span class="s2">:` block UNION the fleet "</span>
+            <span class="sa">f</span><span class="s2">"engine library): </span><span class="si">{</span><span class="n">declared</span><span class="si">}</span><span class="s2">. Declare it in whichever of the "</span>
+            <span class="s2">"two the key belongs to — `sac agents explain &lt;agent&gt;` prints "</span>
+            <span class="s2">"the library path and which entries came from where. sac will "</span>
+            <span class="s2">"NOT fall back to the default engine when an explicit --engine "</span>
+            <span class="s2">"was given."</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">engines</span><span class="p">[</span><span class="n">key</span><span class="p">]</span></div>
+
+
+
+<div class="viewcode-block" id="apply_engine">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.apply_engine">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_engine</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">engine</span><span class="p">:</span> <span class="n">EngineSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Fold ``engine`` onto a resolved ``AgentConfig``, in place.</span>
+
+<span class="sd">    This is the ONLY place an engine becomes behaviour, and it writes</span>
+<span class="sd">    the SAME fields the single-backend surface writes — which is what</span>
+<span class="sd">    makes every downstream reader (auth argv, birth certificate,</span>
+<span class="sd">    explain) engine-aware for free.</span>
+
+<span class="sd">    AN ENGINE ENTRY FULLY DETERMINES THE BACKEND TRIPLE, and every one of</span>
+<span class="sd">    the three is written UNCONDITIONALLY — including when the entry</span>
+<span class="sd">    states nothing (``model: ""`` = "use the runtime default";</span>
+<span class="sd">    ``provider: None`` = "no endpoint override"). Writing them</span>
+<span class="sd">    conditionally is the obvious-looking version and it is wrong twice</span>
+<span class="sd">    over: applying engine B after the loader applied default engine A</span>
+<span class="sd">    would leave A's provider in place, silently pointing the agent at an</span>
+<span class="sd">    endpoint B never declared; and a legacy ``spec.claude.provider``</span>
+<span class="sd">    would leak into an engine that declares none. Both are exactly the</span>
+<span class="sd">    "ran a backend nobody asked for" failure this axis exists to remove.</span>
+<span class="sd">    A legacy block that states a value the default engine does not is</span>
+<span class="sd">    therefore a CONFLICT, not an inheritance — see</span>
+<span class="sd">    :func:`legacy_conflict_messages`.</span>
+
+<span class="sd">    ``env`` merges ON TOP of ``spec.apptainer.env`` — a per-engine env</span>
+<span class="sd">    entry is a deliberate override for THIS backend, so it wins over the</span>
+<span class="sd">    agent-wide value it was written to displace.</span>
+
+<span class="sd">    THE TOP-LEVEL MODEL SURFACE FOLLOWS TOO, and it is not decoration.</span>
+<span class="sd">    ``_loaders`` derives ``AgentConfig.model`` and the injected</span>
+<span class="sd">    ``SCITEX_AGENT_CONTAINER_MODEL`` from the RAW ``spec.claude.model``,</span>
+<span class="sd">    which a spec declaring ``engines:`` deliberately leaves empty — so</span>
+<span class="sd">    without this the whole fleet reported the ``sonnet`` default while</span>
+<span class="sd">    running something else. Measured over the 119-spec corpus: 117 specs</span>
+<span class="sd">    flipped to ``'sonnet'`` / ``'Claude Sonnet'`` on migration while</span>
+<span class="sd">    ``claude.model`` stayed correct. ``sac agents list`` reads</span>
+<span class="sd">    ``config.model`` (``_lifecycle._status``), the tmux runner builds</span>
+<span class="sd">    ``--model`` from it, and ``sac whoami`` prints the env — three</span>
+<span class="sd">    surfaces lying about one backend.</span>
+<span class="sd">    """</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_service_tier</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_service_tier</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._parsers</span><span class="w"> </span><span class="kn">import</span> <span class="n">MODEL_ENV_KEY</span><span class="p">,</span> <span class="n">resolve_model_surface</span>
+
+    <span class="n">validate_service_tier</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">engine</span><span class="p">)</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">engine_key</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">key</span>
+    <span class="c1"># THE SPLIT. An engine that states NO harness states no opinion, and</span>
+    <span class="c1"># an opinion nobody stated must not be written over one that was:</span>
+    <span class="c1"># this line used to assign a manufactured "anthropic" onto a spec</span>
+    <span class="c1"># that had declared ``harness: codex``. Only a harness the entry</span>
+    <span class="c1"># ACTUALLY names is applied — which is what lets ONE fleet engine</span>
+    <span class="c1"># entry serve a Claude-Code agent and a Codex agent unchanged.</span>
+    <span class="k">if</span> <span class="n">engine</span><span class="o">.</span><span class="n">harness</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">harness</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">harness</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">reasoning_effort</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">reasoning_effort</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">service_tier</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">service_tier</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">max_context_tokens</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">max_context_tokens</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">upstream_deadline_seconds</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">upstream_deadline_seconds</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">client_abandonment_seconds</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">client_abandonment_seconds</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">subscription_provider</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">subscription_provider</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">subscription_account</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">subscription_account</span>
+    <span class="n">resolved_model</span><span class="p">,</span> <span class="n">display_model</span> <span class="o">=</span> <span class="n">resolve_model_surface</span><span class="p">(</span><span class="n">engine</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">resolved_model</span>
+    <span class="n">claude</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">"claude"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">claude</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">claude</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">model</span>
+        <span class="n">claude</span><span class="o">.</span><span class="n">provider</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">provider</span>
+        <span class="c1"># A provider-backed engine authenticates with the provider's API key;</span>
+        <span class="c1"># the OAuth account the DEFAULT engine pins is not this start's, and</span>
+        <span class="c1"># the runtime refuses the two together (_apptainer_provider:</span>
+        <span class="c1"># "provider and account are mutually exclusive"). Measured</span>
+        <span class="c1"># 2026-09-05: `business --engine qwen38-27b` was refused on the peer</span>
+        <span class="c1"># with exactly that message while its spec was correct -- the fold</span>
+        <span class="c1"># had left the account in place. Clearing it here keeps the rule</span>
+        <span class="c1"># true for what actually runs; an engine without a provider keeps</span>
+        <span class="c1"># the account, because OAuth is then the only auth it has.</span>
+        <span class="k">if</span> <span class="n">engine</span><span class="o">.</span><span class="n">provider</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">claude</span><span class="o">.</span><span class="n">account</span> <span class="o">=</span> <span class="s2">""</span>
+            <span class="c1"># ...and the ROTATION POOL with it. The exclusion the runtime</span>
+            <span class="c1"># enforces is provider-vs-OAuth, not provider-vs-``account``:</span>
+            <span class="c1"># ``_claude_validation`` asserts it over ``credentials_files``</span>
+            <span class="c1"># too, but only on the RAW spec, never on the folded config.</span>
+            <span class="c1"># A spec declaring four credentials_files beside a</span>
+            <span class="c1"># provider-backed engine therefore passed validation and then</span>
+            <span class="c1"># composed the two at launch. Clearing both here keeps the</span>
+            <span class="c1"># rule true for WHAT ACTUALLY RUNS.</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">claude</span><span class="p">,</span> <span class="s2">"credentials_files"</span><span class="p">):</span>
+                <span class="n">claude</span><span class="o">.</span><span class="n">credentials_files</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">claude</span><span class="p">,</span> <span class="s2">"credentials_file"</span><span class="p">):</span>
+                <span class="n">claude</span><span class="o">.</span><span class="n">credentials_file</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">"env"</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{})</span>
+    <span class="c1"># An EXPLICIT ``spec.apptainer.env`` entry still wins, exactly as it does</span>
+    <span class="c1"># over the loader's auto-derived value: this refreshes the DERIVED half,</span>
+    <span class="c1"># it does not overrule an author who wrote the key themselves.</span>
+    <span class="n">declared_env</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">"apptainer"</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span> <span class="s2">"env"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="k">if</span> <span class="n">MODEL_ENV_KEY</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">declared_env</span><span class="p">:</span>
+        <span class="n">merged</span><span class="p">[</span><span class="n">MODEL_ENV_KEY</span><span class="p">]</span> <span class="o">=</span> <span class="n">display_model</span>
+    <span class="k">if</span> <span class="n">engine</span><span class="o">.</span><span class="n">env</span><span class="p">:</span>
+        <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">engine</span><span class="o">.</span><span class="n">env</span><span class="p">)</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">env</span> <span class="o">=</span> <span class="n">merged</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_default_engine</span><span class="p">(</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">engines</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">],</span>
+    <span class="n">spec</span><span class="p">:</span> <span class="n">Mapping</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EngineSpec</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Fold the DEFAULT engine onto ``config`` at LOAD time; return it.</span>
+
+<span class="sd">    PURE by design — no warning, no host probe, no network. ``sac agents</span>
+<span class="sd">    list`` loads every spec on the machine, so a loader that warned would</span>
+<span class="sd">    print one line per spec and contaminate ``--json``, and a loader that</span>
+<span class="sd">    probed would dial N endpoints for a command that asked no</span>
+<span class="sd">    reachability question. Both belong on the START path</span>
+<span class="sd">    (:mod:`_lifecycle._engine_select`), the same ruling that placed</span>
+<span class="sd">    ``warn_if_legacy_harness_key`` there.</span>
+
+<span class="sd">    A malformed engines block (two defaults, none, an unknown harness, a</span>
+<span class="sd">    legacy disagreement) is already a LOAD error from</span>
+<span class="sd">    ``_engine_validation.validate_engines``, which runs first; the</span>
+<span class="sd">    ``EngineDefaultError`` swallowed here is only reachable for a</span>
+<span class="sd">    hand-built dict that skipped the validator, and leaving the config on</span>
+<span class="sd">    its legacy fields is the honest outcome for a spec whose default</span>
+<span class="sd">    could not be determined.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">engines</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_precedence</span><span class="w"> </span><span class="kn">import</span> <span class="n">default_engine</span> <span class="k">as</span> <span class="n">_spec_local_default</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_precedence</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_default_for_spec</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">spec</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># No spec handed over: answer the narrower SPEC-LOCAL</span>
+            <span class="c1"># question. Reading the fleet default here would be worse</span>
+            <span class="c1"># than useless — it would apply a fleet-wide backend to a</span>
+            <span class="c1"># hand-built config whose legacy pin this function cannot</span>
+            <span class="c1"># see, which is precisely the silent repointing the</span>
+            <span class="c1"># precedence exists to prevent.</span>
+            <span class="n">selected</span> <span class="o">=</span> <span class="n">_spec_local_default</span><span class="p">(</span><span class="n">engines</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">selected</span> <span class="o">=</span> <span class="n">resolve_default_for_spec</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">engines</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="n">EngineDefaultError</span><span class="p">,</span> <span class="n">UnknownEngineError</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">selected</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">apply_engine</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">selected</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">selected</span>
+
+
+<span class="c1"># Legacy/backend conflict checks live in ``_engine_migration`` until</span>
+<span class="c1"># MIGRATION_END_CONDITION; these exports preserve the axis's import surface.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">legacy_backend</span><span class="p">(</span><span class="n">spec</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""See :func:`_engine_migration.legacy_backend`."""</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_migration</span><span class="w"> </span><span class="kn">import</span> <span class="n">legacy_backend</span> <span class="k">as</span> <span class="n">_impl</span>
+
+    <span class="k">return</span> <span class="n">_impl</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">legacy_conflict_messages</span><span class="p">(</span><span class="n">spec</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""See :func:`_engine_migration.legacy_conflict_messages`."""</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">._engine_migration</span><span class="w"> </span><span class="kn">import</span> <span class="n">legacy_conflict_messages</span> <span class="k">as</span> <span class="n">_impl</span>
+
+    <span class="k">return</span> <span class="n">_impl</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Yusuke Watanabe.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

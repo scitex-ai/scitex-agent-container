@@ -26,11 +26,12 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.config import AgentConfig, ClaudeSpec
+from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
 from scitex_agent_container.runtimes import _apptainer_auth, _apptainer_auth_bind
 from scitex_agent_container.runtimes._apptainer_auth_bind import (
     credentials_file_bind,
 )
+from scitex_agent_container.runtimes._apptainer_provider import ProviderEnvError
 
 
 @pytest.fixture
@@ -101,6 +102,65 @@ def test_sac_provider_override_gates_off_the_bind(
         runtime="apptainer",
         workdir="/tmp/flip-wd",
         claude=ClaudeSpec(credentials_file=str(creds)),
+    )
+    # Act
+    flags = credentials_file_bind(cfg)
+    # Assert
+    assert flags == []
+
+
+@pytest.mark.parametrize("harness", ["hermes", "codex", "opencode"])
+def test_non_claude_harness_never_binds_an_unused_claude_file(
+    tmp_path: Path, sandbox_env, harness: str,
+) -> None:
+    # Arrange — a missing Claude file cannot serve these harnesses' auth.
+    cfg = AgentConfig(name="other-harness", harness=harness, runtime="tui")
+    cfg.claude.credentials_file = str(tmp_path / "missing-claude.json")
+    # Act
+    flags = credentials_file_bind(cfg)
+    # Assert
+    assert flags == []
+
+
+@pytest.mark.parametrize("harness", ["anthropic", "claude-code"])
+def test_claude_family_still_refuses_a_missing_pinned_file(
+    tmp_path: Path, sandbox_env, harness: str,
+) -> None:
+    # Arrange — canonical and public alias still require their selected pin.
+    cfg = AgentConfig(name="claude", harness=harness)
+    cfg.claude.credentials_file = str(tmp_path / "missing-claude.json")
+    # Act
+    def bind():
+        return credentials_file_bind(cfg)
+
+    # Assert
+    with pytest.raises(FileNotFoundError, match="credentials_file points at"):
+        bind()
+
+
+def test_unknown_harness_is_refused_before_credentials_are_resolved(
+    tmp_path: Path, sandbox_env,
+) -> None:
+    # Arrange — an unknown selector cannot acquire a skip-auth privilege.
+    cfg = AgentConfig(name="typo", harness="unknown-harness")
+    cfg.claude.credentials_file = str(tmp_path / "missing-claude.json")
+    # Act
+    def bind():
+        return credentials_file_bind(cfg)
+
+    # Assert
+    with pytest.raises(ProviderEnvError, match="unknown harness"):
+        bind()
+
+
+def test_provider_backed_claude_keeps_its_api_key_auth_route(
+    tmp_path: Path, sandbox_env,
+) -> None:
+    # Arrange — a provider endpoint consumes its key, never this Claude pin.
+    cfg = AgentConfig(name="provider", harness="anthropic")
+    cfg.claude.credentials_file = str(tmp_path / "missing-claude.json")
+    cfg.claude.provider = ProviderSpec(
+        base_url="https://backend.invalid/v1", auth_token_env="TEST_PROVIDER_KEY"
     )
     # Act
     flags = credentials_file_bind(cfg)

@@ -426,7 +426,9 @@ def _submit_interactive(
             request_id,
             "session.steer",
             {
-                "render_user_message": True,
+                # No render flag: Hermes backend contracts are extra="forbid"
+                # and prompt.submit/session.steer accept no render_user_message
+                # (2026-09-30 wake 502s). Backend renders by default.
                 "session_id": session_id,
                 "text": text,
             },
@@ -441,7 +443,8 @@ def _submit_interactive(
         return HermesTurnReceipt("steered", "steer", session_id), request_id + 1
 
     params: dict[str, Any] = {
-        "render_user_message": True,
+        # No render_user_message: rejected by backend extra="forbid" contracts
+        # (2026-09-30 wake 502s). Backend renders the user row by default.
         "session_id": session_id,
         "text": text,
     }
@@ -506,7 +509,9 @@ def _parse_pending_clarification(
     seen: set[str] = set()
     for raw in raw_questions:
         if not isinstance(raw, dict):
-            raise HermesTuiRpcError("Hermes pending_clarify contained malformed question")
+            raise HermesTuiRpcError(
+                "Hermes pending_clarify contained malformed question"
+            )
         qid = raw.get("qid")
         question = raw.get("question")
         choices = raw.get("choices")
@@ -746,7 +751,12 @@ def execute_slash_command(
         )
     latest_seq = replay.get("latest_seq")
     epoch = replay.get("epoch")
-    if type(latest_seq) is not int or latest_seq < 0 or not isinstance(epoch, str) or not epoch:
+    if (
+        type(latest_seq) is not int
+        or latest_seq < 0
+        or not isinstance(epoch, str)
+        or not epoch
+    ):
         raise HermesTuiRpcError(
             f"Hermes event replay returned malformed watermark: {replay!r}"
         )

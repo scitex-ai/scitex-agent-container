@@ -217,6 +217,20 @@ the existing start preflight checks that exact stored-account preference and
 the auth bind resolves its snapshot. `account` is rejected on other harness
 entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
 
+### `spec.available_harnesses.hermes.failover`
+
+`accounts` maps engine keys to explicit credential environment-name lists.
+`engines` is the explicit ordered backup-engine list; omit it or use `[]` to
+refuse rather than changing model or provider. A configured slot or a usage
+balance is not proof that the selected model is admitted.
+
+`strategy` defaults to `fill_first`. Set `round_robin` to balance a declared
+account pool using Hermes' existing selector. It requires `accounts`, refuses
+unknown values, and does not discover additional accounts. Aliases of the same
+credential retain one pool member. Profile refresh preserves account cooldowns;
+exhausted pools retain the normal bounded refusal instead of unpooled fallback.
+No strategy change restarts a session or crosses an existing engine/account pin.
+
 ### `spec.available_harnesses.<key>.compression` — Hermes only
 
 Hermes context compaction is configured beside the Hermes harness that owns
@@ -319,6 +333,7 @@ spec:
 | `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
 | `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. While it is accepted, exactly ONE entry may set it: with a single entry it is the default implicitly, and two defaults, or two entries with none, are hard load errors naming the offenders. |
 | `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
+| `service_tier`       | `fast` or omitted                   | Only for a selected Codex harness with an explicit `subscription: {provider: openai, account: openai:<slug>}` engine. Generates `-c service_tier="fast"` independently of reasoning effort; other tiers, harnesses and providers are refused. Omission preserves existing generation. Codex documents `fast` as the request's `priority` tier in its [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference#service_tier). |
 | `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |
 | `timeouts`           | mapping                             | Declares the endpoint's `upstream_deadline_seconds` and the later `client_abandonment_seconds` together. The client value must be strictly greater. Hermes maps the latter to both its request and no-output stale deadlines, so slow prefill is not mistaken for a dead provider; a provider that accepts a connection and never responds still fails at that finite bound. Both values are preserved in the incarnation birth certificate. |
 | `env`                | mapping                             | Merged OVER `spec.apptainer.env` for this engine only — the escape hatch for a gateway knob sac does not model. |

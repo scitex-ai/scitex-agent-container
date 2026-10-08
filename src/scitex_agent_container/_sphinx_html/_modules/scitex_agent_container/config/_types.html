@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.24.19</title>
+  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.29.5</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
+      <script src="../../../_static/documentation_options.js?v=a4b8ebc0"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -71,7 +71,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#harness-session">Harness session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
 </ul>
@@ -87,7 +87,12 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-claude-code-account"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-key-compression-hermes-only"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-background-review"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-available-harnesses-hermes-run-budget-seconds"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../spec-reference.html#spec-comms-harness-neutral-communication"><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../spec-reference.html#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
 </ul>
 </li>
@@ -171,6 +176,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#builtin-layers">Builtin layers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#build">Build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../images.html#distributing-one-verified-artifact-to-a-fleet">Distributing one verified artifact to a fleet</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../images.html#pinning-a-custom-image">Pinning a custom image</a></li>
 </ul>
 </li>
@@ -182,7 +188,18 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engines"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engines</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engine_key"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engine_key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">AgentConfig.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.service_tier"><code class="docutils literal notranslate"><span class="pre">AgentConfig.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">AgentConfig.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -197,12 +214,19 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
@@ -217,9 +241,11 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.delegation"><code class="docutils literal notranslate"><span class="pre">AgentConfig.delegation</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home_layers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home_layers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
@@ -241,7 +267,6 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
@@ -249,14 +274,30 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec"><code class="docutils literal notranslate"><span class="pre">DelegationSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.max_concurrent_children"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.max_concurrent_children</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.worktree_isolation"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.worktree_isolation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.__init__"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError"><code class="docutils literal notranslate"><span class="pre">EngineDefaultError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineError"><code class="docutils literal notranslate"><span class="pre">EngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec"><code class="docutils literal notranslate"><span class="pre">EngineSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.key"><code class="docutils literal notranslate"><span class="pre">EngineSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.harness"><code class="docutils literal notranslate"><span class="pre">EngineSpec.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.model"><code class="docutils literal notranslate"><span class="pre">EngineSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider_declared"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider_declared</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_account"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">EngineSpec.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.service_tier"><code class="docutils literal notranslate"><span class="pre">EngineSpec.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">EngineSpec.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.env"><code class="docutils literal notranslate"><span class="pre">EngineSpec.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.is_default"><code class="docutils literal notranslate"><span class="pre">EngineSpec.is_default</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.__init__"><code class="docutils literal notranslate"><span class="pre">EngineSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
@@ -279,6 +320,24 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.target_ratio"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.target_ratio</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.tail_mode"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.tail_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.in_place"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.in_place</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetBudgetError"><code class="docutils literal notranslate"><span class="pre">HermesFleetBudgetError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.usable_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.usable_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.reserved_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.reserved_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.agent_count"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.agent_count</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.__init__"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.__init__()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
@@ -296,9 +355,11 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.extra_headers"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.extra_headers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.hermes_provider"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.hermes_provider</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -341,6 +402,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError"><code class="docutils literal notranslate"><span class="pre">UnknownEngineError</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
@@ -350,10 +412,13 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.select_engine"><code class="docutils literal notranslate"><span class="pre">select_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
 </ul>
@@ -381,6 +446,13 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust"><code class="docutils literal notranslate"><span class="pre">_detect_codex_dir_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review"><code class="docutils literal notranslate"><span class="pre">_detect_codex_hooks_review()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._CODEX_COMPOSER_MARKERS"><code class="docutils literal notranslate"><span class="pre">_CODEX_COMPOSER_MARKERS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane"><code class="docutils literal notranslate"><span class="pre">_codex_usage_limit_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal"><code class="docutils literal notranslate"><span class="pre">codex_blocking_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done"><code class="docutils literal notranslate"><span class="pre">_detect_codex_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier"><code class="docutils literal notranslate"><span class="pre">_detect_hermes_contributor_tier()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
@@ -421,7 +493,7 @@
            <div itemprop="articleBody">
              
   <h1>Source code for scitex_agent_container.config._types</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;Dataclass definitions for agent configuration.&quot;&quot;&quot;</span>
+<span></span><span class="sd">"""Dataclass definitions for agent configuration."""</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
@@ -436,18 +508,35 @@
 <span class="c1"># ApptainerSpec extracted to a sibling module (per-file line cap);</span>
 <span class="c1"># re-exported here so ``from ...config._types import ApptainerSpec`` resolves.</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._apptainer_spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">ApptainerSpec</span>  <span class="c1"># noqa: E402,F401</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_AGENT_PROVIDER</span><span class="p">,</span> <span class="n">AgentProvider</span><span class="p">,</span> <span class="n">ProviderSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._delegation_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DelegationSpec</span>  <span class="c1"># noqa: E402,F401</span>
+
+<span class="c1"># EngineSpec — one entry of the MULTI-backend ``spec.engines`` surface.</span>
+<span class="c1"># Imported for the ``AgentConfig.engines`` field type; ``_engine_types``</span>
+<span class="c1"># imports nothing from this module, so the dependency is one-way.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._engine_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">EngineSpec</span>  <span class="c1"># noqa: E402,F401</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._harness_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_AGENT_HARNESS</span><span class="p">,</span> <span class="n">AgentHarness</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">HermesCompressionSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_failover</span><span class="w"> </span><span class="kn">import</span> <span class="n">HermesFailoverSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_run_budget</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_HERMES_RUN_BUDGET_SECONDS</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_approval</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_OPENCODE_APPROVAL_POLICY</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_run_budget</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_OPENCODE_RUN_BUDGET_SECONDS</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._opencode_serve</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_OPENCODE_SERVE_PORT</span>
+
+<span class="c1"># ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:</span>
+<span class="c1"># ``from ...config._types import ProviderSpec`` is an existing import path.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>  <span class="c1"># noqa: E402,F401</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._residency_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_AGENT_RESIDENCY</span><span class="p">,</span> <span class="n">AgentResidency</span>
 
 
 <div class="viewcode-block" id="ContainerSpec">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ContainerSpec</span><span class="p">:</span>
-    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>  <span class="c1"># none | apptainer (see VALID_CONTAINER_RUNTIMES)</span>
-    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:latest&quot;</span>
+    <span class="c1"># NO engine field: apptainer is the only one — see _container_engine.</span>
+    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"scitex-agent-container:latest"</span>
     <span class="n">volumes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-    <span class="n">network</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;host&quot;</span>
-    <span class="c1"># Opt-in auto-mount of the host&#39;s ``~/.claude`` directory at</span>
+    <span class="n">network</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"host"</span>
+    <span class="c1"># Opt-in auto-mount of the host's ``~/.claude`` directory at</span>
     <span class="c1"># ``/home/agent/.claude:ro`` inside the container. Default False: the</span>
     <span class="c1"># container is the isolation boundary, and auto-mounting leaks host</span>
     <span class="c1"># identity/skills/MCP/memory into every agent — surprising default.</span>
@@ -457,112 +546,10 @@
 
 
 
-<div class="viewcode-block" id="ClaudeSpec">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec">[docs]</a>
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">ClaudeSpec</span><span class="p">:</span>
-    <span class="c1"># v3-realign: model lives under spec.claude.model (promoted from</span>
-    <span class="c1"># top-level spec.model — §3). Empty = runtime default.</span>
-    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">channels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-    <span class="n">flags</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-    <span class="c1"># v3 escape hatch (§1 invariant): splat ``**raw_options`` into</span>
-    <span class="c1"># ``ClaudeAgentOptions`` so power users can reach any SDK option</span>
-    <span class="c1"># sac doesn&#39;t model. Merged on top of curated keys; raw_options wins.</span>
-    <span class="n">raw_options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
-    <span class="c1"># Session continuity strategy. One of:</span>
-    <span class="c1">#   fresh        never pass ``-c``/``--continue`` — every launch is an</span>
-    <span class="c1">#                independent session (DEFAULT). This is the right</span>
-    <span class="c1">#                behaviour for experiment trials, where each capsule</span>
-    <span class="c1">#                run must be hermetic and must not inherit the prior</span>
-    <span class="c1">#                conversation.</span>
-    <span class="c1">#   continue     resume the latest session for this cwd (TUI: ``claude</span>
-    <span class="c1">#                -c``; SDK: auto-resume the persisted session_id). The</span>
-    <span class="c1">#                right behaviour for LONG-LIVED coordinator agents</span>
-    <span class="c1">#                (lead/head/worker/telegrammer/project-maintainer/...)</span>
-    <span class="c1">#                that must keep their working memory across restarts.</span>
-    <span class="c1">#   resume       pass --resume &lt;resume_id&gt; (explicit session ID).</span>
-    <span class="c1"># Aliases accepted at load time (parse_claude):</span>
-    <span class="c1">#   new-session, new  -&gt; fresh   (back-compat: the pre-2026-06 names)</span>
-    <span class="c1">#   continue-or-new   -&gt; continue</span>
-    <span class="c1"># NOTE the default flipped from ``continue`` to ``fresh`` (2026-06-22,</span>
-    <span class="c1"># &quot;fresh by default, opt-in continue&quot;): a spec that omits ``session``</span>
-    <span class="c1"># now starts fresh. Coordinator/long-lived roles are mapped back to</span>
-    <span class="c1"># ``continue`` BY ROLE so omitting the field keeps those agents</span>
-    <span class="c1"># continuous WITHOUT editing every deployed spec, while experiment</span>
-    <span class="c1"># capsules (non-coordinator roles) get fresh. See</span>
-    <span class="c1"># ``config/_session_continuity.py`` (``role_wants_continuity`` /</span>
-    <span class="c1"># ``default_session_for_role`` / ``_CONTINUITY_ROLES``) for the</span>
-    <span class="c1"># role-default, applied in ``config/_loaders.py`` after ``parse_claude``;</span>
-    <span class="c1"># and ``runtimes/_apptainer_inner_argv._tui_runner_argv`` for where the</span>
-    <span class="c1"># resolved mode becomes ``claude -c`` (continue) or no flag (fresh).</span>
-    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;fresh&quot;</span>
-    <span class="c1"># Only resume if the most recent session jsonl is newer than this many minutes.</span>
-    <span class="c1"># None = no age check (always resume if session exists).</span>
-    <span class="n">continue_max_age_minutes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="c1"># Explicit session ID to pass to --resume. Only used when session=&quot;resume&quot;.</span>
-    <span class="n">resume_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">auto_accept</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
-    <span class="c1"># Saved-account name (from ``sac account list``) whose credential</span>
-    <span class="c1"># snapshot this agent runs on. ``&quot;&quot;`` = the host&#39;s live</span>
-    <span class="c1"># ``~/.claude/.credentials.json`` (current default).</span>
-    <span class="c1">#</span>
-    <span class="c1"># When set, the runtime COPIES that account&#39;s ``.credentials.json``</span>
-    <span class="c1"># into the agent&#39;s own state dir at start (frozen boot-copy, not a</span>
-    <span class="c1"># live bind), so two agents pinned to two accounts never fight one</span>
-    <span class="c1"># mount. The copy is bound RW so in-container ~1h token refresh keeps</span>
-    <span class="c1"># working on the agent&#39;s private copy.</span>
-    <span class="c1">#</span>
-    <span class="c1"># Takes effect on next start/restart — a host ``/login`` does NOT</span>
-    <span class="c1"># move a pinned agent (that is the point of pinning), and changing</span>
-    <span class="c1"># this field requires ``sac agent restart`` to re-copy the snapshot.</span>
-    <span class="n">account</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="c1"># Explicit credentials-file designation (host path to a</span>
-    <span class="c1"># ``.credentials.json``). When set, the runtime BIND-MOUNTS that</span>
-    <span class="c1"># exact file WRITABLE at the in-container</span>
-    <span class="c1"># ``$HOME/.claude/.credentials.json`` — single source of truth, no</span>
-    <span class="c1"># copy. The in-container ``claude`` reads/refreshes that file</span>
-    <span class="c1"># directly, so an OAuth refresh persists straight back to the</span>
-    <span class="c1"># designated file and never desyncs from / corrupts a shared</span>
-    <span class="c1"># ``~/.claude/.credentials.json``. Designating different files for</span>
-    <span class="c1"># different agents is how multiple accounts run side by side</span>
-    <span class="c1"># (rotate by pointing agents at different credential files).</span>
-    <span class="c1">#</span>
-    <span class="c1"># Precedence: when set, this file-mount REPLACES the account /</span>
-    <span class="c1"># host dir-bind auth path (no ``CLAUDE_CONFIG_DIR`` redirect) — the</span>
-    <span class="c1"># designated file IS the agent&#39;s credentials. Mutually exclusive</span>
-    <span class="c1"># with ``provider`` (an API-key backend needs no OAuth file).</span>
-    <span class="c1">#</span>
-    <span class="c1"># Caveat (documented in ``_apptainer_auth``): a single-file bind is</span>
-    <span class="c1"># on the file&#39;s inode; a host-side atomic tmp+rename on the source</span>
-    <span class="c1"># orphans the bind. In-container ``claude`` refresh that writes</span>
-    <span class="c1"># in-place is safe; designate a path NOT concurrently atomic-renamed</span>
-    <span class="c1"># by host-side ``sac accounts``/watch-live tooling.</span>
-    <span class="n">credentials_file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="c1"># Account POOL: a list of host paths to ``.credentials.json`` files</span>
-    <span class="c1"># (one per saved account). When non-empty, the start pre-flight picks</span>
-    <span class="c1"># ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked</span>
-    <span class="c1"># and 7d-near-capped accounts, load-balanced across the fleet per</span>
-    <span class="c1"># agent name (see ``_creds.pick_healthy_account`` +</span>
-    <span class="c1"># ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and</span>
-    <span class="c1"># binds the PICKED file exactly as if it had been named in the singular</span>
-    <span class="c1"># ``credentials_file`` field. Each entry&#39;s ACCOUNT SLUG is its parent</span>
-    <span class="c1"># directory name (the fleet layout is</span>
-    <span class="c1"># ``~/.scitex/agent-container/accounts/&lt;slug&gt;/.credentials.json``), and</span>
-    <span class="c1"># that slug is the account name the quota-aware picker keys off. The</span>
-    <span class="c1"># singular ``credentials_file`` remains supported and is treated as a</span>
-    <span class="c1"># 1-element pool (pick returns it) for back-compat. Fail-loud: when NO</span>
-    <span class="c1"># listed entry has a usable (non-expired) snapshot the start aborts with</span>
-    <span class="c1"># ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``</span>
-    <span class="c1"># (an API-key backend needs no OAuth).</span>
-    <span class="n">credentials_files</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-    <span class="c1"># Vendor-agnostic backend override (see :class:`ProviderSpec`).</span>
-    <span class="c1"># When set, the SDK session runs against an Anthropic-SDK-compatible</span>
-    <span class="c1"># backend (DeepSeek, a gateway, ...) on an API key instead of</span>
-    <span class="c1"># Anthropic OAuth. ``None`` = default Anthropic backend. Mutually</span>
-    <span class="c1"># exclusive with ``account`` (an API-key backend needs no OAuth).</span>
-    <span class="n">provider</span><span class="p">:</span> <span class="n">ProviderSpec</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
-
+<span class="c1"># ClaudeSpec lives in the sibling ``_claude_spec`` module (per-file line</span>
+<span class="c1"># cap, same split as ApptainerSpec/ProviderSpec above); re-exported here</span>
+<span class="c1"># so ``from ...config._types import ClaudeSpec`` keeps resolving.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._claude_spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClaudeSpec</span>  <span class="c1"># noqa: E402,F401</span>
 
 
 <div class="viewcode-block" id="HealthSpec">
@@ -572,7 +559,7 @@
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="n">interval</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span>
     <span class="n">timeout</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span>
-    <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;multiplexer-alive&quot;</span></div>
+    <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"multiplexer-alive"</span></div>
 
 
 
@@ -584,9 +571,9 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">WatchdogSpec</span><span class="p">:</span>
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="n">interval</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.5</span>
-    <span class="n">resp_y_n</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;1&quot;</span>
-    <span class="n">resp_y_y_n</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2&quot;</span>
-    <span class="n">resp_waiting</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;/speak-and-call&quot;</span></div>
+    <span class="n">resp_y_n</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"1"</span>
+    <span class="n">resp_y_y_n</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"2"</span>
+    <span class="n">resp_waiting</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"/speak-and-call"</span></div>
 
 
 
@@ -611,26 +598,26 @@
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">AutonomousSpec</span><span class="p">:</span>
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-    <span class="n">drive_until</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DONE&quot;</span>
+    <span class="n">drive_until</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"DONE"</span>
     <span class="n">max_turns</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span>
     <span class="n">idle_kick_after_s</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">120</span>
-    <span class="n">kick_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Continue. Print DONE when finished.&quot;</span>
+    <span class="n">kick_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"Continue. Print DONE when finished."</span>
 
 
 <div class="viewcode-block" id="RestartSpec">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">RestartSpec</span><span class="p">:</span>
-    <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;never&quot;</span>  <span class="c1"># never | on-failure | always</span>
+    <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"never"</span>  <span class="c1"># never | on-failure | always</span>
     <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
     <span class="n">backoff_initial</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span>
     <span class="n">backoff_max</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span>
     <span class="n">backoff_multiplier</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
     <span class="c1"># Inode-hygiene opt-in (sac-runtime-state-hygiene incident): when</span>
-    <span class="c1"># True AND ``policy == &quot;never&quot;``, a CLEAN terminal ``sac agents stop``</span>
-    <span class="c1"># prunes this agent&#39;s runtime dir + overlay so ephemeral capsules</span>
-    <span class="c1"># don&#39;t accumulate one-per-run forever. EXPLICIT opt-in is required</span>
-    <span class="c1"># (default False) — ``policy`` itself DEFAULTS to &quot;never&quot;, so a</span>
+    <span class="c1"># True AND ``policy == "never"``, a CLEAN terminal ``sac agents stop``</span>
+    <span class="c1"># prunes this agent's runtime dir + overlay so ephemeral capsules</span>
+    <span class="c1"># don't accumulate one-per-run forever. EXPLICIT opt-in is required</span>
+    <span class="c1"># (default False) — ``policy`` itself DEFAULTS to "never", so a</span>
     <span class="c1"># persistent coordinator that merely omits a ``restart:`` block must</span>
     <span class="c1"># NOT be pruned; only specs that deliberately set this flag are.</span>
     <span class="n">prune_on_stop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></div>
@@ -640,45 +627,23 @@
 <span class="c1"># Inbound A2A surface for an agent. The SDK runner launches a sidecar</span>
 <span class="c1"># HTTP server exposing ``/v1/turn`` + ``/.well-known/agent.json``.</span>
 <span class="c1"># ``port`` semantics:</span>
-<span class="c1">#   * ``&quot;auto&quot;`` (default) — sac allocates via port_allocator at start.</span>
+<span class="c1">#   * ``"auto"`` (default) — sac allocates via port_allocator at start.</span>
 <span class="c1">#     Clients should reach the agent through ``sac listen`` (one host</span>
 <span class="c1">#     port, name-in-path); per-agent ports are internal IPC.</span>
 <span class="c1">#   * ``int``   — operator-pinned; collisions raise at start time.</span>
 <span class="c1">#   * ``None``  — sidecar disabled (no inbound HTTP).</span>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">A2ASpec</span><span class="p">:</span>
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;127.0.0.1&quot;</span>
-    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span>
+    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"127.0.0.1"</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="s2">"auto"</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">is_auto</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="o">==</span> <span class="s2">"auto"</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">is_disabled</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="ow">is</span> <span class="kc">None</span>
-
-
-<div class="viewcode-block" id="ContextManagementConfig">
-<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig">[docs]</a>
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">ContextManagementConfig</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Context-lifecycle policy for an agent.</span>
-
-<span class="sd">    Defaults mirror ``strategy=&quot;noop&quot;`` so absence of the ``context_management``</span>
-<span class="sd">    block preserves existing behavior (sensor disabled).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="n">trigger_at_percent</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">70.0</span>
-    <span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;noop&quot;</span>  <span class="c1"># &quot;compact&quot; | &quot;restart&quot; | &quot;noop&quot;</span>
-    <span class="n">warn_before_n_checks</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="n">check_interval_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span>
-    <span class="n">state_file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;~/.scitex/agent-container/state/&lt;agent&gt;.json&quot;</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">enabled</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span> <span class="o">!=</span> <span class="s2">&quot;noop&quot;</span></div>
-
 
 
 <div class="viewcode-block" id="SkillsSpec">
@@ -687,29 +652,29 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">SkillsSpec</span><span class="p">:</span>
     <span class="n">required</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># Auto-loaded at startup</span>
     <span class="n">available</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># Available but not auto-loaded</span>
-    <span class="c1"># How sac materializes the skill list into the agent&#39;s CLAUDE.md:</span>
-    <span class="c1">#   &quot;at-import&quot; — resolve each name to file paths and emit `@&lt;path&gt;` lines</span>
+    <span class="c1"># How sac materializes the skill list into the agent's CLAUDE.md:</span>
+    <span class="c1">#   "at-import" — resolve each name to file paths and emit `@&lt;path&gt;` lines</span>
     <span class="c1">#                 so Claude Code inlines the content at session start</span>
     <span class="c1">#                 (default — eager loading per Anthropic @-import).</span>
-    <span class="c1">#   &quot;block&quot;     — emit a ```skills &lt;name&gt;``` block (legacy lazy form).</span>
-    <span class="n">injection_mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;at-import&quot;</span>
+    <span class="c1">#   "block"     — emit a ```skills &lt;name&gt;``` block (legacy lazy form).</span>
+    <span class="n">injection_mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"at-import"</span>
     <span class="c1"># Strategies used to resolve a skill name → file paths in at-import mode.</span>
     <span class="c1"># Each entry runs independently; results are unioned + deduped.</span>
-    <span class="c1">#   &quot;skill-id&quot; — Anthropic-canonical: walk skill roots, for each</span>
+    <span class="c1">#   "skill-id" — Anthropic-canonical: walk skill roots, for each</span>
     <span class="c1">#                ``&lt;dir&gt;/SKILL.md`` resolve identity as</span>
     <span class="c1">#                ``frontmatter.name`` (if set) ELSE ``&lt;dir&gt;.name``.</span>
     <span class="c1">#                Match if identity equals the requested value.</span>
     <span class="c1">#                See https://docs.claude.com/en/docs/claude-code/skills.</span>
-    <span class="c1">#   &quot;tag&quot;      — files where frontmatter ``tags:`` contains the value</span>
+    <span class="c1">#   "tag"      — files where frontmatter ``tags:`` contains the value</span>
     <span class="c1">#                (orchestration extension; not in Anthropic spec but</span>
     <span class="c1">#                used by ywatanabe ``tags-expand`` pattern).</span>
-    <span class="c1">#   &quot;filename&quot; — files whose basename (without ``.md``) matches</span>
+    <span class="c1">#   "filename" — files whose basename (without ``.md``) matches</span>
     <span class="c1">#                (opt-in; broader than ``skill-id``, can over-match).</span>
-    <span class="n">match_by</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;skill-id&quot;</span><span class="p">,</span> <span class="s2">&quot;tag&quot;</span><span class="p">])</span>
+    <span class="n">match_by</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="p">[</span><span class="s2">"skill-id"</span><span class="p">,</span> <span class="s2">"tag"</span><span class="p">])</span>
     <span class="c1"># Comparison style for ``match_by`` strategies.</span>
-    <span class="c1">#   &quot;exact&quot;   — value == candidate (default)</span>
-    <span class="c1">#   &quot;partial&quot; — value substring of candidate (case-sensitive)</span>
-    <span class="n">match_style</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;exact&quot;</span></div>
+    <span class="c1">#   "exact"   — value == candidate (default)</span>
+    <span class="c1">#   "partial" — value substring of candidate (case-sensitive)</span>
+    <span class="n">match_style</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"exact"</span></div>
 
 
 
@@ -717,7 +682,7 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">HostsSpec</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Where an agent should run, in either singleton or multi-instance form.</span>
+<span class="w">    </span><span class="sd">"""Where an agent should run, in either singleton or multi-instance form.</span>
 
 <span class="sd">    Mutually exclusive — exactly one of ``host`` or ``hosts`` may be set:</span>
 
@@ -726,15 +691,15 @@
 <span class="sd">        - string: pinned to that host</span>
 <span class="sd">        - list: priority order; first available host wins (fallback chain)</span>
 <span class="sd">    * ``hosts`` (plural) — multiple instances run, one per host:</span>
-<span class="sd">        - &quot;all&quot;: one per fleet host (replaces the old per-host mode)</span>
+<span class="sd">        - "all": one per fleet host (replaces the old per-host mode)</span>
 <span class="sd">        - list of host names: one per listed host (subset)</span>
 
 <span class="sd">    Validator (in ``_validation.py``) enforces mutual exclusion + types.</span>
 <span class="sd">    Loader composes effective ids: ``hosts`` triggers the</span>
 <span class="sd">    ``&lt;name&gt;-&lt;HOST&gt;`` suffix; ``host`` keeps the bare name.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="s2">""</span>
     <span class="n">hosts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span></div>
 
 
@@ -743,7 +708,7 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.SchedulingSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">SchedulingSpec</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fleet-wide scheduling policy for an agent (shared-host layout).</span>
+<span class="w">    </span><span class="sd">"""Fleet-wide scheduling policy for an agent (shared-host layout).</span>
 
 <span class="sd">    ``mode`` controls effective-id composition and launch-skip behavior:</span>
 <span class="sd">      * ``per-host`` (default): agent is started on every host that runs</span>
@@ -755,10 +720,10 @@
 
 <span class="sd">    ``fallback-hosts`` is recorded for observability but not acted on</span>
 <span class="sd">    automatically — manual failover today.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
-    <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;per-host&quot;</span>
-    <span class="n">preferred_host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"per-host"</span>
+    <span class="n">preferred_host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
     <span class="n">fallback_hosts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span></div>
 
 
@@ -767,19 +732,19 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ListenPort">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ListenPort</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Declaration of a port/socket an external tool binds on behalf of an agent.</span>
+<span class="w">    </span><span class="sd">"""Declaration of a port/socket an external tool binds on behalf of an agent.</span>
 
 <span class="sd">    The container NEVER binds these — it just validates the shape and</span>
 <span class="sd">    echoes them in ``status --json`` so orchestrators can see what</span>
 <span class="sd">    sidecars are expected to exist. ``owner`` is free-form (e.g.</span>
-<span class="sd">    ``&quot;fleet-hub&quot;``) to identify the plugin that actually listens.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    ``"fleet-hub"``) to identify the plugin that actually listens.</span>
+<span class="sd">    """</span>
 
     <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="n">proto</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tcp&quot;</span>  <span class="c1"># tcp | udp | unix</span>
-    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># unix-socket path (when proto == &quot;unix&quot;)</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span></div>
+    <span class="n">proto</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"tcp"</span>  <span class="c1"># tcp | udp | unix</span>
+    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># unix-socket path (when proto == "unix")</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span></div>
 
 
 
@@ -787,13 +752,13 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">HookSpec</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;All hook points supported by the container.</span>
+<span class="w">    </span><span class="sd">"""All hook points supported by the container.</span>
 
 <span class="sd">    Each entry is a list of opaque commands — shell strings or http(s)</span>
 <span class="sd">    URLs. The container executes them fire-and-forget; errors are</span>
 <span class="sd">    logged but never raised to the caller. Absent keys default to</span>
 <span class="sd">    empty lists (feature disabled).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="n">pre_start</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">post_start</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
@@ -807,13 +772,13 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.counts">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">counts</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;pre_start&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pre_start</span><span class="p">),</span>
-            <span class="s2">&quot;post_start&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">post_start</span><span class="p">),</span>
-            <span class="s2">&quot;pre_stop&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pre_stop</span><span class="p">),</span>
-            <span class="s2">&quot;post_stop&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">post_stop</span><span class="p">),</span>
-            <span class="s2">&quot;on_compact&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_compact</span><span class="p">),</span>
-            <span class="s2">&quot;on_restart&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_restart</span><span class="p">),</span>
-            <span class="s2">&quot;on_diff&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_diff</span><span class="p">),</span>
+            <span class="s2">"pre_start"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pre_start</span><span class="p">),</span>
+            <span class="s2">"post_start"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">post_start</span><span class="p">),</span>
+            <span class="s2">"pre_stop"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pre_stop</span><span class="p">),</span>
+            <span class="s2">"post_stop"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">post_stop</span><span class="p">),</span>
+            <span class="s2">"on_compact"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_compact</span><span class="p">),</span>
+            <span class="s2">"on_restart"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_restart</span><span class="p">),</span>
+            <span class="s2">"on_diff"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">on_diff</span><span class="p">),</span>
         <span class="p">}</span></div>
 </div>
 
@@ -824,7 +789,7 @@
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">StartupCommand</span><span class="p">:</span>
     <span class="n">delay</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># seconds after startup</span>
-    <span class="n">command</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span></div>
+    <span class="n">command</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span></div>
 
 
 
@@ -832,41 +797,71 @@
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">AgentConfig</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parsed agent configuration from a YAML definition file.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Parsed agent configuration from a YAML definition file."""</span>
 
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="c1"># Launch-mode selector. Default ``&quot;tui&quot;`` (interactive in-apptainer</span>
-    <span class="c1"># TUI — operator directive 2026-06-15). ``&quot;claude-agent-sdk&quot;`` =</span>
-    <span class="c1"># headless SDK runner; legacy ``&quot;apptainer&quot;`` maps to the SDK runner.</span>
-    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tui&quot;</span>
-    <span class="c1"># Agent SDK family selector (top-level, sibling of ``runtime`` — NOT</span>
-    <span class="c1"># the same field as ``claude.provider`` below; see the naming-collision</span>
-    <span class="c1"># note in ``config._provider_types.AgentProvider``). Default</span>
-    <span class="c1"># &quot;anthropic&quot; = claude-agent-sdk, the only implemented family today.</span>
-    <span class="c1"># &quot;openai&quot; validates (openai-compat-1 foundation) but has no runner</span>
-    <span class="c1"># until openai-compat-2 lands — this field is inert until then.</span>
-    <span class="n">provider</span><span class="p">:</span> <span class="n">AgentProvider</span> <span class="o">=</span> <span class="n">DEFAULT_AGENT_PROVIDER</span>
+    <span class="c1"># Launch-mode selector. Default ``"tui"`` (interactive in-apptainer</span>
+    <span class="c1"># TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =</span>
+    <span class="c1"># headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.</span>
+    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"tui"</span>
+    <span class="c1"># HARNESS: which agent SDK runs the session ("anthropic" = the</span>
+    <span class="c1"># claude-agent-sdk | "openai"). Carries ``spec.harness`` or its</span>
+    <span class="c1"># DEPRECATED alias ``spec.provider`` — see ``config._harness_types``.</span>
+    <span class="n">harness</span><span class="p">:</span> <span class="n">AgentHarness</span> <span class="o">=</span> <span class="n">DEFAULT_AGENT_HARNESS</span>
+    <span class="c1"># Provenance, NOT a spec field: reached only through the alias.</span>
+    <span class="n">harness_key_is_legacy</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="c1"># ENGINES — the several named backends ``spec.engines`` declares, one</span>
+    <span class="c1"># of which THIS start runs on. Empty for a legacy single-backend spec</span>
+    <span class="c1"># (the majority of the deployed corpus), which takes the unchanged</span>
+    <span class="c1"># path. See ``config._engine_types``: the loader folds the DEFAULT</span>
+    <span class="c1"># engine onto ``harness`` / ``claude.model`` / ``claude.provider``,</span>
+    <span class="c1"># and ``sac agents start|restart --engine &lt;key&gt;`` re-folds a</span>
+    <span class="c1"># different entry for THAT start (operator answer Q2: start time</span>
+    <span class="c1"># only — no per-turn hatch, no mid-session rebinding).</span>
+    <span class="n">engines</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EngineSpec</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="c1"># Which engine key this config resolved to. "" = no engines block;</span>
+    <span class="c1"># provenance for the launch env and the birth certificate.</span>
+    <span class="n">engine_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="c1"># PER-ENGINE PARAMETERS (operator answer Q4 — parameters per model,</span>
+    <span class="c1"># reasoning_effort above all). They live on AgentConfig rather than</span>
+    <span class="c1"># on ClaudeSpec on purpose: ``_explicit_fields._claude_fields``</span>
+    <span class="c1"># derives EVERY ClaudeSpec field as a REQUIRED yaml key, so adding</span>
+    <span class="c1"># them there would red-start all ~123 deployed specs for declaring</span>
+    <span class="c1"># nothing new. Empty / None = the engine states no opinion. Delivered</span>
+    <span class="c1"># to the container by ``runtimes._apptainer_provider.engine_env_flags``.</span>
+    <span class="n">reasoning_effort</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">service_tier</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">max_context_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">upstream_deadline_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">client_abandonment_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">subscription_provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">subscription_account</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="c1"># RESIDENCY: does the daemon outlive its work? "resident" (default)</span>
+    <span class="c1"># parks awaiting more turns after a conversation completes;</span>
+    <span class="c1"># "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when</span>
+    <span class="c1"># the conversation completes. v4 step 6 — see config._residency_types.</span>
+    <span class="n">residency</span><span class="p">:</span> <span class="n">AgentResidency</span> <span class="o">=</span> <span class="n">DEFAULT_AGENT_RESIDENCY</span>
     <span class="c1"># spec.access REMOVED 2026-06-23 — host access + cwd are the single</span>
     <span class="c1"># source of truth in apptainer.binds + spec.workdir. There is no posture</span>
-    <span class="c1"># enum: a &quot;full&quot; agent declares ``- /home/&lt;user&gt;:/home/&lt;user&gt;:rw``; a</span>
+    <span class="c1"># enum: a "full" agent declares ``- /home/&lt;user&gt;:/home/&lt;user&gt;:rw``; a</span>
     <span class="c1"># capsule declares only the binds it wants. build_run_argv emits exactly</span>
-    <span class="c1"># the spec&#39;s binds + ``--pwd &lt;workdir&gt;`` and nothing implicit. A spec</span>
+    <span class="c1"># the spec's binds + ``--pwd &lt;workdir&gt;`` and nothing implicit. A spec</span>
     <span class="c1"># still carrying ``access:`` is rejected loud (config/_validation.py).</span>
     <span class="c1"># Top-level container image. Empty = use the default sac-scitex SIF.</span>
     <span class="c1"># (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)</span>
-    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;sonnet&quot;</span>
-    <span class="c1"># Empty default means &quot;use the per-agent workspace under sac&#39;s</span>
-    <span class="c1"># user-state root&quot; — resolved by `expanded_workdir` below to</span>
+    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"sonnet"</span>
+    <span class="c1"># Empty default means "use the per-agent workspace under sac's</span>
+    <span class="c1"># user-state root" — resolved by `expanded_workdir` below to</span>
     <span class="c1"># `~/.scitex/agent-container/runtime/agents/&lt;name&gt;/`. Setting</span>
     <span class="c1"># `spec.workdir` explicitly overrides that.</span>
-    <span class="n">workdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">python_venv</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># resolved venv path (post _resolve_python_venv)</span>
+    <span class="n">workdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">python_venv</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># resolved venv path (post _resolve_python_venv)</span>
     <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">env_files</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
         <span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span>
     <span class="p">)</span>  <span class="c1"># .env file paths (workspace-relative ok)</span>
-    <span class="n">screen_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">screen_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
     <span class="n">labels</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">container</span><span class="p">:</span> <span class="n">ContainerSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">ContainerSpec</span><span class="p">)</span>
     <span class="n">claude</span><span class="p">:</span> <span class="n">ClaudeSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">ClaudeSpec</span><span class="p">)</span>
@@ -874,6 +869,16 @@
     <span class="n">watchdog</span><span class="p">:</span> <span class="n">WatchdogSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">WatchdogSpec</span><span class="p">)</span>
     <span class="n">restart</span><span class="p">:</span> <span class="n">RestartSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">RestartSpec</span><span class="p">)</span>
     <span class="n">autonomous</span><span class="p">:</span> <span class="n">AutonomousSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">AutonomousSpec</span><span class="p">)</span>
+    <span class="n">hermes_background_review</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">hermes_failover</span><span class="p">:</span> <span class="n">HermesFailoverSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">HermesFailoverSpec</span><span class="p">)</span>
+    <span class="n">hermes_yolo</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">hermes_run_budget_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">DEFAULT_HERMES_RUN_BUDGET_SECONDS</span>
+    <span class="n">hermes_compression</span><span class="p">:</span> <span class="n">HermesCompressionSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
+        <span class="n">default_factory</span><span class="o">=</span><span class="n">HermesCompressionSpec</span>
+    <span class="p">)</span>
+    <span class="n">opencode_approval_policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">DEFAULT_OPENCODE_APPROVAL_POLICY</span>
+    <span class="n">opencode_run_budget_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">DEFAULT_OPENCODE_RUN_BUDGET_SECONDS</span>
+    <span class="n">opencode_serve_port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">DEFAULT_OPENCODE_SERVE_PORT</span>
     <span class="n">apptainer</span><span class="p">:</span> <span class="n">ApptainerSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">ApptainerSpec</span><span class="p">)</span>
     <span class="n">hooks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">listen</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ListenPort</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
@@ -883,9 +888,14 @@
     <span class="c1"># via the old ``spec.remote.{host,hops,user,key,...}`` block has</span>
     <span class="c1"># been retired together with ``runtimes/ssh_remote.py``.</span>
     <span class="n">skills</span><span class="p">:</span> <span class="n">SkillsSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">SkillsSpec</span><span class="p">)</span>
-    <span class="n">context_management</span><span class="p">:</span> <span class="n">ContextManagementConfig</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
-        <span class="n">default_factory</span><span class="o">=</span><span class="n">ContextManagementConfig</span>
-    <span class="p">)</span>
+    <span class="c1"># ``context_management`` was DELETED 2026-08-15, and deleting it changed</span>
+    <span class="c1"># nothing, which is the point: every one of the 109 live specs declared</span>
+    <span class="c1"># ``strategy: noop``, ``state_file`` had no reader and no writer anywhere</span>
+    <span class="c1"># in this package, and the directory it named was never created. The</span>
+    <span class="c1"># status surface hardcoded ``result["context_management"] = None``. Five</span>
+    <span class="c1"># required lines per spec, zero behaviour. The key is still TOLERATED at</span>
+    <span class="c1"># load (see _validation.py) so deployed specs keep parsing until the</span>
+    <span class="c1"># fleet sweep strips the block.</span>
     <span class="c1"># startup_commands run as SHELL commands inside the container before</span>
     <span class="c1"># the claude SDK starts. startup_prompts (separate field) carries</span>
     <span class="c1"># the claude mission. No fallback between the two.</span>
@@ -896,62 +906,77 @@
     <span class="n">startup_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="c1"># Opt-OUT switches (No-Surprise: see what an agent gets via `sac agents</span>
     <span class="c1"># explain`, then turn specific items off). Each entry is a substring matched</span>
-    <span class="c1"># against a materialized hook COMMAND (e.g. &quot;report_to_lead_on_stop&quot; drops</span>
+    <span class="c1"># against a materialized hook COMMAND (e.g. "report_to_lead_on_stop" drops</span>
     <span class="c1"># that Stop hook) or a skill @-import path. Empty = nothing excluded.</span>
     <span class="n">exclude_hooks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">exclude_skills</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">mcp_servers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
-    <span class="n">multiplexer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tmux&quot;</span>  <span class="c1"># &quot;tmux&quot; (default) or &quot;screen&quot;</span>
+    <span class="n">multiplexer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"tmux"</span>  <span class="c1"># "tmux" (default) or "screen"</span>
     <span class="n">hosts_spec</span><span class="p">:</span> <span class="n">HostsSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">HostsSpec</span><span class="p">)</span>
     <span class="n">scheduling</span><span class="p">:</span> <span class="n">SchedulingSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">SchedulingSpec</span><span class="p">)</span>
-    <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="c1"># Declarative bind-mounts: list of {&quot;src&quot;: &lt;host&gt;, &quot;dst&quot;: &lt;ctr&gt;, &quot;mode&quot;: &quot;rw&quot;|&quot;ro&quot;}.</span>
+    <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="c1"># Declarative bind-mounts: list of {"src": &lt;host&gt;, "dst": &lt;ctr&gt;, "mode": "rw"|"ro"}.</span>
     <span class="n">mounts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-    <span class="c1"># Container user. &quot;&quot; → image&#39;s USER (typically `agent`); &quot;host&quot; → host</span>
-    <span class="c1"># operator&#39;s UID:GID; &quot;&lt;uid&gt;:&lt;gid&gt;&quot; → explicit numeric. Pair with</span>
+    <span class="c1"># Container user. "" → image's USER (typically `agent`); "host" → host</span>
+    <span class="c1"># operator's UID:GID; "&lt;uid&gt;:&lt;gid&gt;" → explicit numeric. Pair with</span>
     <span class="c1"># spec.mounts + spec.env.HOME for host-shaped paths + ownership.</span>
-    <span class="n">user</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">user</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
     <span class="c1"># Inbound A2A endpoint (HTTP /v1/turn + AgentCard).</span>
     <span class="n">a2a</span><span class="p">:</span> <span class="n">A2ASpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">A2ASpec</span><span class="p">)</span>
     <span class="c1"># Phase-3 capsule-isolation: per-spec ACL policy + spawn gating.</span>
     <span class="c1"># Defaults preserve pre-Phase-3 behaviour (everything allow / true).</span>
     <span class="n">comms</span><span class="p">:</span> <span class="n">CommsSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">CommsSpec</span><span class="p">)</span>
     <span class="n">lineage</span><span class="p">:</span> <span class="n">LineageSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">LineageSpec</span><span class="p">)</span>
-    <span class="c1"># v3 ``kind`` discriminator: &quot;Agent&quot; (SDK runner) or &quot;AgentProxy&quot;</span>
+    <span class="n">delegation</span><span class="p">:</span> <span class="n">DelegationSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">DelegationSpec</span><span class="p">)</span>
+    <span class="c1"># v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"</span>
     <span class="c1"># (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any</span>
-    <span class="c1"># other value. Loader populates from raw[&quot;kind&quot;].</span>
-    <span class="n">kind</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Agent&quot;</span>
+    <span class="c1"># other value. Loader populates from raw["kind"].</span>
+    <span class="n">kind</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"Agent"</span>
     <span class="c1"># ProxySpec is only meaningful when ``kind == AgentProxy``.</span>
     <span class="c1"># Stored as ``Any`` here so this module stays import-cycle-free with</span>
     <span class="c1"># ``_proxy_types``; the actual type is ``ProxySpec | None``.</span>
     <span class="n">proxy</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="c1"># ADR-0006: spec.to_home — directory whose contents are mirrored</span>
-    <span class="c1"># into the agent&#39;s container ``$HOME`` (= ``runtime/&lt;name&gt;/home/``</span>
+    <span class="c1"># into the agent's container ``$HOME`` (= ``runtime/&lt;name&gt;/home/``</span>
     <span class="c1"># on the host) on every start. Every path under ``to_home/``</span>
     <span class="c1"># lands at the same relative path inside ``$HOME``.</span>
     <span class="c1"># Default: ``./to_home`` next to ``spec.yaml`` (auto-discovered</span>
     <span class="c1"># when this field is empty).</span>
-    <span class="n">to_home</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;./to_home&quot;</span>
+    <span class="n">to_home</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"./to_home"</span>
+    <span class="c1"># spec.to_home_layers — which to_home CASCADE layers this agent inherits,</span>
+    <span class="c1"># named explicitly so the spec states what will be merged into it instead</span>
+    <span class="c1"># of leaving it to be discovered on disk. Valid names are the cascade's own</span>
+    <span class="c1"># (``user-shared``, ``project-shared``, ``per-agent``); order is fixed by</span>
+    <span class="c1"># precedence, not by how they are listed here.</span>
+    <span class="c1">#</span>
+    <span class="c1"># ``None`` (key absent) means "inherit whatever is on disk" — today's</span>
+    <span class="c1"># implicit behaviour, kept so this field can land without changing a single</span>
+    <span class="c1"># existing agent. It is NOT the end state: measured 2026-08-09, ALL 102</span>
+    <span class="c1"># registered specs are in exactly this position, so refusing an undeclared</span>
+    <span class="c1"># spec today would strip every hook from every agent at once. The migration</span>
+    <span class="c1"># declares them first, and enforcement comes after that. Until then an</span>
+    <span class="c1"># absent value is warned about, never refused.</span>
+    <span class="n">to_home_layers</span><span class="p">:</span> <span class="s2">"list[str] | None"</span> <span class="o">=</span> <span class="kc">None</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">screen_name</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">screen_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;cld-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">screen_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"cld-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">expanded_workdir</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span><span class="p">:</span>
             <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workdir</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>
-        <span class="c1"># Per-agent default workspace — lives under sac&#39;s user-state</span>
+        <span class="c1"># Per-agent default workspace — lives under sac's user-state</span>
         <span class="c1"># tree so multiple agents stay isolated, mounts at /work</span>
         <span class="c1"># inside the container, persists across restarts. Created</span>
         <span class="c1"># lazily by the runtime adapter (apptainer bind target dir</span>
         <span class="c1"># auto-created by apptainer if missing).</span>
         <span class="k">return</span> <span class="nb">str</span><span class="p">(</span>
             <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span>
-            <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span>
-            <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span>
-            <span class="o">/</span> <span class="s2">&quot;runtime&quot;</span>
-            <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
+            <span class="o">/</span> <span class="s2">".scitex"</span>
+            <span class="o">/</span> <span class="s2">"agent-container"</span>
+            <span class="o">/</span> <span class="s2">"runtime"</span>
+            <span class="o">/</span> <span class="s2">"agents"</span>
             <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
         <span class="p">)</span></div>
 

@@ -1,5 +1,5 @@
 /* SciTeX Agents — scoped dashboard.
-   Fills the scitex_ui standalone shell's app_content block. All class names are
+   Fills the scitex_sdk/ui standalone shell's app_content block. All class names are
    prefixed `agents-` / `dot` / `pill` / `btn` and scoped under .agents-app so
    they cannot leak into the shared shell. Colors use shell CSS custom
    properties with literal fallbacks, so the app themes correctly in both dark
@@ -236,6 +236,7 @@
 .tl-agent a:hover { text-decoration: underline; color: var(--agents-cross); }
 .tl-kind { color: var(--agents-dim); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .tl-value { word-break: break-word; }
+.tl-reason { display: block; font-size: 11.5px; text-align: left; }
 .tl-source { font-size: 11.5px; }
 .tl-state {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;

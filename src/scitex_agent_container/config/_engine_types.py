@@ -143,6 +143,7 @@ ENGINE_ENTRY_KEYS = frozenset(
         "subscription",
         "default",
         "reasoning_effort",
+        "service_tier",
         "max_context_tokens",
         "timeouts",
         "env",
@@ -203,6 +204,7 @@ class EngineSpec:
     subscription_provider: str = ""
     subscription_account: str = ""
     reasoning_effort: str = ""
+    service_tier: str = ""
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
@@ -271,10 +273,9 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
         subscription_provider=_stated(subscription.get("provider")) or "",
         subscription_account=_stated(subscription.get("account")) or "",
         reasoning_effort=(_stated(entry.get("reasoning_effort")) or "").lower(),
+        service_tier=_stated(entry.get("service_tier")) or "",
         max_context_tokens=_parse_int(entry.get("max_context_tokens")),
-        upstream_deadline_seconds=_parse_int(
-            timeouts.get("upstream_deadline_seconds")
-        ),
+        upstream_deadline_seconds=_parse_int(timeouts.get("upstream_deadline_seconds")),
         client_abandonment_seconds=_parse_int(
             timeouts.get("client_abandonment_seconds")
         ),
@@ -386,8 +387,10 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     ``--model`` from it, and ``sac whoami`` prints the env — three
     surfaces lying about one backend.
     """
+    from ._engine_service_tier import validate_service_tier
     from ._parsers import MODEL_ENV_KEY, resolve_model_surface
 
+    validate_service_tier(config, engine)
     config.engine_key = engine.key
     # THE SPLIT. An engine that states NO harness states no opinion, and
     # an opinion nobody stated must not be written over one that was:
@@ -398,6 +401,7 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     if engine.harness is not None:
         config.harness = engine.harness
     config.reasoning_effort = engine.reasoning_effort
+    config.service_tier = engine.service_tier
     config.max_context_tokens = engine.max_context_tokens
     config.upstream_deadline_seconds = engine.upstream_deadline_seconds
     config.client_abandonment_seconds = engine.client_abandonment_seconds
@@ -490,11 +494,8 @@ def apply_default_engine(
     return selected
 
 
-# The MIGRATION half — reading the legacy single-backend block beside an
-# ``engines:`` block and refusing when the two disagree — lives in the
-# sibling ``_engine_migration`` module, which is meant to be DELETED
-# when MIGRATION_END_CONDITION is met. Re-exported here so callers keep
-# one import surface for the axis.
+# Legacy/backend conflict checks live in ``_engine_migration`` until
+# MIGRATION_END_CONDITION; these exports preserve the axis's import surface.
 def legacy_backend(spec: Mapping) -> dict[str, Any]:
     """See :func:`_engine_migration.legacy_backend`."""
     from ._engine_migration import legacy_backend as _impl
