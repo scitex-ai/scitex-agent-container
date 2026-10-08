@@ -795,6 +795,14 @@ exclude = [".git"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
+# In-process worktree policy assets. They must be reachable from an INSTALLED
+# sac on hosts where the repo is not on disk: the engine resolves them via
+# Path(__file__), and every launch gate hashes them. Override without code
+# changes via SAC_WORKTREE_POLICY_PATH / SAC_WORKTREE_POLICY_PROJECTION_DIR.
+"src/scitex_agent_container/_baseline_assets/worktree_policy/worktree-policy.json" = "scitex_agent_container/_baseline_assets/worktree_policy/worktree-policy.json"
+"src/scitex_agent_container/_baseline_assets/worktree_policy/generated/AGENTS.worktree-policy.md" = "scitex_agent_container/_baseline_assets/worktree_policy/generated/AGENTS.worktree-policy.md"
+"src/scitex_agent_container/_baseline_assets/worktree_policy/generated/CLAUDE.worktree-policy.md" = "scitex_agent_container/_baseline_assets/worktree_policy/generated/CLAUDE.worktree-policy.md"
+"src/scitex_agent_container/_baseline_assets/worktree_policy/generated/HERMES.worktree-policy.md" = "scitex_agent_container/_baseline_assets/worktree_policy/generated/HERMES.worktree-policy.md"
 # systemd --user unit TEMPLATES. Shipped in the wheel for the same reason the
 # cron script is: they must be reachable from an INSTALLED sac, on a host where
 # the repo is not on disk. They are templates with @PLACEHOLDER@s and nothing

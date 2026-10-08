@@ -199,8 +199,9 @@ generic provider shape. **[Full harness + model + provider reference →](docs/s
 
 **Worktree policy.** Before a new write-capable Claude, Codex, or Hermes task
 starts, the host resolves or provisions a deterministic agent-owned linked
-worktree, then invokes the neutral `scitex-worktree-policy` CLI and fails closed
-unless its context and generated projections are current and allowed. Existing
+worktree, then authorizes it against the bundled in-process policy engine and
+fails closed unless its context and generated projections are current and
+allowed. Existing
 agent work is resumed; dirty authority or conflicting ownership is preserved
 and refused. Dry-run/explain show the planned resolution without creating it.
 SAC records the returned policy/projection hashes on the incarnation and does
