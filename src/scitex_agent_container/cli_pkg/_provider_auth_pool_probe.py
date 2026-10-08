@@ -2,12 +2,11 @@
 
 from copy import deepcopy
 
-from scitex_genai.availability import probe_provider_key
-
 from ..config._engine_types import apply_engine
 from ..config._hermes_config import compile_hermes_config
 from ..config._hermes_failover import HermesFailoverSpec
 from ..runtimes._apptainer_provider import ProviderEnvError
+from ..runtimes._availability import probe_provider_key
 from ..runtimes._hermes_failover import configure_failover
 from ..runtimes._hermes_profile import _launch_plan
 from ._provider_auth_probe import (

@@ -114,8 +114,6 @@ dependencies = [
     "httpx>=0.28.1",
     # Hermes' official TUI and SAC share one gateway session over JSON-RPC.
     "websockets>=15,<16",
-    # Shared key/model probes return scitex-dev's native status protocol.
-    "scitex-genai>=0.2.3",
     "psutil>=5.9",
     # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
     # validate_proto_required_fields still references — pin until upstream
