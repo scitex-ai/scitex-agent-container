@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import contextmanager
 
 import pytest
 
@@ -12,6 +13,24 @@ from scitex_agent_container.config._provider_types import ProviderSpec
 from scitex_agent_container.runtimes import _hermes_failover as failover
 from scitex_agent_container.runtimes._apptainer_provider import resolve_provider_api_key
 from scitex_agent_container.runtimes._hermes_profile import _launch_plan
+
+
+@contextmanager
+def _env(mapping, *, delete=()):
+    """Set/unset process env without mocks, restoring every name after."""
+    names = (*mapping, *delete)
+    previous = {name: os.environ.get(name) for name in names}
+    os.environ.update(mapping)
+    for name in delete:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 @pytest.fixture
@@ -121,38 +140,141 @@ def test_profile_refresh_preserves_existing_account_cooldown(
     )
 
 
-def test_missing_first_slot_can_launch_and_becomes_available_after_install(
-    tmp_path, monkeypatch
-):
+def _recovery_config(first, second):
     config = AgentConfig(name="recovery", harness="hermes", runtime="tui")
     config.workdir = "/work"
     config.engine_key = "muse"
     config.model = "muse-spark-1.3-contributor"
-    first, second = "SAC_RECOVERY_UNINSTALLED", "SAC_RECOVERY_INSTALLED"
-    monkeypatch.delenv(first, raising=False)
-    monkeypatch.setenv(second, "synthetic-installed")
     config.claude.provider = ProviderSpec(
         hermes_provider="opencode-go", auth_token_env=first
     )
     config.hermes_failover = HermesFailoverSpec(accounts={"muse": [first, second]})
-    rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+    return config
 
-    assert (
-        failover.resolve_primary_key(config, resolve_provider_api_key)
-        == "synthetic-installed"
+
+def test_missing_first_slot_launches_on_installed_second(tmp_path):
+    # Arrange
+    first, second = "SAC_RECOVERY_UNINSTALLED", "SAC_RECOVERY_INSTALLED"
+    with _env({second: "synthetic-installed"}, delete=[first]):
+        config = _recovery_config(first, second)
+        rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+        # Act
+        primary = failover.resolve_primary_key(config, resolve_provider_api_key)
+        _, pools = failover.configure_failover(config, rendered)
+    # Assert
+    assert (primary, [r["label"] for r in pools["opencode-go"].credentials]) == (
+        "synthetic-installed",
+        [second],
     )
-    _, pools = failover.configure_failover(config, rendered)
-    assert [r["label"] for r in pools["opencode-go"].credentials] == [second]
-    assert "env:" + first in pools["opencode-go"].suppressed_sources
-    pools["opencode-go"].credentials[0]["exhausted_until"] = 2_000_000_000
-    failover.materialize_pools(tmp_path, pools)
 
-    monkeypatch.setenv(first, "synthetic-newly-installed")
-    _, pools = failover.configure_failover(config, rendered)
-    failover.materialize_pools(tmp_path, pools)
-    rows = json.loads((tmp_path / "auth.json").read_text())["credential_pool"][
-        "opencode-go"
-    ]
-    assert [row["label"] for row in rows] == [first, second]
-    assert rows[1]["exhausted_until"] == 2_000_000_000
+
+def test_missing_first_slot_is_suppressed_not_dropped(tmp_path):
+    # Arrange
+    first, second = "SAC_RECOVERY_UNINSTALLED", "SAC_RECOVERY_INSTALLED"
+    with _env({second: "synthetic-installed"}, delete=[first]):
+        config = _recovery_config(first, second)
+        rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+        # Act
+        _, pools = failover.configure_failover(config, rendered)
+    # Assert
+    assert "env:" + first in pools["opencode-go"].suppressed_sources
+
+
+def test_newly_installed_first_slot_joins_pool_and_keeps_cooldown(tmp_path):
+    # Arrange
+    first, second = "SAC_RECOVERY_UNINSTALLED", "SAC_RECOVERY_INSTALLED"
+    with _env({second: "synthetic-installed"}, delete=[first]):
+        config = _recovery_config(first, second)
+        rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+        _, pools = failover.configure_failover(config, rendered)
+        pools["opencode-go"].credentials[0]["exhausted_until"] = 2_000_000_000
+        failover.materialize_pools(tmp_path, pools)
+        # Act
+        os.environ[first] = "synthetic-newly-installed"
+        try:
+            _, pools = failover.configure_failover(config, rendered)
+            failover.materialize_pools(tmp_path, pools)
+        finally:
+            os.environ.pop(first, None)
+        rows = json.loads((tmp_path / "auth.json").read_text())["credential_pool"][
+            "opencode-go"
+        ]
+    # Assert
+    assert ([row["label"] for row in rows], rows[1]["exhausted_until"]) == (
+        [first, second],
+        2_000_000_000,
+    )
+
+
+def test_recovery_leaves_declared_accounts_untouched(tmp_path):
+    # Arrange
+    first, second = "SAC_RECOVERY_UNINSTALLED", "SAC_RECOVERY_INSTALLED"
+    with _env(
+        {first: "synthetic-newly-installed", second: "synthetic-installed"}
+    ):
+        config = _recovery_config(first, second)
+        rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+        # Act
+        _, _pools = failover.configure_failover(config, rendered)
+    # Assert
     assert config.hermes_failover.accounts["muse"] == [first, second]
+
+
+def _health_pools():
+    row = {
+        "id": "sac-old",
+        "label": "KEY_A",
+        "source": "manual:sac:KEY_A",
+        "auth_type": "api_key",
+        "access_token": "fake-old",
+    }
+    return {"provider": failover.DeclaredPool([row], [])}, row
+
+
+def test_rejected_key_stays_declared_but_marked_dead(tmp_path):
+    # Arrange
+    pools, _row = _health_pools()
+    failover.materialize_pools(tmp_path, pools)
+    path = tmp_path / "auth.json"
+    store = json.loads(path.read_text())
+    store["credential_pool"]["provider"][0].update(
+        last_status="exhausted", last_error_code=401, last_status_at=1
+    )
+    path.write_text(json.dumps(store))
+    # Act
+    failover.materialize_pools(tmp_path, pools)
+    # Assert
+    assert [(entry["id"], entry["last_status"]) for entry in _entries(tmp_path)] == [
+        ("sac-old", "dead")
+    ]
+
+
+def _entries(state_dir):
+    return json.loads((state_dir / "auth.json").read_text())["credential_pool"][
+        "provider"
+    ]
+
+
+def test_replaced_key_returns_without_carrying_old_rejection(tmp_path):
+    # Arrange
+    pools, row = _health_pools()
+    failover.materialize_pools(tmp_path, pools)
+    path = tmp_path / "auth.json"
+    store = json.loads(path.read_text())
+    store["credential_pool"]["provider"][0].update(
+        last_status="exhausted", last_error_code=401, last_status_at=1
+    )
+    path.write_text(json.dumps(store))
+    failover.materialize_pools(tmp_path, pools)
+    pools["provider"].credentials[0] = {
+        **row,
+        "id": "sac-new",
+        "access_token": "fake-new",
+    }
+    # Act
+    failover.materialize_pools(tmp_path, pools)
+    # Assert
+    assert (_entries(tmp_path)[0]["id"], "last_status" in _entries(tmp_path)[0]) == (
+        "sac-new",
+        False,
+    )

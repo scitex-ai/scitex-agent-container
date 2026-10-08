@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from dataclasses import replace
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import scitex_logging as slogging
+
+logger = slogging.getLogger(__name__)
 _ERROR_FIELDS = (
     "last_status",
     "last_status_at",

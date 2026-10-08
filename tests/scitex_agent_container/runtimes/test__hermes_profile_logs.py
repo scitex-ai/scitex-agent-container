@@ -318,6 +318,12 @@ def materialized_home_backings(tmp_path, request):
         "_launch_plan": lambda *args, **kwargs: SimpleNamespace(
             endpoint=SimpleNamespace(auth_env="SYNTHETIC_KEY")
         ),
+        "_verified_route": lambda *args, **kwargs: (
+            SimpleNamespace(endpoint=SimpleNamespace(auth_env="SYNTHETIC_KEY")),
+            {},
+            {},
+            {},
+        ),
         "compile_hermes_config": lambda *args, **kwargs: {},
         "_mcp_servers": lambda *args, **kwargs: ({}, []),
         "_sac_profile_env": lambda *args: {},

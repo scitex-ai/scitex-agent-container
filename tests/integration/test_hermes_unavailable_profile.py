@@ -1,5 +1,6 @@
 """An actual rejected HTTP probe must leave deployed configuration intact."""
 
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -10,7 +11,7 @@ from scitex_agent_container.runtimes._hermes_profile import (
 )
 
 
-def test_unavailable_key_preserves_existing_profile(tmp_path, monkeypatch):
+def test_unavailable_key_preserves_existing_profile(tmp_path):
     # Arrange
     class Reject(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -42,7 +43,8 @@ def test_unavailable_key_preserves_existing_profile(tmp_path, monkeypatch):
     config.hermes_failover = HermesFailoverSpec(
         accounts={"diagnostic": ["SAC_DIAGNOSTIC_KEY"]}
     )
-    monkeypatch.setenv("SAC_DIAGNOSTIC_KEY", "fake-rejected-key")
+    previous = os.environ.get("SAC_DIAGNOSTIC_KEY")
+    os.environ["SAC_DIAGNOSTIC_KEY"] = "fake-rejected-key"
     existing = tmp_path / "runtime/home/.hermes/config.yaml"
     existing.parent.mkdir(parents=True)
     original = b"model: {default: original-model, provider: original-provider}\n"
@@ -54,6 +56,10 @@ def test_unavailable_key_preserves_existing_profile(tmp_path, monkeypatch):
     except RuntimeError as error:
         refused = "No declared Hermes account passed" in str(error)
     finally:
+        if previous is None:
+            os.environ.pop("SAC_DIAGNOSTIC_KEY", None)
+        else:
+            os.environ["SAC_DIAGNOSTIC_KEY"] = previous
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
