@@ -1,79 +1,10 @@
 #!/usr/bin/env bash
-# Per-run scratch LIFECYCLE for the in-SIF CI scripts.
-#
-# SOURCE this file. It only defines functions — it creates nothing, removes
-# nothing and exports nothing on its own.
-#
-# ---------------------------------------------------------------------------
-# THE DEFECT THIS EXISTS FOR (measured on scitex-04-cpu-01, 2026-08-09)
-# ---------------------------------------------------------------------------
-# run-in-sif.sh, build-in-sif.sh and publish-in-sif.sh each export a per-run
-# TMPDIR under /tmp, and NOTHING ever removed it. 116 surviving directories at
-# 1.8-2.2 GB each put /tmp at 270 GB of a 393 GB root: root 100% FULL (39 MB
-# free), inodes at 92%. Twelve fleet agents live on that box, so a full root is
-# a fleet outage, not a nuisance. The pytest matrix runs 3.11/3.12/3.13, so ONE
-# CI run leaked THREE directories.
-#
-# The bug is a HOSTED-RUNNER ASSUMPTION applied to a PERSISTENT runner. On a
-# GitHub-hosted runner the whole VM is discarded after the job, so leaking
-# scratch is invisible and free. Every one of this repo's in-SIF call sites is
-# self-hosted today, where the same code is a slow outage — but `runs-on` is
-# `fromJSON(vars.CI_RUNS_ON || …)`, so re-pointing ONE repo Actions Variable
-# moves them all to hosted images with no code change. Nothing here may
-# therefore REQUIRE a persistent box: the prune tolerates an empty or absent
-# root, and no function in this file can fail a job.
-#
-# ---------------------------------------------------------------------------
-# THREE MECHANISMS, because no single one covers every way a job can end
-# ---------------------------------------------------------------------------
-#   1. ci_tmpdir_path()   ONE definition of the directory name, used by the
-#                         script that CREATES it, the step that REMOVES it and
-#                         the prune that SKIPS it. Two independent spellings of
-#                         this name is how a cleanup starts quietly missing the
-#                         directory it exists to remove.
-#
-#   2. clean-tmpdir.sh    An `if: always()` job step. Covers SUCCESS, FAILURE
-#                         and CANCELLATION. It is a SEPARATE step process the
-#                         runner starts after the work step has been torn down,
-#                         so it does not race the signals that killed that step.
-#
-#   3. ci_tmpdir_prune()  Startup sweep, called host-side from exec-in-sif.sh.
-#                         The ONLY cover for SIGKILL and reboot, where no
-#                         in-process cleanup can run by construction. That path
-#                         is real here: the runner's systemd unit is
-#                         KillMode=process / TimeoutStopSec=5min, so a service
-#                         stop signals only the supervisor and then SIGKILLs the
-#                         job's descendants.
-#
-# WHY NOT A bash TRAP — the obvious answer, which does not work here. Both
-# layers end in `exec`: exec-in-sif.sh hands off to apptainer, run-in-sif.sh
-# hands off to pytest. `exec` replaces the shell image and takes every trap with
-# it, so a `trap … EXIT` added above either line SILENTLY NEVER FIRES (verified
-# by probe, not assumed). Making one fire means deleting an `exec` that is
-# load-bearing for signal and exit-code propagation through a 45-minute pytest
-# run — autobump-release-sweep.yaml depends on that propagation by name. An
-# `if: always()` step buys the same coverage for free and cannot race a SIGTERM.
-#
-# ---------------------------------------------------------------------------
-# WHY SCRATCH IS SELECTED ON THE HOST
-# ---------------------------------------------------------------------------
-# The earlier /tmp choice was invalidated by observation on
-# scitex-compute-04 (2026-09-12): /tmp's ext4 volume had only 1.4G free when a
-# test correctly required 2G of headroom, while the dedicated node-local ext4
-# /scratch had 2.7T free. The runner's /scratch/ywatanabe is now an existing,
-# writable 0700 directory. exec-in-sif.sh resolves this root on the HOST and
-# binds it into the SIF; inner scripts never guess what the host exposes.
-#
-# HPC runner supervisors provision a node-local TMPDIR below /tmp. Prefer that
-# explicit runner allocation over GPFS: pytest tmp_path is semantically local,
-# jailed-path tests reject shared filesystems, and GPFS inherits setgid modes.
-# This is not a raw /tmp fallback; only an existing writable child exported by
-# the runner is accepted. GPFS remains the last provisioned fallback for hosts
-# without node-local runner temp. A runner with none fails before tests.
-
-# --- knobs ---------------------------------------------------------------
-# SAC_CI_TMPDIR_ROOT       explicit provisioned scratch root
-# SAC_CI_TMPDIR_MAX_AGE_H  prune age floor, hours      (default 24)
+# Source-only helpers for provisioned CI scratch. A producer records the
+# directory incarnation, job identity and current process/group birth.
+# Normal cleanup is the exact job step or the waiting host supervisor.
+# Startup prune needs an owned, quiescent group; age alone grants nothing.
+# Legacy/malformed records and unknown bare-job completion remain untouched.
+# Parent/leaf symlinks are refused and removals are time bounded.
 
 _ci_tmpdir_root() {
     if [ -n "${SAC_CI_TMPDIR_ROOT:-}" ]; then
@@ -123,9 +54,8 @@ ci_tmpdir_prefix_for_inner() {
     esac
 }
 
-# The canonical per-run scratch path. Kept byte-identical to the names the three
-# scripts already used, so this fix also reclaims the directories ALREADY on
-# disk instead of starting a second, differently-named leak beside the first.
+# The canonical per-run scratch name is unchanged. A historical directory
+# without a complete owned incarnation is retained, even when its name matches.
 ci_tmpdir_path() {
     local prefix="${1:?prefix required (ci|build|publish)}"
     local version="${2:?python version required}"
@@ -159,116 +89,143 @@ _ci_tmpdir_is_managed() {
     return 1
 }
 
-# Remove ONE scratch directory.
-#
-# IDEMPOTENT (a path already gone is success) and CONCURRENCY-SAFE (two callers
-# removing the same path both succeed). Both properties are load-bearing, not
-# defensive padding: the `always()` step and the NEXT run's prune can and do
-# fire on the same directory, and a re-run of a cancelled job re-enters here.
-#
-# THE RETURN VALUE IS HONEST: 0 only when the path is GONE. An earlier draft did
-# `rm -rf … || true; return 0`, which made clean-tmpdir.sh's `::warning::` branch
-# unreachable and printed "removing <path> (2.0G)" for a directory that was still
-# there — the exact line a human is told to grep for as proof the fix worked. A
-# cleanup that cannot report failure is a leak that reports success.
-#
-# The one failure that actually happens here is a NON-WRITABLE SUBTREE: ~10 tests
-# in this suite chmod a `tmp_path` directory to 0o555/0o000 and restore it in a
-# `finally`, and `tmp_path` lives under $TMPDIR. A worker SIGKILLed between the
-# chmod and the finally — precisely the cancellation path this fix covers — leaves
-# a subtree `rm -rf` cannot enter. So retry once after restoring owner write/search
-# bits, which is exactly what that case needs and nothing more.
-ci_tmpdir_cleanup() {
-    local d="${1:-}"
-    if ! _ci_tmpdir_is_managed "$d"; then
-        echo "::error::refusing to remove '$d' — not a managed CI scratch path" >&2
-        return 1
-    fi
-    [ -e "$d" ] || return 0
-    rm -rf -- "$d" 2>/dev/null && return 0
-    chmod -R u+rwX -- "$d" 2>/dev/null || true
-    rm -rf -- "$d" 2>/dev/null || true
-    if [ -e "$d" ]; then
-        return 1
-    fi
-    return 0
+
+# Ownership is recorded by the actual producer. Age selects candidates only.
+# Unknown legacy directories are retained rather than treated as permission.
+_ci_tmpdir_pid_start() {
+    local row rest
+    case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+    IFS= read -r row < "/proc/$1/stat" || return 1
+    rest="${row##*) }"
+    set -- $rest
+    printf '%s' "${20}"
 }
 
-# Sweep scratch left by runs that COULD NOT clean up after themselves — SIGKILL,
-# runner service stop, reboot. Called once, host-side, from exec-in-sif.sh
-# before the SIF starts. This is the disk-side sibling of that script's process
-# reap, and rests on the same reasoning its comment already spells out: AGE is
-# what separates a leftover from a live concurrent sibling.
-#
-# TWO INDEPENDENT GUARDS, because this is the one part of the fix that can cause
-# the very outage it was written to prevent:
-#
-#  (a) SELF-EXCLUSION BY RUN IDENTITY. The three matrix legs start at the SAME
-#      INSTANT on the same box and share GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT, so
-#      the 3.11 leg's prune SEES 3.12's and 3.13's live scratch. Any name
-#      carrying this run+attempt is skipped BY NAME — an exact test, not a
-#      heuristic, and it holds no matter how long a leg has been running.
-#
-#  (b) AN AGE FLOOR for every OTHER run id, because a different workflow run can
-#      legitimately be in flight on the same runner. Note what the floor
-#      actually measures: `-mmin` reads the TOP-LEVEL mtime, which only a DIRECT
-#      child of $TMPDIR refreshes (pytest's `pytest-of-*` basetemp, an
-#      XDG_CACHE_HOME entry, a `tempfile.mkdtemp()`); writes nested deeper leave
-#      it untouched. So the apparent age is at most the job's age and is often
-#      exactly it — a job that creates no direct child after setup has a mtime
-#      frozen at job start. Design to that worst case: the floor must
-#      therefore exceed the longest a job can legitimately LIVE. pytest-matrix
-#      caps at `timeout-minutes: 45`, but the release workflow's test job sets
-#      NO timeout-minutes and inherits GitHub's 6-HOUR platform default. 24 h is
-#      4x that ceiling. The asymmetry justifies erring large: too small deletes
-#      a LIVE job's scratch and produces a baffling red release, while too large
-#      only delays reclaiming disk that mechanisms 1-2 already reclaim on every
-#      normal ending. This prune is the backstop, not the workhorse.
-#
-# Never fails, never returns non-zero: a multi-user /tmp can hand us a directory
-# we may not remove, and that must not take down CI.
-ci_tmpdir_prune() {
-    local root age_h age_min run_id attempt victims d
-    root="$(_ci_tmpdir_root)"
-    [ -d "$root" ] || return 0
-    # CLAMPED, because this knob's failure mode is destructive and its input is
-    # a string. `=0` would delete a 3-minute-old concurrent run's LIVE scratch;
-    # `=abc` made `$((age_h * 60))` abort with `abc: unbound variable`, which
-    # under exec-in-sif.sh's `set -euo pipefail` failed the job before the SIF
-    # even started. Anything that is not a whole number of hours >= 1 is not a
-    # floor, so fall back to the contract default instead of honouring it.
-    age_h="${SAC_CI_TMPDIR_MAX_AGE_H:-24}"
-    case "$age_h" in
-    '' | *[!0-9]*) age_h=24 ;;
+_ci_tmpdir_group_alive() {
+    local wanted="${1:?group required}" rows member parent group state extra
+    local live=0 dead=0 unknown=0
+    kill -0 -- "-$wanted" 2>/dev/null || return 1
+    # A zombie cannot execute work or hold scratch. Direct children are waited
+    # by their supervisor; adopted nonchild reaping belongs to the runner.
+    rows="$(timeout --signal=TERM --kill-after=1s 3s ps -eo pid=,ppid=,pgid=,stat=)" || {
+        echo '::warning::owned group process metadata unknown; scratch retained' >&2
+        return 0
+    }
+    while read -r member parent group state extra; do
+        [ "$group" = "$wanted" ] || continue
+        case "$member:$parent" in *[!0-9:]*) unknown=$((unknown+1)); continue ;; esac
+        case "$state" in
+            Z*|X*) dead=$((dead+1)) ;;
+            R*|S*|D*|T*|t*|I*|W*) live=$((live+1)) ;;
+            *) unknown=$((unknown+1)) ;;
+        esac
+    done <<< "$rows"
+    echo "ci-tmpdir: remaining group members live=$live dead/nonchild=$dead unknown=$unknown (nonchild reaping unverified)" >&2
+    [ "$live" -gt 0 ] || [ "$unknown" -gt 0 ]
+}
+
+_ci_tmpdir_root_safe() {
+    local root
+    root="$(_ci_tmpdir_root)" || return 1
+    [ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]
+}
+
+ci_tmpdir_prepare() {
+    local d="${1:-}" uid dev inode mode boot pid start group group_start kind job
+    _ci_tmpdir_is_managed "$d" && _ci_tmpdir_root_safe || return 1
+    [ ! -e "$d" ] && [ ! -L "$d" ] || {
+        echo '::error::CI scratch already exists; refusing overwrite' >&2; return 1;
+    }
+    uid="$(id -u)"
+    job="${GITHUB_JOB:-none}"
+    case "$job" in ''|*[!a-zA-Z0-9_.-]*) return 1 ;; esac
+    pid="${SAC_CI_OWNER_PID:-$BASHPID}"
+    start="$(_ci_tmpdir_pid_start "$pid")" || return 1
+    [ "$start" = "${SAC_CI_OWNER_START:-$start}" ] || return 1
+    group="${SAC_CI_GROUP_PID:-0}"; group_start=0; kind=job
+    if [ "$group" != 0 ]; then
+        group_start="$(_ci_tmpdir_pid_start "$group")" || return 1
+        [ "$group_start" = "${SAC_CI_GROUP_START:-$group_start}" ] || return 1
+        kind=group
+    fi
+    IFS= read -r boot < /proc/sys/kernel/random/boot_id || return 1
+    mkdir -m 700 -- "$d" || return 1
+    read -r dev inode mode < <(stat -c '%d %i %a' -- "$d")
+    [ "$mode" = 700 ] || return 1
+    (umask 077; set -o noclobber; printf '1 %s %s %s %s %s %s %s %s %s %s %s %s\n' \
+        "$uid" "$dev" "$inode" "$boot" "$pid" "$start" "$group" "$group_start" \
+        "$kind" "${GITHUB_RUN_ID:-0}" "${GITHUB_RUN_ATTEMPT:-0}" "$job" > "$d/.sac-ci-owner")
+}
+
+_ci_tmpdir_owned() {
+    local d="${1:-}" marker schema uid dev inode boot pid start group group_start kind run attempt job extra now owner live
+    _ci_tmpdir_is_managed "$d" && _ci_tmpdir_root_safe || return 1
+    [ -d "$d" ] && [ ! -L "$d" ] && [ "$(realpath -e -- "$d")" = "$d" ] || return 1
+    marker="$d/.sac-ci-owner"
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+    [ "$(stat -c '%u:%a' -- "$marker")" = "$(id -u):600" ] || return 1
+    [ "$(wc -l < "$marker")" = 1 ] || return 1
+    read -r schema uid dev inode boot pid start group group_start kind run attempt job extra < "$marker" || return 1
+    [ "$schema" = 1 ] && [ -z "$extra" ] && \
+        [ "$(stat -c '%u:%d:%i:%a' -- "$d")" = "$uid:$dev:$inode:700" ] && [ "$uid" = "$(id -u)" ] || return 1
+    case "$pid:$start:$group:$group_start:$run:$attempt" in *[!0-9:]*) return 1 ;; esac
+    [ "$pid" -gt 0 ] && [ "$start" -gt 0 ] || return 1
+    IFS= read -r now < /proc/sys/kernel/random/boot_id || return 1
+    owner="$(_ci_tmpdir_pid_start "$pid" 2>/dev/null)" || owner=''
+    if [ "$boot" = "$now" ] && [ "$owner" = "$start" ] && [ "$pid" != "$BASHPID" ]; then
+        return 1
+    fi
+    case "$kind" in
+    group)
+        [ "$group" -gt 0 ] && [ "$group_start" -gt 0 ] || return 1
+        if [ "$boot" = "$now" ] && _ci_tmpdir_group_alive "$group"; then return 1; fi
+        ;;
+    job)
+        # A bare prepare step ends before its work step. No stale-job inference:
+        # only the same job's explicit always-cleanup may reclaim it.
+        [ "${2:-explicit}" != prune ] && [ "$group" = 0 ] && \
+            [ "$run" = "${GITHUB_RUN_ID:-0}" ] && [ "$attempt" = "${GITHUB_RUN_ATTEMPT:-0}" ] && \
+            [ "$job" = "${GITHUB_JOB:-none}" ] || return 1
+        ;;
+    *) return 1 ;;
     esac
-    [ "$age_h" -ge 1 ] 2>/dev/null || age_h=24
-    age_min=$((age_h * 60))
-    run_id="${GITHUB_RUN_ID:-0}"
-    attempt="${GITHUB_RUN_ATTEMPT:-0}"
+}
 
-    victims="$(
-        find "$root" -mindepth 1 -maxdepth 1 -type d \
-            \( -name 'ci-scitex_agent_container-*' \
-            -o -name 'build-scitex_agent_container-*' \
-            -o -name 'publish-scitex_agent_container-*' \
-            -o -name 'docs-scitex_agent_container-*' \
-            -o -name 'import-scitex_agent_container-*' \
-            -o -name 'lint-scitex_agent_container-*' \
-            -o -name 'guard-scitex_agent_container-*' \) \
-            ! -name "*-${run_id}-${attempt}-*" \
-            -mmin "+${age_min}" \
-            -print 2>/dev/null || true
-    )"
-    [ -n "$victims" ] || return 0
+ci_tmpdir_cleanup() {
+    local d="${1:-}" before
+    _ci_tmpdir_is_managed "$d" || {
+        echo "::error::refusing to remove '$d' — not a managed CI scratch path" >&2; return 1;
+    }
+    [ -e "$d" ] || { [ ! -L "$d" ]; return; }
+    _ci_tmpdir_owned "$d" "${2:-explicit}" || {
+        echo '::warning::refusing to remove unproven or live CI scratch' >&2; return 1;
+    }
+    before="$(stat -c '%u:%d:%i:%a' -- "$d")"
+    # Recheck the complete owner and directory incarnation immediately before rm.
+    _ci_tmpdir_owned "$d" "${2:-explicit}" && [ "$(stat -c '%u:%d:%i:%a' -- "$d")" = "$before" ] || return 1
+    # Restore owned directory search/write bits before rm can remove the owner
+    # record. Traversal is physical and restricted to this filesystem.
+    timeout --signal=TERM --kill-after=2s 30s find -P "$d" -xdev -type d -uid "$(id -u)" -exec chmod u+rwX -- '{}' + 2>/dev/null || return 1
+    _ci_tmpdir_owned "$d" "${2:-explicit}" || return 1
+    timeout --signal=TERM --kill-after=2s 30s rm -rf --one-file-system -- "$d" 2>/dev/null || return 1
+    [ ! -e "$d" ] && [ ! -L "$d" ]
+}
 
-    # Report every removal. A silent destructive sweep on a shared node is how
-    # the next incident gets misdiagnosed.
-    while IFS= read -r d; do
-        [ -n "$d" ] || continue
-        echo "ci-tmpdir: pruning leftover scratch (job started >${age_h}h ago): $d"
-        ci_tmpdir_cleanup "$d" || true
-    done <<EOF
-$victims
-EOF
+ci_tmpdir_prune() {
+    local root age_h age_min run_id attempt d
+    root="$(_ci_tmpdir_root)" || return 0
+    _ci_tmpdir_root_safe || return 0
+    age_h="${SAC_CI_TMPDIR_MAX_AGE_H:-24}"
+    case "$age_h" in ''|*[!0-9]*) age_h=24 ;; esac
+    [ "$age_h" -ge 1 ] && [ "$age_h" -le 8760 ] || age_h=24
+    age_min=$((age_h * 60)); run_id="${GITHUB_RUN_ID:-0}"; attempt="${GITHUB_RUN_ATTEMPT:-0}"
+    while IFS= read -r -d '' d; do
+        if _ci_tmpdir_owned "$d" prune; then
+            if ci_tmpdir_cleanup "$d" prune; then
+                echo "ci-tmpdir: pruning leftover scratch (owned and quiescent): $d"
+            fi
+        fi
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d \
+        ! -name "*-${run_id}-${attempt}-*" -mmin "+${age_min}" -print0 2>/dev/null)
     return 0
 }

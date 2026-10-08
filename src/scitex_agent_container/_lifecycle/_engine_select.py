@@ -220,11 +220,23 @@ def select_engine_at_start(
     # an engine is idempotent.
     apply_engine(config, engine)
 
+    auth_options = {}
+    policy = getattr(config, "hermes_failover", None)
+    if (
+        getattr(config, "harness", None) == "hermes"
+        and policy is not None
+        and (policy.accounts or policy.engines)
+    ):
+        # The complete declared pool is proved by native inference preflight.
+        # A missing base alias cannot decide whether sibling/fallback keys
+        # work. Declaration and harness compatibility checks still run here.
+        auth_options["check_auth_token"] = False
     verdict = engine_verdict(
         engine,
         harness=spec_harness,
         probe=engine_probe_requested(probe),
         timeout_s=timeout_s,
+        **auth_options,
     )
     agent_name = getattr(config, "name", "<unknown>")
     if verdict.refuses:

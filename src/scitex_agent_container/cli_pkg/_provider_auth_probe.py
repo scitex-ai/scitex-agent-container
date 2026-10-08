@@ -442,6 +442,13 @@ def _probe_hermes_responses_auth(
 
 def probe_provider_auth(config, *, timeout: float = 5.0) -> ProviderAuthVerdict:
     """Ask ``config``'s provider backend whether its resolved key works."""
+    policy = getattr(config, "hermes_failover", None)
+    if getattr(config, "harness", None) == "hermes" and policy is not None:
+        if policy.accounts or policy.engines:
+            from ._provider_auth_pool_probe import probe_declared_provider_auth
+
+            return probe_declared_provider_auth(config, timeout=timeout)
+
     from ..runtimes._apptainer_provider import (
         ProviderEnvError,
         provider_active,

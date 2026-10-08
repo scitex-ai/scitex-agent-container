@@ -143,7 +143,7 @@ def effective_harness(engine: EngineSpec, harness: str | None = None) -> str:
 
 
 def static_verdict(
-    engine: EngineSpec, harness: str | None = None
+    engine: EngineSpec, harness: str | None = None, *, check_auth_token: bool = True
 ) -> EngineVerdict:
     """Resolve ``engine`` against the spec text and the host environment.
 
@@ -153,6 +153,10 @@ def static_verdict(
     the same answer until someone changes the spec or the environment.
 
     ``harness`` is the SPEC's harness, used when the engine states none.
+
+    ``check_auth_token=False`` defers only the base-token existence check.
+    SAC uses this for explicitly declared Hermes pools, whose usable keys are
+    verified on the native inference path before a launch or replacement.
 
     THE PAIRING IS CHECKED FIRST, deliberately: an unsupported
     combination must be named AS a combination. Reporting it as "the
@@ -229,7 +233,7 @@ def static_verdict(
             f"set spec.{ENGINES_KEY}.{engine.key}.provider.auth_token_env to "
             "the NAME of the host env var holding the key",
         )
-    if not _resolve_token(token_env):
+    if check_auth_token and not _resolve_token(token_env):
         return _no(
             engine,
             f"the provider's auth_token_env names ${token_env}, which is "
@@ -309,6 +313,7 @@ def engine_verdict(
     harness: str | None = None,
     probe: bool = False,
     timeout_s: float = PROBE_TIMEOUT_S,
+    check_auth_token: bool = True,
 ) -> EngineVerdict:
     """Static resolution always; the live probe only when ``probe`` is set.
 
@@ -317,7 +322,7 @@ def engine_verdict(
     and dialling a socket to discover that would be slower and less
     specific.
     """
-    verdict = static_verdict(engine, harness)
+    verdict = static_verdict(engine, harness, check_auth_token=check_auth_token)
     if not verdict.honourable or not probe:
         return verdict
     return probe_verdict(engine, timeout_s=timeout_s)
