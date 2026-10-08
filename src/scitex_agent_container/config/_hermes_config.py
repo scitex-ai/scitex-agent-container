@@ -127,6 +127,13 @@ def compile_hermes_config(
             # therefore must be selected through the named-custom identity.
             "provider": f"custom:{provider_key}",
             "api_mode": api_mode,
+            # Auxiliary judge calls (goal_judge) build their own client and
+            # do NOT inherit the provider entry's extra_headers — without
+            # x-opencode-session OpenCode Go answers 400 MissingSessionID
+            # and every goal pauses after 5 transport failures. Verified live.
+            "extra_headers": {
+                "x-opencode-session": session_id,
+            },
         }
         providers_block = {provider_key: provider}
     agent: dict[str, Any] = {

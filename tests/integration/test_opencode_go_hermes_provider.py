@@ -114,6 +114,9 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
             "default": "deepseek-v4.1-flash",
             "provider": "custom:sac-opencode-go-deepseek-v4.1-flash",
             "api_mode": "chat_completions",
+            "extra_headers": {
+                "x-opencode-session": "sac:providers:opencode-go-deepseek-v4.1-flash"
+            },
         },
         "https://opencode.ai/zen/go/v1",
         "OPENCODE_GO_API_KEY",
@@ -187,6 +190,9 @@ def test_portable_alternative_resolves_exact_responses_transport(
             "default": "gpt-5.6-sol",
             "provider": "custom:sac-codex-subscription-gpt-5.6-sol",
             "api_mode": "responses",
+            "extra_headers": {
+                "x-opencode-session": "sac:providers:codex-subscription-gpt-5.6-sol"
+            },
         },
         "http://127.0.0.1:18765/v1",
         "SCITEX_GENAI_GATEWAY_API_KEY",
@@ -250,6 +256,9 @@ def test_free_engine_resolves_exact_chat_completions_transport(
             "default": "muse-spark-1.3-contributor-free",
             "provider": "custom:sac-scitex-free-muse-spark-1.3-contributor-free",
             "api_mode": "chat_completions",
+            "extra_headers": {
+                "x-opencode-session": "sac:providers:scitex-free-muse-spark-1.3-contributor-free"
+            },
         },
         "http://127.0.0.1:18779/v1",
         "SCITEX_GENAI_GATEWAY_API_KEY",
