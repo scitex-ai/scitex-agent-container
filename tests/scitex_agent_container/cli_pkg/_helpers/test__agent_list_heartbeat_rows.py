@@ -24,26 +24,26 @@ def _beat(**overrides):
         "observed_at": 100.0,
         "progress_at": 100.0,
         "progress_seq": 1,
+        "session_jsonl_delta_bytes": 0,
         "state": "idle",
         "lease_expires_at": 130.0,
         "card_id": "",
         "card_role": "",
-        "_process_alive": None,
-        "_federation_connected": True,
     }
     beat.update(overrides)
     return beat
 
 
 def test_live_lease_adds_missing_resident_with_runtime_identity() -> None:
-    # Arrange
+    # Arrange — binary verdict (CCT 4276/4299): a positive session delta
+    # in-window reads WORKING and lists as running.
     # Act
     rows = heartbeat_lease_rows(
         covered=set(),
         display_host="display",
         running_only=True,
         host_display_for=lambda host, _display: host,
-        beats=[_beat()],
+        beats=[_beat(session_jsonl_delta_bytes=512)],
         now=101.0,
     )
     # Assert
@@ -57,15 +57,16 @@ def test_live_lease_adds_missing_resident_with_runtime_identity() -> None:
     ) == (1, "scholar", "running", "vllm", "qwen3-coder", "compute-04")
 
 
-def test_expired_lease_is_not_in_running_only_view() -> None:
-    # Arrange
+def test_zero_delta_lease_is_missing_from_running_only_view() -> None:
+    # Arrange — no work evidence (zero deltas) reads DEAD, never
+    # idle/ready: excluded from the running-only view.
     # Act
     rows = heartbeat_lease_rows(
         covered=set(),
         display_host="display",
         running_only=True,
         host_display_for=lambda host, _display: host,
-        beats=[_beat(lease_expires_at=90.0)],
+        beats=[_beat(session_jsonl_delta_bytes=0)],
         now=101.0,
     )
     # Assert
@@ -87,16 +88,16 @@ def test_registry_or_instance_row_keeps_precedence() -> None:
     assert rows == []
 
 
-def test_host_process_evidence_can_classify_dead() -> None:
-    # Arrange
-    beat = _beat(_process_alive=False, _federation_connected=True)
+def test_host_process_dead_outranks_heartbeat_deltas() -> None:
+    # Arrange — a zero-delta beat (DEAD verdict) lists stopped with the
+    # binary resident_state.
     # Act
     rows = heartbeat_lease_rows(
         covered=set(),
         display_host="display",
         running_only=False,
         host_display_for=lambda host, _display: host,
-        beats=[beat],
+        beats=[_beat(session_jsonl_delta_bytes=0)],
         now=101.0,
     )
     # Assert
@@ -106,22 +107,21 @@ def test_host_process_evidence_can_classify_dead() -> None:
     )
 
 
-def test_host_process_alive_outranks_disconnected_heartbeat() -> None:
-    # Arrange
-    beat = _beat(_process_alive=True, _federation_connected=False)
+def test_working_beat_lists_running_with_binary_resident_state() -> None:
+    # Arrange — deltas alone decide; process/federation flags are gone.
     # Act
     rows = heartbeat_lease_rows(
         covered=set(),
         display_host="display",
         running_only=True,
         host_display_for=lambda host, _display: host,
-        beats=[beat],
+        beats=[_beat(session_jsonl_delta_bytes=64)],
         now=101.0,
     )
     # Assert
     assert (rows[0]["status"], rows[0]["labels"]["resident_state"]) == (
         "running",
-        "disconnected",
+        "working",
     )
 
 
@@ -138,10 +138,12 @@ def test_observer_only_hermes_row_stays_explicitly_unknown() -> None:
 
 
 def test_native_hermes_beat_overlays_progress_on_existing_row() -> None:
-    # Arrange
+    # Arrange — a delta-positive beat overlays WORKING and running.
     rows = [{"name": "scholar", "harness": "hermes", "status": "unknown"}]
     # Act
-    overlay_authoritative_heartbeats(rows, beats=[_beat()], now=101.0)
+    overlay_authoritative_heartbeats(
+        rows, beats=[_beat(session_jsonl_delta_bytes=32)], now=101.0
+    )
     # Assert
     assert (
         rows[0]["resident_state"],
@@ -149,7 +151,7 @@ def test_native_hermes_beat_overlays_progress_on_existing_row() -> None:
         rows[0]["heartbeat_boot_id"],
         rows[0]["heartbeat_progress_seq"],
         rows[0]["status"],
-    ) == ("idle", True, "boot-1", 1, "running")
+    ) == ("working", True, "boot-1", 1, "running")
 
 
 def test_direct_dead_row_outranks_fresh_heartbeat_without_process_probe() -> None:
@@ -172,8 +174,9 @@ def test_direct_dead_row_outranks_fresh_heartbeat_without_process_probe() -> Non
     ) == ("stopped", "dead", False)
 
 
-def test_direct_alive_row_outranks_disconnected_heartbeat() -> None:
-    # Arrange
+def test_direct_alive_row_stays_running_with_dead_verdict() -> None:
+    # Arrange — a directly-observed live row keeps running even when the
+    # beat shows no work evidence (binary verdict reads DEAD).
     rows = [
         {
             "name": "scholar",
@@ -185,7 +188,7 @@ def test_direct_alive_row_outranks_disconnected_heartbeat() -> None:
     # Act
     overlay_authoritative_heartbeats(
         rows,
-        beats=[_beat(_federation_connected=False)],
+        beats=[_beat(session_jsonl_delta_bytes=0)],
         now=101.0,
     )
     # Assert

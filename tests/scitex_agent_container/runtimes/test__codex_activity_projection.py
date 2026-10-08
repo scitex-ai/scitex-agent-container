@@ -62,30 +62,39 @@ def test_native_projection_uses_compiled_launch_and_existing_instance_lease(tmp_
     observation, diary = _promote(layout)
     beat = _cache(layout)
 
-    # Assert: canonical launch/thread identity and completed work reach the lease.
+    # Assert: canonical launch/thread identity and byte-delta work evidence
+    # reach the lease. First beat has no prior size baseline, so both
+    # deltas read 0 (no evidence yet) — never a fabricated positive.
+    # Counters are forbidden by the HEARTBEAT SPEC and are absent.
     assert (
         beat["writer"],
         beat["engine"],
         beat["model"],
         beat["session_id"],
-        beat["tools_started"],
-        beat["tools_completed"],
+        beat["session_jsonl_delta_bytes"],
+        beat["subagent_jsonl_delta_bytes"],
+        beat.get("turns_completed"),
+        beat.get("tools_completed"),
         beat["last_turn_status"],
         diary.instances[0][0],
         diary.instances[0][1]["session_id"],
-        diary.instances[0][1]["progress_seq"],
+        "progress_seq" in diary.instances[0][1],
+        diary.instances[0][1]["session_jsonl_delta_bytes"],
         observation.event_seq,
     ) == (
         "codex-rollout-events",
         "native-selected",
         "gpt-6.1-sol",
         THREAD,
-        1,
-        1,
+        0,
+        0,
+        None,
+        None,
         "complete",
         INSTANCE,
         THREAD,
-        4,
+        False,
+        0,
         4,
     )
 
@@ -104,15 +113,18 @@ def test_native_projection_does_not_import_stale_claude_caps_phase_or_usage(tmp_
     beat = _cache(layout)
 
     # Assert: typed UNKNOWN survives instead of stale false health/cap inference.
+    # The pre-existing session.jsonl content is a first-beat baseline, not
+    # work evidence: the delta reads 0 and no counter is fabricated.
     assert (
         beat["capacity_status"],
         beat["capped"],
         beat["current_phase"],
-        beat["turns_completed"],
+        beat.get("turns_completed"),
         beat.get("input_tokens"),
-        beat.get("session_jsonl_bytes"),
+        beat["session_jsonl_bytes"],
+        beat["session_jsonl_delta_bytes"],
         beat["authoritative_heartbeat"]["state"],
-    ) == ("unknown", None, "", 1, None, None, "idle")
+    ) == ("unknown", None, "", None, None, 38, 0, "idle")
 
 
 @pytest.mark.parametrize("manager", ["hub", "stats", "app", "ui", "cards"])
@@ -134,14 +146,17 @@ def test_five_error_zero_tool_managers_remain_blocked_with_unknown_capacity(
     beat = _cache(layout)
 
     # Assert: live runtime/accepted turn does not make these managers productive.
+    # The terminal error surfaces as blocked with zero byte-delta work
+    # evidence; step counters are forbidden and absent.
     assert (
         beat["last_turn_status"],
-        beat["tools_started"],
-        beat["tools_completed"],
+        beat.get("tools_started"),
+        beat.get("tools_completed"),
+        beat["session_jsonl_delta_bytes"],
         beat["authoritative_heartbeat"]["state"],
         beat["capped"],
         beat["capacity_status"],
-    ) == ("error", 0, 0, "blocked", None, "unknown")
+    ) == ("error", None, None, 0, "blocked", None, "unknown")
 
 
 def test_new_active_turn_can_work_while_previous_terminal_error_remains_visible(
@@ -156,18 +171,26 @@ def test_new_active_turn_can_work_while_previous_terminal_error_remains_visible(
         + _turn("task_started", turn="turn-2", timestamp=13)
         + _tool("function_call", timestamp=14)
     )
+    (layout["state"] / "session.jsonl").write_text("baseline turn output\n")
 
-    # Act: reflect both present activity and the historical error honestly.
+    # Act: baseline beat records sizes; session growth then proves work.
     _promote(layout)
+    session_log = layout["state"] / "session.jsonl"
+    session_log.write_text(
+        session_log.read_text(encoding="utf-8") + "turn-2 produced output\n"
+    )
+    _promote(layout, now=101)
     beat = _cache(layout)
 
-    # Assert: the ongoing turn is active, while its prior error is retained.
+    # Assert: session growth reads busy/active with positive byte-delta
+    # work evidence, while the prior terminal error is retained.
     assert (
         beat["state"],
         beat["authoritative_heartbeat"]["state"],
         beat["last_turn_status"],
-        beat["tools_inflight"],
-    ) == ("busy", "active", "error", 1)
+        beat["session_jsonl_delta_bytes"] > 0,
+        beat.get("tools_inflight"),
+    ) == ("busy", "active", "error", True, None)
 
 
 def _wrong_model_route(layout):

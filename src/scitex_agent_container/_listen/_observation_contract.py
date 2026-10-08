@@ -80,17 +80,13 @@ class RuntimeObservation(_Contract):
     lease_expires_at: FiniteFloat | None = None
     lease_remaining_s: FiniteFloat | None = None
     lease_expired: bool | None = None
-    resident_state: Literal["idle", "active", "blocked"] | None = None
+    resident_state: Literal["working", "dead"] | None = None
     progress_at: FiniteFloat | None = None
     progress_age_s: FiniteFloat | None = None
-    progress_seq: int | None = Field(default=None, ge=0)
-    progress_stale_s: FiniteFloat | None = None
-    progress_is_stale: bool | None = None
-    turns_accepted: int | None = Field(default=None, ge=0)
-    turns_completed: int | None = Field(default=None, ge=0)
-    tools_started: int | None = Field(default=None, ge=0)
-    tools_completed: int | None = Field(default=None, ge=0)
-    tools_inflight: int | None = Field(default=None, ge=0)
+    session_jsonl_delta_bytes: FiniteFloat | None = None
+    subagent_jsonl_delta_bytes: FiniteFloat | None = None
+    nonce_challenge: str | None = None
+    nonce_echo: str | None = None
 
 
 class AgentObservation(_Contract):

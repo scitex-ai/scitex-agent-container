@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 ALLOWED_FIELDS = frozenset(
@@ -24,6 +24,10 @@ ALLOWED_FIELDS = frozenset(
         "observed_at",
         "progress_at",
         "progress_seq",
+        "session_jsonl_delta_bytes",
+        "subagent_jsonl_delta_bytes",
+        "nonce_challenge",
+        "nonce_echo",
         "state",
         "lease_expires_at",
         "card_id",
@@ -158,7 +162,13 @@ def validate_heartbeat(
         raise AuthoritativeHeartbeatError(f"invalid resident state: {state!r}")
     seq = _integer(payload, "seq")
     monotonic_ns = _integer(payload, "monotonic_ns")
-    progress_seq = _integer(payload, "progress_seq")
+    # OPERATOR ORDER 2026-10-08 (HEARTBEAT SPEC): ``progress_seq`` is a
+    # forbidden self-reported counter — the verdict never reads it, and
+    # writers no longer send it. Accept it when present (monotonicity
+    # still enforced within a boot) but never require it.
+    progress_seq: int | None = None
+    if payload.get("progress_seq") is not None:
+        progress_seq = _integer(payload, "progress_seq")
     observed_at = _number(payload, "observed_at")
     progress_at = _number(payload, "progress_at")
     lease_expires_at = _number(payload, "lease_expires_at")
@@ -191,36 +201,220 @@ def validate_heartbeat(
                 raise AuthoritativeHeartbeatError("heartbeat sequence is duplicate/out-of-order")
             if monotonic_ns <= _integer(previous, "monotonic_ns"):
                 raise AuthoritativeHeartbeatError("heartbeat monotonic time regressed")
-            if progress_seq < _integer(previous, "progress_seq"):
-                raise AuthoritativeHeartbeatError("heartbeat progress sequence regressed")
+            if progress_seq is not None and previous.get("progress_seq") is not None:
+                if progress_seq < _integer(previous, "progress_seq"):
+                    raise AuthoritativeHeartbeatError(
+                        "heartbeat progress sequence regressed"
+                    )
         elif seq > 1:
             raise AuthoritativeHeartbeatError("new heartbeat boot must reset sequence")
     return dict(payload)
 
 
-def classify_resident_state(
+def heartbeat_delta_bytes(
     heartbeat: Mapping[str, object],
+) -> tuple[float, float]:
+    """Mechanically-measured work evidence from one beat.
+
+    Returns ``(session_jsonl_delta_bytes, subagent_jsonl_delta_bytes)`` —
+    file-size growth measured by the writer loop, never self-declared.
+    Missing, non-numeric or negative entries read as 0.0 (no evidence).
+    These two fields are the ONLY heartbeat content the verdict may read.
+    """
+    deltas = []
+    for key in ("session_jsonl_delta_bytes", "subagent_jsonl_delta_bytes"):
+        value = heartbeat.get(key, 0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            deltas.append(0.0)
+        else:
+            deltas.append(max(0.0, float(value)))
+    session_delta, subagent_delta = deltas
+    return session_delta, subagent_delta
+
+
+NONCE_DIGITS = 16
+_NONCE_MODULUS = 10**NONCE_DIGITS
+
+
+def issue_challenge_nonce() -> str:
+    """Issue a random 16-digit challenge nonce (CCT 4309).
+
+    The listen server announces one per agent; the agent echoes it
+    agentically (its own session output); listen reflects the observed
+    echo in the heartbeat. Zero-padded so the echo is greppable as a
+    fixed-width token in session.jsonl.
+    """
+    import secrets as _secrets
+
+    return f"{_secrets.randbelow(_NONCE_MODULUS):0{NONCE_DIGITS}d}"
+
+
+def _nonce_token(value: object) -> str | None:
+    if not isinstance(value, str) or len(value) != NONCE_DIGITS:
+        return None
+    if not value.isdigit():
+        return None
+    return value
+
+
+def nonce_echo_confirms(heartbeat: Mapping[str, object]) -> bool | None:
+    """Dual-confirmation check for one beat (CCT 4309).
+
+    Returns ``None`` when the beat carries no challenge (writer has not
+    enrolled in the nonce protocol — deltas alone decide). Otherwise
+    ``True`` iff the reflected echo is a byte-exact match of the
+    challenge; a missing or mismatched echo is ``False`` (failed
+    confirmation), never an error.
+    """
+    import hmac as _hmac
+
+    challenge = _nonce_token(heartbeat.get("nonce_challenge"))
+    if challenge is None:
+        return None
+    echo = _nonce_token(heartbeat.get("nonce_echo"))
+    if echo is None:
+        return False
+    return _hmac.compare_digest(challenge, echo)
+
+
+def read_challenge_nonce(state_dir: Path) -> str | None:
+    """Return the listen-issued challenge for this agent, if any.
+
+    The challenge lives in ``<state_dir>/nonce-challenge.txt`` (written
+    by ``sac listen`` when it enrolls the agent in the nonce protocol,
+    via :func:`write_challenge_nonce`). The agent learns the token when
+    listen delivers it, and echoes it agentically in its own session
+    output; promoters reflect the observed echo as ``nonce_echo``.
+    Returns ``None`` when no challenge is enrolled — beats without a
+    challenge are decided on byte deltas alone. NEVER raises.
+    """
+    try:
+        token = _nonce_token(
+            Path(state_dir).joinpath("nonce-challenge.txt").read_text(
+                encoding="utf-8"
+            ).strip()
+        )
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return token
+
+
+def write_challenge_nonce(state_dir: Path, nonce: str) -> str:
+    """Enroll (or rotate) this agent's challenge nonce (listen side).
+
+    Persists the 16-digit ``nonce`` to ``nonce-challenge.txt`` so every
+    promoter reflects the same challenge until listen rotates it.
+    Raises :class:`AuthoritativeHeartbeatError` on a malformed token.
+    """
+    token = _nonce_token(nonce)
+    if token is None:
+        raise AuthoritativeHeartbeatError("invalid challenge nonce")
+    state_path = Path(state_dir)
+    state_path.mkdir(parents=True, exist_ok=True)
+    from .._runners._atomic import atomic_write_text
+
+    atomic_write_text(state_path / "nonce-challenge.txt", token + "\n")
+    return token
+
+
+def scan_session_echo(
+    state_dir: Path, challenge: str | None, *, tail_bytes: int = 16 * 1024
+) -> str | None:
+    """Return ``challenge`` iff the session.jsonl tail contains it.
+
+    The agent proves it can respond agentically by reproducing the
+    challenge token in its own session output — the token is greppable
+    as a fixed-width 16-digit string, so a trailing slice suffices and
+    long sessions stay cheap. Anything else (no challenge enrolled,
+    no session.jsonl, token absent) is ``None``: no echo observed.
+    NEVER raises.
+    """
+    token = _nonce_token(challenge)
+    if token is None:
+        return None
+    try:
+        size = Path(state_dir).joinpath("session.jsonl").stat().st_size
+    except OSError:
+        return None
+    if size <= 0:
+        return None
+    try:
+        with Path(state_dir).joinpath("session.jsonl").open("rb") as fh:
+            if size > tail_bytes:
+                fh.seek(size - tail_bytes)
+            tail = fh.read().decode("utf-8", errors="ignore")
+    except (OSError, ValueError):
+        return None
+    return token if token in tail else None
+
+
+def classify_resident_state(
+    beats: Mapping[str, object] | Sequence[Mapping[str, object]],
     *,
     now: float,
-    process_alive: bool | None,
-    federation_connected: bool,
-    progress_stale_s: float,
+    window_s: float = 600.0,
 ) -> str:
-    """Classify one validated latest beat without collapsing UNKNOWN into death."""
-    lease_expires_at = _number(heartbeat, "lease_expires_at")
-    if process_alive is False:
+    """Binary work verdict: WORKING or DEAD, no intermediate states.
+
+    OPERATOR ORDERS 2026-10-07 (CCT 4276/4289/4291/4299/4305/4309): an
+    agent is either WORKING or DEAD. The verdict reads ONLY the two
+    mechanically-measured delta fields — ``session_jsonl_delta_bytes``
+    and ``subagent_jsonl_delta_bytes`` (file-size growth, never pane
+    rendering, so TUI presence alone can never read WORKING) — plus the
+    nonce challenge/response pair. NO liveness, NO counters
+    (``progress_seq``, ``turns/tools_completed``), NO phase
+    (``state``, ``current_phase``), NO card identity. Nothing
+    self-declared, nothing counted.
+
+    ``beats`` is the beat history for one agent (a single beat mapping
+    is accepted and treated as a one-beat history). Beats fire every
+    ~60s; ``window_s`` is the 10-minute work window: the in-window
+    deltas are SUMMED, and a positive sum reads WORKING. A lone
+    delta-positive beat inside the window implies a positive sum, so
+    latest-only callers degrade exactly to "delta > 0 recently".
+
+    Dual confirmation (CCT 4309): where the history's latest in-window
+    beat carries a challenge, its reflected echo must match, or the
+    verdict is DEAD even with positive deltas. Beats with no challenge
+    are decided on deltas alone (writer not yet enrolled).
+
+    Everything else — zero windowed deltas, no in-window beat, a stale
+    beat, a failed echo — is DEAD.
+    """
+    if isinstance(beats, Mapping):
+        history = [beats]
+    else:
+        history = list(beats)
+    current = float(now)
+    cutoff = current - float(window_s)
+    total = 0.0
+    latest_challenged: Mapping[str, object] | None = None
+    latest_observed = float("-inf")
+    for beat in history:
+        try:
+            observed_at = _number(beat, "observed_at")
+        except AuthoritativeHeartbeatError:
+            continue
+        if observed_at < cutoff or observed_at > current + DEFAULT_FUTURE_SKEW_S:
+            continue
+        session_delta, subagent_delta = heartbeat_delta_bytes(beat)
+        total += session_delta + subagent_delta
+        if observed_at >= latest_observed and _nonce_token(
+            beat.get("nonce_challenge")
+        ) is not None:
+            latest_observed = observed_at
+            latest_challenged = beat
+    if total <= 0.0:
         return "dead"
-    if not federation_connected or float(now) > lease_expires_at:
-        return "disconnected"
-    state = _text(heartbeat, "state")
-    if state == "blocked":
-        return "blocked"
-    if state == "active":
-        progress_at = _number(heartbeat, "progress_at")
-        if float(now) - progress_at > float(progress_stale_s):
-            return "stalled"
-        return "active"
-    return "idle"
+    if latest_challenged is not None and not nonce_echo_confirms(
+        latest_challenged
+    ):
+        return "dead"
+    return "working"
 
 
 def select_federated_heartbeats(
@@ -267,8 +461,14 @@ __all__ = [
     "RESIDENT_STATES",
     "classify_resident_state",
     "clear_card_lease",
+    "heartbeat_delta_bytes",
+    "issue_challenge_nonce",
+    "nonce_echo_confirms",
     "read_card_lease",
+    "read_challenge_nonce",
+    "scan_session_echo",
     "select_federated_heartbeats",
     "validate_heartbeat",
     "write_card_lease",
+    "write_challenge_nonce",
 ]

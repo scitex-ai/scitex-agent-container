@@ -68,11 +68,8 @@ def test_activity_is_explicitly_unknown_without_authoritative_signals(tmp_path) 
         "tool",
         "wait",
         "session_id",
-        "turns_accepted",
-        "turns_completed",
-        "tools_started",
-        "tools_completed",
-        "tools_inflight",
+        "session_jsonl_delta_bytes",
+        "subagent_jsonl_delta_bytes",
         "last_event_type",
         "last_turn_status",
         "last_error_code",
@@ -101,11 +98,14 @@ def test_fenced_native_api_exposes_lifecycle_counters_and_real_event_time(tmp_pa
     # Act: project only fenced native event measurements for the GUI contract.
     activity = activity_projection(layout["state"], now=110)
 
-    # Assert: tool completion is lifecycle completion; mtime and caps do not infer work.
+    # Assert: byte-delta work evidence (not counters) is lifecycle evidence;
+    # mtime and caps do not infer work. Single beat after promotion has no
+    # prior baseline, so both deltas read 0 (observed, honestly zero).
     assert (
         activity["session_id"]["value"],
-        activity["tools_started"]["value"],
-        activity["tools_completed"]["value"],
+        activity["session_jsonl_delta_bytes"]["value"],
+        activity["session_jsonl_delta_bytes"]["state"],
+        activity["subagent_jsonl_delta_bytes"]["value"],
         activity["last_turn_status"]["value"],
         activity["last_progress"]["value"],
         activity["last_progress"]["source"],
@@ -113,8 +113,9 @@ def test_fenced_native_api_exposes_lifecycle_counters_and_real_event_time(tmp_pa
         activity["capacity"]["value"],
     ) == (
         THREAD,
-        1,
-        1,
+        0,
+        "observed",
+        0,
         "complete",
         "1970-01-01T00:00:14+00:00",
         "heartbeat.authoritative_heartbeat.progress_at",
@@ -146,20 +147,19 @@ def test_unfenced_or_stale_heartbeat_cannot_publish_native_activity(
     # Act: a live pane or old cache cannot renew native event authority.
     activity = activity_projection(layout["state"], now=now)
 
-    # Assert: all native counters/session/progress are typed UNKNOWN, never zero.
+    # Assert: all native work-evidence/session/progress are typed UNKNOWN, never zero.
     assert {
         activity[key]["state"]
         for key in (
             "session_id",
-            "tools_started",
-            "tools_completed",
-            "turns_accepted",
+            "session_jsonl_delta_bytes",
+            "subagent_jsonl_delta_bytes",
             "last_progress",
         )
     } == {"unknown"}
 
 
-def test_impossible_or_bool_tool_counters_are_unknown_without_private_error_output(
+def test_impossible_or_bool_work_deltas_are_unknown_without_private_error_output(
     tmp_path,
 ):
     # Arrange: a corrupt detail vector and private full error exist beside the cache.
@@ -168,17 +168,19 @@ def test_impossible_or_bool_tool_counters_are_unknown_without_private_error_outp
     path = layout["state"] / "heartbeat.json"
     beat = json.loads(path.read_text())
     beat.update(
-        tools_started=True, tools_completed=99, last_error_message="private-error"
+        session_jsonl_delta_bytes=True,
+        subagent_jsonl_delta_bytes="garbage",
+        last_error_message="private-error",
     )
     path.write_text(json.dumps(beat))
 
-    # Act: validate the typed counter vector instead of coercing booleans/numbers.
+    # Act: validate the typed delta vector instead of coercing booleans/numbers.
     activity = activity_projection(layout["state"], now=110)
 
-    # Assert: invalid detail cannot become a trusted count or leak full errors.
+    # Assert: invalid detail cannot become trusted work evidence or leak full errors.
     assert (
-        activity["tools_started"]["state"],
-        activity["tools_completed"]["state"],
+        activity["session_jsonl_delta_bytes"]["state"],
+        activity["subagent_jsonl_delta_bytes"]["state"],
         "private-error" in repr(activity),
     ) == ("unknown", "unknown", False)
 

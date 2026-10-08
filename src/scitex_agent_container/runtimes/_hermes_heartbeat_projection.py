@@ -341,13 +341,32 @@ def promote_hermes_heartbeat_projection(
             )
             _assert_monotonic_publication(previous, observed)
             identity = dict(identity_fields or {})
+            # HEARTBEAT SPEC 2026-10-08: the resident verdict reads ONLY
+            # the two mechanically-measured byte deltas plus the nonce
+            # pair. Measure them here (file-size growth, never pane
+            # rendering) and reflect the enrolled challenge/observed echo.
+            from .._runners._heartbeat_fields import heartbeat_jsonl_fields
+            from .._state.authoritative_heartbeat import (
+                read_challenge_nonce,
+                scan_session_echo,
+            )
+
+            _jsonl_fields = heartbeat_jsonl_fields(state_dir, observed.observed_at)
+            _nonce_challenge = read_challenge_nonce(state_dir)
             resident_fields = {
                 **observed.heartbeat_fields(),
                 **identity,
                 "session_id": observed.session_id,
                 "boot_id": observed.engine_incarnation_id,
                 "progress_at": observed.activity_at,
-                "progress_seq": observed.event_seq,
+                "session_jsonl_delta_bytes": _jsonl_fields.get(
+                    "session_jsonl_delta_bytes", 0
+                ),
+                "subagent_jsonl_delta_bytes": _jsonl_fields.get(
+                    "subagent_jsonl_delta_bytes", 0
+                ),
+                "nonce_challenge": _nonce_challenge,
+                "nonce_echo": scan_session_echo(state_dir, _nonce_challenge),
             }
             write_fn(
                 state_dir,
