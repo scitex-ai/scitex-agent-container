@@ -51,8 +51,10 @@ def base_def_text() -> str:
 
 @pytest.mark.parametrize("marker", _REQUIRED_MARKERS)
 def test_base_def_installs_hermes_local_browser(base_def_text: str, marker: str) -> None:
-    # Arrange + Act
-    present = marker in base_def_text
+    # Arrange
+    text = base_def_text
+    # Act
+    present = marker in text
     # Assert
     assert present, (
         f"{marker!r} missing from apptainer-base.def — the Hermes local "
