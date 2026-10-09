@@ -39,8 +39,9 @@ def skills_group() -> None:
     Examples:
       $ sac dev skills list
       $ sac dev skills get 01_installation
-      $ sac dev skills install                      # → ~/.scitex/dev/skills/scitex-agent-container/
-      $ sac dev skills install --claude-symlink     # also expose to ~/.claude/skills/scitex/
+      $ sac dev skills install                      # → ~/.scitex/dev/skills/scitex-agent-container/ + Hermes exposure
+      $ sac dev skills install --no-hermes-symlink  # store only, skip Hermes exposure
+      $ sac dev skills install --claude-symlink     # (legacy) also expose to ~/.claude/skills/scitex/
     """
 
 
@@ -126,7 +127,13 @@ def skills_get(name: str, as_json: bool) -> None:
 @click.option(
     "--claude-symlink",
     is_flag=True,
-    help="Also expose at ~/.claude/skills/scitex/ for Claude Code consumers.",
+    help="(Legacy opt-in) also expose at ~/.claude/skills/scitex/ for Claude Code consumers.",
+)
+@click.option(
+    "--no-hermes-symlink",
+    "no_hermes_symlink",
+    is_flag=True,
+    help="Skip the default Hermes exposure at ~/.hermes/skills/scitex-agent-container/.",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without copying/linking.")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
@@ -134,6 +141,7 @@ def skills_install(
     dest: str | None,
     no_link: bool,
     claude_symlink: bool,
+    no_hermes_symlink: bool,
     dry_run: bool,
     yes: bool,
 ) -> None:
@@ -141,16 +149,21 @@ def skills_install(
 
     \b
     Default: symlink the entire `_skills/scitex-agent-container/` dir to
-    ~/.scitex/dev/skills/scitex-agent-container/ so add/rename/delete in
-    source propagates immediately.
+    ~/.scitex/dev/skills/scitex-agent-container/ (the canonical store,
+    shared with `scitex-dev dev skills install`, resolved via $SCITEX_DIR)
+    so add/rename/delete in source propagates immediately — then expose
+    the installed package to Hermes (the first-option harness) at
+    ~/.hermes/skills/scitex-agent-container/.
 
-    Use --claude-symlink to also expose at ~/.claude/skills/scitex/ for
-    Claude Code's skill loader.
+    Use --no-hermes-symlink to skip the Hermes exposure, and
+    --claude-symlink (legacy opt-in) to also expose at
+    ~/.claude/skills/scitex/ for Claude Code's skill loader.
 
     \b
     Example:
       $ sac dev skills install
-      $ sac dev skills install --claude-symlink
+      $ sac dev skills install --no-hermes-symlink
+      $ sac dev skills install --claude-symlink     # legacy Claude Code exposure
       $ sac dev skills install --no-link --dest /tmp/sac-skills
     """
     del yes  # accepted for §2 compliance; install is non-interactive
@@ -167,6 +180,9 @@ def skills_install(
     if dry_run:
         action = "copy" if no_link else "symlink"
         click.echo(f"would {action} {src} → {target}")
+        if not no_hermes_symlink:
+            hermes_link = Path.home() / ".hermes" / "skills" / PKG
+            click.echo(f"would symlink {hermes_link} → {target}")
         if claude_symlink:
             link = Path.home() / ".claude" / "skills" / "scitex"
             click.echo(f"would symlink {link} → {base}")
@@ -188,6 +204,20 @@ def skills_install(
     else:
         _os.symlink(src, target, target_is_directory=True)
         click.echo(f"linked {target} → {src}")
+
+    if not no_hermes_symlink:
+        hermes_link = Path.home() / ".hermes" / "skills" / PKG
+        hermes_link.parent.mkdir(parents=True, exist_ok=True)
+        if hermes_link.is_symlink():
+            hermes_link.unlink()
+        if not hermes_link.exists():
+            _os.symlink(target.resolve(), hermes_link, target_is_directory=True)
+            click.echo(f"linked {hermes_link} → {target}")
+        else:
+            click.echo(
+                f"warning: {hermes_link} exists and is not a symlink — skipping",
+                err=True,
+            )
 
     if claude_symlink:
         link = Path.home() / ".claude" / "skills" / "scitex"

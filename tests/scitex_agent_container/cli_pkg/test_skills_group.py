@@ -253,6 +253,29 @@ def test_install_dry_run_with_claude_symlink_announces(fake_skills_root, fragmen
     assert fragment in result.output
 
 
+def test_install_dry_run_default_announces_hermes(fake_skills_root, sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dry-run"])
+    # Assert
+    assert result.exit_code == 0, result.output
+    assert ".hermes" in result.output
+    assert "scitex-agent-container" in result.output
+
+
+def test_install_dry_run_no_hermes_symlink_suppresses(fake_skills_root, sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        skills_group, ["install", "--dry-run", "--no-hermes-symlink"]
+    )
+    # Assert
+    assert result.exit_code == 0, result.output
+    assert ".hermes" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # install — real filesystem
 # ---------------------------------------------------------------------------
@@ -409,6 +432,118 @@ def test_install_replaces_existing_dir_writes_new_files(fake_skills_root, tmp_pa
     runner.invoke(skills_group, ["install", "--dest", str(dest), "--no-link"])
     # Assert
     assert (target / "01_alpha.md").is_file()
+
+
+def test_install_hermes_symlink_default_real_exits_zero(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_install_hermes_symlink_default_real_creates_link(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    # Assert
+    assert link.is_symlink()
+
+
+def test_install_hermes_symlink_default_real_points_at_target(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    target = dest / "scitex-agent-container"
+    # Assert
+    assert link.resolve() == target.resolve()
+
+
+def test_install_hermes_symlink_default_real_exposes_skill_files(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    # Assert
+    assert (link / "01_alpha.md").is_file()
+
+
+def test_install_no_hermes_symlink_real_exits_zero(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    result = runner.invoke(
+        skills_group, ["install", "--dest", str(dest), "--no-hermes-symlink"]
+    )
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_install_no_hermes_symlink_real_creates_no_link(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    runner.invoke(
+        skills_group, ["install", "--dest", str(dest), "--no-hermes-symlink"]
+    )
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    # Assert
+    assert not link.is_symlink()
+    assert not link.exists()
+
+
+def test_install_hermes_symlink_skips_when_exists_nonlink_exits_zero(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    link.parent.mkdir(parents=True)
+    link.mkdir()  # exists as a real dir, not a symlink
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_install_hermes_symlink_skips_when_exists_nonlink_reports_skip(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    link.parent.mkdir(parents=True)
+    link.mkdir()  # exists as a real dir, not a symlink
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dest", str(dest)])
+    # Assert
+    assert "skipping" in result.output
 
 
 def test_install_claude_symlink_real_exits_zero(
