@@ -1,0 +1,25 @@
+{% extends "scitex_app/app_shell.html" %}
+{% comment %}
+Leaf-side bridge: map the documented SDK adapter onto the host shell.
+
+Page templates in this package extend "scitex_sdk/app/app_shell.html".
+That path resolves from the ``scitex_sdk.app`` Django app, which the
+standalone server installs (see _server.py / _test_settings.py) — but a
+mounted host does not have to. scitex-hub mounts the leaf's urlconf
+through its generic ``scitex.apps`` plugin mount and provides its host
+chrome at "scitex_app/app_shell.html" (project DIRS shadow; the
+scitex-app wheel ships the standalone fallback), exactly like the
+scitex-cards leaf this mirrors.
+
+Without this file an authenticated request to the mount renders
+TemplateDoesNotExist (500): anonymous traffic never reaches a template
+(the leaf's ``mount_policy.login_required`` 302s at the boundary), which
+is why the failure is invisible until login.
+
+Precedence keeps standalone byte-identical: the template loader searches
+INSTALLED_APPS in order and standalone lists ``scitex_sdk.app`` BEFORE
+this app, so the SDK-owned adapter still wins there and this shadow only
+activates where the SDK app is absent (a mounted host). Child blocks
+(``scitex_app_content``, ``extra_css``, ``extra_js``) override straight
+through to the host shell — this file defines none of its own.
+{% endcomment %}
