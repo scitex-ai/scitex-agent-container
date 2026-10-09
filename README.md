@@ -333,6 +333,7 @@ sac doctor --pollers                      # >1 live Telegram poller per bot toke
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
 sac skills list / get                     # bundled agent-facing skills
+sac dev skills install [--dry-run]        # → ~/.scitex/dev/skills/ (canonical store) + Hermes exposure
 
 # Federated scheduled jobs (delegates to scitex-dev ecosystem)
 sac dev systemd list / install / uninstall    # kind=timer|service -> ~/.config/systemd/user/sac.*
@@ -356,6 +357,26 @@ sac --help-recursive                      # full subcommand tree
 Lifecycle starts enforce [fail-closed spec authority](docs/spec-authority.md)
 in core code: a clean/current `develop` main checkout or an exactly identified
 immutable detached snapshot, with no stale-source bypass.
+
+### Agent skills (`sac dev skills`)
+
+```bash
+sac dev skills list                        # bundled skill files
+sac dev skills get 01_installation         # print one skill
+sac dev skills install                     # canonical store + Hermes exposure
+sac dev skills install --dry-run           # preview without linking
+sac dev skills install --no-hermes-symlink # store only, skip Hermes exposure
+sac dev skills install --claude-symlink    # (legacy) also expose to Claude Code
+```
+
+- **Canonical store:** `~/.scitex/dev/skills/scitex-agent-container/` — `$SCITEX_DIR`-resolved,
+  the same store `scitex-dev dev skills install` manages (single source of truth, do not fork it).
+  `~/.local/state/scitex/dev/skills/` is a legacy XDG location: the pre-existing
+  `~/.claude/skills/scitex` symlink still points there, but current `scitex-dev` installs
+  land under `~/.scitex/dev/skills/`.
+- **Hermes first:** install exposes the package at `~/.hermes/skills/scitex-agent-container/`
+  by default (Hermes is the first-option harness; Claude Code is legacy). Opt out with
+  `--no-hermes-symlink`.
 
 <details>
 <summary><strong>Python ⭐⭐</strong></summary>
