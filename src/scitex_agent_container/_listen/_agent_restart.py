@@ -88,12 +88,15 @@ def _build_detached_restart_argv(
       502 of the deadlock. The deterministic stop-if-running bounce is
       instead ``sac agents start <name> --force`` (the mechanism the
       ``fresh`` path already uses): ``--force`` stops any live instance
-      first, and with NO session flag the session then follows the SPEC
-      policy — byte-identical to what a plain ``sac agents restart``
-      resolves (``_lifecycle/_stop.py::agent_restart`` calls
-      ``agent_start(session_override=None)``) — so a resuming (non-fresh)
-      restart is preserved. ``--fresh`` is appended only for a fresh
-      (no-resume) bounce, mirroring the synchronous fresh path verbatim.
+      first. The session then MUST resume: a bare ``start --force`` with
+      no session flag follows the SPEC session policy (default fresh),
+      which fresh-boots and drops context — NOT what a plain ``sac agents
+      restart`` resolves (``_lifecycle/_stop.py::agent_restart`` passes
+      ``session_override="continue"``). The non-fresh bounce therefore
+      appends ``--continue`` explicitly, so resume-by-default holds on
+      this route too (operator directive 2026-10-10). ``--fresh`` is
+      appended only for a fresh (no-resume) bounce, mirroring the
+      synchronous fresh path verbatim.
     * stdout+stderr are appended to ``log_path`` (NEVER ``/dev/null``) so the
       bounce that necessarily outlives this process is debuggable post-hoc.
 
@@ -104,6 +107,12 @@ def _build_detached_restart_argv(
     bounce = [sac_bin, "agents", "start", name, "--force"]
     if fresh:
         bounce.append("--fresh")
+    else:
+        # Resume-by-default (operator directive 2026-10-10): without an
+        # explicit session flag ``start --force`` follows the SPEC policy
+        # (default fresh) and drops context. The restart contract is
+        # resume unless explicitly fresh.
+        bounce.append("--continue")
     bounce.append("--json")
     bounce_str = " ".join(shlex.quote(tok) for tok in bounce)
     marker = shlex.quote(
@@ -172,7 +181,7 @@ async def agent_restart(request: Request) -> JSONResponse:
     the bounce is instead handed to a detached, deferred child and the
     handler returns ``202`` + ``self_restart="scheduled"`` at once. Honours
     ``fresh``: the detached child force-bounces with ``sac agents start
-    <name> --force`` (resume, spec-policy session) or ``--force --fresh``.
+    <name> --force --continue`` (resume) or ``--force --fresh``.
     """
     name = request.path_params["name"]
 

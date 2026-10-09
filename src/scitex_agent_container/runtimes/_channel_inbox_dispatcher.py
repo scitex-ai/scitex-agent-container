@@ -20,6 +20,12 @@ from ._cards_ingress import consume as consume_cards
 
 log = slogging.getLogger(__name__)
 
+#: Owner heartbeat cadence for the dispatcher pidfile mtime. The stop
+#: path reaps a pidfile as stale only with dead-pid proof (or an ended
+#: incarnation row); the heartbeat exists so an *expired* mtime on a
+#: *live, owned* pidfile reads as "stalled owner", never as "orphan".
+HEARTBEAT_INTERVAL_S = 60.0
+
 
 class _NotificationSink:
     async def send_message(self, message: Any) -> None:
@@ -136,7 +142,48 @@ async def consume(
     await asyncio.gather(*consumers)
 
 
-def main(argv: list[str] | None = None) -> int:
+async def _heartbeat_loop(pid_path: Path, interval_s: float) -> None:
+    """Touch the pidfile mtime while this owner lives (never raises)."""
+    from ._channel_inbox_dispatcher_ownership import touch_dispatcher_pidfile
+
+    touch_dispatcher_pidfile(pid_path)
+    while True:
+        await asyncio.sleep(interval_s)
+        touch_dispatcher_pidfile(pid_path)
+
+
+async def _serve(
+    *,
+    consume_fn: Callable[..., Awaitable[None]] = consume,
+    consume_kwargs: dict[str, Any],
+    pid_path: Path,
+    heartbeat_s: float | None,
+) -> None:
+    """Run the consumer with an owner-heartbeat sibling task, if enabled.
+
+    ``heartbeat_s=None`` disables the heartbeat (tests / back-compat):
+    the consumer runs exactly as before. ``consume_fn`` is the real
+    :func:`consume` unless a test injects a short-lived stand-in.
+    """
+    if heartbeat_s is None:
+        await consume_fn(**consume_kwargs)
+        return
+    heartbeat = asyncio.create_task(_heartbeat_loop(pid_path, heartbeat_s))
+    try:
+        await consume_fn(**consume_kwargs)
+    finally:
+        heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    heartbeat_s: float | None = HEARTBEAT_INTERVAL_S,
+) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True)
     parser.add_argument("--listen-url", required=True)
@@ -147,13 +194,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--channel", action="append", dest="channels", default=[])
     args = parser.parse_args(argv)
+    try:
+        from ._channel_inbox_dispatcher_lifecycle import PID_FILENAME
+    except Exception:  # stx-allow: fallback (pidfile name is stable)
+        PID_FILENAME = "channel-inbox-dispatcher.pid"
     asyncio.run(
-        consume(
-            name=args.name,
-            listen_url=args.listen_url,
-            turn_url=args.turn_url,
-            channels=tuple(args.channels),
-            state_dir=args.state_dir,
+        _serve(
+            consume_kwargs={
+                "name": args.name,
+                "listen_url": args.listen_url,
+                "turn_url": args.turn_url,
+                "channels": tuple(args.channels),
+                "state_dir": args.state_dir,
+            },
+            pid_path=args.state_dir / PID_FILENAME,
+            heartbeat_s=heartbeat_s,
         )
     )
     return 0
