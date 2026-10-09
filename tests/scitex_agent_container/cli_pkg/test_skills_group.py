@@ -253,15 +253,42 @@ def test_install_dry_run_with_claude_symlink_announces(fake_skills_root, fragmen
     assert fragment in result.output
 
 
-def test_install_dry_run_default_announces_hermes(fake_skills_root, sandbox_home):
+def test_install_dry_run_default_exits_zero(fake_skills_root, sandbox_home):
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(skills_group, ["install", "--dry-run"])
     # Assert
     assert result.exit_code == 0, result.output
+
+
+def test_install_dry_run_default_announces_hermes(fake_skills_root, sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dry-run"])
+    # Assert
     assert ".hermes" in result.output
+
+
+def test_install_dry_run_default_announces_project(fake_skills_root, sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(skills_group, ["install", "--dry-run"])
+    # Assert
     assert "scitex-agent-container" in result.output
+
+
+def test_install_dry_run_no_hermes_symlink_exits_zero(fake_skills_root, sandbox_home):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        skills_group, ["install", "--dry-run", "--no-hermes-symlink"]
+    )
+    # Assert
+    assert result.exit_code == 0, result.output
 
 
 def test_install_dry_run_no_hermes_symlink_suppresses(fake_skills_root, sandbox_home):
@@ -272,7 +299,6 @@ def test_install_dry_run_no_hermes_symlink_suppresses(fake_skills_root, sandbox_
         skills_group, ["install", "--dry-run", "--no-hermes-symlink"]
     )
     # Assert
-    assert result.exit_code == 0, result.output
     assert ".hermes" not in result.output
 
 
@@ -513,6 +539,20 @@ def test_install_no_hermes_symlink_real_creates_no_link(
     link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
     # Assert
     assert not link.is_symlink()
+
+
+def test_install_no_hermes_symlink_real_creates_no_entry(
+    fake_skills_root, tmp_path, sandbox_home
+):
+    # Arrange
+    runner = CliRunner()
+    dest = tmp_path / "dest"
+    # Act
+    runner.invoke(
+        skills_group, ["install", "--dest", str(dest), "--no-hermes-symlink"]
+    )
+    link = sandbox_home / "home" / ".hermes" / "skills" / "scitex-agent-container"
+    # Assert
     assert not link.exists()
 
 
