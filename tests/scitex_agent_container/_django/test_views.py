@@ -810,7 +810,7 @@ def test_page_extends_the_sdk_adapter_and_fills_its_content_block(page):
     assert f'{{% extends "{_SEAM_ADAPTER}" %}}' in body and "{% block scitex_app_content %}" in body
 
 
-def test_sdk_adapter_bridge_maps_onto_the_host_shell():
+def test_sdk_adapter_bridge_extends_the_host_shell():
     # Mounted hosts do not install scitex_sdk.app, so the adapter path is
     # unresolvable there (authenticated 500 while anonymous traffic still
     # 302s at the login boundary). The leaf-side bridge re-parents the
@@ -818,9 +818,22 @@ def test_sdk_adapter_bridge_maps_onto_the_host_shell():
     # (scitex_app/app_shell.html — hub DIRS shadow when mounted, scitex-app
     # wheel fallback standalone). Standalone is unaffected: scitex_sdk.app
     # precedes this app in INSTALLED_APPS, so the SDK-owned adapter wins.
-    body = _SEAM_BRIDGE.read_text(encoding="utf-8")
+    # Arrange
+    bridge_path = _SEAM_BRIDGE
+    # Act
+    body = bridge_path.read_text(encoding="utf-8")
+    # Assert
     assert body.startswith(f'{{% extends "{_SEAM_HOST_SHELL}" %}}')
-    assert "{% block" not in body  # pure passthrough: page blocks override through
+
+
+def test_sdk_adapter_bridge_defines_no_blocks():
+    # Pure passthrough: page blocks override through to the host shell.
+    # Arrange
+    bridge_path = _SEAM_BRIDGE
+    # Act
+    body = bridge_path.read_text(encoding="utf-8")
+    # Assert
+    assert "{% block" not in body
 
 
 def test_app_config_uses_the_public_sdk_contract():
