@@ -112,7 +112,9 @@ def _request_body(protocol: str, model: str) -> dict:
         return {
             "model": model,
             "input": "SAC availability probe. Reply OK.",
-            "max_output_tokens": 1,
+            # opencode-go rejects max_output_tokens < 16 with a 400 that
+            # the gate would misread as a dead key (measured 2026-10-09).
+            "max_output_tokens": 16,
             "stream": False,
         }
     return {
