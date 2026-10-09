@@ -51,6 +51,32 @@ def _session_for(name: str) -> tuple[str, str]:
         return name, f"tui-{name}"
 
 
+def _running_sessions_hint(limit: int = 8) -> str:
+    """Comma-joined live tmux session names, or "" when none are visible.
+
+    Best-effort hint for failure notices: never raises, never blocks.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "ls", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:  # stx-allow: fallback (tmux absent/broken → no hint)
+        return ""
+    if proc.returncode != 0:
+        return ""
+    names = sorted(
+        part.strip() for part in proc.stdout.splitlines() if part.strip()
+    )
+    if not names:
+        return ""
+    shown = names[:limit]
+    more = "" if len(names) <= limit else f", +{len(names) - limit} more"
+    return ", ".join(shown) + more
+
+
 def _classify_agent_host(name: str) -> tuple[str, str | None]:
     """Return ``(kind, peer)`` for the agent's ``spec.host``.
 
@@ -175,9 +201,11 @@ def attach(name: str) -> None:
     except FileNotFoundError:  # stx-allow: fallback (tmux absent → no session)
         exists = False
     if not exists:
+        running = _running_sessions_hint()
         system_msg(
             f"no running session '{session}' for agent '{agent}'. "
-            f"Start it first: `sac agents start {agent}`.",
+            f"Start it first: `sac agents start {agent}`."
+            + (f" Running now: {running}." if running else ""),
             style="red",
         )
         raise SystemExit(1)

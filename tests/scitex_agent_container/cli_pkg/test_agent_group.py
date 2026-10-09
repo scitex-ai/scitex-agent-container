@@ -83,3 +83,39 @@ def test_agents_terminal_delivery_command_is_retired() -> None:
     registered = "deliver" in commands
     # Assert
     assert registered is False
+
+
+def test_agents_help_has_no_other_section() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — every command is categorized, so no Other bucket renders.
+    assert "\nOther:" not in result.output
+
+
+def test_agents_fork_lists_under_lifecycle_category() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — `fork` follows the Lifecycle section header.
+    assert result.output.index("fork") > result.output.index("Lifecycle:")
+
+
+def test_agents_relocate_lists_under_lifecycle_category() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — `relocate` follows the Lifecycle section header.
+    assert result.output.index("relocate") > result.output.index("Lifecycle:")
+
+
+def test_agents_whoami_lists_under_discovery_category() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — `whoami` follows the Discovery section header.
+    assert result.output.index("whoami") > result.output.index("Discovery:")
