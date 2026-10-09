@@ -30,7 +30,7 @@ start-half sees "already running -> no-op" and returns a confusing 502
 (incident 2026-07-12). When the resolved ``caller`` equals ``name`` the
 handler instead spawns a fully-detached, deferred bounce (``setsid`` +
 ``start_new_session``) that sleeps a few seconds so THIS response flushes
-first, then restarts the agent, and returns ``202`` with
+first, then force-bounces the agent, and returns ``202`` with
 ``self_restart="scheduled"`` immediately. An external / admin restart
 (caller is None, or caller != name) keeps the synchronous path unchanged.
 """
@@ -70,7 +70,6 @@ def _build_detached_restart_argv(
     fresh: bool,
     delay_s: int,
     log_path: str,
-    drain_timeout_s: float = 0.0,
 ) -> list[str]:
     """Build the fully-detached, deferred self-restart command (PURE — no I/O).
 
@@ -82,9 +81,22 @@ def _build_detached_restart_argv(
     * ``sleep <delay_s>`` defers the bounce past this handler's 202 flush so
       the caller's restart tool-call returns cleanly before the caller is
       bounced (see :data:`_SELF_RESTART_DELAY_S`).
-    * ``<bounce>`` uses ``sac agents restart`` and its normal stop,
-      active-turn, and successor checks. ``--fresh`` starts a new conversation
-      only after those checks pass.
+    * ``<bounce>`` is the FORCED restart. ``sac agents restart`` exposes no
+      ``--force`` flag (confirmed: ``cli_pkg/lifecycle/_restart.py`` defines
+      none) and its start-leg runs without force, so a still-running agent
+      trips "already running -> no-op -> use --force" — the exact confusing
+      502 of the deadlock. The deterministic stop-if-running bounce is
+      instead ``sac agents start <name> --force`` (the mechanism the
+      ``fresh`` path already uses): ``--force`` stops any live instance
+      first. The session then MUST resume: a bare ``start --force`` with
+      no session flag follows the SPEC session policy (default fresh),
+      which fresh-boots and drops context — NOT what a plain ``sac agents
+      restart`` resolves (``_lifecycle/_stop.py::agent_restart`` passes
+      ``session_override="continue"``). The non-fresh bounce therefore
+      appends ``--continue`` explicitly, so resume-by-default holds on
+      this route too (operator directive 2026-10-10). ``--fresh`` is
+      appended only for a fresh (no-resume) bounce, mirroring the
+      synchronous fresh path verbatim.
     * stdout+stderr are appended to ``log_path`` (NEVER ``/dev/null``) so the
       bounce that necessarily outlives this process is debuggable post-hoc.
 
@@ -92,11 +104,15 @@ def _build_detached_restart_argv(
     too) starts a new session so the child survives BOTH this handler's
     return AND the caller's imminent death.
     """
-    bounce = [sac_bin, "agents", "restart", name, "--yes"]
+    bounce = [sac_bin, "agents", "start", name, "--force"]
     if fresh:
         bounce.append("--fresh")
-    if drain_timeout_s > 0:
-        bounce += ["--drain-timeout", f"{drain_timeout_s:g}"]
+    else:
+        # Resume-by-default (operator directive 2026-10-10): without an
+        # explicit session flag ``start --force`` follows the SPEC policy
+        # (default fresh) and drops context. The restart contract is
+        # resume unless explicitly fresh.
+        bounce.append("--continue")
     bounce.append("--json")
     bounce_str = " ".join(shlex.quote(tok) for tok in bounce)
     marker = shlex.quote(
@@ -164,8 +180,8 @@ async def agent_restart(request: Request) -> JSONResponse:
     would deadlock (the caller cannot die while awaiting this response), so
     the bounce is instead handed to a detached, deferred child and the
     handler returns ``202`` + ``self_restart="scheduled"`` at once. Honours
-    ``fresh``: the detached child uses ``sac agents restart --fresh`` when
-    requested, preserving the normal active-turn and successor checks.
+    ``fresh``: the detached child force-bounces with ``sac agents start
+    <name> --force --continue`` (resume) or ``--force --fresh``.
     """
     name = request.path_params["name"]
 
@@ -178,11 +194,6 @@ async def agent_restart(request: Request) -> JSONResponse:
         body = {}
     if not isinstance(body, dict):
         body = {}
-    if "force" in body:
-        return JSONResponse(
-            {"error": "force is unsupported; restart preserves teardown checks"},
-            status_code=400,
-        )
     claimed_caller = body.get("caller")
     if claimed_caller is not None and not isinstance(claimed_caller, str):
         return JSONResponse(
@@ -252,7 +263,7 @@ async def agent_restart(request: Request) -> JSONResponse:
     # (incident 2026-07-12: scitex-dev self-restarting to reload a corrected
     # dependency). Hand the bounce to a fully-detached, deferred child that
     # (a) survives the caller's death, (b) sleeps so THIS 202 flushes + the
-    # caller's tool-call unwinds FIRST, then (c) restarts — and return 202
+    # caller's tool-call unwinds FIRST, then (c) force-bounces — and return 202
     # immediately. ``caller`` is the already-resolved identity (an unspoofable
     # per-node bearer, else the body ``caller`` claim); an external / admin
     # restart (caller is None, OR caller != name) is UNAFFECTED and keeps the
@@ -271,7 +282,6 @@ async def agent_restart(request: Request) -> JSONResponse:
             fresh=fresh,
             delay_s=_SELF_RESTART_DELAY_S,
             log_path=str(log_path),
-            drain_timeout_s=drain_timeout_s,
         )
         try:
             _spawn_detached(detached_argv, env=child_env)
@@ -299,11 +309,14 @@ async def agent_restart(request: Request) -> JSONResponse:
             status_code=202,
         )
 
-    inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
     if fresh:
-        inner_argv.append("--fresh")
-    if drain_timeout_s > 0:
-        inner_argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
+        # New session, no resume: stop-then-start fresh. ``start`` accepts
+        # --force (stop if running), --fresh (never --continue) and --json.
+        inner_argv = [sac_bin, "agents", "start", name, "--force", "--fresh", "--json"]
+    else:
+        inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
+        if drain_timeout_s > 0:
+            inner_argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
 
     try:
         proc = await asyncio.create_subprocess_exec(
