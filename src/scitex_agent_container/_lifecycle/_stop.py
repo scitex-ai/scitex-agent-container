@@ -23,6 +23,7 @@ from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
 from ._instances import resolve_local_stop_instance
+from ._lifecycle_audit import audit as _audit_lifecycle
 from ._runtime_select import _get_runtime
 
 logger = slogging.getLogger(__name__)
@@ -105,6 +106,14 @@ def agent_stop(
             direct force-stop callers; restart passes ``False`` explicitly.
     """
     registry = registry or Registry()
+    _audit_lifecycle(
+        "agent-stop",
+        name,
+        force=force,
+        prune_runtime=prune_runtime,
+        drain_timeout_s=drain_timeout_s,
+        allow_active_turn_kill=allow_active_turn_kill,
+    )
     entry = registry.get(name)
     if entry is None:
         resolver = config_resolver
@@ -466,6 +475,13 @@ def agent_restart(
     from ._start import agent_start
 
     registry = registry or Registry()
+    _audit_lifecycle(
+        "agent-restart",
+        name,
+        engine_override=engine_override,
+        drain_timeout_s=drain_timeout_s,
+        wait_for_stop_timeout_s=wait_for_stop_timeout_s,
+    )
     entry = registry.get(name)
 
     if entry is not None:

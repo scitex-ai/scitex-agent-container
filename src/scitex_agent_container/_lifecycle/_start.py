@@ -24,6 +24,7 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._identity_drift import check_board_identity_at_launch  # noqa: F401
 from ._instances import record_local_instance as _record_local_instance
 from ._layers_preflight import check_to_home_layers_at_launch  # noqa: F401
+from ._lifecycle_audit import audit as _audit_lifecycle
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy  # noqa: F401
@@ -139,6 +140,17 @@ def agent_start(
     Truthy on success, False on failure; the already-running no-op
     returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
     """
+    _audit_lifecycle(
+        "agent-start",
+        None,
+        config_path=config_path,
+        force=force,
+        session_override=session_override,
+        engine_override=engine_override,
+        dry_run=dry_run,
+        foreground=foreground,
+        one_shot=one_shot,
+    )
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
