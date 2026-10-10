@@ -224,7 +224,24 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                     if final:
                         completed.add(index)
                 elif not process.is_alive():
-                    if index not in completed:
+                    # A dead worker with no pending pipe data may still hold an
+                    # unread final message already queued: receive.poll() can
+                    # race a fast exit (observed: known fetch + blocked cache
+                    # write lands the final row microseconds after is_alive
+                    # flips). Drain once before declaring failure.
+                    drained = False
+                    if receive.poll(0.05):
+                        try:
+                            _final, _result = receive.recv()
+                        except (EOFError, OSError):
+                            pass
+                        else:
+                            if _result.get("qualified_id") is not None:
+                                rows[index] = _result
+                            if _final:
+                                completed.add(index)
+                            drained = _final
+                    if index not in completed and not drained:
                         rows[index]["error"] = "metadata-worker-failed"
                     receive.close()
                     process.join(timeout=0.02)
