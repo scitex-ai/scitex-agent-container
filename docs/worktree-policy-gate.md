@@ -1,33 +1,25 @@
 # Harness-neutral worktree policy gate
 
-SAC ships its harness-neutral policy checker and default manifest in the Python
-package. `sac worktree policy` runs that checker from an installed wheel without
-requiring a source checkout, dotfiles, or a host helper script.
-
-The checker is an installed private package. Lifecycle invokes its absolute
-`__main__.py` path with the current Python interpreter, so changing the working
-directory or `PYTHONPATH` cannot select a different SAC checkout. The CLI imports
-the same checker; Git context, shell evaluation, and policy configuration each
-have a separate module.
-
-An optional host manifest lives at
-`~/.scitex/agent-container/worktree-policy/worktree-policy.json`, with its
-projections in the adjacent `generated/` directory. `SCITEX_AGENT_CONTAINER_HOME`
-selects a different SAC root. An existing invalid manifest or stale projection
-refuses launch; the bundled defaults apply only when no host manifest exists.
-Run `sac worktree policy generate-projections` after an intentional manifest change and
-`sac worktree policy check-projections` to verify it.
+SAC owns worktree policy. It decides every allow/deny in-process
+(`_lifecycle/_worktree_policy_engine.py`) from the selected manifest plus
+real Git inspection, and records the manifest/projection identity on the
+launch. Resolution order: `SAC_WORKTREE_POLICY_PATH`, else the per-host
+state copy at `~/.scitex/agent-container/worktree-policy/` when present,
+else the bundled `_baseline_assets/worktree_policy/worktree-policy.json`.
+No operator-side executable is required. Operators who keep their own policy
+executable can still pass its path as `cli_path`; the engine schema and this
+page document the contract it must honor.
 
 ## Launch behavior
 
 Before a write-capable `kind: Agent` task starts, SAC:
 
-1. asks the CLI to validate its generated projections;
-2. inspects the authored `spec.workdir` through the CLI;
-3. resolves a stable, agent-owned linked worktree and asks the CLI to authorize
-   any provisioning command;
+1. validates its generated projections are current;
+2. inspects the authored `spec.workdir`;
+3. resolves a stable, agent-owned linked worktree and authorizes
+   any provisioning command against the engine;
 4. changes the in-memory runtime workdir to that linked worktree; and
-5. asks the CLI to authorize edit context there immediately before launch.
+5. authorizes edit context there immediately before launch.
 
 `spec.workdir` is the authored project path. When it names the primary checkout,
 SAC chooses the topic branch automatically from the agent name; there is no
@@ -70,16 +62,16 @@ launch repeats validation and obtains edit authorization against the created or
 reused worktree. A restart is checked before the old process is stopped;
 a supervisor restart repeats the gate.
 
-Any missing executable, timeout, denial, stale generated projection, malformed
-response, invalid hash, identity change between checks, dirty/conflicting
-ownership, or failed provisioning refuses launch. There is no permissive
+Any timeout, denial, stale generated projection, invalid hash, identity
+change between checks, dirty/conflicting ownership, failed provisioning,
+or unreadable manifest refuses launch. There is no permissive
 fallback.
 
 ## Recovering an absent owned checkout
 
 `sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID` is an explicit
 dry-run operation on the agent's declared owning host. It reads the existing
-canonical runtime ownership record and asks the neutral CLI's
+canonical runtime ownership record and asks the policy engine's
 `check-owned-restore` verb to approve only that recorded missing path and
 retained existing branch. The authored workdir must name either the recorded
 primary repository or the exact recorded checkout. The command emits JSON with
@@ -102,9 +94,13 @@ normal launch gate, author the spec workdir as the matching restored owned
 checkout, then perform the ordinary launch preflight. Restoring committed
 branch content cannot recover absent uncommitted files.
 
-The SAC suite uses a subprocess protocol fixture for hermetic mechanics tests.
-To run its additional cross-repository contract against an explicitly configured policy CLI,
-set `SCITEX_WORKTREE_POLICY_TEST_CLI` to its reviewed executable and run
+The SAC suite uses a subprocess protocol fixture for hermetic mechanics tests
+of the external-CLI opt-in path. New default-path coverage exercises the
+in-process engine directly with real Git repositories
+(`test__worktree_policy_engine.py`).
+To run its additional cross-repository contract against an actual external
+policy executable, set `SCITEX_WORKTREE_POLICY_TEST_CLI` to its reviewed
+path and run
 `tests/scitex_agent_container/_lifecycle/test__worktree_restore.py`; the neutral
 repository independently tests all approval and refusal shapes with real Git.
 
@@ -121,7 +117,7 @@ guess a container mapping.
 The accepted proof is persisted on the incarnation as `policy_sha256` and
 `projection_sha256`, and in
 `compiled_spec_json.launch_artifacts.worktree_policy` with authored/resolved
-workdirs and the CLI-approved context.
+workdirs and the engine-approved context.
 
 `kind: AgentProxy` is outside this gate because it launches no mutation-capable
 agent harness.
@@ -130,19 +126,21 @@ agent harness.
 
 | Surface | Responsibility |
 | --- | --- |
-| Packaged CLI + selected manifest | Sole executable decision contract and policy identity. |
-| SAC lifecycle | Resolve ownership, invoke the CLI, fail closed, and persist evidence. |
-| MCP | Transport only; it must call the CLI rather than reproduce decisions. |
+| Manifest + engine | Sole executable decision contract and policy identity. |
+| SAC lifecycle | Resolve ownership, invoke the engine, fail closed, and persist evidence. |
+| External CLI opt-in | Transport only when configured; it must honor the engine schema. |
+| MCP | Transport only; it must call the engine rather than reproduce decisions. |
 | Hooks | Harness event adapters, never cross-harness authority. |
 | Skills/prompts/docs | Generated guidance or hash-validated projections only; never authorization. |
 | Commands | User-facing wrappers around executable behavior, never policy. |
 
 SAC ships no worktree-policy skill or launch prompt containing a second copy of
 the rules. Host AGENTS/CLAUDE/HERMES explanatory projections are accepted only
-when the CLI's `check-projections` result is current and hash-valid. Editing
-prose cannot change a launch decision. Consult the CLI/manifest for the current
-rules rather than this document.
+when the engine's `check-projections` result is current and hash-valid. Editing
+prose cannot change a launch decision. Consult the bundled manifest and the
+engine module for the current rules rather than this document.
 
-The subprocess boundary is tested with the executable fixture under
+The external-CLI opt-in boundary is tested with the executable fixture under
 `tests/scitex_agent_container/_lifecycle/_fixtures/worktree-policy/`. It models
 the CLI protocol and real Git worktree operations, not a second policy engine.
+The engine itself is tested in-process with real Git repositories.

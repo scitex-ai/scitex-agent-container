@@ -12,6 +12,7 @@ from typing import Any
 
 import scitex_logging as slogging
 
+from .._mcp._channel_kick_guard import KickLedger
 from .._mcp._channel_sse import _consume_sse
 from .._mcp.channel import _push_channel_event
 from ._apptainer_build import _read_listen_bearer
@@ -52,6 +53,10 @@ async def consume(
         raise RuntimeError("SAC listen bearer is required for channel inbox delivery")
     sink = _NotificationSink()
     state_dir = state_dir or Path("/state") / name
+    # A2A kick guard (card sac-a2a-kick-on-message-20261006): every message
+    # kicks exactly once per storm. Per-daemon ledger: dedupe by msg_id,
+    # rate cap per recipient. Skips still record the inbound event below.
+    kicks = KickLedger()
 
     async def default_dispatch(event: dict[str, Any]) -> None:
         event = dict(event)
@@ -87,7 +92,18 @@ async def consume(
         if live_session_id and stored_session_id:
             event["_hermes_delivery_session_id"] = live_session_id
             event["_hermes_delivery_stored_session_id"] = stored_session_id
-        await target_dispatch(event)
+        msg_id = event.get("msg_id")
+        decision = kicks.check(name, msg_id if isinstance(msg_id, str) else None)
+        if decision != "admit":
+            log.warning(
+                "kick %s for %s msg_id=%r; message stays in durable inbox",
+                decision,
+                name,
+                msg_id,
+            )
+        else:
+            kicks.record(name, msg_id if isinstance(msg_id, str) else None)
+            await target_dispatch(event)
         from ._hermes_context_gc import record_inbound_task_event
 
         record_inbound_task_event(state_dir, name, event)

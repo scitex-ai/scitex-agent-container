@@ -321,6 +321,15 @@ def materialized_home_backings(tmp_path, request):
         "compile_hermes_config": lambda *args, **kwargs: {},
         "configure_failover": lambda *args, **kwargs: ({}, {}),
         "preflight_pools": lambda *args, **kwargs: None,
+        # The verified-route seam probes declared pools before deploying
+        # files; this log-repair test pins the seam's outputs instead.
+        "_verified_route": lambda *args, **kwargs: (
+            SimpleNamespace(endpoint=SimpleNamespace(auth_env="SYNTHETIC_KEY")),
+            {},
+            {},
+            {},
+        ),
+        "_profile_primary_key": lambda *args: "synthetic",
         "_mcp_servers": lambda *args, **kwargs: ({}, []),
         "_sac_profile_env": lambda *args: {},
         "_cct_profile_env": lambda *args: {},

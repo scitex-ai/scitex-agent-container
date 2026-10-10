@@ -1,9 +1,10 @@
-<!-- GENERATED. source-sha256: e659eb9aee2c4e337e67cd33b19a8804318b3cbdf74836a4bcd72a49d14a36b8 -->
+<!-- GENERATED. source-sha256: 15c401d5fddf1580bde7e636a5d52f6595e13c6e6aeb1c536a2fdc15e453f163 -->
 # Worktree policy (HERMES)
 
 This file is a discovery projection, not policy authority. The authoritative
-manifest is selected by `sac worktree policy` from the SAC configuration root
-or the installed package defaults; runtime decisions come only from that CLI.
+manifest is the `worktree-policy.json` bundled with SAC
+(`_baseline_assets/worktree_policy/`); runtime decisions come only from SAC's
+in-process policy engine.
 
 - The authority checkout stays on `develop` and is read-only.
 - All edits, commits, pushes, and branch changes happen in linked worktrees.
@@ -13,6 +14,6 @@ or the installed package defaults; runtime decisions come only from that CLI.
 
 Examples generated from the tested manifest fixtures:
 
-- `sac worktree policy assert-context --repo /path/to/repo --intent edit` → deny
-- `sac worktree policy assert-context --repo /path/to/repo/.worktrees/fix-x --intent edit` → allow
-- `sac worktree policy inspect --repo .` → resolved JSON policy record
+- `assert-context --repo /path/to/repo --intent edit` → deny
+- `assert-context --repo /path/to/repo/.worktrees/fix-x --intent edit` → allow
+- `inspect --repo .` → resolved JSON policy record

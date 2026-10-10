@@ -49,8 +49,14 @@ def _binding(config):
         config.claude.session,
         deepcopy(config.claude.provider),
         deepcopy(config.engines),
-        deepcopy(config.hermes_failover),
-        deepcopy(config.hermes_goals),
+        # The pool policy is part of the proof identity: a reordered or
+        # replaced failover pool between probe and stop must refuse, not
+        # silently rebind the verified route to different credentials.
+        deepcopy(getattr(config, "hermes_failover", None)),
+        # ``hermes_goals`` exists only where the generalized goal spec has
+        # landed; older trees pin the judge inline. Absence is a stable
+        # binding value either way.
+        deepcopy(getattr(config, "hermes_goals", None)),
         _source_stamp(config.config_path),
     )
 
@@ -105,12 +111,27 @@ def consume_prepared_route(config, *, launch_mode):
     return prepared
 
 
+def _goal_base(name) -> str:
+    """Strip one ``meta/`` (wire) or ``meta-`` (named-custom) route prefix."""
+    text = str(name)
+    for prefix in ("meta/", "meta-"):
+        if text.startswith(prefix):
+            return text[len(prefix) :]
+    return text
+
+
 def same_goal_model(left, right):
-    """Recognize only the established Muse/CommandCode wire-name alias."""
+    """Recognize only the established Muse/CommandCode wire-name alias.
+
+    Both spellings of the meta route (``meta/<base>`` on the wire,
+    ``meta-<base>`` as the named-custom identity) denote the same model,
+    so either may match each other or the bare base — but only for
+    ``muse-spark-`` bases, and never across different models.
+    """
     if left == right:
         return True
-    bare = str(left).removeprefix("meta/")
-    return bare.startswith("muse-spark-") and {left, right} == {bare, "meta/" + bare}
+    base = _goal_base(left)
+    return base == _goal_base(right) and base.startswith("muse-spark-")
 
 
 def _read_previous(profiles):

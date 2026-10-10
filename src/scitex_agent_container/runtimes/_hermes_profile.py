@@ -453,8 +453,9 @@ def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
     )
 
     prepared = consume_prepared_route(config, launch_mode=launch_mode)
-    if prepared is None and (
-        config.hermes_failover.accounts or config.hermes_failover.engines
+    policy = getattr(config, "hermes_failover", None)
+    if prepared is None and policy is not None and (
+        getattr(policy, "accounts", None) or getattr(policy, "engines", None)
     ):
         targets = [home / ".hermes"]
         upper = resolve_overlay_upper_home(config)

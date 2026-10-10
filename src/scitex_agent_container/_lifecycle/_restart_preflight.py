@@ -340,7 +340,7 @@ def preflight_from_config_path(
     opener: Any = None,
     engine_override: str | None = None,
     session_override: str | None = None,
-):
+) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
     ``agent_restart`` holds a spec PATH (not a loaded config) and stops the

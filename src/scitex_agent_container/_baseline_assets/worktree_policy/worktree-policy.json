@@ -11,6 +11,12 @@
     "test/"
   ],
   "worktree_directory": ".worktrees",
+  "owned_restore": {
+    "enabled": true,
+    "owner_file": "worktree-owner.json",
+    "directory_prefix": "sac-",
+    "branch_prefix": "feature/sac-"
+  },
   "exit_codes": {
     "allow": 0,
     "deny": 2,
@@ -20,17 +26,17 @@
   "examples": [
     {
       "name": "authority-is-read-only",
-      "command": "sac worktree policy assert-context --repo /path/to/repo --intent edit",
+      "command": "assert-context --repo /path/to/repo --intent edit",
       "outcome": "deny"
     },
     {
       "name": "topic-worktree-is-editable",
-      "command": "sac worktree policy assert-context --repo /path/to/repo/.worktrees/fix-x --intent edit",
+      "command": "assert-context --repo /path/to/repo/.worktrees/fix-x --intent edit",
       "outcome": "allow"
     },
     {
       "name": "inspect-before-work",
-      "command": "sac worktree policy inspect --repo .",
+      "command": "inspect --repo .",
       "outcome": "resolved JSON policy record"
     }
   ]

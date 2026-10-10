@@ -221,7 +221,7 @@ def select_engine_at_start(
     auth_options = {}
     policy = getattr(config, "hermes_failover", None)
     if (
-        config.harness == "hermes"
+        getattr(config, "harness", None) == "hermes"
         and policy is not None
         and (policy.accounts or policy.engines)
     ):
