@@ -28,6 +28,13 @@ def mixed_fetch(target, deadline):
     return known_fetch(target, deadline)
 
 
+# Lands just past the 0.75s collection deadline but inside the 0.5s grace
+# window: fails without grace, passes with it.
+def slow_fetch(target, deadline):
+    time.sleep(0.7)
+    return known_fetch(target, deadline)
+
+
 def refusing_fetch(target, deadline):
     return {"error": "http-403"}
 
@@ -342,3 +349,14 @@ def test_blocking_cache_write_leaves_no_owned_child(tmp_path):
     new_pids = {process.pid for process in multiprocessing.active_children()} - before
     # Assert
     assert new_pids == set()
+
+
+def test_slow_starting_fetch_accepted_within_grace(tmp_path):
+    # Arrange — a fetch worker that delivers just past the collection
+    # deadline on a loaded runner must still count, not read as unknown.
+    account = targets()[1]
+
+    # Act
+    rows = collect([account], home=tmp_path, budget=1, fetcher=slow_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "known"

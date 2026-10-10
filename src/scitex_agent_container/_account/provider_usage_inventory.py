@@ -166,6 +166,22 @@ def _result_row(target, previous, result):
     return row
 
 
+def _accept_fetch(rows, completed, index, final, result):
+    """Record a worker-delivered fetch, tracking completion."""
+    if result.get("qualified_id") is not None:
+        rows[index] = result
+    elif index not in completed:
+        rows[index]["error"] = "metadata-worker-failed"
+    if final:
+        completed.add(index)
+
+
+# Bounded grace for workers still spinning up when the collection deadline
+# expires (loaded runner): a result arriving inside the window still counts.
+# Kept small so the suite's elapsed bounds hold.
+_WORKER_GRACE_SECONDS = 0.5
+
+
 def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             fetcher=fetch, now=None, cache_writer=_save):
     """Bound provider collection only, including cache I/O; not the whole CLI."""
@@ -217,12 +233,7 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                             process.join(timeout=0.02)
                         del active[index]
                         continue
-                    if result.get("qualified_id") is not None:
-                        rows[index] = result
-                    elif index not in completed:
-                        rows[index]["error"] = "metadata-worker-failed"
-                    if final:
-                        completed.add(index)
+                    _accept_fetch(rows, completed, index, final, result)
                 elif not process.is_alive():
                     # A dead worker with no pending pipe data may still hold an
                     # unread final message already queued: receive.poll() can
@@ -251,6 +262,25 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             if active:
                 time.sleep(0.01)
     finally:
+        # Same grace as the observation collector: workers still spinning up
+        # when the deadline expires may deliver just past it.
+        grace_until = time.monotonic() + _WORKER_GRACE_SECONDS
+        while active and time.monotonic() < grace_until:
+            for index, (process, receive, _target) in list(active.items()):
+                if receive.poll():
+                    try:
+                        final, result = receive.recv()
+                    except (EOFError, OSError):
+                        continue
+                    _accept_fetch(rows, completed, index, final, result)
+                    receive.close()
+                    process.join(timeout=0.02)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(timeout=0.02)
+                    del active[index]
+            if active:
+                time.sleep(0.01)
         for index, (process, receive, _) in active.items():
             if index not in completed:
                 rows[index]["error"] = "metadata-deadline"

@@ -43,13 +43,16 @@ sys.meta_path.insert(0, MissingDependencyFinder())
     with tempfile.TemporaryDirectory(prefix="sac-optional-probe-") as home:
         env["HOME"] = home
         env["TMPDIR"] = home
+        # Generous wall clock: this asserts ImportError semantics, not speed.
+        # A cold interpreter + full package import on a loaded CI runner can
+        # exceed 5s; locally it completes in <0.5s.
         return subprocess.run(
             [sys.executable, "-c", code],
             cwd=ROOT,
             env=env,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         )
 
 
