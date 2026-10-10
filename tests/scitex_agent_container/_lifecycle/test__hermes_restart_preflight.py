@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from scitex_agent_container._lifecycle import _hermes_restart_preflight as gate
 from scitex_agent_container._lifecycle._hermes_restart_preflight import (
     prepare_hermes_successor,
     reset_probe_cache,
@@ -31,8 +34,12 @@ from scitex_agent_container._lifecycle._restart_preflight import (
     RestartPreflightAbort,
 )
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._engine_types import EngineSpec
+from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._hermes_failover import HermesFailoverSpec
+from scitex_agent_container.config._hermes_goals import HermesGoalSpec
 from scitex_agent_container.config._provider_types import ProviderSpec
+from scitex_agent_container.runtimes import _hermes_profile as profile
 from scitex_agent_container.runtimes._apptainer_provider import ProviderEnvError
 
 _CONTROL = "sac-preflight-control-not-a-valid-key"
@@ -286,15 +293,7 @@ def test_same_goal_model_refuses_non_muse_base() -> None:
 
 # ---- Merged successor-auth proof tests (feature/remove-force-option) ----
 # Union with the skip-dead failover suite above; test names are disjoint.
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-
-from scitex_agent_container._lifecycle import _hermes_restart_preflight as gate
-from scitex_agent_container.config._engine_types import EngineSpec
-from scitex_agent_container.config._hermes_config import compile_hermes_config
-from scitex_agent_container.config._hermes_goals import HermesGoalSpec
-from scitex_agent_container.runtimes import _hermes_profile as profile
-from scitex_agent_container.runtimes._apptainer_provider import ProviderEnvError
+# (Imports hoisted to the top of this file.)
 
 MODEL = "muse-spark-1.3-contributor"
 TOKENS = {"SAC_TEST_A": "synthetic-primary-a", "SAC_TEST_B": "synthetic-primary-b"}

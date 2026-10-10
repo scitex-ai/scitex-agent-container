@@ -12,12 +12,12 @@ differs. Untracked files never count as dirty (matches fleet_sync.sh).
 
 from __future__ import annotations
 
-from .._logging import render_content
-
 import json
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from .._logging import render_content
 
 __all__ = ["collect_checkout_state"]
 
