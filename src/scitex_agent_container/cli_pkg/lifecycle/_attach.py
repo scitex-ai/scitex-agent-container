@@ -95,28 +95,33 @@ def _classify_agent_host(name: str) -> tuple[str, str | None]:
         return ("local", None)
 
 
-def _remote_attach_argv(session: str, peer: str) -> list[str]:
-    """Build the ``ssh -t <target> tmux attach -t <session>`` argv for a remote agent.
-
-    The ssh alias comes from ``host_config.peers[peer].ssh`` (the same
-    source ``sac agents start`` dispatches through); it falls back to the
-    peer name when no explicit ``ssh:`` is set. ``tmux`` is invoked DIRECTLY on
-    the peer's non-login PATH: a login shell (``bash -lc``) triggers the
-    profile's interactive-tmux and fails with "open terminal failed: not a
-    terminal", so attach must not wrap the command. ``-t`` still forces a PTY so
-    tmux gets a terminal.
-    """
-    ssh_target = peer
+def ssh_target_for(peer: str) -> str:
+    """Resolve the ssh target for a peer (alias when set, else peer name)."""
     try:
         from ..._state.host_config import load as _load_host_config
 
         spec = _load_host_config().peers.get(peer)
         if spec is not None and getattr(spec, "ssh", None):
-            ssh_target = spec.ssh
+            return spec.ssh
     except (
         Exception
     ):  # stx-allow: fallback (peer without an ssh alias → use the peer name)
         pass
+    return peer
+
+
+def _remote_attach_argv(session: str, peer: str) -> list[str]:
+    """Build the ``ssh -t <target> tmux attach -t <session>`` argv for a remote agent.
+
+    The ssh alias comes from ``host_config.peers[peer].ssh`` (see
+    :func:`ssh_target_for`, the same source ``sac agents start`` dispatches
+    through); it falls back to the peer name when no explicit ``ssh:`` is set. ``tmux`` is invoked DIRECTLY on
+    the peer's non-login PATH: a login shell (``bash -lc``) triggers the
+    profile's interactive-tmux and fails with "open terminal failed: not a
+    terminal", so attach must not wrap the command. ``-t`` still forces a PTY so
+    tmux gets a terminal.
+    """
+    ssh_target = ssh_target_for(peer)
     return [
         "ssh",
         "-t",
@@ -152,6 +157,29 @@ def attach(name: str) -> None:
 
     if kind == "remote" and peer is not None:
         # Control-plane attach: the session lives on the peer, not here.
+        # Pre-check over ssh so a missing session fails HERE with the start
+        # hint — not as tmux's bare "can't find session" after the PTY closes
+        # (operator report 2026-10-10: attach to a never-started agent showed
+        # only tmux's line plus a dropped connection, no next step).
+        try:
+            probe = subprocess.run(
+                ["ssh", ssh_target_for(peer), "tmux", "has-session",
+                 "-t", exact_target(session)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            remote_exists = probe.returncode == 0
+        except Exception:  # stx-allow: fallback (ssh broken → let attach surface it)
+            remote_exists = True
+        if not remote_exists:
+            system_msg(
+                f"no running session '{session}' for agent '{agent}' "
+                f"on '{peer}'. "
+                f"Start it first: `sac agents start {agent}`.",
+                style="red",
+            )
+            raise SystemExit(1)
         system_msg(
             f"'{agent}' runs on remote host '{peer}'; attaching over ssh. "
             f"Ctrl-b d detaches (back to {peer}'s shell); Ctrl-d returns here.",

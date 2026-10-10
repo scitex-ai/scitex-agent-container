@@ -386,6 +386,34 @@ def enrich_rows(
                             child.join(0.02)
                         del active[index]
                 elif not child.is_alive():
+                    # A dead worker with no pending pipe data may still hold an
+                    # unread observation already queued: receive.poll() can race
+                    # a fast exit (observed: fast-row result lands microseconds
+                    # after is_alive flips while the suite's slow row burns the
+                    # budget). Drain once before declaring failure.
+                    if receive.poll(0.05):
+                        try:
+                            observation = receive.recv()
+                        except (EOFError, OSError):
+                            pass
+                        else:
+                            observation["canonical_instance_present"] = True
+                            outputs[index]["observation"] = observation
+                            observation["observation_scope"] = {
+                                "host": host,
+                                "batch_id": hashlib.sha256(salt).hexdigest()[:16],
+                            }
+                            if observation.get("process") == "alive":
+                                outputs[index]["status"] = (
+                                    "auth-failed"
+                                    if rows[index].get("auth_failed")
+                                    else "running"
+                                )
+                                outputs[index]["liveness_unknown"] = False
+                            receive.close()
+                            child.join(0.01)
+                            del active[index]
+                            continue
                     receive.close()
                     child.join(0.01)
                     outputs[index]["observation"] = unknown("observation-worker-failed")
