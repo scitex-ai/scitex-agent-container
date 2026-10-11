@@ -14,7 +14,20 @@ import pytest
 from scitex_agent_container._logging import render_content, write_stream
 
 
-@pytest.mark.parametrize("text", ['{"status":"accepted"}', "", "first\nsecond"])
+def _installed_site():
+    """Site directory holding this process's installed scitex-logging build."""
+    try:
+        import scitex_logging as _slogging
+
+        logged = Path(getattr(_slogging, "__file__", "") or "")
+    except ImportError:
+        return ""
+    if logged.suffix == ".py" and logged.parent.name == "scitex_logging":
+        return str(logged.parent.parent)
+    return ""
+
+
+@pytest.mark.parametrize("text", ['{"status":"accepted"}', "", "first\\nsecond"])
 def test_write_stream_preserves_protocol_payload_on_the_owned_stream(text):
     # Arrange
     stream = StringIO()
@@ -156,7 +169,14 @@ render_rich('hidden by quiet threshold', 'output-contract')
 render_content('{"status":"accepted"}')
 """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "src")
+    # Hand the child the installed site explicitly: the SIF matrix exposes
+    # its fresh installs only through ambient PYTHONPATH, which this
+    # overwrite would otherwise drop — leaving a stale interpreter-baked
+    # scitex-logging without the plain console the merged code requires.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parents[3] / "src")]
+        + ([_installed_site()] if _installed_site() else [])
+    )
     # Act
     result = subprocess.run(
         [sys.executable, "-c", code, str(log_path), str(capture_prints)],
@@ -207,7 +227,14 @@ write_stream('caller-owned \\u03bb', owned)
 render_content(owned.getvalue().rstrip('\\n'))
 """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "src")
+    # Hand the child the installed site explicitly: the SIF matrix exposes
+    # its fresh installs only through ambient PYTHONPATH, which this
+    # overwrite would otherwise drop — leaving a stale interpreter-baked
+    # scitex-logging without the plain console the merged code requires.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parents[3] / "src")]
+        + ([_installed_site()] if _installed_site() else [])
+    )
     result = subprocess.run(
         [sys.executable, "-c", code, str(capture_prints)],
         env=env,
