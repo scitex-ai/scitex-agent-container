@@ -385,9 +385,12 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
     config = load_config(spec_path)
     # Explicitly expose the compiling installation and every interpreter
     # alias, just as a fleet's existing home/scratch binds do in production.
+    # Bind parent dirs of files too: split installations (binary from a
+    # PATH shim, prefix from sysconfig) leave the binary outside every
+    # bound dir, which validate_sac_runtime rightly refuses.
     for path in sac_installation(config).required_paths:
-        if path.is_dir():
-            config.apptainer.binds.append(f"{path}:{path}:ro")
+        anchor = path if path.is_dir() else path.parent
+        config.apptainer.binds.append(f"{anchor}:{anchor}:ro")
     select_engine_at_start(config, None, log=False)
     runtime = _get_runtime(config)
     home = runtime.materialize_workspace(config)

@@ -31,7 +31,14 @@ def _terminal_argv(tmp_path, config, installation, source, image):
 
     apptainer = shutil.which("apptainer")
     roots = dict.fromkeys(
-        (*[path for path in installation.required_paths if path.is_dir()], source)
+        (
+            *[
+                path if path.is_dir() else path.parent
+                for path in installation.required_paths
+                if path.is_dir() or path.is_file()
+            ],
+            source,
+        )
     )
     argv = [
         apptainer,
