@@ -100,8 +100,9 @@ def render_projection(name: str, policy: dict[str, Any], source_hash: str) -> st
 # Worktree policy ({name})
 
 This file is a discovery projection, not policy authority. The authoritative
-manifest is selected by `sac worktree policy` from the SAC configuration root
-or the installed package defaults; runtime decisions come only from that CLI.
+manifest is the `worktree-policy.json` bundled with SAC
+(`_baseline_assets/worktree_policy/`); runtime decisions come only from SAC's
+in-process policy engine.
 
 - The authority checkout stays on `{policy["authority_branch"]}` and is read-only.
 - All edits, commits, pushes, and branch changes happen in linked worktrees.
