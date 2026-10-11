@@ -64,6 +64,13 @@ def _hermes_spec(tmp_path: Path) -> Path:
             "  harness: hermes\n"
             "  host: ${HOSTNAME}\n"
             f"  workdir: {tmp_path}\n"
+            "  available_engines:\n"
+            "    test-engine:\n"
+            "      model: test-model\n"
+            "      provider:\n"
+            "        base_url: http://synthetic.invalid/v1\n"
+            "        auth_token_env: SAC_TEST_START_ENGINE_KEY\n"
+            "  engine: test-engine\n"
         )
     )
     return path
@@ -239,9 +246,17 @@ def test_remote_force_stop_is_refused():
 
 
 @pytest.mark.parametrize("session_override", [None, "fresh"])
-def test_restart_preserves_active_turn_guard(tmp_path, session_override):
+def test_restart_preserves_active_turn_guard(tmp_path, session_override, env_save_restore):
     # Arrange
     spec = _hermes_spec(tmp_path)
+    # Admin path: no SAC_NAME, so the spawn gate takes the admin branch
+    # and skips the lineage Postgres write (this host has no DB for it).
+    env_save_restore.delete("SAC_NAME")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_NAME")
+    # The declared test engine's key is synthetic and exported, so the
+    # pre-stop static engine check passes on any host; the turn-guard
+    # under test is unrelated to gateway credentials.
+    env_save_restore.set("SAC_TEST_START_ENGINE_KEY", "sk-test-key")
     runtime = HermesTuiSessionRuntime(multiplexer=_LiveMux())
     runtime.stop = lambda _config: (_ for _ in ()).throw(
         AssertionError("teardown reached after active-turn refusal")

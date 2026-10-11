@@ -51,6 +51,13 @@ def _spec(tmp_path: Path) -> Path:
             f"  workdir: {tmp_path}\n"
             "  a2a:\n"
             "    port: null\n"
+            "  available_engines:\n"
+            "    test-engine:\n"
+            "      model: test-model\n"
+            "      provider:\n"
+            "        base_url: http://synthetic.invalid/v1\n"
+            "        auth_token_env: SAC_TEST_START_ENGINE_KEY\n"
+            "  engine: test-engine\n"
         )
     )
     return establish_test_spec_authority(path)
@@ -64,9 +71,16 @@ def test_internal_restart_cleanup_refuses_a_newly_busy_hermes_runtime(
     spec = _spec(tmp_path)
     name = spec.parent.name
     env_save_restore.set("HOME", str(tmp_path))
+    # Admin path: no SAC_NAME, so the spawn gate takes the admin branch
+    # and skips the lineage Postgres write (this host has no DB for it).
+    env_save_restore.delete("SAC_NAME")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_NAME")
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
     )
+    # Synthetic engine key so the pre-stop static engine check passes;
+    # the busy-runtime refusal under test is unrelated to credentials.
+    env_save_restore.set("SAC_TEST_START_ENGINE_KEY", "sk-test-key")
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add(name, str(spec), f"tui-{name}")
     runtime = _ProtectedHermesRuntime(multiplexer=_LiveMux())
