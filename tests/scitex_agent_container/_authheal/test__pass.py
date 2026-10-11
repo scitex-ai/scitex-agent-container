@@ -154,19 +154,27 @@ def test_spent_budget_does_not_turn_a_banner_into_admission(history, events):
     assert _verdict(outcome, "hpc") == Verdict.UNOBSERVED
 
 
-def test_unproven_banner_does_not_record_confirmed_degradation(history, events):
-    # Arrange — the whole point of the cap: instead of bouncing forever, the
-    # agent that cannot be healed leaves a durable record in sac's own log.
-    # This is the ONE test here that lets the recording rail run (the rest
-    # pass ``alarm=False``, because their subject is the restart decision).
+def test_unproven_banner_does_not_record_confirmed_degradation_checks_degraded(history, events):
+    # Arrange
     _seed_history(history, {"hpc": [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100]})
     rec = Recorder()
     # Act
     _run(stuck("hpc"), history, events, rec, alarm=True)
-    # Assert — no unproven banner is recorded as confirmed degradation.
     degraded = read_events(events, subsystem=SUBSYSTEM, event=SUBJECT_DEGRADED)
+    # Assert
     assert degraded == []
+
+
+def test_unproven_banner_does_not_record_confirmed_degradation_checks_rec_names(history, events):
+    # Arrange
+    _seed_history(history, {"hpc": [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100]})
+    rec = Recorder()
+    # Act
+    _run(stuck("hpc"), history, events, rec, alarm=True)
+    degraded = read_events(events, subsystem=SUBSYSTEM, event=SUBJECT_DEGRADED)
+    # Assert
     assert rec.names == []
+
 
 
 # --- can't read our own memory → refuse, never a blind loop ---------------

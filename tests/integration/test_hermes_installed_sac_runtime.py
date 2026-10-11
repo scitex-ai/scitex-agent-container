@@ -26,15 +26,11 @@ from scitex_agent_container.runtimes._hermes_sac_runtime import (
 )
 
 
-def test_existing_image_executes_installed_sac_in_hermes_terminal(tmp_path):
-    image = os.environ.get("SAC_TEST_HERMES_SIF", "")
-    if not image:
-        pytest.skip("set SAC_TEST_HERMES_SIF to run actual-image conformance")
+def _terminal_argv(tmp_path, config, installation, source, image):
+    """Arrange the apptainer argv binding the installed SAC plus tmp state."""
+    import shutil
+
     apptainer = shutil.which("apptainer")
-    assert apptainer and Path(image).is_file()
-    config = AgentConfig(name="isolated-verification", harness="hermes", runtime="tui")
-    installation = sac_installation(config)
-    source = Path(__file__).resolve().parents[2] / "src"
     roots = dict.fromkeys(
         (*[path for path in installation.required_paths if path.is_dir()], source)
     )
@@ -57,8 +53,40 @@ def test_existing_image_executes_installed_sac_in_hermes_terminal(tmp_path):
         *sac_runtime_env_flags(config),
         image,
     ]
-    validate_sac_runtime(config, launch_argv=argv)
+    return argv
 
+
+def _conformance_image(tmp_path):
+    """Arrange the reviewed image path; skip when the image is not provided."""
+    image = os.environ.get("SAC_TEST_HERMES_SIF", "")
+    if not image:
+        pytest.skip("set SAC_TEST_HERMES_SIF to run actual-image conformance")
+    return image
+
+
+def test_existing_image_validates_installed_sac_runtime(tmp_path):
+    # Arrange
+    image = _conformance_image(tmp_path)
+    import shutil
+
+    config = AgentConfig(name="isolated-verification", harness="hermes", runtime="tui")
+    installation = sac_installation(config)
+    source = Path(__file__).resolve().parents[2] / "src"
+    argv = _terminal_argv(tmp_path, config, installation, source, image)
+    # Act
+    validate_sac_runtime(config, launch_argv=argv)
+    # Assert
+    assert shutil.which("apptainer") and Path(image).is_file()
+
+
+def test_existing_image_terminal_preserves_selected_sac_path(tmp_path):
+    # Arrange
+    image = _conformance_image(tmp_path)
+    config = AgentConfig(name="isolated-verification", harness="hermes", runtime="tui")
+    installation = sac_installation(config)
+    source = Path(__file__).resolve().parents[2] / "src"
+    argv = _terminal_argv(tmp_path, config, installation, source, image)
+    validate_sac_runtime(config, launch_argv=argv)
     # Actual Hermes subprocess filtering must retain the selected SAC PATH.
     terminal_code = """
 import json,pathlib,shutil,subprocess,sys
@@ -71,22 +99,41 @@ sys.stdout.write(json.dumps({'binary':binary,'returncode':result.returncode,
  'version_output':result.stdout,'hermes_binary':str(pathlib.Path('/usr/local/bin/hermes').resolve()),
  'hermes_pin':pathlib.Path('/opt/hermes-agent/SAC_UPSTREAM_COMMIT').read_text().strip()}))
 """
+    # Act
     completed = subprocess.run(
         [*argv, "/opt/hermes-agent/.venv/bin/python", "-c", terminal_code],
         text=True,
         capture_output=True,
         timeout=45,
     )
+    # Assert
     assert completed.returncode == 0, completed.stderr
     receipt = json.loads(completed.stdout)
-    assert receipt["binary"] == str(installation.binary)
-    assert receipt["returncode"] == 0
-    assert str(installation.python) in receipt["version_output"]
-    assert receipt["hermes_binary"] == HERMES_BINARY
-    assert receipt["hermes_pin"] == os.environ.get(
-        "SAC_TEST_HERMES_PIN", "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+    assert (
+        receipt["binary"],
+        receipt["returncode"],
+        str(installation.python) in receipt["version_output"],
+        receipt["hermes_binary"],
+        receipt["hermes_pin"],
+    ) == (
+        str(installation.binary),
+        0,
+        True,
+        HERMES_BINARY,
+        os.environ.get(
+            "SAC_TEST_HERMES_PIN", "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+        ),
     )
 
+
+def test_existing_image_loader_parses_new_schema_with_host_interpreter(tmp_path):
+    # Arrange
+    image = _conformance_image(tmp_path)
+    config = AgentConfig(name="isolated-verification", harness="hermes", runtime="tui")
+    installation = sac_installation(config)
+    source = Path(__file__).resolve().parents[2] / "src"
+    argv = _terminal_argv(tmp_path, config, installation, source, image)
+    validate_sac_runtime(config, launch_argv=argv)
     # The compiling source's newly added schema works with this exact host
     # interpreter in the image, without changing the image's site-packages.
     loader_code = f"""
@@ -101,13 +148,18 @@ config.hermes_goals=HermesGoalSpec(max_turns=99999,judge_engine='same-model')
 options=HERMES_GATEWAY.parse_agent_options(config)
 sys.stdout.write(json.dumps(options))
 """
+    # Act
     completed = subprocess.run(
         [*argv, str(installation.python), "-c", loader_code],
         text=True,
         capture_output=True,
         timeout=45,
     )
+    # Assert
     assert completed.returncode == 0, completed.stderr
     options = json.loads(completed.stdout)
-    assert options["max_turns"] == options["goals"]["max_turns"] == 99999
-    assert options["goals"]["judge_engine"] == "same-model"
+    assert (
+        options["max_turns"],
+        options["goals"]["max_turns"],
+        options["goals"]["judge_engine"],
+    ) == (99999, 99999, "same-model")

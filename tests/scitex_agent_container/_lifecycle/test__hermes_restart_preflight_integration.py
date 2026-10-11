@@ -158,17 +158,40 @@ def configured_probe(*, tokens):
         gate.prepare_hermes_successor = previous
 
 
-def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path):
+def test_real_restart_all_missing_refuses_without_declared_credential(tmp_path):
+    # Arrange
     path = spec_file(tmp_path)
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add("alpha", str(path), "tui-alpha")
     runtime = _FakeRuntime(running=True)
-    with configured_probe(tokens={}) as calls:
+    # Act
+    # Assert
+    with configured_probe(tokens={}):
         with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
             lifecycle.agent_restart(
                 "alpha", registry=registry, runtime_factory=lambda _c: runtime
             )
-    assert (runtime.running, runtime.stop_calls, runtime.start_calls, calls) == (
+
+
+def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path):
+    # Arrange
+    path = spec_file(tmp_path)
+    registry = Registry(registry_dir=tmp_path / "registry")
+    registry.add("alpha", str(path), "tui-alpha")
+    runtime = _FakeRuntime(running=True)
+    # Act
+    with configured_probe(tokens={}) as calls:
+        try:
+            lifecycle.agent_restart(
+                "alpha", registry=registry, runtime_factory=lambda _c: runtime
+            )
+        except RestartPreflightAbort:
+            refused = True
+        else:
+            refused = False
+    # Assert
+    assert (refused, runtime.running, runtime.stop_calls, runtime.start_calls, calls) == (
+        True,
         True,
         [],
         [],
@@ -176,14 +199,13 @@ def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path):
     )
 
 
-def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
-    pg_schema, tmp_path
-):
+def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(pg_schema, tmp_path):
+    # Arrange
     path = spec_file(tmp_path)
+    # Act
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add("alpha", str(path), "tui-alpha")
     observed = []
-
     class Successor(_FakeRuntime):
         def start(self, config, **kwargs):
             plan, selection, _, _ = profile._verified_route(
@@ -206,7 +228,6 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
                 )
             )
             return super().start(config, **kwargs)
-
     runtime = Successor(running=True)
     with configured_probe(
         tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
@@ -221,6 +242,7 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
                 "idle", "idle", "existing-session"
             ),
         )
+    # Assert
     assert (
         result,
         len(runtime.stop_calls),
@@ -244,9 +266,10 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
     )
 
 
-def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_reprobe(
-    tmp_path,
-):
+
+def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_reprobe(tmp_path):
+    # Arrange
+    # Act
     from scitex_agent_container._lifecycle._engine_select import (
         check_engine_before_stop,
     )
@@ -254,7 +277,6 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
         preflight_from_config_path,
     )
     from scitex_agent_container.config import load_config
-
     path = spec_file(tmp_path)
     with configured_probe(
         tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
@@ -273,6 +295,7 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
         goals=successor.hermes_goals,
     )
     profile._apply_verified_route(rendered, selection)
+    # Assert
     assert (
         len(calls),
         successor.claude.session,
@@ -288,61 +311,14 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
     )
 
 
-@pytest.mark.parametrize("problem", ["dirty-authority", "unowned-worktree"])
-def test_production_restart_workspace_refusal_happens_before_stop(
-    tmp_path, problem
-):
-    from scitex_agent_container._lifecycle import _restart_preflight, _stop
-    from scitex_agent_container._lifecycle._worktree_policy import (
-        WorktreePolicyError,
-        plan_task_worktree,
-    )
-    from scitex_agent_container.config import load_config
 
-    root = _authority(tmp_path / "work")
-    path = spec_file(tmp_path)
-    if problem == "dirty-authority":
-        (root / "tracked.txt").write_text("preserve this edit\n")
-        expected = "authority checkout .* is dirty"
-    else:
-        (root / ".gitignore").write_text(".worktrees/\n")
-        subprocess.run(["git", "-C", str(root), "add", ".gitignore"], check=True)
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=tests@scitex.invalid",
-                "commit",
-                "-qm",
-                "ignore linked worktrees",
-            ],
-            check=True,
-        )
-        FIXTURE.chmod(FIXTURE.stat().st_mode | 0o111)
-        plan = plan_task_worktree(load_config(path), provision=False, cli_path=FIXTURE)
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                plan.branch,
-                plan.resolved_workdir,
-            ],
-            check=True,
-        )
-        expected = "exists without SAC ownership"
-    registry = Registry(registry_dir=tmp_path / "registry")
-    registry.add("alpha", str(path), "tui-alpha")
-    real_workspace_preflight = _restart_preflight.preflight_workspace_from_config_path
+def _run_refusal(tmp_path, registry, expected):
+    """Act the restart; assert the refusal happens before any stop."""
+    from scitex_agent_container._lifecycle import _restart_preflight, _stop
+    from scitex_agent_container._lifecycle._worktree_policy import WorktreePolicyError
+
     previous_preflight = _restart_preflight.preflight_workspace_from_config_path
+    real_workspace_preflight = previous_preflight
     _restart_preflight.preflight_workspace_from_config_path = (
         lambda config_path, **kwargs: real_workspace_preflight(
             config_path, cli_path=FIXTURE, **kwargs
@@ -360,4 +336,72 @@ def test_production_restart_workspace_refusal_happens_before_stop(
     finally:
         _restart_preflight.preflight_workspace_from_config_path = previous_preflight
         _stop.agent_stop = previous_stop
+    return stops
+
+
+def test_production_restart_dirty_authority_refusal_happens_before_stop(tmp_path):
+    # Arrange
+    from scitex_agent_container._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+    )
+
+    root = _authority(tmp_path / "work")
+    path = spec_file(tmp_path)
+    (root / "tracked.txt").write_text("preserve this edit\n")
+    registry = Registry(registry_dir=tmp_path / "registry")
+    registry.add("alpha", str(path), "tui-alpha")
+    # Act
+    stops = _run_refusal(tmp_path, registry, "authority checkout .* is dirty")
+    # Assert
+    assert stops == []
+
+
+def test_production_restart_unowned_worktree_refusal_happens_before_stop(tmp_path):
+    # Arrange
+    from scitex_agent_container._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+        plan_task_worktree,
+    )
+    from scitex_agent_container.config import load_config
+
+    root = _authority(tmp_path / "work")
+    path = spec_file(tmp_path)
+    (root / ".gitignore").write_text(".worktrees/\n")
+    subprocess.run(["git", "-C", str(root), "add", ".gitignore"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=tests@scitex.invalid",
+            "commit",
+            "-qm",
+            "ignore linked worktrees",
+        ],
+        check=True,
+    )
+    FIXTURE.chmod(FIXTURE.stat().st_mode | 0o111)
+    plan = plan_task_worktree(load_config(path), provision=False, cli_path=FIXTURE)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            plan.branch,
+            plan.resolved_workdir,
+        ],
+        check=True,
+    )
+    registry = Registry(registry_dir=tmp_path / "registry")
+    registry.add("alpha", str(path), "tui-alpha")
+    # Act
+    stops = _run_refusal(tmp_path, registry, "exists without SAC ownership")
+    # Assert
     assert stops == []

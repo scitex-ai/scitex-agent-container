@@ -390,10 +390,15 @@ def prepare(value, *, codes=None, tokens=None, calls=None, **kwargs):
 
 
 def test_nonhermes_successor_keeps_existing_guard():
+    # Arrange
+    # Act
+    # Assert
     assert gate.prepare_hermes_successor(AgentConfig(name="native")) is None
 
 
 def test_healthy_sibling_is_selected_without_touching_auth_file(tmp_path):
+    # Arrange
+    # Act
     value = config()
     before = deepcopy(value)
     auth = tmp_path / "alpha/home/.hermes/auth.json"
@@ -402,6 +407,7 @@ def test_healthy_sibling_is_selected_without_touching_auth_file(tmp_path):
     original = auth.read_bytes()
     proof = prepare(value, codes={TOKENS["SAC_TEST_A"]: 429})
     rows = next(iter(proof.pools.values())).credentials
+    # Assert
     assert (
         proof.provider_key,
         [r["last_status"] for r in rows],
@@ -416,8 +422,10 @@ def test_healthy_sibling_is_selected_without_touching_auth_file(tmp_path):
 
 
 def test_missing_slot_is_skipped_and_canonical_pool_can_supply_daemon_key():
+    # Arrange
     import os
 
+    # Act
     value = config()
     value.hermes_failover.accounts["muse"] = ["SAC_TEST_MISSING", "SAC_TEST_B"]
     previous_missing = os.environ.pop("SAC_TEST_B", None)
@@ -434,6 +442,7 @@ def test_missing_slot_is_skipped_and_canonical_pool_can_supply_daemon_key():
     finally:
         if previous_missing is not None:
             os.environ["SAC_TEST_B"] = previous_missing
+    # Assert
     assert (proof.provider_key, list(proof.env)) == (
         TOKENS["SAC_TEST_B"],
         ["SAC_TEST_B", "SAC_TEST_A"],
@@ -448,15 +457,34 @@ def test_missing_slot_is_skipped_and_canonical_pool_can_supply_daemon_key():
         (TOKENS, {t: None for t in TOKENS.values()}),
     ],
 )
-def test_all_missing_rejected_or_unknown_refuses_without_creating_home(
-    tmp_path, tokens, codes
-):
+def test_all_missing_rejected_or_unknown_refuses_without_creating_home_checks_pytest_raises_restartpreflightabort_match(tmp_path, tokens, codes):
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
         prepare(config(), tokens=tokens, codes=codes)
+
+
+@pytest.mark.parametrize(
+    "tokens,codes",
+    [
+        ({}, {}),
+        (TOKENS, {t: 401 for t in TOKENS.values()}),
+        (TOKENS, {t: None for t in TOKENS.values()}),
+    ],
+)
+def test_all_missing_rejected_or_unknown_refuses_without_creating_home_checks_tmp_path_alpha_exists(tmp_path, tokens, codes):
+    # Arrange
+    # Act
+    # Assert
     assert not (tmp_path / "alpha").exists()
 
 
+
 def test_public_get_style_acceptance_of_bad_key_is_not_auth_proof():
+    # Arrange
+    # Act
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="invalid credential control"):
         gate.prepare_hermes_successor(
             config(),
@@ -466,19 +494,32 @@ def test_public_get_style_acceptance_of_bad_key_is_not_auth_proof():
         )
 
 
-def test_probe_exception_never_echoes_a_key():
+def test_probe_exception_never_echoes_a_key_checks_pytest_raises_restartpreflightabort_error():
+    # Arrange
     sentinel = TOKENS["SAC_TEST_A"]
-
     def broken(_spec, _token):
         raise ValueError("upstream echoed authorization " + sentinel)
-
+    # Act
+    # Assert
     with pytest.raises(RestartPreflightAbort) as error:
         gate.prepare_hermes_successor(config(), resolver=resolve(TOKENS), probe=broken)
+
+
+def test_probe_exception_never_echoes_a_key_checks_sentinel_str_error_value():
+    # Arrange
+    sentinel = TOKENS["SAC_TEST_A"]
+    def broken(_spec, _token):
+        raise ValueError("upstream echoed authorization " + sentinel)
+    # Act
+    # Assert
     assert sentinel not in str(error.value)
 
 
-def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe(tmp_path):
+
+def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_pytest_raises_restartpreflightabort_prepare(tmp_path):
+    # Arrange
     value = config()
+    # Act
     initial = prepare(value)
     pool = next(iter(initial.pools.values()))
     pool.credentials[0].update(probe_result(401))
@@ -496,12 +537,40 @@ def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe(tmp_path):
     )
     gate.reset_probe_cache()
     calls = []
+    # Assert
     with pytest.raises(RestartPreflightAbort):
         prepare(value, calls=calls)
+
+
+def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_token_for_token_calls(tmp_path):
+    # Arrange
+    value = config()
+    # Act
+    initial = prepare(value)
+    pool = next(iter(initial.pools.values()))
+    pool.credentials[0].update(probe_result(401))
+    pool.credentials[1].update(probe_result(429))
+    auth = tmp_path / "alpha/home/.hermes/auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text(
+        json.dumps(
+            {
+                "credential_pool": {
+                    initial.selection["model"]["provider"]: pool.credentials
+                }
+            }
+        )
+    )
+    gate.reset_probe_cache()
+    calls = []
+    # Assert
     assert [token for _, token in calls] == [gate._CONTROL_TOKEN]
 
 
+
 def test_expired_quota_cooldown_is_rechecked(tmp_path):
+    # Arrange
+    # Act
     value = config()
     initial = prepare(value)
     provider = initial.selection["model"]["provider"]
@@ -515,10 +584,13 @@ def test_expired_quota_cooldown_is_rechecked(tmp_path):
     gate.reset_probe_cache()
     calls = []
     proof = prepare(value, calls=calls)
+    # Assert
     assert (len(calls), proof.provider_key) == (3, TOKENS["SAC_TEST_A"])
 
 
 def test_changed_token_cannot_inherit_dead_metadata_under_stale_same_id(tmp_path):
+    # Arrange
+    # Act
     value = config()
     initial = prepare(value)
     provider = initial.selection["model"]["provider"]
@@ -532,10 +604,13 @@ def test_changed_token_cannot_inherit_dead_metadata_under_stale_same_id(tmp_path
     gate.reset_probe_cache()
     calls = []
     proof = prepare(value, calls=calls)
+    # Assert
     assert (len(calls), proof.provider_key) == (3, TOKENS["SAC_TEST_A"])
 
 
 def test_healthy_primary_survives_unreachable_backup_control():
+    # Arrange
+    # Act
     value = config(fallback_model="meta/" + MODEL, judge=True)
 
     def native(spec, token):
@@ -549,6 +624,7 @@ def test_healthy_primary_survives_unreachable_backup_control():
         probe=native,
         now=lambda: 1000,
     )
+    # Assert
     assert (
         proof.selection["model"]["provider"],
         proof.selection["fallback_providers"],
@@ -561,6 +637,8 @@ def test_healthy_primary_survives_unreachable_backup_control():
 
 
 def test_auth_discriminating_backup_with_failed_real_probe_does_not_ground_primary():
+    # Arrange
+    # Act
     value = config(fallback_model="meta/" + MODEL, judge=True)
 
     def native(spec, token):
@@ -573,14 +651,18 @@ def test_auth_discriminating_backup_with_failed_real_probe_does_not_ground_prima
         resolver=resolve({**TOKENS, "SAC_TEST_C": "synthetic-backup"}),
         probe=native,
     )
+    # Assert
     assert (
         proof.selection["model"]["provider"],
         proof.selection["fallback_providers"],
     ) == ("custom:sac-muse", [])
 
 
-def test_missing_primary_and_unverified_backup_control_refuses_without_writes(tmp_path):
+def test_missing_primary_and_unverified_backup_control_refuses_without_writes_checks_pytest_raises_restartpreflightabort_match(tmp_path):
+    # Arrange
     value = config(fallback_model="meta/" + MODEL, judge=True)
+    # Act
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
         gate.prepare_hermes_successor(
             value,
@@ -588,10 +670,20 @@ def test_missing_primary_and_unverified_backup_control_refuses_without_writes(tm
             pool_reader=lambda: SimpleNamespace(env={}),
             probe=lambda *_args: probe_result(200),
         )
+
+
+def test_missing_primary_and_unverified_backup_control_refuses_without_writes_checks_tmp_path_alpha_exists(tmp_path):
+    # Arrange
+    value = config(fallback_model="meta/" + MODEL, judge=True)
+    # Act
+    # Assert
     assert not (tmp_path / "alpha").exists()
 
 
+
 def test_bulk_concurrent_agents_share_native_health_for_identical_vendor_keys():
+    # Arrange
+    # Act
     calls = []
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(
@@ -600,11 +692,14 @@ def test_bulk_concurrent_agents_share_native_health_for_identical_vendor_keys():
                 ["alpha", "beta", "gamma", "delta"],
             )
         )
+    # Assert
     assert (len(calls), len(results)) == (3, 4)
 
 
 def test_probe_cache_expires_and_drops_old_key_material():
+    # Arrange
     stamp = [1000.0]
+    # Act
     calls = []
     spec = {
         "url": "https://opencode.ai/zen/go/v1/responses",
@@ -622,6 +717,7 @@ def test_probe_cache_expires_and_drops_old_key_material():
     gate._cached_probe(spec, "retired-synthetic", native, lambda: stamp[0])
     stamp[0] += 2
     gate._cached_probe(spec, "new-synthetic", native, lambda: stamp[0])
+    # Assert
     assert (calls, any("retired-synthetic" in key for key in gate._CACHE)) == (
         ["retired-synthetic", "new-synthetic"],
         False,
@@ -629,6 +725,8 @@ def test_probe_cache_expires_and_drops_old_key_material():
 
 
 def test_arbitrary_gateway_identity_headers_are_not_cache_equivalent():
+    # Arrange
+    # Act
     calls = []
     spec = {
         "url": "https://private.example/v1/responses",
@@ -648,12 +746,16 @@ def test_arbitrary_gateway_identity_headers_are_not_cache_equivalent():
         native,
         lambda: 1000,
     )
+    # Assert
     assert len(calls) == 2
 
 
 def test_missing_primary_can_use_verified_same_muse_backup_with_same_judge():
+    # Arrange
+    # Act
     value = config(fallback_model="meta/" + MODEL, judge=True)
     proof = prepare(value, tokens={"SAC_TEST_C": "synthetic-backup"})
+    # Assert
     assert (
         proof.selection["model"]["provider"],
         proof.selection["model"]["default"],
@@ -668,40 +770,54 @@ def test_missing_primary_can_use_verified_same_muse_backup_with_same_judge():
 
 
 def test_unrelated_model_backup_refuses_authored_judge_intent():
+    # Arrange
+    # Act
     value = config(fallback_model="deepseek-chat", judge=True)
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="authored goal judge model"):
         prepare(value, tokens={"SAC_TEST_C": "synthetic-backup"})
 
 
 def test_unknown_fallback_is_not_skipped_as_an_unresolved_account():
+    # Arrange
+    # Act
     value = config()
     value.hermes_failover.engines = ["not-declared"]
+    # Assert
     with pytest.raises(ValueError, match="not available"):
         prepare(value)
 
 
 def test_prepared_route_cannot_be_rebound_to_different_pool_policy():
+    # Arrange
+    # Act
     value = config()
     proof = prepare(value)
     value.hermes_failover.accounts["muse"].reverse()
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="configuration changed"):
         gate.attach_prepared_route(value, proof)
 
 
 def test_spec_edit_between_probe_and_stop_refuses(tmp_path):
+    # Arrange
+    # Act
     value = config()
     path = tmp_path / "spec.yaml"
     path.write_text("first")
     value.config_path = str(path)
     proof = prepare(value)
     path.write_text("second-version")
+    # Assert
     with pytest.raises(RestartPreflightAbort, match="spec changed"):
         gate.assert_prepared_source_current(proof)
 
 
 def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
+    # Arrange
     tmp_path,
 ):
+    # Act
     value = config(judge=True)
     calls = []
     proof = prepare(value, calls=calls)
@@ -709,8 +825,9 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
     value.workdir = "/work/.worktrees/owned-topic"
 
     def forbidden(*_args, **_kwargs):
-        pytest.fail("prepared route must not re-probe or resolve a different key")
+        forbidden_calls.append((_args, _kwargs))
 
+    forbidden_calls = []
     previous_pools = profile.preflight_pools
     previous_resolve = profile.resolve_provider_api_key
     profile.preflight_pools = forbidden
@@ -727,6 +844,7 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         plan, workdir=value.workdir, goals=value.hermes_goals
     )
     profile._apply_verified_route(rendered, selection)
+    # Assert
     assert (
         plan is proof.plan,
         env is proof.env,
@@ -737,6 +855,7 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         rendered["providers"]["sac-muse"]["key_env"],
         rendered["auxiliary"]["goal_judge"],
         all(token not in repr(proof) for token in TOKENS.values()),
+        tuple(forbidden_calls),
     ) == (
         True,
         True,
@@ -747,16 +866,20 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         "",
         {"provider": "main", "model": MODEL},
         True,
+        (),
     )
 
 
 def test_same_muse_fallback_updates_goal_judge_wire_name():
+    # Arrange
+    # Act
     value = config(fallback_model="meta/" + MODEL, judge=True)
     proof = prepare(value, tokens={"SAC_TEST_C": "synthetic-backup"})
     rendered = compile_hermes_config(
         proof.plan, workdir=value.workdir, goals=value.hermes_goals
     )
     profile._apply_verified_route(rendered, proof.selection)
+    # Assert
     assert rendered["auxiliary"]["goal_judge"] == {
         "provider": "main",
         "model": "meta/" + MODEL,

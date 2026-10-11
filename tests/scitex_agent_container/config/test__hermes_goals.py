@@ -50,9 +50,11 @@ def test_omitted_turn_controls_preserve_existing_defaults():
 def test_explicit_turn_limit_rejects_invalid_scalar(field, value):
     # Arrange
     entry = {field: {"max_turns": value} if field == "goals" else value}
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="positive integer"):
         parse_selected_hermes_goals(_spec(entry))
+
 
 
 @pytest.mark.parametrize(
@@ -62,9 +64,11 @@ def test_explicit_turn_limit_rejects_invalid_scalar(field, value):
 def test_goal_policy_rejects_invalid_shape_or_unknown_field(goals):
     # Arrange
     spec = _spec({"goals": goals})
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError):
         parse_selected_hermes_goals(spec)
+
 
 
 def test_canonical_validator_accepts_explicit_hermes_turn_policy():
@@ -129,13 +133,15 @@ def test_judge_route_refuses_unknown_engine_or_changed_model(judge, model, messa
     config.engines["other"] = parse_engine_entry("other", {"model": "different-model"})
     config.hermes_goals = replace(config.hermes_goals, judge_engine=judge)
     config.model = model
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match=message):
         validate_hermes_goal_engine(config)
 
 
-@pytest.mark.parametrize("judge", ["muse", "unknown", "other"])
-def test_authored_goal_intent_crosses_validated_yaml_loader(
+
+@pytest.mark.parametrize("judge", ["unknown", "other"])
+def test_authored_goal_intent_with_non_muse_judge_fails_yaml_load(
     tmp_path, env_save_restore, judge
 ):
     # Arrange
@@ -175,14 +181,57 @@ def test_authored_goal_intent_crosses_validated_yaml_loader(
     path = tmp_path / "lead" / "spec.yaml"
     path.parent.mkdir()
     path.write_text(yaml.safe_dump(raw))
-    # Act / Assert
-    if judge == "muse":
-        config = load_config(path)
-        assert (config.hermes_max_turns, config.hermes_goals, config.model) == (
-            99999,
-            HermesGoalSpec(99999, "muse"),
-            "muse-spark-1.3-contributor",
-        )
-    else:
-        with pytest.raises(ValueError, match="judge_engine"):
-            load_config(path)
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="judge_engine"):
+        load_config(path)
+
+
+def test_authored_goal_intent_with_muse_judge_loads_validated_values(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    from scitex_agent_container.config import load_config
+
+    env_save_restore.set("SAC_ENGINES_FILE", str(tmp_path / "no-fleet-engines.yaml"))
+    raw = explicit_doc(
+        {
+            "runtime": "tui",
+            "harness": "hermes",
+            "engine": "muse",
+            "comms": {"channels": []},
+            "available_harnesses": {
+                "hermes": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "max_turns": 99999,
+                    "goals": {"max_turns": 99999, "judge_engine": "muse"},
+                }
+            },
+            "available_engines": {
+                key: {
+                    "model": model,
+                    "provider": {
+                        "base_url": "http://synthetic.invalid/v1",
+                        "auth_token_env": "SYNTHETIC_KEY",
+                    },
+                }
+                for key, model in (
+                    ("muse", "muse-spark-1.3-contributor"),
+                    ("other", "other-model"),
+                )
+            },
+        }
+    )
+    for legacy in ("engines", "claude", "watchdog", "container"):
+        raw["spec"].pop(legacy, None)
+    path = tmp_path / "lead" / "spec.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump(raw))
+    # Act
+    config = load_config(path)
+    # Assert
+    assert (config.hermes_max_turns, config.hermes_goals, config.model) == (
+        99999,
+        HermesGoalSpec(99999, "muse"),
+        "muse-spark-1.3-contributor",
+    )

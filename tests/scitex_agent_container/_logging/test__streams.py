@@ -212,7 +212,8 @@ render_content('{"status":"accepted"}')
 
 
 @pytest.mark.parametrize("capture_prints", [False, True])
-def test_protocol_output_survives_global_logging_disable(capture_prints):
+def test_protocol_output_survives_global_logging_disable_stdout(capture_prints):
+    # Arrange
     code = """
 import logging
 import sys
@@ -235,6 +236,7 @@ render_content(owned.getvalue().rstrip('\\n'))
         [str(Path(__file__).resolve().parents[3] / "src")]
         + ([_installed_site()] if _installed_site() else [])
     )
+    # Act
     result = subprocess.run(
         [sys.executable, "-c", code, str(capture_prints)],
         env=env,
@@ -242,8 +244,76 @@ render_content(owned.getvalue().rstrip('\\n'))
         text=True,
         check=True,
     )
+    # Assert
     assert result.stdout == '{"transport":"stdout"}\ncaller-owned λ\n'
+
+
+@pytest.mark.parametrize("capture_prints", [False, True])
+def test_protocol_output_survives_global_logging_disable_stderr_checks_result_stdout_transport_stdout(capture_prints):
+    # Arrange
+    # Act
+    code = """
+import logging
+import sys
+from io import StringIO
+import scitex_logging as slogging
+from scitex_agent_container._logging import render_content, write_stream
+slogging.configure(level='critical', enable_file=False, capture_prints=sys.argv[1] == 'True')
+logging.disable(logging.CRITICAL)
+render_content('{"transport":"stdout"}')
+owned = StringIO()
+write_stream('caller-owned \\u03bb', owned)
+render_content(owned.getvalue().rstrip('\\n'))
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parents[3] / "src")]
+        + ([_installed_site()] if _installed_site() else [])
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(capture_prints)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert
+    assert result.stdout == '{"transport":"stdout"}\ncaller-owned λ\n'
+
+
+@pytest.mark.parametrize("capture_prints", [False, True])
+def test_protocol_output_survives_global_logging_disable_stderr_checks_result_stderr(capture_prints):
+    # Arrange
+    # Act
+    code = """
+import logging
+import sys
+from io import StringIO
+import scitex_logging as slogging
+from scitex_agent_container._logging import render_content, write_stream
+slogging.configure(level='critical', enable_file=False, capture_prints=sys.argv[1] == 'True')
+logging.disable(logging.CRITICAL)
+render_content('{"transport":"stdout"}')
+owned = StringIO()
+write_stream('caller-owned \\u03bb', owned)
+render_content(owned.getvalue().rstrip('\\n'))
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parents[3] / "src")]
+        + ([_installed_site()] if _installed_site() else [])
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(capture_prints)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert
     assert result.stderr == ""
+
+
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Real terminal check requires a PTY")

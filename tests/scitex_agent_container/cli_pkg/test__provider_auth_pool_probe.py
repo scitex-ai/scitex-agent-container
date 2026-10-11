@@ -26,12 +26,14 @@ def test_real_native_http_pool_probe_is_shared_and_discriminates_invalid_keys(
 ):
     import os
 
+    # Arrange
     previous_home = os.environ.get("HOME")
     previous_key = os.environ.get(_ENV_NAME)
     os.environ["HOME"] = str(tmp_path)
     os.environ[_ENV_NAME] = _GOOD_KEY
     reset_probe_cache()
     try:
+        # Act
         with _serve_hermes_chat(accept_all=accept_all, completion=True) as (
             url,
             observed,
@@ -47,6 +49,7 @@ def test_real_native_http_pool_probe_is_shared_and_discriminates_invalid_keys(
             config.hermes_failover = HermesFailoverSpec(accounts={"muse": [_ENV_NAME]})
             first = probe_provider_auth(config, timeout=5)
             second = probe_provider_auth(config, timeout=5)
+            # Assert
             assert (
                 first.state,
                 second.state,
