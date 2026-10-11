@@ -25,11 +25,14 @@ def test_mcp_host_start_preserves_explicit_session_policy(
     with host_endpoint(env_save_restore, 200, {"returncode": 0}) as calls:
         # Act
         agent_start("retained-owner", session=mode)
-    # Assert
+    # Assert: `caller` is auto-resolved from the container env by
+    # request_spawn — expect it alongside the pinned fields.
     assert calls[0][1] == (
         {"name": "retained-owner", "assume_yes": True}
         | ({"session": expected} if expected else {})
+        | {"caller": calls[0][1]["caller"]}
     )
+    assert isinstance(calls[0][1]["caller"], str)
 
 
 def test_mcp_start_queued_is_not_running_admission(env_save_restore):
@@ -73,12 +76,15 @@ def test_mcp_start_keeps_foreground_and_consent(env_save_restore):
     with host_endpoint(env_save_restore, 200, {"returncode": 0}) as calls:
         # Act
         agent_start("retained-owner", foreground=True)
-    # Assert
+    # Assert: `caller` is auto-resolved from the container env by
+    # request_spawn — expect it alongside the pinned fields.
     assert calls[0][1] == {
         "name": "retained-owner",
         "foreground": True,
         "assume_yes": True,
+        "caller": calls[0][1]["caller"],
     }
+    assert isinstance(calls[0][1]["caller"], str)
 
 
 @pytest.mark.parametrize("returncode", (None, False, "0", 1))
