@@ -70,10 +70,25 @@ from scitex_agent_container.cli_pkg.installation_group import boot  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def isolated_job_catalog(tmp_path, monkeypatch):
+def isolated_job_catalog(tmp_path):
     """Keep operator recovery pauses out of installation catalog expectations."""
-    monkeypatch.setenv("SCITEX_DIR", str(tmp_path / "ecosystem-root"))
-    monkeypatch.delenv("SAC_JOBS_ENABLED", raising=False)
+    import os
+
+    previous_dir = os.environ.get("SCITEX_DIR")
+    previous_enabled = os.environ.get("SAC_JOBS_ENABLED")
+    os.environ["SCITEX_DIR"] = str(tmp_path / "ecosystem-root")
+    os.environ.pop("SAC_JOBS_ENABLED", None)
+    try:
+        yield
+    finally:
+        if previous_dir is None:
+            os.environ.pop("SCITEX_DIR", None)
+        else:
+            os.environ["SCITEX_DIR"] = previous_dir
+        if previous_enabled is None:
+            os.environ.pop("SAC_JOBS_ENABLED", None)
+        else:
+            os.environ["SAC_JOBS_ENABLED"] = previous_enabled
 
 
 def _declared_timers() -> list[str]:

@@ -13,7 +13,7 @@ from scitex_agent_container.runtimes import _hermes_sac_runtime as runtime
 
 
 @pytest.fixture
-def installed_sac(tmp_path, monkeypatch):
+def installed_sac(tmp_path):
     prefix = tmp_path / "environment"
     scripts = prefix / "bin"
     scripts.mkdir(parents=True)
@@ -27,14 +27,34 @@ def installed_sac(tmp_path, monkeypatch):
     binary = scripts / "sac"
     binary.write_text(f"#!{python}\n")
     binary.chmod(0o755)
-    monkeypatch.setattr(runtime.sysconfig, "get_path", lambda name: str(scripts))
-    monkeypatch.setattr(runtime.sys, "executable", str(python))
-    monkeypatch.setattr(runtime.sys, "prefix", str(prefix))
-    monkeypatch.setattr(runtime.sys, "base_prefix", str(base))
-    monkeypatch.setattr(_fleet_env, "effective_env", lambda config: dict(config.env))
-    monkeypatch.delenv("SAC_BIN", raising=False)
-    monkeypatch.delenv("SAC_BIN_IN_SIF", raising=False)
-    return runtime.SacInstallation(binary, python, prefix, base)
+    previous_get_path = runtime.sysconfig.get_path
+    previous_executable = runtime.sys.executable
+    previous_prefix = runtime.sys.prefix
+    previous_base_prefix = runtime.sys.base_prefix
+    previous_effective_env = _fleet_env.effective_env
+    previous_bin = os.environ.pop("SAC_BIN", None)
+    previous_bin_in_sif = os.environ.pop("SAC_BIN_IN_SIF", None)
+    runtime.sysconfig.get_path = lambda name: str(scripts)
+    runtime.sys.executable = str(python)
+    runtime.sys.prefix = str(prefix)
+    runtime.sys.base_prefix = str(base)
+    _fleet_env.effective_env = lambda config: dict(config.env)
+    try:
+        yield runtime.SacInstallation(binary, python, prefix, base)
+    finally:
+        runtime.sysconfig.get_path = previous_get_path
+        runtime.sys.executable = previous_executable
+        runtime.sys.prefix = previous_prefix
+        runtime.sys.base_prefix = previous_base_prefix
+        _fleet_env.effective_env = previous_effective_env
+        if previous_bin is None:
+            os.environ.pop("SAC_BIN", None)
+        else:
+            os.environ["SAC_BIN"] = previous_bin
+        if previous_bin_in_sif is None:
+            os.environ.pop("SAC_BIN_IN_SIF", None)
+        else:
+            os.environ["SAC_BIN_IN_SIF"] = previous_bin_in_sif
 
 
 def _config():

@@ -22,10 +22,14 @@ from tests.scitex_agent_container.cli_pkg.test__provider_auth_probe import (
 
 @pytest.mark.parametrize("accept_all,expected", [(False, OK), (True, PROBE_FAILED)])
 def test_real_native_http_pool_probe_is_shared_and_discriminates_invalid_keys(
-    tmp_path, monkeypatch, accept_all, expected
+    tmp_path, accept_all, expected
 ):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv(_ENV_NAME, _GOOD_KEY)
+    import os
+
+    previous_home = os.environ.get("HOME")
+    previous_key = os.environ.get(_ENV_NAME)
+    os.environ["HOME"] = str(tmp_path)
+    os.environ[_ENV_NAME] = _GOOD_KEY
     reset_probe_cache()
     try:
         with _serve_hermes_chat(accept_all=accept_all, completion=True) as (
@@ -55,4 +59,12 @@ def test_real_native_http_pool_probe_is_shared_and_discriminates_invalid_keys(
                 True,
             )
     finally:
+        if previous_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = previous_home
+        if previous_key is None:
+            os.environ.pop(_ENV_NAME, None)
+        else:
+            os.environ[_ENV_NAME] = previous_key
         reset_probe_cache()
