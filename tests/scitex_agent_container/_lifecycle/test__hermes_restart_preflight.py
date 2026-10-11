@@ -300,16 +300,25 @@ TOKENS = {"SAC_TEST_A": "synthetic-primary-a", "SAC_TEST_B": "synthetic-primary-
 
 
 @pytest.fixture(autouse=True)
-def isolated_health(tmp_path, monkeypatch):
+def isolated_health(tmp_path):
+    import os
+
     from scitex_agent_container.runtimes import tui_session
 
     gate.reset_probe_cache()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(
-        tui_session, "state_dir_for_config", lambda c: tmp_path / c.name
-    )
-    yield
-    gate.reset_probe_cache()
+    previous_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    previous_state_dir = tui_session.state_dir_for_config
+    tui_session.state_dir_for_config = lambda c: tmp_path / c.name
+    try:
+        yield
+    finally:
+        if previous_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = previous_home
+        tui_session.state_dir_for_config = previous_state_dir
+        gate.reset_probe_cache()
 
 
 def config(name="alpha", *, fallback_model=None, judge=False):
@@ -406,19 +415,25 @@ def test_healthy_sibling_is_selected_without_touching_auth_file(tmp_path):
     )
 
 
-def test_missing_slot_is_skipped_and_canonical_pool_can_supply_daemon_key(monkeypatch):
+def test_missing_slot_is_skipped_and_canonical_pool_can_supply_daemon_key():
+    import os
+
     value = config()
     value.hermes_failover.accounts["muse"] = ["SAC_TEST_MISSING", "SAC_TEST_B"]
-    monkeypatch.delenv("SAC_TEST_B", raising=False)
-    proof = gate.prepare_hermes_successor(
-        value,
-        resolver=resolve({}),
-        pool_reader=lambda: SimpleNamespace(env={"SAC_TEST_B": TOKENS["SAC_TEST_B"]}),
-        probe=lambda _spec, token: probe_result(
-            401 if token == gate._CONTROL_TOKEN else 200
-        ),
-        now=lambda: 1000,
-    )
+    previous_missing = os.environ.pop("SAC_TEST_B", None)
+    try:
+        proof = gate.prepare_hermes_successor(
+            value,
+            resolver=resolve({}),
+            pool_reader=lambda: SimpleNamespace(env={"SAC_TEST_B": TOKENS["SAC_TEST_B"]}),
+            probe=lambda _spec, token: probe_result(
+                401 if token == gate._CONTROL_TOKEN else 200
+            ),
+            now=lambda: 1000,
+        )
+    finally:
+        if previous_missing is not None:
+            os.environ["SAC_TEST_B"] = previous_missing
     assert (proof.provider_key, list(proof.env)) == (
         TOKENS["SAC_TEST_B"],
         ["SAC_TEST_B", "SAC_TEST_A"],
@@ -685,7 +700,7 @@ def test_spec_edit_between_probe_and_stop_refuses(tmp_path):
 
 
 def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     value = config(judge=True)
     calls = []
@@ -696,11 +711,17 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
     def forbidden(*_args, **_kwargs):
         pytest.fail("prepared route must not re-probe or resolve a different key")
 
-    monkeypatch.setattr(profile, "preflight_pools", forbidden)
-    monkeypatch.setattr(profile, "resolve_provider_api_key", forbidden)
-    plan, selection, env, pools = profile._verified_route(
-        value, tmp_path / "home", launch_mode="tui"
-    )
+    previous_pools = profile.preflight_pools
+    previous_resolve = profile.resolve_provider_api_key
+    profile.preflight_pools = forbidden
+    profile.resolve_provider_api_key = forbidden
+    try:
+        plan, selection, env, pools = profile._verified_route(
+            value, tmp_path / "home", launch_mode="tui"
+        )
+    finally:
+        profile.preflight_pools = previous_pools
+        profile.resolve_provider_api_key = previous_resolve
     key = profile._profile_primary_key(value)
     rendered = compile_hermes_config(
         plan, workdir=value.workdir, goals=value.hermes_goals

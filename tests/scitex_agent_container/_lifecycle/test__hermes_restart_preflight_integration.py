@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -34,18 +36,34 @@ _FakeRuntime = restart_test._FakeRuntime
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("SAC_ENGINES_FILE", str(tmp_path / "no-fleet-engines.yaml"))
+def isolated_environment(tmp_path):
+    previous = {}
+    for name, value in (
+        ("HOME", str(tmp_path)),
+        ("SAC_ENGINES_FILE", str(tmp_path / "no-fleet-engines.yaml")),
+    ):
+        previous[name] = os.environ.get(name)
+        os.environ[name] = value
+    removed = {}
     for name in (
         "SAC_TEST_PRIMARY_MISSING",
         "SAC_TEST_HEALTHY_SIBLING",
         "SAC_TEST_FALLBACK",
     ):
-        monkeypatch.delenv(name, raising=False)
+        removed[name] = os.environ.pop(name, None)
     gate.reset_probe_cache()
-    yield
-    gate.reset_probe_cache()
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        for name, value in removed.items():
+            if value is not None:
+                os.environ[name] = value
+        gate.reset_probe_cache()
 
 
 def spec_file(tmp_path):
@@ -104,7 +122,8 @@ def spec_file(tmp_path):
     return establish_test_spec_authority(path)
 
 
-def configure_probe(monkeypatch, *, tokens):
+@contextmanager
+def configured_probe(*, tokens):
     calls = []
     real_prepare = gate.prepare_hermes_successor
 
@@ -131,20 +150,24 @@ def configure_probe(monkeypatch, *, tokens):
             **kwargs,
         )
 
-    monkeypatch.setattr(gate, "prepare_hermes_successor", prepare)
-    return calls
+    previous = gate.prepare_hermes_successor
+    gate.prepare_hermes_successor = prepare
+    try:
+        yield calls
+    finally:
+        gate.prepare_hermes_successor = previous
 
 
-def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path, monkeypatch):
+def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path):
     path = spec_file(tmp_path)
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add("alpha", str(path), "tui-alpha")
     runtime = _FakeRuntime(running=True)
-    calls = configure_probe(monkeypatch, tokens={})
-    with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
-        lifecycle.agent_restart(
-            "alpha", registry=registry, runtime_factory=lambda _c: runtime
-        )
+    with configured_probe(tokens={}) as calls:
+        with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
+            lifecycle.agent_restart(
+                "alpha", registry=registry, runtime_factory=lambda _c: runtime
+            )
     assert (runtime.running, runtime.stop_calls, runtime.start_calls, calls) == (
         True,
         [],
@@ -154,14 +177,11 @@ def test_real_restart_all_missing_keeps_live_process_and_session(tmp_path, monke
 
 
 def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
-    pg_schema, tmp_path, monkeypatch
+    pg_schema, tmp_path
 ):
     path = spec_file(tmp_path)
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add("alpha", str(path), "tui-alpha")
-    calls = configure_probe(
-        monkeypatch, tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
-    )
     observed = []
 
     class Successor(_FakeRuntime):
@@ -188,16 +208,19 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
             return super().start(config, **kwargs)
 
     runtime = Successor(running=True)
-    result = lifecycle.agent_restart(
-        "alpha",
-        registry=registry,
-        runtime_factory=lambda _c: runtime,
-        sleep_fn=lambda _seconds: None,
-        handover_mod=_FakeHandover(),
-        managed_turn_probe=lambda _c: HermesTurnActivity(
-            "idle", "idle", "existing-session"
-        ),
-    )
+    with configured_probe(
+        tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
+    ) as calls:
+        result = lifecycle.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: runtime,
+            sleep_fn=lambda _seconds: None,
+            handover_mod=_FakeHandover(),
+            managed_turn_probe=lambda _c: HermesTurnActivity(
+                "idle", "idle", "existing-session"
+            ),
+        )
     assert (
         result,
         len(runtime.stop_calls),
@@ -222,7 +245,7 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(
 
 
 def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_reprobe(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     from scitex_agent_container._lifecycle._engine_select import (
         check_engine_before_stop,
@@ -233,16 +256,16 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
     from scitex_agent_container.config import load_config
 
     path = spec_file(tmp_path)
-    calls = configure_probe(
-        monkeypatch, tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
-    )
-    proof = preflight_from_config_path(str(path))
-    check_engine_before_stop(str(path))
-    successor = load_config(path)
-    gate.attach_prepared_route(successor, proof)
-    plan, selection, _, _ = profile._verified_route(
-        successor, tmp_path / "unused-home", launch_mode="tui"
-    )
+    with configured_probe(
+        tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
+    ) as calls:
+        proof = preflight_from_config_path(str(path))
+        check_engine_before_stop(str(path))
+        successor = load_config(path)
+        gate.attach_prepared_route(successor, proof)
+        plan, selection, _, _ = profile._verified_route(
+            successor, tmp_path / "unused-home", launch_mode="tui"
+        )
     rendered = compile_hermes_config(
         plan,
         workdir=successor.workdir,
@@ -267,7 +290,7 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
 
 @pytest.mark.parametrize("problem", ["dirty-authority", "unowned-worktree"])
 def test_production_restart_workspace_refusal_happens_before_stop(
-    tmp_path, monkeypatch, problem
+    tmp_path, problem
 ):
     from scitex_agent_container._lifecycle import _restart_preflight, _stop
     from scitex_agent_container._lifecycle._worktree_policy import (
@@ -318,19 +341,23 @@ def test_production_restart_workspace_refusal_happens_before_stop(
         expected = "exists without SAC ownership"
     registry = Registry(registry_dir=tmp_path / "registry")
     registry.add("alpha", str(path), "tui-alpha")
-    configure_probe(
-        monkeypatch, tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
-    )
     real_workspace_preflight = _restart_preflight.preflight_workspace_from_config_path
-    monkeypatch.setattr(
-        _restart_preflight,
-        "preflight_workspace_from_config_path",
+    previous_preflight = _restart_preflight.preflight_workspace_from_config_path
+    _restart_preflight.preflight_workspace_from_config_path = (
         lambda config_path, **kwargs: real_workspace_preflight(
             config_path, cli_path=FIXTURE, **kwargs
-        ),
+        )
     )
+    previous_stop = _stop.agent_stop
     stops = []
-    monkeypatch.setattr(_stop, "agent_stop", lambda *args, **kwargs: stops.append(args))
-    with pytest.raises(WorktreePolicyError, match=expected):
-        lifecycle.agent_restart("alpha", registry=registry)
+    _stop.agent_stop = lambda *args, **kwargs: stops.append(args)
+    try:
+        with configured_probe(
+            tokens={"SAC_TEST_HEALTHY_SIBLING": "synthetic-working"}
+        ):
+            with pytest.raises(WorktreePolicyError, match=expected):
+                lifecycle.agent_restart("alpha", registry=registry)
+    finally:
+        _restart_preflight.preflight_workspace_from_config_path = previous_preflight
+        _stop.agent_stop = previous_stop
     assert stops == []
