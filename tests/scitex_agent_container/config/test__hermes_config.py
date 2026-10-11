@@ -167,17 +167,21 @@ def test_compiler_refuses_invalid_explicit_turn_caps(value, field):
         if field == "agent"
         else {"goals": HermesGoalSpec(max_turns=value)}
     )
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="positive integer"):
         compile_hermes_config(_plan(), workdir="/work", **options)
+
 
 
 def test_compiler_refuses_judge_selected_from_another_engine():
     # Arrange
     goals = HermesGoalSpec(judge_engine="different-engine")
-    # Act / Assert
+    # Act
+    # Assert
     with pytest.raises(ValueError, match="selected agent engine"):
         compile_hermes_config(_plan(), workdir="/work", goals=goals)
+
 
 
 def test_compiler_embeds_explicit_verified_system_prompt():

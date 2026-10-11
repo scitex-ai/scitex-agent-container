@@ -341,10 +341,6 @@ def _run_refusal(tmp_path, registry, expected):
 
 def test_production_restart_dirty_authority_refusal_happens_before_stop(tmp_path):
     # Arrange
-    from scitex_agent_container._lifecycle._worktree_policy import (
-        WorktreePolicyError,
-    )
-
     root = _authority(tmp_path / "work")
     path = spec_file(tmp_path)
     (root / "tracked.txt").write_text("preserve this edit\n")
@@ -359,7 +355,6 @@ def test_production_restart_dirty_authority_refusal_happens_before_stop(tmp_path
 def test_production_restart_unowned_worktree_refusal_happens_before_stop(tmp_path):
     # Arrange
     from scitex_agent_container._lifecycle._worktree_policy import (
-        WorktreePolicyError,
         plan_task_worktree,
     )
     from scitex_agent_container.config import load_config

@@ -554,18 +554,21 @@ def test_unknown_selection_is_visible_refusal_even_with_wildcard(tmp_path, conte
     # Arrange
     _sel_write(tmp_path, content)
     # Act
+    # Assert
     with pytest.raises(ValueError, match="unknown job names"):
         _sel_jobs(tmp_path)
+
     # Assert
 
 
 def test_unreadable_selection_does_not_rearm_jobs(tmp_path):
     # Arrange
-    # An actual directory where the file should be raises an actual I/O error.
     (tmp_path / "jobs-enabled.txt").mkdir()
     # Act
+    # Assert
     with pytest.raises(RuntimeError, match="refusing job discovery"):
         _sel_jobs(tmp_path)
+
     # Assert
 
 
@@ -573,8 +576,10 @@ def test_broken_authored_selection_symlink_does_not_rearm_jobs(tmp_path):
     # Arrange
     (tmp_path / "jobs-enabled.txt").symlink_to(tmp_path / "missing-pause-config")
     # Act
+    # Assert
     with pytest.raises(RuntimeError, match="broken symlink"):
         _sel_jobs(tmp_path)
+
     # Assert
 
 
@@ -582,8 +587,10 @@ def test_invalid_utf8_selection_is_not_treated_as_absent(tmp_path):
     # Arrange
     (tmp_path / "jobs-enabled.txt").write_bytes(b"\xff\xfe")
     # Act
+    # Assert
     with pytest.raises(UnicodeError):
         _sel_jobs(tmp_path)
+
     # Assert
 
 
