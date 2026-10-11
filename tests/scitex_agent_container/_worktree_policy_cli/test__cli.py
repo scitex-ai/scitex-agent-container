@@ -21,7 +21,14 @@ def _run(tmp_path, *args, extra_env=None):
     env = dict(os.environ)
     env["SCITEX_AGENT_CONTAINER_HOME"] = str(tmp_path / "sac-state")
     env["SCITEX_DIR"] = str(tmp_path / "scitex")
-    env.update(extra_env or {})
+    for key, value in (extra_env or {}).items():
+        if key == "PYTHONPATH" and value and env.get("PYTHONPATH"):
+            # Keep the SIF matrix's ambient installs behind the test's own
+            # entries: overwriting drops them and the child resolves stale
+            # interpreter-baked deps (same site-handoff rule as _logging).
+            env[key] = value + os.pathsep + env["PYTHONPATH"]
+        else:
+            env[key] = value
     return subprocess.run(
         [sys.executable, str(Path(policy.__file__).with_name("__main__.py")), *args],
         env=env,
