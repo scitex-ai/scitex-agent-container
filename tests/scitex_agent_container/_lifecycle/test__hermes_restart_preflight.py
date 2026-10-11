@@ -494,32 +494,27 @@ def test_public_get_style_acceptance_of_bad_key_is_not_auth_proof():
         )
 
 
-def test_probe_exception_never_echoes_a_key_checks_pytest_raises_restartpreflightabort_error():
+def test_probe_exception_refuses_without_echoing_a_key():
     # Arrange
     sentinel = TOKENS["SAC_TEST_A"]
+
     def broken(_spec, _token):
         raise ValueError("upstream echoed authorization " + sentinel)
+
     # Act
-    # Assert
-    with pytest.raises(RestartPreflightAbort) as error:
+    try:
         gate.prepare_hermes_successor(config(), resolver=resolve(TOKENS), probe=broken)
-
-
-def test_probe_exception_never_echoes_a_key_checks_sentinel_str_error_value():
-    # Arrange
-    sentinel = TOKENS["SAC_TEST_A"]
-    def broken(_spec, _token):
-        raise ValueError("upstream echoed authorization " + sentinel)
-    # Act
+    except RestartPreflightAbort as error:
+        observed = str(error)
+    else:
+        observed = None
     # Assert
-    assert sentinel not in str(error.value)
+    assert observed is not None and sentinel not in observed
 
 
-
-def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_pytest_raises_restartpreflightabort_prepare(tmp_path):
+def test_dead_and_future_quota_cooldown_refuse_without_reprobe(tmp_path):
     # Arrange
     value = config()
-    # Act
     initial = prepare(value)
     pool = next(iter(initial.pools.values()))
     pool.credentials[0].update(probe_result(401))
@@ -537,15 +532,15 @@ def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_pyt
     )
     gate.reset_probe_cache()
     calls = []
+    # Act
     # Assert
     with pytest.raises(RestartPreflightAbort):
         prepare(value, calls=calls)
 
 
-def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_token_for_token_calls(tmp_path):
+def test_dead_and_future_quota_cooldown_probe_only_control_token(tmp_path):
     # Arrange
     value = config()
-    # Act
     initial = prepare(value)
     pool = next(iter(initial.pools.values()))
     pool.credentials[0].update(probe_result(401))
@@ -563,9 +558,15 @@ def test_dead_and_future_quota_cooldown_are_preserved_without_reprobe_checks_tok
     )
     gate.reset_probe_cache()
     calls = []
+    # Act
+    try:
+        prepare(value, calls=calls)
+    except RestartPreflightAbort:
+        refused = True
+    else:
+        refused = False
     # Assert
-    assert [token for _, token in calls] == [gate._CONTROL_TOKEN]
-
+    assert (refused, [token for _, token in calls]) == (True, [gate._CONTROL_TOKEN])
 
 
 def test_expired_quota_cooldown_is_rechecked(tmp_path):
