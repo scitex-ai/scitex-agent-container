@@ -106,16 +106,17 @@ sys.stdout.write(json.dumps({'binary':binary,'returncode':result.returncode,
         capture_output=True,
         timeout=45,
     )
-    # Assert
-    assert completed.returncode == 0, completed.stderr
     receipt = json.loads(completed.stdout)
+    # Assert
     assert (
+        completed.returncode,
         receipt["binary"],
         receipt["returncode"],
         str(installation.python) in receipt["version_output"],
         receipt["hermes_binary"],
         receipt["hermes_pin"],
     ) == (
+        0,
         str(installation.binary),
         0,
         True,
@@ -155,11 +156,11 @@ sys.stdout.write(json.dumps(options))
         capture_output=True,
         timeout=45,
     )
-    # Assert
-    assert completed.returncode == 0, completed.stderr
     options = json.loads(completed.stdout)
+    # Assert
     assert (
+        completed.returncode,
         options["max_turns"],
         options["goals"]["max_turns"],
         options["goals"]["judge_engine"],
-    ) == (99999, 99999, "same-model")
+    ) == (0, 99999, 99999, "same-model")
