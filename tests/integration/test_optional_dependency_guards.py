@@ -43,13 +43,16 @@ sys.meta_path.insert(0, MissingDependencyFinder())
     with tempfile.TemporaryDirectory(prefix="sac-optional-probe-") as home:
         env["HOME"] = home
         env["TMPDIR"] = home
+        # Generous wall clock: on a loaded CI node (32-way xdist, cold
+        # interpreter, coverage) even an ImportError-guarded import of a
+        # heavy optional peer can take seconds; 5s flaked under load.
         return subprocess.run(
             [sys.executable, "-c", code],
             cwd=ROOT,
             env=env,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=60,
         )
 
 
