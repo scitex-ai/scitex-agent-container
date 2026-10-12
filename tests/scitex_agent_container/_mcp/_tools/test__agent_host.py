@@ -72,10 +72,11 @@ def test_mcp_host_start_preserves_explicit_session_policy_caller(
     env_save_restore,
 ):
     # Arrange
+    env_save_restore.set("SAC_NAME", "synthetic-caller")
     # Act
     body = _host_start_body(env_save_restore, None)
     # Assert
-    assert isinstance(body["caller"], str)
+    assert body["caller"] == "synthetic-caller"
 
 
 def test_mcp_start_queued_is_not_running_admission(env_save_restore):
@@ -142,10 +143,11 @@ def test_mcp_start_keeps_consent_flag(env_save_restore):
 
 def test_mcp_start_keeps_caller_identity(env_save_restore):
     # Arrange
+    env_save_restore.set("SAC_NAME", "synthetic-caller")
     # Act
     body = _host_start_foreground_body(env_save_restore)
     # Assert
-    assert isinstance(body["caller"], str)
+    assert body["caller"] == "synthetic-caller"
 
 
 @pytest.mark.parametrize("returncode", (None, False, "0", 1))

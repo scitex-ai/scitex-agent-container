@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from scitex_dev.linter._rules._lookup import lookup as _real_lookup
 
 from scitex_agent_container._linter_plugin import (
     _make_issue,
@@ -184,7 +183,9 @@ def test_source_at_returns_empty_string_when_lineno_above_range():
 
 def test_make_issue_returns_none_when_suppressed_by_inline_comment():
     # Arrange — real rule + a source line carrying a real stx-allow tag.
-    rule = _real_lookup("STX-SAC001")
+    # Use the plugin's own rule (not the merged lookup, which loads every
+    # installed plugin and trips on unrelated duplicate declarations).
+    rule = next(r for r in get_plugin()["rules"] if r.id == "STX-SAC001")
     suppressed_line = 'card = {"name": "x", "url": "u"}  # stx-allow: STX-SAC001'
     # Act
     issue = _make_issue(rule, line=1, col=0, source_line=suppressed_line)
