@@ -177,6 +177,7 @@ def _hermes_tui_inner_argv(
     """
     del options
     from ..runtimes._hermes_context_gc import DEFAULT_MAX_SESSION_AGE_MINUTES
+    from ..runtimes._hermes_sac_runtime import HERMES_BINARY, sac_installation
 
     configured_max_age = config.claude.continue_max_age_minutes
     max_age = min(
@@ -187,7 +188,7 @@ def _hermes_tui_inner_argv(
         "/usr/bin/tini",
         "-s",
         "--",
-        "python3",
+        str(sac_installation(config).python),
         "-m",
         "scitex_agent_container.runtimes._hermes_tui_owner",
         "--state-dir",
@@ -195,7 +196,7 @@ def _hermes_tui_inner_argv(
         "--max-session-age-minutes",
         str(max_age),
         "--",
-        "hermes",
+        HERMES_BINARY,
         "chat",
         "--tui",
         "--in",
@@ -314,11 +315,13 @@ def _hermes_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]
     remain absent from the world-readable process command line.
     """
     from ..runtimes._apptainer_provider import engine_env_flags
+    from ..runtimes._hermes_sac_runtime import sac_runtime_env_flags
 
     return (
         ["--env", "HERMES_HOME=/home/agent/.hermes"]
         + _hermes_profile_env_argv(state_dir)
         + engine_env_flags(config)
+        + sac_runtime_env_flags(config)
     )
 
 

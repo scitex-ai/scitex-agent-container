@@ -140,9 +140,11 @@ def test_preflight_fixture_preserves_an_inherited_external_auth_file(
         "test_preflight_executes_the_exact_declared_model_with_selected_auth"
     )
     # Act — exercise the real fixture in a child, never the current profile.
+    # Generous wall clock: a cold nested pytest under 32-way xdist load
+    # exceeds 5s on CI runners.
     subprocess.run(
         [sys.executable, "-m", "pytest", target, "-q", "--no-header"],
-        env=child_env, capture_output=True, check=True, timeout=5,
+        env=child_env, capture_output=True, check=True, timeout=120,
     )
     # Assert
     assert external_auth.read_bytes() == sentinel

@@ -647,10 +647,8 @@ def test_cross_host_restart_nonjson_stdout_reports_non_json(
 
 
 # ---------------------------------------------------------------------------
-# --fresh branch: a fresh (no-resume) restart is broker-only. Inside a SIF it
-# brokers ``start --force --fresh`` (fresh=True) and never touches the local
-# restart; on a bare host there is nothing to broker to, so it fails LOUD with
-# the direct command rather than silently doing a resuming restart.
+# --fresh branch: a fresh restart uses the same guarded lifecycle on a host
+# or through the SIF's host broker, preserving the no-resume session override.
 # ---------------------------------------------------------------------------
 
 
@@ -659,24 +657,17 @@ def _broker_ok(name, *, fresh=False):
     return {"name": name, "restarted": True, "via": "host-listen"}, True
 
 
-def test_fresh_on_bare_host_exits_one():
-    # Arrange — not inside a SIF, so there is no host listen to broker to.
-    runner = CliRunner()
-    # Act
-    with _swap("must_broker_to_host", lambda: False):
-        result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
-    # Assert
-    assert result.exit_code == 1
-
-
-def test_fresh_on_bare_host_reports_direct_start_command():
+def test_fresh_on_bare_host_uses_guarded_restart():
     # Arrange
-    runner = CliRunner()
+    calls = []
+    def record(name, **kwargs):
+        calls.append((name, kwargs))
+        return True
     # Act
-    with _swap("must_broker_to_host", lambda: False):
-        result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
-    # Assert — fail loud with the deterministic bare-host command.
-    assert "start alpha --force --fresh" in result.output
+    with _swap("must_broker_to_host", lambda: False), _swap("agent_restart", record):
+        result = CliRunner().invoke(restart, ["alpha", "-y", "--fresh"])
+    # Assert
+    assert (result.exit_code, calls[0][1]["session_override"]) == (0, "fresh"), result.output
 
 
 def test_fresh_in_sif_brokers_fresh_true():
@@ -699,7 +690,7 @@ def test_fresh_in_sif_brokers_fresh_true():
 
 
 def test_fresh_does_not_call_local_agent_restart():
-    # Arrange — fresh is broker-only; the local restart must NOT run.
+    # Arrange — a SIF restart delegates to the host broker.
     called: list[str] = []
     runner = CliRunner()
     # Act

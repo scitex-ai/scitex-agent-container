@@ -126,7 +126,7 @@ same peer share one TCP+SSH master, which:
   overlay.
 
 ControlPath resolution order: explicit caller arg → `$SAC_SSH_CONTROL_DIR`
-env → `${TMPDIR:-/tmp}/.sac-ssh-cm`. The dir is `mkdir -p`'d on first
+env → `~/.scitex/agent-container/runtime/ssh-cm`. The dir is `mkdir -p`'d on first
 use; if the parent is read-only the function falls through to `[]` and
 sac's argv is byte-identical to the pre-patch shape (degrade, don't
 crash).

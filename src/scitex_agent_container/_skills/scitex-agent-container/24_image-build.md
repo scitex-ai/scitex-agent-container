@@ -11,7 +11,7 @@ The container images agents run are **apptainer** `.sif` files, defined in the
 dotfiles (canonical SSoT), **not** in this repo:
 
 ```
-~/.dotfiles/src/.scitex/agent-container/containers/
+~/.scitex/agent-container/containers/
   sac-base/sac-base.def       sac-base.sif      # base layer (git, uv, node, …)
   sac-scitex/sac-scitex.def   sac-scitex.sif    # default image (sac + scitex[all])
   overlays/

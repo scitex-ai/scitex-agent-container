@@ -1,59 +1,18 @@
-"""One login-expired auto-restart pass over the live TUI fleet.
+"""Report auth-banner candidates without destroying healthy idle sessions.
 
-SIBLING OF ``_reconcile``, NOT A REPLACEMENT
-    ``sac.fleet-reconcile`` restarts agents whose tmux session is GONE (a
-    corpse: no session ⇒ no context to lose). It EXPLICITLY leaves alone a LIVE
-    session whose Claude cannot authenticate — a frozen "Login expired" banner —
-    because touching a live session destroys context. THIS pass owns exactly
-    that other half: a live-but-auth-dead agent, which only a restart clears
-    (Claude never re-reads its credentials). The frozen-banner corroboration
-    (:mod:`._detect`) is what proves the session is wedged, not working, so the
-    restart is safe and is the cure.
+A frozen banner can remain on an agent that already recovered. The scheduled
+pass therefore requires BOTH the positional and liveness auditors' restart
+admission before any destructive action. Those auditors are currently
+report-only; --apply cannot bypass them. Native Hermes requires session/turn
+telemetry proving an actual failure or assigned-work stall, separately from
+proof that successor credentials are usable.
 
-REUSE, NOT REINVENTION
-    Reuses :mod:`.._reconcile._budget` wholesale — the rate limits proven in
-    production by ``auth-heal.py`` (30-min/agent debounce, <=2/agent/hour,
-    <=N/pass) — and :class:`.._reconcile._rule.Verdict`. It keeps its OWN history
-    file (``SAC_LOGIN_EXPIRED_HISTORY``) so the two restarters' debounces stay
-    independent and their atomic writes never race on one file.
-
-POOL-LOADING RESTART (class fix, 2026-07-18)
-    The restart goes through the normal :func:`.._lifecycle.lifecycle
-    .agent_restart` path — the SAME mechanism ``sac.fleet-reconcile`` uses. With
-    the pool class fix (:func:`..runtimes._envrc.resolve_secret_files`), that
-    path now loads the CCT/Telegram token pool from the canonical ``$HOME``
-    default even when ``SAC_SECRETS_ENVRC`` is unset, so a timer-driven restart
-    can no longer strip an agent's bot token.
-
-DEPLOY GATE — READ BEFORE ENABLING THE TIMER
-    An existing ``auth-heal.py`` cron (its ``scan_tui``) ALREADY restarts these
-    agents on the fleet host. Enabling this timer while that cron still runs =
-    TWO restarters bouncing the same ``tui-<agent>`` sessions with INDEPENDENT
-    debounce state = the double-supervisor class (the ``sac.listen`` catastrophe
-    in another costume). This timer MUST NOT be enabled on a host until that
-    host's ``auth-heal.py`` ``scan_tui`` is retired. See :mod:`.._jobs._jobs_plugin`
-    and the ``sac agents restart-login-expired`` command help.
-
-WHAT A CLEAN PASS IS ALLOWED TO MEAN
-    A pass reports on the REGISTERED roster, not on whatever its pane reading
-    happened to contain. Every registered agent must leave this pass in exactly
-    one of three states — wedged, observed-and-fine, or UNOBSERVED — and only
-    the wedged ones are ever restarted. That third state is what makes exit 0 a
-    real claim rather than the far weaker "we produced no reports", which is
-    also what a pass that read nothing at all produces.
-
-    UNOBSERVED is not one thing, and the difference decides the exit code. A
-    live session whose pane would not capture is US failing to look. A
-    registered agent with NO session is a determinate reading of something this
-    pass explicitly delegates to fleet-reconcile — and since the roster is spec
-    files on a fleet that registers far more agents than it runs, treating it as
-    an indeterminacy made exit 0 unreachable for every possible fleet state.
-    See :meth:`PassOutcome.indeterminate`.
-
-Every collaborator is an injectable seam with a REAL default, so tests drive the
-whole pass against real panes, a real temp history file and a real temp event
-log — with the one irreversible act (the restart) swapped for a recorder. No
-mocks.
+The existing private execution rail retains its independent budget and
+attempt/outcome event contract. A rejected banner candidate neither enters
+that rail nor spends/writes restart history nor records confirmed auth failure.
+Pass receipts still report every unproven candidate as UNOBSERVED (exit 2).
+Sessionless registrations are reported and delegated to fleet-reconcile,
+whose bounded dead-agent policy remains independent of this audit.
 """
 
 from __future__ import annotations
@@ -74,6 +33,7 @@ from .._reconcile._budget import (
     save_history,
 )
 from .._reconcile._rule import Verdict
+from ._admission import banner_restart_admission
 from ._alarm import record_pass_completed, record_reports
 from ._detect import (
     DEFAULT_INTERVAL,
@@ -281,7 +241,7 @@ def _perform(
         now=now,
         extra={"source": "sac.restart-login-expired"},
     )
-    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the wedged fleet still needs recovering; the failure is carded and reported)
+    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the wedged fleet still needs recovering; the attempt and its outcome are recorded in the auth event log)
     try:
         ok = restart_fn(name)
     except Exception as exc:
@@ -348,13 +308,13 @@ def auth_heal_pass(
     err_stream: Any = None,
     event_log: Path | None = None,
 ) -> PassOutcome:
-    """Run ONE login-expired auto-restart pass over the live TUI fleet.
+    """Audit auth-banner candidates; never infer a stall from pane silence.
 
     ``apply=False`` (the default, selected by ``--check``) is a REPORT: it
-    detects and decides but restarts nothing. The only board write a dry-run
-    makes is this restarter's own heartbeat — and, since 2026-07-18, the
-    auth-event records of what it OBSERVED. Observing is not acting: a dry run
-    that saw a wedge really did see it, and that sighting is worth keeping.
+    reports but restarts nothing. ``apply=True`` also respects the auditors'
+    report-only admission contract. Unproven banners are carried as visible
+    UNOBSERVED reports, never recorded as confirmed auth failures or restart
+    attempts. The pass heartbeat still records that the audit ran.
 
     Parameters
     ----------
@@ -391,11 +351,18 @@ def auth_heal_pass(
 
     # PROVE we can read (and create) our own memory before acting on it — a
     # budget we cannot read is not a budget (see _reconcile._budget).
-    read = read_history(history_file)
-    budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
+    read = None
+    budget = None
     reports: list[AgentReport] = []
 
     for name in detection.auth_failed:
+        admission = banner_restart_admission(name, observed[name], observed_s=interval)
+        if not admission.allowed:
+            reports.append(admission.report)
+            continue
+        if read is None:
+            read = read_history(history_file)
+            budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
         # WHAT WE SAW, recorded before anything we do about it and regardless
         # of whether we are allowed to act — a wedge observed under --check, or
         # while cooling down, is the same fact as one observed before a
@@ -422,19 +389,25 @@ def auth_heal_pass(
                 save_history(history_file, budget.history, now=now)
             except OSError as exc:
                 budget.spent = budget.pass_cap
-                write_stream(f"[login-expired-restart] CANNOT RECORD restarts to "
-                    f"{history_file} ({exc}) — halting this pass's restarts.", stream)
+                write_stream(
+                    f"[login-expired-restart] CANNOT RECORD restarts to "
+                    f"{history_file} ({exc}) — halting this pass's restarts.",
+                    stream,
+                )
 
     if apply and budget is not None:
-        # stx-allow: fallback (reason: the end-of-pass write is housekeeping; its failure is already reported per-restart above and must not crash a pass that has done its work)
+        # stx-allow: fallback (reason: the end-of-pass write is housekeeping; its failure is already recorded per-restart in the auth event log above and must not crash a pass that has done its work)
         try:
             save_history(history_file, budget.history, now=now)
         except OSError:
             pass
 
-    if budget is None and reports:
-        write_stream(f"[login-expired-restart] REFUSING to restart {len(reports)} wedged "
-            f"agent(s): {read.detail}", stream)
+    if read is not None and budget is None and reports:
+        write_stream(
+            f"[login-expired-restart] REFUSING to restart {len(reports)} wedged "
+            f"agent(s): {read.detail}",
+            stream,
+        )
 
     # Now say what we did NOT manage to look at. These reports carry no action
     # — they are added after every restart decision precisely so they cannot

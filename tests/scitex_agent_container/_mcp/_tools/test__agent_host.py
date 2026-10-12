@@ -18,18 +18,65 @@ from tests.scitex_agent_container.cli_pkg.test__send_host import host_endpoint
         ("new-session", "fresh"),
     ),
 )
-def test_mcp_host_start_preserves_explicit_session_policy(
-    env_save_restore, mode, expected
-):
+def _host_start_body(env_save_restore, mode):
     # Arrange
     with host_endpoint(env_save_restore, 200, {"returncode": 0}) as calls:
         # Act
         agent_start("retained-owner", session=mode)
+        # Assert: `caller` is auto-resolved from the container env by
+        # request_spawn — return the observed body for per-field checks.
+        return dict(calls[0][1])
+
+
+def test_mcp_host_start_preserves_explicit_session_policy_name(
+    env_save_restore,
+):
+    # Arrange
+    # Act
+    body = _host_start_body(env_save_restore, None)
     # Assert
-    assert calls[0][1] == (
-        {"name": "retained-owner", "assume_yes": True}
-        | ({"session": expected} if expected else {})
-    )
+    assert body["name"] == "retained-owner"
+
+
+def test_mcp_host_start_preserves_explicit_session_policy_consent(
+    env_save_restore,
+):
+    # Arrange
+    # Act
+    body = _host_start_body(env_save_restore, None)
+    # Assert
+    assert body["assume_yes"] is True
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    (
+        (None, None),
+        ("continue", "continue"),
+        ("fresh", "fresh"),
+        ("resume", "resume"),
+        ("new-session", "fresh"),
+    ),
+)
+def test_mcp_host_start_preserves_explicit_session_policy_session(
+    env_save_restore, mode, expected
+):
+    # Arrange
+    # Act
+    body = _host_start_body(env_save_restore, mode)
+    # Assert
+    assert body.get("session") == expected
+
+
+def test_mcp_host_start_preserves_explicit_session_policy_caller(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set("SAC_NAME", "synthetic-caller")
+    # Act
+    body = _host_start_body(env_save_restore, None)
+    # Assert
+    assert body["caller"] == "synthetic-caller"
 
 
 def test_mcp_start_queued_is_not_running_admission(env_save_restore):
@@ -68,17 +115,39 @@ def test_mcp_start_invalid_session_never_posts(env_save_restore):
     assert (result["status"], calls) == ("error", [])
 
 
-def test_mcp_start_keeps_foreground_and_consent(env_save_restore):
+def _host_start_foreground_body(env_save_restore):
     # Arrange
     with host_endpoint(env_save_restore, 200, {"returncode": 0}) as calls:
         # Act
         agent_start("retained-owner", foreground=True)
+        # Assert: `caller` is auto-resolved from the container env by
+        # request_spawn — return the observed body for per-field checks.
+        return dict(calls[0][1])
+
+
+def test_mcp_start_keeps_foreground_flag(env_save_restore):
+    # Arrange
+    # Act
+    body = _host_start_foreground_body(env_save_restore)
     # Assert
-    assert calls[0][1] == {
-        "name": "retained-owner",
-        "foreground": True,
-        "assume_yes": True,
-    }
+    assert body["foreground"] is True
+
+
+def test_mcp_start_keeps_consent_flag(env_save_restore):
+    # Arrange
+    # Act
+    body = _host_start_foreground_body(env_save_restore)
+    # Assert
+    assert body["assume_yes"] is True
+
+
+def test_mcp_start_keeps_caller_identity(env_save_restore):
+    # Arrange
+    env_save_restore.set("SAC_NAME", "synthetic-caller")
+    # Act
+    body = _host_start_foreground_body(env_save_restore)
+    # Assert
+    assert body["caller"] == "synthetic-caller"
 
 
 @pytest.mark.parametrize("returncode", (None, False, "0", 1))

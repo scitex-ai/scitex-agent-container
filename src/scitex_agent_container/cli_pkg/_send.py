@@ -312,7 +312,7 @@ def send_to_agent(
         if endpoint.source == "host_broker_no_port":
             reason = (
                 "the host fleet registry holds no a2a port claim for it "
-                "(a claim is released only at `sac agents stop` / --force)"
+                "(a claim is released only at `sac agents stop`)"
             )
             error = (
                 f"agent {name!r} is registered on the host, but {reason}; "

@@ -193,10 +193,10 @@ def _hermes_headers(config, provider, api_key: str) -> dict[str, str]:
     headers = {"User-Agent": "scitex-agent-container/preflight"}
     headers.update(
         {
-        str(name): str(value)
-        .replace(AGENT_ID_TEMPLATE, agent)
-        .replace(SESSION_ID_TEMPLATE, session)
-        for name, value in raw.items()
+            str(name): str(value)
+            .replace(AGENT_ID_TEMPLATE, agent)
+            .replace(SESSION_ID_TEMPLATE, session)
+            for name, value in raw.items()
         }
     )
     headers.update(
