@@ -498,9 +498,16 @@ plain.emit("OK: artifact symbol probe passed")
 PYEOF
 # --input=none: see the STDIN RULE at the top of this file. The probe is a
 # FILE argument; this task has no use for stdin.
+# SCITEX_DIR: the probe imports scitex_logging, which mkdirs its log tree on
+# first use. On Spartan ~/.scitex is a symlink into an unrelated read-only
+# project tree (punim0264/paper-scitex-clew), so without this the gate dies
+# EROFS (measured 2026-10-15). Point it at purpose-built workdir state; the
+# probe asserts symbols, never real agent state.
+mkdir -p "$WORKDIR/.scitex-gate" || fail "gate-statedir"
 "$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 \
     --job-name="sac-sif-gate-$LAYER" \
-    "$APPTAINER" exec --bind "$WORKDIR" "$PARTIAL_SIF" \
+    --export=ALL,SCITEX_DIR="$WORKDIR/.scitex-gate" \
+    "$APPTAINER" exec --env "SCITEX_DIR=$WORKDIR/.scitex-gate" --bind "$WORKDIR" "$PARTIAL_SIF" \
     /opt/venv-sac/bin/python "$PROBE" < /dev/null
 GATE_RC=$?
 [ "$GATE_RC" -eq 0 ] || fail "gate-failed" "rc=$GATE_RC — artifact is stale/wrong; NOT published"
