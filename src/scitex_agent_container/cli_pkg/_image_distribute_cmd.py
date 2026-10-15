@@ -89,18 +89,24 @@ def image_distribute(
     try:
         artifact = resolve_artifact(source, layer)
         cfg = _load_config()
-        unknown = [host for host in hosts if cfg.peers.get(host) is None]
+        # Registry SSOT: hosts known to scitex_dev.hosts resolve even with
+        # no config.yaml entry (measured 2026-10-15: distribute refused
+        # registry-known computes on a fresh container). Config entries
+        # keep precedence inside peers_with_registry.
+        from .._state._peer_resolve import peers_with_registry
+        peers = peers_with_registry(cfg.peers)
+        unknown = [host for host in hosts if peers.get(host) is None]
         if unknown:
-            configured = ", ".join(cfg.peers.keys()) or "(none)"
+            configured = ", ".join(peers.keys()) or "(none)"
             raise click.UsageError(
-                f"target host(s) not configured in {cfg.source_path}: "
-                f"{', '.join(unknown)}; configured peers: {configured}"
+                f"target host(s) not configured in {cfg.source_path} nor the host registry: "
+                f"{', '.join(unknown)}; known peers: {configured}"
             )
         result = distribute(
             artifact=artifact,
             hosts=hosts,
             target_root=target_root,
-            transport=None if dry_run else _transport(cfg.peers, timeout),
+            transport=None if dry_run else _transport(peers, timeout),
             dry_run=dry_run,
         )
     except ValueError as exc:
