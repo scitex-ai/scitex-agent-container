@@ -51,7 +51,9 @@ time). The lifecycle verbs resolve *where it is*:
 | unregistered / typo | FAIL LOUD with the registered-peer list (`sac host list`); never ssh. `--no-redispatch` forces local; a chain tail naming this machine runs local |
 
 Identity is `config.yaml::host:` (canonical + aliases); peers are
-`config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias). The local check
+`config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias) PLUS every
+host in the scitex-dev hosts registry (SSOT; config entries win on conflict
+— see `peers_with_registry`). The local check
 precedes the peer table, so a self-registered peer (`ssh: localhost`) is never
 ssh'd to itself. Resolver: `_host_routing.classify_spec_host_route`.
 
