@@ -265,10 +265,10 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
     echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c -
     mkdir -p /opt/bun
-    python3 -c "import zipfile; zipfile.ZipFile('/tmp/bun.zip').extract('bun-linux-x64/bun', '/tmp/bunx'); import os; os.rename('/tmp/bunx/bun-linux-x64/bun', '/opt/bun/bun')"
+    python3 -c "import zipfile; open('/opt/bun/bun','wb').write(zipfile.ZipFile('/tmp/bun.zip').read('bun-linux-x64/bun'))"
     chmod 0755 /opt/bun/bun
     ln -sf /opt/bun/bun /usr/local/bin/bun
-    rm -rf /tmp/bun.zip /tmp/bunx
+    rm -f /tmp/bun.zip
     bun --version
 
     # ---- 3c. A STABLE PATH FOR THE BROWSER -----------------------------
