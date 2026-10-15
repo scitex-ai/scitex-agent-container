@@ -666,6 +666,16 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         "/opt/scitex-cards-src[mcp,postgres]" \
         "/opt/scitex-agent-container-src[all,dev]"
 
+    # ---- 6b-x. CCT TS dependencies (for contained MCP/poller) ------------
+    # The packaged telegram-server.ts needs its node_modules; without them
+    # the contained MCP path (dotfiles lead specs) cannot start, and any
+    # agent restart on those specs loses CCT (measured 2026-10-15). Install
+    # once at build with the in-image bun (section 3b); bun.lock ships in
+    # the package so --frozen-lockfile is deterministic.
+    CCT_TS_DIR="$(/opt/venv-sac/bin/python -c 'import os, claude_code_telegrammer; print(os.path.join(os.path.dirname(claude_code_telegrammer.__file__), "ts"))')"
+    /usr/local/bin/bun install --cwd "$CCT_TS_DIR" --frozen-lockfile
+    test -d "$CCT_TS_DIR/node_modules/@modelcontextprotocol"
+
     # ---- 6c. Hermes harness + official TUI ---------------------------
     # Hermes is a harness available to every SAC agent, not a separate image
     # product. Its exact source commit is staged beside SAC before the base
