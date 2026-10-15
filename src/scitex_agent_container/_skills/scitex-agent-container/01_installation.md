@@ -90,7 +90,7 @@ Cross-host placement now goes through:
 - **`spec.host`** — pin an agent to a host (or a priority list). See
   [11_remote-deploy.md](11_remote-deploy.md).
 - **`sac --on <peer>`** (F-CS12) — dispatch a `sac` command on a peer
-  defined in `config.yaml`'s `peers:` block.
+  from `config.yaml`'s `peers:` block or the hosts registry SSOT.
 
 HPC-specific environment (Lmod modules, SLURM tenancy, etc.) belongs in
 the apptainer image / overlay or the agent's `to_home/` (see
