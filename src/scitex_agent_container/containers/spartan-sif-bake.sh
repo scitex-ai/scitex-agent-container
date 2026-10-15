@@ -237,7 +237,11 @@ fi
 # ---------------------------------------------------------------------------
 STEP="stage"
 CTX="$WORKDIR/build-context/$LAYER"
-rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/scripts" || fail "stage-mkdir"
+rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/scripts" "$CTX/scitex-agent-container-src/src/scitex_agent_container" || fail "stage-mkdir"
+# NOTE 2026-10-15: the src/scitex_agent_container dir MUST pre-exist, or the
+# cp below RENAMES the package into src/ (flat tree) instead of nesting it,
+# and stage-provenance fails on the missing _provenance/_stamp.py. This
+# matches the canonical staged shape in cli_pkg/_image_source_build.py.
 DEF_SRC="$REPO/src/scitex_agent_container/containers/apptainer-$LAYER.def"
 [ -f "$DEF_SRC" ] || fail "def-missing" "$DEF_SRC"
 cp -f "$DEF_SRC" "$CTX/" || fail "stage-def"
