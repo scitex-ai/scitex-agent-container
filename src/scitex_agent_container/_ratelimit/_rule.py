@@ -196,6 +196,15 @@ def decide(
         )
 
     if second.reset_at is None:
+        if (second.window or "") == "billing":
+            return Decision(
+                Verdict.RESUME,
+                "billing-exhausted",
+                f"{name} is parked behind a frozen billing-exhaustion wall "
+                f"({second.detail}) — the key's allowance is empty and no "
+                f"reset is published, so there is nothing to wait out. "
+                f"Waking it now rotates it onto a headroom key",
+            )
         return Decision(
             Verdict.RESET_UNKNOWN,
             "reset-unreadable",

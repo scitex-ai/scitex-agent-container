@@ -57,10 +57,37 @@ def test_every_captured_specimen_is_detected(pane: str) -> None:
 def test_every_captured_specimen_yields_a_reset(pane: str) -> None:
     # Arrange — a detected wall with no reset time cannot be waited out, so
     # detection alone is not enough for any of the shipped renderings.
+    # EXCEPT the billing-exhaustion rendering: an empty allowance has no
+    # reset by construction, and the rule treats it as already-lifted.
     # Act
     observation = _observe(pane)
     # Assert
-    assert observation.reset_at is not None
+    if observation.window == "billing":
+        assert observation.reset_at is None
+    else:
+        assert observation.reset_at is not None
+
+
+def test_billing_exhaustion_specimen_reads_as_lifted_wall() -> None:
+    # Arrange — the exact 2026-10-15/16 killer: frozen billing banner.
+    from dataclasses import replace
+
+    from scitex_agent_container._ratelimit._rule import Verdict, decide
+
+    frozen = "Billing or credits exhausted: HTTP 400: You have insufficient credits"
+    first = replace(_observe(frozen), line_index=3)
+    second = replace(_observe(frozen), line_index=3)
+    # Act
+    decision = decide(
+        name="x",
+        policy="always",
+        session_present=True,
+        first=first,
+        second=second,
+        now=datetime.now(timezone.utc),
+    )
+    # Assert
+    assert (decision.verdict, decision.reason) == (Verdict.RESUME, "billing-exhausted")
 
 
 def test_the_incident_banner_resolves_to_its_real_reset() -> None:
