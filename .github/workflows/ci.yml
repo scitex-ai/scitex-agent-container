@@ -60,7 +60,7 @@ jobs:
     uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
-      dependency_group: dev
+      dependency_group: ""
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
