@@ -34,7 +34,13 @@ from __future__ import annotations
 # required on every agent — implements the operator's "scitex-todo must
 # be a REQUIRED skill for the lead AND every sac agent" rule without
 # 60 per-spec edits.
-BASE_REQUIRED_SKILLS: tuple[str, ...] = ("scitex-todo",)
+#
+# Operator directive 2026-10-16: ``scitex`` (ecosystem bundle carrying
+# the SAC/infra material) is required on every agent for the same
+# reason — sac agents must carry sac skills. Unresolved names degrade
+# to a visible placeholder + warning (never a start failure), so this
+# is safe on hosts whose skill roots lack the bundle.
+BASE_REQUIRED_SKILLS: tuple[str, ...] = ("scitex-todo", "scitex")
 
 
 def apply_base_required_skills(per_spec_required: list[str]) -> list[str]:

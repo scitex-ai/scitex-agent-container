@@ -275,7 +275,12 @@ def agent_start(
         assert_explicit_engine_noop_safe(
             config, engine_override, force=force, dry_run=dry_run
         )
-    if not really_running and not dry_run:
+    if not dry_run:
+        # Announced on BOTH paths (operator order 2026-10-16): the old
+        # `not really_running` gate made a confused-ALIVE verdict exit 0
+        # silently with no session — the storage 2026-10-15 incident, ten
+        # no-op starts nobody could distinguish from success. A no-op must
+        # name the evidence that vouched the agent alive.
         _announce_start_verdict(verdict)
     if uses_production_runtime and force and not dry_run:
         from ..runtimes._native_tui_admission import preflight_native_tui

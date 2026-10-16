@@ -2132,3 +2132,20 @@ def test_extract_turn_text_rejects_an_empty_envelope() -> None:
     text, _meta = bridge.extract_turn_text(body)
     # Assert
     assert text is None
+
+
+def test_tui_endpoint_gone_fires_only_on_connection_class_errno() -> None:
+    """A wedged-live TUI must never be restarted; only a gone endpoint kicks."""
+    # Arrange
+    from scitex_dev.status import StatusCode
+
+    gone = StatusCode(kind="errno", code="ECONNREFUSED", message="refused")
+    visibility = StatusCode(kind="http", code=502, message="delivery failed")
+    # Act
+    fires = bridge._tui_endpoint_gone(gone)
+    silent = bridge._tui_endpoint_gone(visibility)
+    missing = bridge._tui_endpoint_gone(None)
+    # Assert
+    assert fires is True
+    assert silent is False
+    assert missing is False
