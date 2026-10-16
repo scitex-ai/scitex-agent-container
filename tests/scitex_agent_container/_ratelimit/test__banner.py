@@ -53,19 +53,32 @@ def test_every_captured_specimen_is_detected(pane: str) -> None:
     assert observation.limited is True
 
 
-@pytest.mark.parametrize("pane", SPECIMEN_PANES)
-def test_every_captured_specimen_yields_a_reset(pane: str) -> None:
-    # Arrange — a detected wall with no reset time cannot be waited out, so
-    # detection alone is not enough for any of the shipped renderings.
-    # EXCEPT the billing-exhaustion rendering: an empty allowance has no
-    # reset by construction, and the rule treats it as already-lifted.
+# Partitioned once at import: timed walls carry a reset, the
+# billing-exhaustion rendering has none by construction. Splitting here —
+# not in a test body — keeps each test to a single straight-line path with
+# one assertion (STX-TQ002/007: no top-level if/else in tests).
+_TIMED_SPECIMENS = tuple(p for p in SPECIMEN_PANES if _observe(p).window != "billing")
+_BILLING_SPECIMENS = tuple(p for p in SPECIMEN_PANES if _observe(p).window == "billing")
+
+
+@pytest.mark.parametrize("pane", _TIMED_SPECIMENS)
+def test_timed_captured_specimens_yield_a_reset(pane: str) -> None:
+    # Arrange — a detected timed wall with no reset time cannot be waited
+    # out, so detection alone is not enough for these renderings.
     # Act
     observation = _observe(pane)
     # Assert
-    if observation.window == "billing":
-        assert observation.reset_at is None
-    else:
-        assert observation.reset_at is not None
+    assert observation.reset_at is not None
+
+
+@pytest.mark.parametrize("pane", _BILLING_SPECIMENS)
+def test_billing_exhaustion_specimens_yield_no_reset(pane: str) -> None:
+    # Arrange — an empty allowance has no reset by construction, and the
+    # rule treats it as already-lifted.
+    # Act
+    observation = _observe(pane)
+    # Assert
+    assert observation.reset_at is None
 
 
 def test_billing_exhaustion_specimen_reads_as_lifted_wall() -> None:

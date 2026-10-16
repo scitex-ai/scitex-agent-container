@@ -195,7 +195,7 @@ def test_accounts_keepalive_and_accounts_refresh_are_both_declared() -> None:
     assert {"scitex-agent-container-accounts-refresh", "scitex-agent-container-accounts-keepalive"} <= names
 
 
-def test_accounts_key_liveness_job_is_declared() -> None:
+def test_accounts_key_liveness_job_constructs_as_real_jobspec() -> None:
     # Arrange — the TUI-independent measurement half of key health
     # (operator order 2026-10-16). Without this declaration the sweep
     # verb exists but never runs, and every slot reads UNKNOWN.
@@ -203,10 +203,32 @@ def test_accounts_key_liveness_job_is_declared() -> None:
     job = _job("scitex-agent-container-accounts-key-liveness")
     # Assert
     assert isinstance(job, jobs_mod.JobSpec)
+
+
+def test_accounts_key_liveness_job_kind_is_timer() -> None:
+    # Arrange — a periodic sweep, so kind="timer" like its siblings.
+    # Act
+    job = _job("scitex-agent-container-accounts-key-liveness")
+    # Assert
     assert job.kind == "timer"
+
+
+def test_accounts_key_liveness_command_runs_probe_verb() -> None:
+    # Arrange — the sweep verb, self-bounded by `/usr/bin/timeout <N>`.
+    # Act
+    job = _job("scitex-agent-container-accounts-key-liveness")
     bound, _payload, rest = _split_command(job.command)
+    # Assert
     assert (bound, rest) == (
         "/usr/bin/timeout 300",
         "accounts probe-api-keys --all",
     )
+
+
+def test_accounts_key_liveness_cadence_bounds_slot_outage() -> None:
+    # Arrange — the cadence IS the worst-case window a dead slot goes
+    # unnoticed, matching the sibling keepalive tick.
+    # Act
+    job = _job("scitex-agent-container-accounts-key-liveness")
+    # Assert
     assert job.on_unit_active_sec == "15min"
