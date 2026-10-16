@@ -539,15 +539,21 @@ class TestReferenceSizeSkipsDanglingLinks:
     """
 
     def test_dangling_links_are_skipped(self, tmp_path: Path) -> None:
+        # Arrange
         layer_dir = tmp_path / "sac-base"
         layer_dir.mkdir()
         (layer_dir / "sac-base-2026-0930-032921.sif").symlink_to(
             "/nonexistent/sac-base-sha256-deadbeef.sif"
         )
 
-        assert core._reference_size(layer_dir, "base") is None
+        # Act
+        result = core._reference_size(layer_dir, "base")
+
+        # Assert
+        assert result is None
 
     def test_live_file_beside_dangling_link_wins(self, tmp_path: Path) -> None:
+        # Arrange
         layer_dir = tmp_path / "sac-base"
         layer_dir.mkdir()
         (layer_dir / "sac-base-2026-0930-032921.sif").symlink_to(
@@ -556,4 +562,8 @@ class TestReferenceSizeSkipsDanglingLinks:
         live = layer_dir / "sac-base-2026-1015-041758.sif"
         live.write_bytes(b"x" * 64)
 
-        assert core._reference_size(layer_dir, "base") == 64
+        # Act
+        result = core._reference_size(layer_dir, "base")
+
+        # Assert
+        assert result == 64

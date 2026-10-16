@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -151,7 +152,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["env"]["SCITEX_STORE_DSN"],
         seen["env"]["SCITEX_CARDS_INBOX_DSN"],
         seen["env"]["SCITEX_CARDS_NOTIFY_DSN"],
-        (state_dir / lifecycle.PID_FILENAME).read_text(),
+        json.loads((state_dir / lifecycle.PID_FILENAME).read_text())["pid"],
     )
     # Assert
     assert outcome == (
@@ -172,7 +173,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         "postgresql://cards-primary:55432/cards",
         "postgresql://cards-primary:55432/cards",
         "postgresql://cards-primary:55433/cards",
-        "4242\n",
+        4242,
     )
 
 
