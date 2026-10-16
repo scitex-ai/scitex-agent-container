@@ -193,3 +193,20 @@ def test_accounts_keepalive_and_accounts_refresh_are_both_declared() -> None:
     names = {job.name for job in provide_jobs()}
     # Assert
     assert {"scitex-agent-container-accounts-refresh", "scitex-agent-container-accounts-keepalive"} <= names
+
+
+def test_accounts_key_liveness_job_is_declared() -> None:
+    # Arrange — the TUI-independent measurement half of key health
+    # (operator order 2026-10-16). Without this declaration the sweep
+    # verb exists but never runs, and every slot reads UNKNOWN.
+    # Act
+    job = _job("scitex-agent-container-accounts-key-liveness")
+    # Assert
+    assert isinstance(job, jobs_mod.JobSpec)
+    assert job.kind == "timer"
+    bound, _payload, rest = _split_command(job.command)
+    assert (bound, rest) == (
+        "/usr/bin/timeout 300",
+        "accounts probe-api-keys --all",
+    )
+    assert job.on_unit_active_sec == "15min"

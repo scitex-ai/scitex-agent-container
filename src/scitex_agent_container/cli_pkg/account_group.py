@@ -393,6 +393,19 @@ register_probe_entitlement_command(account)
 
 
 # ---------------------------------------------------------------------------
+# probe-api-keys — the PRODUCER for the per-slot key-liveness verdicts the
+# boot picker and the listen key-health endpoint read. Same relationship
+# as probe-entitlement above: the readers are cache-only by contract, so
+# without a periodic run of this every slot reads UNKNOWN and the gate is
+# inert. Operator order 2026-10-16 (TUI-independent key health): one cheap
+# read-only billing-endpoint GET per declared slot, never a turn.
+# ---------------------------------------------------------------------------
+from ._account_probe_api_keys import register_probe_api_keys_command
+
+register_probe_api_keys_command(account)
+
+
+# ---------------------------------------------------------------------------
 # pause / resume — the OPERATOR's own switch, and the counterpart to
 # probe-entitlement above. That verb records what Anthropic MEASURED about an
 # account; these two record what the operator DECIDED about it. Separate

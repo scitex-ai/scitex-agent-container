@@ -90,6 +90,32 @@ def test_classify_detects_y_n_prompt():
     assert state == "y_n_prompt"
 
 
+def test_classify_detects_hermes_approval_box():
+    # Arrange — the Hermes TUI approval phrasing (operator order
+    # 2026-10-16): fixed "approval required" + numbered options.
+    pane = (
+        "approval required · Write to protected agent-instruction file(s): AGENTS.md.\n"
+        " 1. Allow once\n"
+        " 2. Deny\n"
+        "up/down select · Enter confirm · 1-2 quick pick"
+    )
+    # Act
+    state, snippet = _classify_pane_state(pane)
+    # Assert
+    assert state == "hermes_approval"
+    assert "approval required" in snippet
+
+
+def test_classify_does_not_fire_hermes_approval_without_options():
+    # Arrange — approval wording with no actionable options must not arm
+    # the auto-answer path.
+    pane = "approval required for something, pending review"
+    # Act
+    state, _ = _classify_pane_state(pane)
+    # Assert
+    assert state != "hermes_approval"
+
+
 def test_classify_detects_compose_pending():
     # Arrange
     pane = "❯ hello there\n"
