@@ -2134,18 +2134,35 @@ def test_extract_turn_text_rejects_an_empty_envelope() -> None:
     assert text is None
 
 
-def test_tui_endpoint_gone_fires_only_on_connection_class_errno() -> None:
+def test_tui_endpoint_gone_fires_on_connection_errno() -> None:
     """A wedged-live TUI must never be restarted; only a gone endpoint kicks."""
     # Arrange
     from scitex_dev.status import StatusCode
 
     gone = StatusCode(kind="errno", code="ECONNREFUSED", message="refused")
-    visibility = StatusCode(kind="http", code=502, message="delivery failed")
     # Act
     fires = bridge._tui_endpoint_gone(gone)
-    silent = bridge._tui_endpoint_gone(visibility)
-    missing = bridge._tui_endpoint_gone(None)
     # Assert
     assert fires is True
+
+
+def test_tui_endpoint_gone_ignores_a_visibility_failure() -> None:
+    """An HTTP delivery failure is a visibility problem, not a gone endpoint."""
+    # Arrange
+    from scitex_dev.status import StatusCode
+
+    visibility = StatusCode(kind="http", code=502, message="delivery failed")
+    # Act
+    silent = bridge._tui_endpoint_gone(visibility)
+    # Assert
     assert silent is False
-    assert missing is False
+
+
+def test_tui_endpoint_gone_ignores_a_missing_status() -> None:
+    """No status at all must never read as a gone endpoint."""
+    # Arrange
+    missing = None
+    # Act
+    silent = bridge._tui_endpoint_gone(missing)
+    # Assert
+    assert silent is False
