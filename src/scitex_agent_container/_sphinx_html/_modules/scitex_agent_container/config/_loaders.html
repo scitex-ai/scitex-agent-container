@@ -215,6 +215,8 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_max_turns"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_max_turns</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_goals"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_goals</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
@@ -506,6 +508,11 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_background_review</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_background_review</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_compression</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_failover</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_failover</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_goals</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">parse_selected_hermes_goals</span><span class="p">,</span>
+    <span class="n">parse_selected_hermes_max_turns</span><span class="p">,</span>
+    <span class="n">validate_hermes_goal_engine</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_run_budget</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_run_budget</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._hermes_yolo</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_selected_hermes_yolo</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -895,6 +902,8 @@
         <span class="n">restart</span><span class="o">=</span><span class="n">parse_restart</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">autonomous</span><span class="o">=</span><span class="n">parse_autonomous</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">hermes_background_review</span><span class="o">=</span><span class="n">parse_selected_hermes_background_review</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
+        <span class="n">hermes_max_turns</span><span class="o">=</span><span class="n">parse_selected_hermes_max_turns</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
+        <span class="n">hermes_goals</span><span class="o">=</span><span class="n">parse_selected_hermes_goals</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">hermes_failover</span><span class="o">=</span><span class="n">parse_selected_hermes_failover</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">hermes_yolo</span><span class="o">=</span><span class="n">parse_selected_hermes_yolo</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">hermes_run_budget_seconds</span><span class="o">=</span><span class="n">parse_selected_hermes_run_budget</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
@@ -940,6 +949,7 @@
     <span class="c1"># ``_engine_types.apply_default_engine`` for why those belong on the</span>
     <span class="c1"># START path instead).</span>
     <span class="n">apply_default_engine</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">engines</span><span class="p">,</span> <span class="n">spec</span><span class="p">)</span>
+    <span class="n">validate_hermes_goal_engine</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">config</span>
 
 
