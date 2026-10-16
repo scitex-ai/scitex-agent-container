@@ -292,19 +292,54 @@ def send_to_agent(
     if endpoint.row is None and endpoint.source == "none":
         # No active instances row AND no durable allocator claim → the
         # agent is genuinely not running anywhere this host can see.
-        reason = "no active instances row and no durable port-allocator claim"
-        return {
-            "status": "error",
-            "error": f"agent {name!r} not running",
-            "status_code": agent_unavailable_status_code(name, reason).to_dict(),
-            "diagnosis": diagnose_send_failure(
-                name,
-                a2a_port=None,
-                peer_host=current_host,
-                current_host=current_host,
-                brokered=brokered,
-            ),
-        }
+        # Start-on-send (operator order 2026-10-16): EVERY send kicks.
+        # A message to a stopped agent starts it (doctrine-guarded:
+        # managed restart.policy only, deliberate stops sacred, shared
+        # restart budget) and then delivers, instead of dropping the
+        # payload with "not running". See :mod:`._send_autostart`.
+        from ._send_autostart import maybe_autostart_for_send
+
+        started, autostart_note = maybe_autostart_for_send(name)
+        if started:
+            endpoint = resolve_send_endpoint(name, current_host=current_host)
+            a2a_port = endpoint.a2a_port
+            peer_host = endpoint.host if endpoint.host != current_host else ""
+            if endpoint.row is not None or a2a_port is not None:
+                pass  # re-resolved to something deliverable; fall through
+            else:
+                reason = (
+                    "auto-started for send but still no live endpoint; "
+                    f"autostart: {autostart_note}"
+                )
+                return {
+                    "status": "error",
+                    "error": f"agent {name!r} not running ({reason})",
+                    "status_code": agent_unavailable_status_code(name, reason).to_dict(),
+                    "diagnosis": diagnose_send_failure(
+                        name,
+                        a2a_port=None,
+                        peer_host=current_host,
+                        current_host=current_host,
+                        brokered=brokered,
+                    ),
+                }
+        else:
+            reason = (
+                "no active instances row and no durable port-allocator claim; "
+                f"autostart declined: {autostart_note}"
+            )
+            return {
+                "status": "error",
+                "error": f"agent {name!r} not running",
+                "status_code": agent_unavailable_status_code(name, reason).to_dict(),
+                "diagnosis": diagnose_send_failure(
+                    name,
+                    a2a_port=None,
+                    peer_host=current_host,
+                    current_host=current_host,
+                    brokered=brokered,
+                ),
+            }
     if a2a_port is None:
         # No usable port. Loud — there is no /v1/turn to reach. The message
         # names the SOURCE of the verdict, so a reader never has to guess

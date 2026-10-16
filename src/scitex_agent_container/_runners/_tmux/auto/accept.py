@@ -149,6 +149,39 @@ def respond(
         logger.info("[%s] y_n_prompt → sent 1 + Enter (verified [1] Yes present)", name)
         return True
 
+    if state == "hermes_approval":
+        # Hermes TUI approval box (operator order 2026-10-16: SAC answers
+        # approvals it can see in tmux panes). SAFETY: auto-answer ONLY
+        # the agent-instruction-file class (AGENTS.md etc. — the blanket
+        # pre-approved class). Any other approval (destructive commands,
+        # credential writes, network egress) is ESCALATED, never auto-sent:
+        # a pattern that approves everything approves the fleet's deletion.
+        text = pane_text or ""
+        if "agent-instruction" not in text.lower():
+            _dm(
+                "mgr-infra",
+                f"[{name}] hermes_approval needs eyes — not auto-answered "
+                f"(outside the pre-approved instruction-file class)",
+            )
+            logger.warning(
+                "[%s] hermes_approval → escalated (not instruction-file class)",
+                name,
+            )
+            return False
+        if "allow once" not in text.lower():
+            logger.warning(
+                "[%s] hermes_approval: Allow-once option not found — skipping blind send",
+                name,
+            )
+            return False
+        _send("1")
+        _send("Enter")
+        logger.info(
+            "[%s] hermes_approval → sent 1 + Enter (instruction-file class, verified)",
+            name,
+        )
+        return True
+
     if state == "auth_error":
         # The login wall. Initiate re-auth by sending `/login`; the OAuth
         # authorize URL appears on the next pane (state "login_url") and is
