@@ -23,7 +23,6 @@ from ..config._launch_plan import (
 from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
 from ._hermes_key_probe import preflight_pools
-from ._hermes_profile_logs import ensure_hermes_log_files
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
@@ -153,9 +152,6 @@ def validate_hermes_tui_profile(
     config: AgentConfig, *, state_dir: Path, launch_argv: Sequence[str]
 ) -> None:
     """Validate the materialized profile against the real finalized argv."""
-    from ._hermes_sac_runtime import validate_sac_runtime
-
-    validate_sac_runtime(config, launch_argv=launch_argv)
     targets = [state_dir / "home"]
     upper = resolve_overlay_upper_home(config)
     if upper is not None:
@@ -189,13 +185,17 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         # endpoint, protocol and session handling. SAC only names the
         # provider + model and delivers the key via the agent env.
         if base_url:
-            raise RuntimeError("Hermes native provider must not declare base_url")
+            raise RuntimeError(
+                "Hermes native provider must not declare base_url"
+            )
         endpoint = Endpoint(
             protocol="hermes-native:" + native,
             url="",
             auth_kind="bearer",
             auth_env=str(provider.auth_token_env or ""),
-            extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
+            extra_headers=tuple(
+                (getattr(provider, "extra_headers", {}) or {}).items()
+            ),
         )
     else:
         if not base_url:
@@ -310,9 +310,6 @@ def _mcp_servers(
 def _bind_mcp_runtime_env(
     config: AgentConfig, servers: dict[str, dict[str, Any]]
 ) -> None:
-    from ._hermes_sac_runtime import bind_sac_mcp_command
-
-    bind_sac_mcp_command(config, servers)
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
@@ -445,87 +442,6 @@ def ensure_api_key(state_dir: Path) -> str:
     return value
 
 
-def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
-    """Probe before deploying files into an existing agent home."""
-    from .._lifecycle._hermes_restart_preflight import (
-        consume_prepared_route,
-        prepare_hermes_successor,
-    )
-
-    prepared = consume_prepared_route(config, launch_mode=launch_mode)
-    policy = getattr(config, "hermes_failover", None)
-    if prepared is None and policy is not None and (
-        getattr(policy, "accounts", None) or getattr(policy, "engines", None)
-    ):
-        targets = [home / ".hermes"]
-        upper = resolve_overlay_upper_home(config)
-        if upper is not None:
-            targets.append(upper / ".hermes")
-        prepared = prepare_hermes_successor(config, profiles=targets)
-    if prepared is not None:
-        config._hermes_prepared_provider_key = prepared.provider_key
-        return prepared.plan, prepared.selection, prepared.env, prepared.pools
-    plan = _launch_plan(config, launch_mode=launch_mode)
-    selection = compile_hermes_config(plan, workdir=str(config.workdir))
-    env, pools = configure_failover(config, selection)
-    targets = [home / ".hermes"]
-    upper = resolve_overlay_upper_home(config)
-    if upper is not None:
-        targets.append(upper / ".hermes")
-    preflight_pools(selection, pools, targets)
-    if pools:
-        selection["sac_managed_model"] = True
-    return plan, selection, env, pools
-
-
-def _apply_verified_route(rendered: dict, selection: dict) -> None:
-    authored = rendered.get("model")
-    authored_default = authored.get("default") if isinstance(authored, dict) else None
-    for key in (
-        "model",
-        "providers",
-        "fallback_providers",
-        "credential_pool_strategies",
-        "sac_managed_model",
-    ):
-        if key in selection:
-            rendered[key] = selection[key]
-    if selection.get("credential_pool_strategies"):
-        # A stale base alias must not bypass the managed credential pool in
-        # main or auxiliary clients. The pool owns the live usable key.
-        for provider in rendered.get("providers", {}).values():
-            provider["key_env"] = ""
-            provider.pop("api_key", None)
-    judge = rendered.get("auxiliary", {}).get("goal_judge")
-    verified = selection.get("model")
-    verified_default = verified.get("default") if isinstance(verified, dict) else None
-    if (
-        judge
-        and authored_default is not None
-        and verified_default is not None
-        and verified_default != authored_default
-    ):
-        # The verified fallback moved the model: the authored judge must
-        # follow within its lane. An unchanged route keeps the authored
-        # judge (notably the operator-pinned Muse judge on non-Muse lanes).
-        from .._lifecycle._hermes_restart_preflight import same_goal_model
-
-        actual = rendered["model"]["default"]
-        if not same_goal_model(judge.get("model"), actual):
-            raise ValueError(
-                "Hermes verified fallback changes the authored goal judge model"
-            )
-        judge["model"] = actual
-
-
-def _profile_primary_key(config):
-    prepared = getattr(config, "_hermes_prepared_provider_key", None)
-    if prepared is not None:
-        del config._hermes_prepared_provider_key
-        return prepared
-    return resolve_primary_key(config, resolve_provider_api_key)
-
-
 def materialize_hermes_profile(
     config: AgentConfig, *, state_dir: Path, api_port: int
 ) -> tuple[str, list[Path]]:
@@ -533,9 +449,6 @@ def materialize_hermes_profile(
     state_dir.mkdir(parents=True, exist_ok=True)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
-    plan, selection, failover_env, credential_pools = _verified_route(
-        config, home, launch_mode="headless"
-    )
     deploy_to_home(config, str(home))
     setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
@@ -546,19 +459,18 @@ def materialize_hermes_profile(
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
     api_key = ensure_api_key(state_dir)
-    provider_key = _profile_primary_key(config)
+    provider_key = resolve_primary_key(config, resolve_provider_api_key)
+    plan = _launch_plan(config)
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
-        max_turns=config.hermes_max_turns,
-        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    _apply_verified_route(rendered, selection)
+    failover_env, credential_pools = configure_failover(config, rendered)
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -596,10 +508,14 @@ def materialize_hermes_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
-        ensure_hermes_log_files(profile)
+        # Hermes opens logs/agent.log at startup and fails with Errno 2
+        # when the directory is absent (measured 2026-09-29: fresh agents
+        # IDLE with this startup error). Pre-create it with the profile.
+        (profile / "logs").mkdir(parents=True, exist_ok=True)
         (profile / "config.yaml").write_text(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )
@@ -617,9 +533,6 @@ def materialize_hermes_tui_profile(
     ensure_api_key(state_dir)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
-    plan, selection, failover_env, credential_pools = _verified_route(
-        config, home, launch_mode="tui"
-    )
     if deploy_home:
         deploy_to_home(config, str(home))
         overlay_home = deploy_to_home_overlay(config)
@@ -632,19 +545,18 @@ def materialize_hermes_tui_profile(
         setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
-    provider_key = _profile_primary_key(config)
+    provider_key = resolve_primary_key(config, resolve_provider_api_key)
+    plan = _launch_plan(config, launch_mode="tui")
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
-        max_turns=config.hermes_max_turns,
-        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
         system_prompt=system_prompt,
     )
-    _apply_verified_route(rendered, selection)
+    failover_env, credential_pools = configure_failover(config, rendered)
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )
@@ -676,10 +588,13 @@ def materialize_hermes_tui_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    preflight_pools(rendered, credential_pools, [target / ".hermes" for target in targets])
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
-        ensure_hermes_log_files(profile)
+        # Same startup-logs guarantee as the SDK profile above: Hermes
+        # opens logs/agent.log at boot (Errno 2 without it).
+        (profile / "logs").mkdir(parents=True, exist_ok=True)
         (profile / "config.yaml").write_text(
             yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
         )

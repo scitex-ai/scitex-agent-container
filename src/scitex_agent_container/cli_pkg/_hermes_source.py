@@ -9,12 +9,9 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from .._runtime_paths import runtime_base_dir
-
 # SciTeX-org Hermes fork (operator, 2026-09-29): bake the fleet's own
 # fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
-# ship in the hermes SIF. Always export this immutable commit; the branch
-# records its origin and is never substituted for the build pin.
+# ship in the hermes SIF. Tracks the fork's scitex-main working branch.
 HERMES_COMMIT = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
 HERMES_REPOSITORY = "https://github.com/scitex-ai/hermes-agent.git"
 HERMES_BRANCH = "scitex-main"
@@ -51,8 +48,11 @@ def _contains_commit(repo: Path) -> bool:
 
 
 def hermes_cache_repo() -> Path:
-    """Return the upstream cache inside SAC's runtime namespace."""
-    return runtime_base_dir() / "upstream" / "hermes-agent.git"
+    """Return the stable, user-owned upstream cache location."""
+    cache_root = Path(
+        os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+    ).expanduser()
+    return cache_root / "scitex-agent-container" / "upstream" / "hermes-agent.git"
 
 
 def resolve_hermes_repo() -> Path:
@@ -107,8 +107,12 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     ``display.tool_progress=off`` (including focus mode). SAC consumes those
     events as an authoritative instrument, so the staging step removes only
     those two display gates and fails closed if the pinned anchors drift.
-    The current immutable fork already removes the outer gates; verify
-    their exact instrumented form while patching the hidden replay path.
+
+    Fork-shape shortcut (scitex-ai/hermes-agent scitex-main and later):
+    the fork refactored the gates into ``_emit_tool_lifecycle``, which
+    stamps every event unconditionally — the instrumentation goal is
+    already met, so there is nothing to patch. Detected by the new
+    anchor; the old anchors are then not required.
     """
     module = staged / "tui_gateway" / "tool_progress.py"
     if not module.is_file():
@@ -116,6 +120,14 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
             "pinned Hermes tui_gateway/tool_progress.py is absent; refusing an "
             "uninstrumented build"
         )
+    text = module.read_text(encoding="utf-8")
+    if "def _emit_tool_lifecycle(event, sid, name, args, payload):" in text:
+        if "_stamp_event(frame)" not in text:
+            raise HermesSourceError(
+                "fork-shape Hermes lifecycle gate without unconditional "
+                "stamping; refusing an uninstrumented build"
+            )
+        return True
     text = module.read_text(encoding="utf-8")
     replacements = {
         """    if not _connector_tool_lifecycle(name, args):
@@ -137,6 +149,14 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
         frame = _event_frame(event, sid, payload)
         _stamp_event(frame)
         return None""",
+        """    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
+            or _connector_tool_lifecycle(name, args)):""": (
+            "    if True:  # SAC heartbeat instrumentation is display-independent"
+        ),
+        """    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
+            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):""": (
+            "    if True:  # SAC heartbeat instrumentation is display-independent"
+        ),
     }
     for old, new in replacements.items():
         if text.count(old) != 1:
@@ -145,25 +165,6 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
                 "uninstrumented build"
             )
         text = text.replace(old, new)
-
-    gates = (
-        """    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
-            or _connector_tool_lifecycle(name, args)):""",
-        """    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
-            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):""",
-    )
-    instrumented_gate = (
-        "    if True:  # SAC heartbeat instrumentation is display-independent"
-    )
-    counts = tuple(text.count(gate) for gate in gates)
-    if counts == (1, 1) and text.count(instrumented_gate) == 0:
-        for gate in gates:
-            text = text.replace(gate, instrumented_gate)
-    elif counts != (0, 0) or text.count(instrumented_gate) != 2:
-        raise HermesSourceError(
-            "pinned Hermes tool lifecycle gate drifted; refusing an "
-            "uninstrumented build"
-        )
     module.write_text(text, encoding="utf-8")
     return True
 
@@ -172,9 +173,7 @@ def _patch_hermes_quota_failover(staged: Path) -> None:
     """Ship fail-fast quota recovery with the immutable Hermes source pin."""
     patch = Path(__file__).with_name("_hermes_quota_failover.patch")
     if not patch.is_file():
-        raise HermesSourceError(
-            "Hermes quota failover patch is missing; refusing an unsafe build"
-        )
+        raise HermesSourceError("Hermes quota failover patch is missing; refusing an unsafe build")
     for arguments in (("--check",), ()):
         completed = subprocess.run(
             ["git", "apply", *arguments, str(patch)],

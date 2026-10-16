@@ -325,6 +325,50 @@ sessions. This keeps Hermes' own tool loop unbounded while leaving
 `spec.autonomous.max_turns` as the independent safety cap for SAC's outer
 drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.
 
+### `spec.available_harnesses.hermes.failover`
+
+Failover happens inside the existing Hermes session. Declare account pools by
+engine key and an ordered list of backup engines; merely listing an available
+engine does not authorize automatic switching to it.
+
+```yaml
+available_harnesses:
+  hermes:
+    failover:
+      accounts:
+        scitex-free:
+          - OPENCODE_GO_API_KEY_1
+          - OPENCODE_GO_API_KEY_2
+        command-code-muse-spark-1.3-contributor:
+          - COMMANDCODE_API_KEY_01
+          - COMMANDCODE_API_KEY_02
+          - COMMANDCODE_API_KEY_ywatanabe
+      engines:
+        - command-code-muse-spark-1.3-contributor
+```
+
+Each backup must exist in `available_engines` and support the selected Hermes
+harness. Unresolved keys, unknown engines, repeated routes, and unused account
+pools fail before writing the profile. Keys are deduplicated by value and stored
+in owner-only Hermes secret files. Declared pools suppress ordinary environment
+seeding so extra aliases cannot become undeclared routes.
+
+Hermes tries accounts in the declared order, staying on a healthy account until
+it is exhausted. A usage-cap 429 triggers immediate account failover; transient
+429s retain Hermes' bounded retry. Published reset times persist across profile
+materialization and restart, including resets days in the future. Once the
+primary pool is exhausted, only declared backup engines may run. Account
+switches name the selected account in a visible diagnostic and the warning log; provider switches use
+Hermes' native fallback notices. Exhausted pools fail with the next reset time
+instead of bypassing the pool with an ordinary environment key. When no declared
+route can continue, quota failures return immediately with the reset time,
+without timed retries, automatic recovery, or an agent restart.
+
+SAC's base-image staging applies the bundled Hermes quota failover patch to the
+immutable source pin and records `quota-failover-fail-closed` in
+`SAC_LOCAL_PATCHES`. An incompatible source tree fails the build. Rebuild the
+base image to deploy it; updating SAC alone does not update a baked image.
+
 Telegram is an edge transport, not a per-agent dependency. Select the CCT
 Telegram channel only on the human-facing gateway agent (normally
 `scitex-lead`); application agents communicate through Cards, SAC, or A2A.

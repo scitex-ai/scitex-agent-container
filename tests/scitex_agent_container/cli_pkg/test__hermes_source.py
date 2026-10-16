@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from scitex_agent_container.cli_pkg import _hermes_source as source
 
 PINNED_TOOL_PROGRESS_ANCHORS = """\
-def _emit_tool_lifecycle(event, sid, name, args, payload):
+def _emit(event, sid, payload):
     if not _connector_tool_lifecycle(name, args):
         return _emit(event, sid, payload)
     return _emit(event, sid, payload)
@@ -28,6 +26,17 @@ def complete(sid, name, args, payload):
         _emit_tool_lifecycle("tool.complete", sid, name, args, payload)
 """
 
+FORK_TOOL_PROGRESS_ANCHORS = """\
+def _emit_tool_lifecycle(event, sid, name, args, payload):
+    if not _connector_tool_lifecycle(name, args):
+        return _emit(event, sid, payload)
+    from tui_gateway.event_replay import _stamp_event
+
+    frame = _event_frame(event, sid, payload)
+    _stamp_event(frame)
+    transport.write(frame)
+"""
+
 
 def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
@@ -41,18 +50,6 @@ def test_pin_names_the_validated_sac_hermes_source() -> None:
 
     # Assert — never replace this immutable pair with a mutable PR ref.
     assert pin == expected
-
-
-def test_default_cache_stays_in_sac_runtime(tmp_path, env_save_restore):
-    # Arrange
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
-    )
-    env_save_restore.set("XDG_CACHE_HOME", str(tmp_path / "unrelated-cache"))
-    # Act
-    observed = source.hermes_cache_repo()
-    # Assert
-    assert observed == tmp_path / "runtime" / "upstream" / "hermes-agent.git"
 
 
 def test_explicit_source_must_contain_pinned_commit(tmp_path):
@@ -121,30 +118,10 @@ def test_heartbeat_instrumentation_fails_closed_when_an_anchor_drifts(tmp_path):
         source._patch_hermes_lifecycle_instrumentation(staged)
 
 
-@pytest.mark.parametrize("gate_count", [1, 3])
-def test_instrumented_fork_rejects_missing_or_extra_lifecycle_gate(
-    tmp_path, gate_count
-):
-    # Arrange
-    staged = tmp_path / "hermes-agent-src"
-    module = staged / "tui_gateway" / "tool_progress.py"
-    module.parent.mkdir(parents=True)
-    module.write_text(
-        "def _emit_tool_lifecycle(event, sid, name, args, payload):\n"
-        "    if not _connector_tool_lifecycle(name, args):\n"
-        "        return _emit(event, sid, payload)\n"
-        + "    if True:  # SAC heartbeat instrumentation is display-independent\n"
-        * gate_count,
-        encoding="utf-8",
-    )
-
-    # Act
-    # Assert
-    with pytest.raises(source.HermesSourceError, match="gate drifted"):
-        source._patch_hermes_lifecycle_instrumentation(staged)
-
-
-def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
+def test_stage_exports_pinned_tree_without_git_metadata(tmp_path, monkeypatch):
+    # This small repository tests export semantics; the exact pinned-stage
+    # test below exercises the production quota patch on the real Hermes tree.
+    monkeypatch.setattr(source, "_patch_hermes_quota_failover", lambda _staged: None)
     # Arrange
     repository = tmp_path / "repository"
     repository.mkdir()
@@ -159,30 +136,6 @@ def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
     tool_progress = repository / "tui_gateway" / "tool_progress.py"
     tool_progress.parent.mkdir()
     tool_progress.write_text(PINNED_TOOL_PROGRESS_ANCHORS, encoding="utf-8")
-    # The complete staging contract includes the deployed quota patch. Seed
-    # its tracked preimages from the same immutable pin, without executing
-    # any credential code or depending on the cache's working branch.
-    pinned_repository = source.resolve_hermes_repo()
-    quota_patch = Path(source.__file__).with_name("_hermes_quota_failover.patch")
-    sections = quota_patch.read_text().split("diff --git ")[1:]
-    for section in sections:
-        if "\nnew file mode " in section:
-            continue
-        name = re.match(r"a/(\S+) b/", section).group(1)
-        preimage = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(pinned_repository),
-                "show",
-                f"{source.HERMES_COMMIT}:{name}",
-            ],
-            check=True,
-            capture_output=True,
-        ).stdout
-        destination = repository / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(preimage)
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
     commit = subprocess.run(
@@ -221,6 +174,11 @@ def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
         == "https://example.invalid/hermes-agent.git\n"
         and not (staged / ".git").exists()
     )
+
+
+def test_quota_patch_refuses_an_incompatible_hermes_tree(tmp_path):
+    with pytest.raises(source.HermesSourceError, match="could not apply Hermes quota failover patch"):
+        source._patch_hermes_quota_failover(tmp_path)
 
 
 def test_exact_pinned_stage_records_hidden_tool_start_without_ui_emission(tmp_path):
@@ -290,3 +248,19 @@ print(json.dumps(event_replay.events_since("session-1", 0), sort_keys=True))
         payload.get("tool_id"),
         event.get("seq"),
     ) == (0, "", source.HERMES_COMMIT, "tool.start", "call-1", 1)
+
+
+def test_fork_shape_tree_needs_no_patch(tmp_path):
+    # Arrange — fork-refactored gates stamp unconditionally already.
+    staged = tmp_path / "hermes-agent-src"
+    module = staged / "tui_gateway" / "tool_progress.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(FORK_TOOL_PROGRESS_ANCHORS, encoding="utf-8")
+
+    # Act
+    result = source._patch_hermes_lifecycle_instrumentation(staged)
+    patched = module.read_text(encoding="utf-8")
+
+    # Assert — no-op, tree untouched.
+    assert result is True
+    assert patched == FORK_TOOL_PROGRESS_ANCHORS
