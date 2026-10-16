@@ -36,10 +36,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded PR runs; NEVER cancel post-merge/protected-branch runs
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # Cancel superseded PR runs; non-PR runs key on run_id (unique per run),
+  # so each is alone in its group and can neither cancel nor be cancelled
   # (preserves the retired release-ci.yml coalescing semantic).
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # EACH JOB PASSES ONLY WHAT ITS CALLEE DECLARES. Measured 2026-08-05 against
 # scitex-ai/.github:
