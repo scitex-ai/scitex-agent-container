@@ -104,7 +104,7 @@ def test_registry_host_resolves_without_config_entry(tmp_path):
     source = tmp_path / "x.sif"
     source.write_bytes(b"x")
     old_load = cmd._load_config
-    old_registry_hosts = _peer_resolve.registry_hosts
+    old_hosts = _peer_resolve.registry_hosts
 
     class Config:
         peers = {}
@@ -120,7 +120,7 @@ def test_registry_host_resolves_without_config_entry(tmp_path):
         )
     finally:
         cmd._load_config = old_load
-        _peer_resolve.registry_hosts = old_registry_hosts
+        _peer_resolve.registry_hosts = old_hosts
     # Assert
     assert (result.exit_code, "not configured" in result.output) == (2, True)
 
@@ -134,7 +134,7 @@ def test_registry_host_accepted_without_config_entry(tmp_path):
     source = tmp_path / "x.sif"
     source.write_bytes(b"x")
     old_load = cmd._load_config
-    old_registry_hosts = _peer_resolve.registry_hosts
+    old_hosts = _peer_resolve.registry_hosts
 
     class Config:
         peers = {}
@@ -166,7 +166,7 @@ def test_registry_host_accepted_without_config_entry(tmp_path):
         )
     finally:
         cmd._load_config = old_load
-        _peer_resolve.registry_hosts = old_registry_hosts
+        _peer_resolve.registry_hosts = old_hosts
     # Assert
     assert (result.exit_code, '"status": "planned"' in result.output) == (
         0,
