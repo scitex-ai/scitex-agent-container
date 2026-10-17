@@ -19,10 +19,10 @@
 ## Verified live 2026-10-08 (~09:30Z, from bare shell on scitex-compute-04)
 - Agent stopped: poll ran as plain `/uvwork/venv-agent/bin/python`, no agent,
   listener, broker, or `_ci_watcher` process exists
-  (`evidence/liveness-probe.sh` → none found).
+  (`.dev/evidence-ci-watcher/liveness-probe.sh` → none found).
 - Target runner stopped: no `Runner.Worker`/`Runner.Listener` on compute-04,
   yet `poll_once` against the real API recorded run 37741732373 → `failure`
-  (`evidence/ci-watch.jsonl`, recorded_at 2026-10-08T09:30:54Z).
+  (`.dev/evidence-ci-watcher/ci-watch.jsonl`, recorded_at 2026-10-08T09:30:54Z).
 - Stopped watcher reads stalled, never healthy: fresh `success` → `healthy`;
   same row +1h → `stalled`; missing ledger → `stalled`; DONE refused on stale.
 - GitHub-hosted capacity is proven in this repo: admission/profile jobs of run

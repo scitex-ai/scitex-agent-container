@@ -289,7 +289,8 @@ def test_done_refused_while_ci_failing(tmp_path):
     record_snapshot(
         ledger, repo="o/r", run_id=7, status="failure", now_fn=lambda: T0
     )
-    # Act + Assert — the gate raises instead of permitting DONE.
+    # Act — attempt DONE against a failing record.
+    # Assert — the gate raises instead of permitting DONE.
     with pytest.raises(DoneRefused):
         assert_done_allowed(ledger, repo="o/r", run_id=7, now_fn=lambda: T0)
 
@@ -300,14 +301,16 @@ def test_done_refused_while_ci_running(tmp_path):
     record_snapshot(
         ledger, repo="o/r", run_id=7, status="running", now_fn=lambda: T0
     )
-    # Act + Assert
+    # Act — attempt DONE while CI is still running.
+    # Assert — incompleteness raises instead of permitting DONE.
     with pytest.raises(DoneRefused):
         assert_done_allowed(ledger, repo="o/r", run_id=7, now_fn=lambda: T0)
 
 
 def test_done_refused_with_no_record_unverifiable(tmp_path):
     # Arrange — nothing was ever recorded for this run.
-    # Act + Assert — absence of evidence is not permission.
+    # Act — attempt DONE with no record at all.
+    # Assert — absence of evidence raises; it is not permission.
     with pytest.raises(DoneRefused):
         assert_done_allowed(
             tmp_path / "absent.jsonl", repo="o/r", run_id=7, now_fn=lambda: T0
@@ -320,7 +323,8 @@ def test_done_refused_when_record_is_stale(tmp_path):
     record_snapshot(
         ledger, repo="o/r", run_id=7, status="success", now_fn=lambda: T0
     )
-    # Act + Assert — yesterday's green does not certify today's HEAD.
+    # Act — attempt DONE against a stale record.
+    # Assert — yesterday's green raises; it does not certify today's HEAD.
     with pytest.raises(DoneRefused):
         assert_done_allowed(
             ledger,
