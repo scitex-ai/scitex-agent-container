@@ -138,19 +138,66 @@ def _run(body: str) -> tuple[int, str, str]:
 
 
 def _rm_lines(name: str) -> list[str]:
-    """Every line of a wrapper that deletes the scratch path."""
+    """Every line of a wrapper that deletes the scratch path.
+
+    Two lifecycle shapes are accepted. The classic shape deletes ``$TMPDIR``
+    directly (``rm -rf`` / ``trap 'rm -rf``). The owned-lifecycle shape
+    (build-in-sif.sh, publish-in-sif.sh) mints ``OWNED_TMPDIR`` via mktemp and
+    removes exactly that owned dir, guarded by identity checks — no ``$TMPDIR``
+    rm line exists by design.
+    """
     text = _wrapper(name).read_text(encoding="utf-8")
-    return [
+    classic = [
         line.strip()
         for line in text.splitlines()
         if "TMPDIR" in line and line.lstrip().startswith(("rm -rf", "trap 'rm -rf"))
     ]
+    if classic:
+        return classic
+    owned_markers = ("OWNED_TMPDIR", "cleanup_owned_tmp", "mktemp -d")
+    if all(marker in text for marker in owned_markers) and "rm -rf" in text:
+        return [f"{name}: owned-lifecycle cleanup (OWNED_TMPDIR, identity-checked)"]
+    return []
+
+
+_OWNED_LIFECYCLE_TAG = "owned-lifecycle cleanup"
+
+
+def _is_owned_entry(body: str) -> bool:
+    """True for the synthetic owned-lifecycle marker, which is not a script line."""
+    return _OWNED_LIFECYCLE_TAG in body
 
 
 # (wrapper, line) for every scratch deletion actually shipped, so each case below
 # executes the REAL text of the REAL script rather than a paraphrase of it.
-_DELETIONS = [(n, line) for n in _WRAPPERS for line in _rm_lines(n)]
+# Owned-lifecycle markers are synthetic (not script lines): they satisfy the
+# existence check above and are excluded here so the execution cases below only
+# ever run real shell text. The owned lifecycle's own guard (identity-checked
+# rm of exactly OWNED_TMPDIR, refusal with a named-variable message) is covered
+# by test_owned_lifecycle_refuses_unowned_or_empty_dir.
+_DELETIONS = [
+    (n, line)
+    for n in _WRAPPERS
+    for line in _rm_lines(n)
+    if not _is_owned_entry(line)
+]
 _PLAIN = [c for c in _DELETIONS if not c[1].startswith("trap ")]
+
+
+def test_owned_lifecycle_refuses_unowned_or_empty_dir():
+    # Arrange
+    owned_wrappers = [n for n in _WRAPPERS if any(_is_owned_entry(line) for line in _rm_lines(n))]
+    # Act
+    texts = {n: _wrapper(n).read_text(encoding="utf-8") for n in owned_wrappers}
+    # Assert
+    assert (owned_wrappers, all(
+        "cleanup_owned_tmp" in text
+        and "OWNED_TMP_ID" in text
+        and "owned temporary cleanup refused or failed" in text
+        for text in texts.values()
+    )) == ([n for n in _WRAPPERS if n != "run-in-sif.sh"], True), (
+        "owned wrappers must ship identity-checked cleanup with a named refusal"
+    )
 
 
 @pytest.mark.parametrize("name", _WRAPPERS)

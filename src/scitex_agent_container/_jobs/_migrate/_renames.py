@@ -154,6 +154,10 @@ BORN_CANONICAL: frozenset[str] = frozenset(
         # every cross-host message down a leg that cannot work in
         # production and nobody knew until a send was tried by hand.
         "scitex-agent-container-a2a-reachability",
+        # Added 2026-10-16. Born canonical: TUI-independent key-liveness
+        # sweep — no host has ever carried any unit for it, because no
+        # predecessor probed declared API-key slots provider-side.
+        "scitex-agent-container-accounts-key-liveness",
     }
 )
 

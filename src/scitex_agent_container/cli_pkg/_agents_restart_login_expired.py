@@ -83,7 +83,8 @@ def already_summarised_by_count(report) -> bool:
     "apply",
     is_flag=True,
     default=False,
-    help="ACTUALLY restart the wedged agents. Without this, nothing is restarted.",
+    help="Compatibility flag; unproven auth banners remain REPORT-ONLY. "
+    "It cannot bypass positional/liveness restart admission.",
 )
 @click.option(
     "--check",
@@ -116,29 +117,24 @@ def restart_login_expired(
     interval: float,
     as_json: bool,
 ) -> None:
-    """Restart LIVE agents wedged behind a frozen "Login expired" banner.
+    """Audit LIVE agents showing auth banners (currently REPORT-ONLY).
 
-    An agent whose API calls are rejected sits at its prompt under an auth
-    banner forever — the tmux session is alive, so ``reconcile`` (which only
-    ever touches a CORPSE) leaves it be, yet it does nothing. Claude never
-    re-reads its credentials, so ONLY a restart clears it. This verb detects
-    that state (a system auth banner frozen directly above the prompt across two
-    captures — so a working agent QUOTING the banner is never mistaken for a
-    wedged one) and restarts it, through the pool-loading start path so the
-    restart cannot strip the agent's CCT/Telegram token.
+    Frozen banners can persist on healthy idle agents. Both positional and
+    liveness auditors must authorize destructive restart admission; their
+    current report-only contract also applies to --apply. An unproven banner
+    is reported as UNOBSERVED (exit 2), never as a confirmed auth failure.
+
+    Native Hermes requires session/turn evidence of assigned work and an
+    actual failure. Healthy successor credentials do not prove a current
+    session is stalled. Dead sessions belong to `sac agents reconcile`.
 
     \b
     Detect (read-only — the DEFAULT; exits non-zero if anything is wedged):
       $ sac agents restart-login-expired
       $ sac agents restart-login-expired --check --json
     \b
-    Remedy:
+    Compatibility invocation (still report-only):
       $ sac agents restart-login-expired --apply
-
-    Rate-limited exactly like ``reconcile`` (30-min/agent debounce, <=2/agent/
-    hour, --limit per pass): an agent STILL wedged after the cap gets a BOARD
-    CARD rather than an infinite bounce — a restart loop is worse than a wedged
-    agent.
 
     \b
     ! DEPLOY GATE — the SCHEDULED form (sac.restart-login-expired-agents timer):
@@ -147,8 +143,7 @@ def restart_login_expired(
       two restarters bouncing one fleet is the double-supervisor class. Running
       THIS COMMAND by hand is always safe.
 
-    Exits 0 ONLY when everything this pass COULD observe was observed and none
-    of it is wedged, 1 if something is wedged, and 2 if anything could not be
+    Exits 0 when every observable pane is clear, and 2 if auth failure could not be
     determined — an unreadable pane, an unreadable fleet roster, or an
     unreadable restart history.
 
@@ -193,9 +188,12 @@ def restart_login_expired(
     # agents we could not read into the agents we found wedged, which is the
     # collapse this command's exit code exists to keep apart.
     unseen = outcome.of(Verdict.UNOBSERVED)
-    render_rich(f"[bold]sac agents restart-login-expired[/bold]  {mode} — "
+    render_rich(
+        f"[bold]sac agents restart-login-expired[/bold]  {mode} — "
         f"{len(outcome.reports) - len(unseen)} corroborated login-expired "
-        f"agent(s), {len(unseen)} NOT observed\n", __name__)
+        f"agent(s), {len(unseen)} NOT observed\n",
+        __name__,
+    )
     # See :func:`already_summarised_by_count` — the no-session population is printed
     # once, by count, below; repeating it per-agent is what put 93,778 lines in a
     # 32 MB timer log. Indeterminate UNOBSERVED reports still print individually.
@@ -205,22 +203,31 @@ def restart_login_expired(
         _print_report(report)
 
     counts = outcome.counts()
-    render_rich("\n[bold]"
+    render_rich(
+        "\n[bold]"
         + ("  ".join(f"{k}={v}" for k, v in counts.items()) or "nothing wedged")
-        + "[/bold]", __name__)
+        + "[/bold]",
+        __name__,
+    )
 
     would = outcome.of(Verdict.WOULD_RESTART)
     if would:
-        render_rich(f"\n[yellow]{len(would)} agent(s) are login-expired and would be "
+        render_rich(
+            f"\n[yellow]{len(would)} agent(s) are login-expired and would be "
             f"restarted:[/yellow] {', '.join(r.name for r in would)}\n"
             "  Nothing was restarted — this is a dry-run. To act:\n"
-            "    sac agents restart-login-expired --apply", __name__)
+            "    sac agents restart-login-expired --apply",
+            __name__,
+        )
     down = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
     if down:
-        render_rich(f"\n[red]{len(down)} agent(s) are STILL wedged and sac could NOT heal "
+        render_rich(
+            f"\n[red]{len(down)} agent(s) are STILL wedged and sac could NOT heal "
             f"them:[/red] {', '.join(r.name for r in down)}\n"
             "  Each has a board card. A human needs to look — restarting is not "
-            "fixing these (usually a real account problem).", __name__)
+            "fixing these (usually a real account problem).",
+            __name__,
+        )
     # `unseen` is EVERY UNOBSERVED, but only some of them are this pass's own
     # indeterminacy. `no-session` is a DETERMINATE reading handed to
     # fleet-reconcile, and :meth:`PassOutcome.exit_code` already excludes it.
@@ -231,24 +238,33 @@ def restart_login_expired(
     indeterminate = outcome.indeterminate()
     no_session = tuple(r for r in unseen if r.reason == "no-session")
     if indeterminate:
-        render_rich(f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
+        render_rich(
+            f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
             f"{', '.join(r.name for r in indeterminate)}\n"
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
             "    sac agents auth-status\n"
-            "    sac agents list", __name__)
+            "    sac agents list",
+            __name__,
+        )
     if no_session:
-        render_rich(f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
+        render_rich(
+            f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
             "— fleet-reconcile's half of the fleet, not this pass's. A missing "
             "session is a determinate reading, so it does NOT prevent a clean "
-            "report here.", __name__)
+            "report here.",
+            __name__,
+        )
     if outcome.of(Verdict.BUDGET_UNKNOWN):
-        render_rich("\n[magenta]sac could not read its OWN restart history[/magenta] — so "
+        render_rich(
+            "\n[magenta]sac could not read its OWN restart history[/magenta] — so "
             "the debounce and the hourly cap cannot be enforced. It has REFUSED "
             "to restart anything rather than risk a loop.\n"
             "  Pin the state somewhere durable:\n"
-            "    export SAC_LOGIN_EXPIRED_HISTORY=/var/tmp/sac-login-expired.json", __name__)
+            "    export SAC_LOGIN_EXPIRED_HISTORY=/var/tmp/sac-login-expired.json",
+            __name__,
+        )
     raise SystemExit(code)
 
 

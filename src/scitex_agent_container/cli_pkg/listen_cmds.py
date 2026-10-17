@@ -346,14 +346,8 @@ def _do_start_listen(
     show_default=True,
     help="SIGTERM-to-SIGKILL escalation deadline (seconds).",
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help="Skip SIGTERM and go straight to SIGKILL.",
-)
 @click.pass_context
-def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
+def listen_restart(ctx: click.Context, grace_secs: float) -> None:
     """Atomically stop, self-heal, and relaunch the sac listen daemon.
 
     Deterministic incident recovery (card
@@ -378,8 +372,9 @@ def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
     Example:
         sac listen restart                  # 10s grace, then SIGKILL
         sac listen restart --grace-secs 30  # longer TERM window
-        sac listen restart --force          # SIGKILL daemon + port holder
+        sac listen restart                  # stop, wait, then relaunch
     """
+    force = False
     from .._listen._restart import (
         format_escalation_warning,
         restart_listen,

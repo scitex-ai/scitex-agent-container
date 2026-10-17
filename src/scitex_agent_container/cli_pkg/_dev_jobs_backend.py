@@ -361,7 +361,7 @@ def build_argv(
     if adopt:
         argv.append("--adopt")
     if force:
-        argv.append("--force")
+        raise ValueError("SAC cannot overwrite an existing supervisor; use --adopt")
     return argv
 
 

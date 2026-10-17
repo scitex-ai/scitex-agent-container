@@ -226,6 +226,31 @@ def test_post_body_omits_zero_drain_timeout(listen_env) -> None:
     assert "drain_timeout_seconds" not in json.loads(captured["body"])
 
 
+@pytest.mark.parametrize(
+    "drain_timeout_s, expected", [(0, 60), (45.5, 105.5), (120, 180)]
+)
+def test_default_transport_budget_outlives_requested_drain(
+    listen_env, drain_timeout_s, expected
+):
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"returncode":0}')
+    # Act
+    request_restart("peer", drain_timeout_s=drain_timeout_s, opener=opener)
+    # Assert
+    assert captured["timeout"] == expected
+
+
+def test_explicit_transport_timeout_overrides_drain_budget(listen_env):
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"returncode":0}')
+    # Act
+    request_restart("peer", drain_timeout_s=120, timeout_s=7.5, opener=opener)
+    # Assert
+    assert captured["timeout"] == 7.5
+
+
 def test_explicit_caller_arg_overrides_sac_name_env(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")

@@ -99,11 +99,13 @@ jobs:
       fail-fast: false
       matrix:
         # THE COMPLEMENT OF THE PR GATE, NOT AN INDEPENDENT LIST.
-        # tests/integration/test_ci_python_matrix_shape.py asserts this equals
-        # the full supported set MINUS what the PR gate runs, so adding 3.14 to
-        # the matrix in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml and
-        # forgetting this file turns that test RED instead of silently leaving
-        # a version untested at night.
+        # tests/integration/test_ci_python_matrix_shape.py pins the PR gate to
+        # the full supported set (via the org-owned matrix behind ci.yml), so
+        # this stays exactly the middle version the PR gate brackets past. If
+        # a future Python bump widens the supported set, the versions that
+        # fall between the ends belong here, and
+        # tests/integration/test_ci_python_matrix_shape.py fails until they
+        # are.
         python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v7

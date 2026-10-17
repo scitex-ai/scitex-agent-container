@@ -1,80 +1,137 @@
 #!/usr/bin/env bash
-# Runs INSIDE the reused scitex-ci SIF (apptainer exec — invoked via
-# exec-in-sif.sh). Builds scitex-agent-container's wheel + sdist into ./dist/.
-#
-# WHY build in the SIF: the self-hosted Spartan runner has no Python on the
-# bare node (the whole reason the old `actions/setup-python@v5` step failed:
-# "version 3.x not found for this OS"). The SIF bakes python 3.11/3.12/3.13 +
-# pip + uv at /opt/venv-<ver>, exactly like the working pytest-matrix CI.
-#
-# `python -m build` needs the `build` frontend, which is NOT baked in the SIF
-# (only scitex-dev[all,dev] deps are). Mirror run-in-sif.sh: install `build`
-# into a writable --target on node-local /tmp and put it on PYTHONPATH. The
-# SIF's /opt/venv-* are root-owned + RO and the compute-node HOME is RO inside
-# the container, so a normal install fails Permission denied — a --target on
-# writable scratch sidesteps both.
-#
-# Fail-loud (operator directive): a missing interpreter or a failed build is a
-# HARD error, never a silent fallback.
+# Whole artifacts are built and imported in the existing qualified SIF Python.
 set -euo pipefail
-
 V="${1:-3.12}"
-VENV="/opt/venv-$V"
-PY="$VENV/bin/python"
-test -x "$PY" || {
-    echo "::error::baked python missing in $VENV — rebuild the SIF: scitex-container apptainer build ci-cpu"
-    exit 1
-}
-
+PY="${BUILD_PYTHON:-/opt/venv-$V/bin/python}"
+[[ "$PY" = /* && "$PY" != *$'\n'* && "$PY" != *$'\r'* ]]
+test -x "$PY"
+: "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
+SCRATCH_ROOT="${RUNNER_TEMP:-/tmp}"
+[ -d "$SCRATCH_ROOT" ] && [ ! -L "$SCRATCH_ROOT" ]
+SCRATCH_PREFIX="$SCRATCH_ROOT/build-scitex_agent_container-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$V-"
+# BEGIN owned temporary-root lifecycle
+OWNED_TMPDIR=""
+OWNED_TMP_ID=""
+OWNED_CHILD_PID=""
+OWNED_CHILD_GROUP=""
+OWNED_CHILD_BIRTH=""
 
-# Writable scratch (the runner's TMPDIR=~/.cache/tmp is a host path that does
-# NOT resolve inside the container). Node-local /tmp is writable.
-#
-# It was NOT "ephemeral", whatever this comment used to say: nothing removed
-# this directory, so every release leaked one. Smaller and rarer than
-# run-in-sif.sh's, therefore slower to notice — not less of a leak. Lifecycle
-# (naming, end-of-job removal, startup prune) now lives in tmpdir-lib.sh.
-# shellcheck source=/dev/null
-. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
-TMPDIR="$(ci_tmpdir_path build "$V")"
-export TMPDIR
-# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
-# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
-# name here would delete nothing, fail nothing, and leave the rest of the script
-# addressing paths off the filesystem root. `:?` aborts instead.
-rm -rf "${TMPDIR:?build scratch path came back empty — refusing to rm -rf it}"
-mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
-
-# The compute-node $HOME is RO inside the container — point every cache the
-# installer might touch at the writable scratch (else uv/pip die creating
-# ~/.cache).
-export UV_CACHE_DIR="$TMPDIR/uv-cache"
-export XDG_CACHE_HOME="$TMPDIR"
-export PIP_CACHE_DIR="$TMPDIR/pip-cache"
-
-# A VIRTUAL_ENV leaked from the runner profile (~/.env-3.11) is a broken
-# symlink in here; unset it so no tool follows it.
-unset VIRTUAL_ENV || true
-
-export PATH="$VENV/bin:$PATH"
-echo "build: py=$("$PY" -V) target=$TMPDIR/site"
-
-# Install the PEP 517 build frontend into the writable target (uv fast path,
-# pip safety net), then build with it. Clean dist/ first so only the freshly
-# built artifacts are uploaded.
-uv pip install --python "$PY" --target="$TMPDIR/site" build ||
-    "$PY" -m pip install --target="$TMPDIR/site" build
-
-export PYTHONPATH="$TMPDIR/site${PYTHONPATH:+:$PYTHONPATH}"
-
-rm -rf dist
-"$PY" -m build --outdir dist
-
-echo "=== built artifacts ==="
-ls -l dist
-# fail-loud: refuse to continue the pipeline with an empty dist/.
-test -n "$(ls -A dist 2>/dev/null)" || {
-    echo "::error::python -m build produced no artifacts in dist/"
-    exit 1
+owned_birth() {
+    local line
+    IFS= read -r line < "/proc/$1/stat" || return 1
+    line="${line##*) }"
+    set -- $line
+    printf '%s' "${20}"
 }
+
+cleanup_owned_tmp() {
+    local result=$? cleanup_result=0 current_id='' attempt=0
+    trap - EXIT INT TERM
+    unset MINTED
+    # Reaping the body alone is insufficient when a descendant remains.
+    # The retained group must disappear before removing its scratch.
+    if [[ -n "$OWNED_CHILD_GROUP" ]]; then
+        for attempt in {1..40}; do
+            kill -0 -- "-$OWNED_CHILD_GROUP" 2>/dev/null || break
+            sleep 0.05
+        done
+        if kill -0 -- "-$OWNED_CHILD_GROUP" 2>/dev/null; then
+            echo "::error::owned child group remains; temporary cleanup refused" >&2
+            cleanup_result=1
+        fi
+    fi
+    if [ -n "$OWNED_TMPDIR" ]; then
+        current_id="$(stat -c '%d:%i:%u:%a' -- "$OWNED_TMPDIR" 2>/dev/null)" || cleanup_result=1
+        if [ "$cleanup_result" -eq 0 ] && [ ! -L "$OWNED_TMPDIR" ] && [ -d "$OWNED_TMPDIR" ] &&
+           [ -n "$OWNED_TMP_ID" ] && [ "$current_id" = "$OWNED_TMP_ID" ]; then
+            /usr/bin/timeout --signal=TERM --kill-after=2s 10s \
+                /usr/bin/rm -rf --one-file-system -- "$OWNED_TMPDIR" || cleanup_result=$?
+        else
+            cleanup_result=1
+        fi
+        if [ "$cleanup_result" -ne 0 ]; then
+            echo "::error::owned temporary cleanup refused or failed" >&2
+            [ "$result" -ne 0 ] || result=1
+        fi
+    fi
+    exit "$result"
+}
+
+terminate_owned_child() {
+    local signal="$1" status="$2" watchdog=""
+    trap '' INT TERM
+    if [[ -n "$OWNED_CHILD_PID" && "$OWNED_CHILD_BIRTH" =~ ^[0-9]+$ ]] \
+        && [[ "$(owned_birth "$OWNED_CHILD_PID" 2>/dev/null || true)" == "$OWNED_CHILD_BIRTH" ]]; then
+        kill -s "$signal" -- "-$OWNED_CHILD_PID" 2>/dev/null || true
+        # The watchdog checks this exact child's kernel birth before signalling
+        # its group, then is reaped by the owning shell on either outcome.
+        (
+            sleep 2
+            if [[ "$OWNED_CHILD_BIRTH" =~ ^[0-9]+$ ]] && [[ "$(owned_birth "$OWNED_CHILD_PID" 2>/dev/null || true)" == "$OWNED_CHILD_BIRTH" ]]; then
+                kill -KILL -- "-$OWNED_CHILD_PID" 2>/dev/null || true
+            fi
+        ) &
+        watchdog=$!
+        wait "$OWNED_CHILD_PID" 2>/dev/null || true
+        kill -TERM -- "-$watchdog" 2>/dev/null || true
+        wait "$watchdog" 2>/dev/null || true
+    fi
+    exit "$status"
+}
+
+trap cleanup_owned_tmp EXIT
+trap 'terminate_owned_child INT 130' INT
+trap 'terminate_owned_child TERM 143' TERM
+
+run_owned_body() {
+    local status=0
+    # Bash job control creates a group for exactly this owned body, so a
+    # termination targets its descendants rather than the runner's group.
+    set -m
+    (
+        set +m
+        trap 'unset MINTED' EXIT
+        # Keep this exact group leader alive through the watchdog window.
+        # Foreground descendants retain their ordinary signal dispositions.
+        trap 'unset MINTED; sleep 3' INT TERM
+        driver_body
+    ) &
+    OWNED_CHILD_PID=$!
+    OWNED_CHILD_GROUP="$OWNED_CHILD_PID"
+    OWNED_CHILD_BIRTH="$(owned_birth "$OWNED_CHILD_PID" 2>/dev/null || true)"
+    wait "$OWNED_CHILD_PID" || status=$?
+    OWNED_CHILD_PID=""
+    return "$status"
+}
+# END owned temporary-root lifecycle
+
+OWNED_TMPDIR="$(/usr/bin/mktemp -d "${SCRATCH_PREFIX}XXXXXX")"
+readonly OWNED_TMPDIR
+suffix="${OWNED_TMPDIR#"$SCRATCH_PREFIX"}"
+[[ "$OWNED_TMPDIR" = "$SCRATCH_PREFIX"* && "$suffix" =~ ^[[:alnum:]]{6}$ ]]
+[ "${OWNED_TMPDIR%/*}" = "$SCRATCH_ROOT" ] && [ ! -L "$OWNED_TMPDIR" ] && [ -d "$OWNED_TMPDIR" ]
+OWNED_TMP_ID="$(stat -c '%d:%i:%u:%a' -- "$OWNED_TMPDIR")"
+[ "${OWNED_TMP_ID##*:}" = 700 ]
+[ "$(stat -c '%u' -- "$OWNED_TMPDIR")" = "$(id -u)" ]
+readonly OWNED_TMP_ID
+export TMPDIR="$OWNED_TMPDIR"
+
+driver_body() {
+
+export TMPDIR UV_CACHE_DIR="$TMPDIR/uv-cache" XDG_CACHE_HOME="$TMPDIR"
+mkdir "$TMPDIR/site"
+unset VIRTUAL_ENV PYTHONHOME PYTHONPATH || true
+command -v uv >/dev/null
+# Preserve the actual declared backend ceiling and whole source. No build
+# isolation, alternate environment or raw-pip fallback is created.
+"$PY" -I .github/ci/release-identity.py check-tests --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
+"$PY" -c 'import tomllib; x=tomllib.load(open("pyproject.toml","rb")); assert x["build-system"] == {"requires":["hatchling<1.28"],"build-backend":"hatchling.build"}'
+uv pip install --python "$PY" --target="$TMPDIR/site" build 'hatchling<1.28'
+export PYTHONPATH="$TMPDIR/site" SAC_BUILD_COMMIT="$RELEASE_COMMIT"
+[ ! -e dist ] && [ ! -L dist ] || { echo "::error::stale release output refused"; exit 1; }
+"$PY" -m build --no-isolation --outdir dist
+"$PY" -I .github/ci/release-identity.py write-proof --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
+}
+
+run_owned_body

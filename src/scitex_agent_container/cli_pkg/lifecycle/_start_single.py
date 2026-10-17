@@ -19,13 +19,11 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
-import click
-
 from ..._creds import NoHealthyAccountError
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
-from ..._logging import render_rich
+from ..._logging import get_logger, render_content, render_rich, write_stream
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
@@ -145,7 +143,7 @@ def run_single_targets(
     effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
     def _emit_json(payload: dict) -> None:
-        click.echo(_json.dumps(payload, ensure_ascii=False))
+        render_content(_json.dumps(payload, ensure_ascii=False))
 
     if single_targets:
         preflight_runner()
@@ -240,7 +238,10 @@ def run_single_targets(
                     line = _json.dumps(obj, ensure_ascii=False)
                     if _err:
                         line = "\n" + line
-                    click.echo(line, err=_err)
+                    if _err:
+                        write_stream(line, sys.stderr)
+                    else:
+                        render_content(line)
 
                 if not as_json:
                     verb_now = "dry-run" if dry_run else "starting"
@@ -284,7 +285,7 @@ def run_single_targets(
                         if verbose
                         else render_plan_summary(config, spec_path=Path(config_path))
                     )
-                    click.echo(plan)
+                    get_logger(__name__).info(plan)
                     system_msg(
                         f"refusing to start {config.name} without --yes/-y — the "
                         "plan above shows exactly what will mount and run; re-run "
@@ -296,7 +297,7 @@ def run_single_targets(
                     # exit code, and this branch's sys.exit(1) below is
                     # indistinguishable from a real launch failure without
                     # this sentinel — see write_marker's guard).
-                    click.echo(DECLINE_SENTINEL, err=True)
+                    system_msg(DECLINE_SENTINEL, style="warning")
                     refused = True
                     continue
 

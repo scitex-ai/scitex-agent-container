@@ -1,38 +1,4 @@
-"""``sac agents forget`` — local-only registry-reset recovery (backlog #3).
-
-Operator backlog #3 (per lead 2026-06-01). Today there is no verb that
-drops a specific agent's registry state cleanly when the agent is
-*already gone* but ``state.db`` still claims it is running. The
-existing ``sac agents stop --force`` handles "agent WAS running, peer
-now unreachable" (it shells ssh, catches transport failure, then
-force-releases the local binding). But it does NOT handle:
-
-* a SLURM-reclaimed compute node whose agent never got a clean stop
-* a peer that came back with a fresh ``state.db`` (the lead's view of
-  the agent's binding is stale, but there is nothing to ssh to)
-* an operator who knows the agent is dead and just wants the entry
-  gone without going through the ssh + stop dance
-
-The dispatch fixes #252/#253 do not close this gap — they fix the
-``stop --force`` path's tolerance, not the case where there is
-nothing live to stop in the first place.
-
-``forget`` is the registry-reset recovery verb:
-
-* tombstones the ``instances`` row with
-  ``exit_reason='operator-forget'`` (distinct from ``stopped`` /
-  ``peer-unreachable-force-released`` / ``cleanup`` so post-hoc
-  state.db forensics tells these apart)
-* unregisters the ``comms_nodes`` row so future a2a routing does
-  not silently fan out to the dead host
-* NO ssh, NO local process signal — purely local state.db mutations
-* refuses to act on an agent that has a live ``instances`` row
-  unless ``--force`` is passed (avoids accidental state-clobber on
-  a healthy agent the operator forgot was running)
-
-The verb is idempotent: running it on a name with no rows at all
-exits 0 with a "nothing-to-do" envelope.
-"""
+"""Forget inactive registry state without signalling processes or bypassing live rows."""
 
 from __future__ import annotations
 
@@ -54,20 +20,12 @@ _FORGET_EXIT_REASON = "operator-forget"
 
 
 def _refusal_message(name: str, active_rows: list[dict]) -> str:
-    """Build the operator-facing refusal when --force is missing.
-
-    Names the live instance(s), the remedy (``--force``), and the
-    safer-alternative (``sac agents stop --force``) so the operator
-    chooses with full context.
-    """
+    """Name live rows and the normal stop operation required first."""
     hosts = sorted({r.get("host", "?") for r in active_rows})
     return (
         f"refusing to forget {name!r}: the shared store shows {len(active_rows)} "
-        f"live instance row(s) on host(s) {hosts!r}. If you are SURE the "
-        f"agent is gone and want the rows dropped anyway, re-run with "
-        f"--force. If the agent is reachable, prefer "
-        f"`sac agents stop --force {name}` instead — it tries the remote "
-        f"stop first and only force-releases on transport failure."
+        f"live instance row(s) on host(s) {hosts!r}. "
+        f"Stop the agent with `sac agents stop {name}` before forgetting it."
     )
 
 
@@ -75,11 +33,15 @@ def _forget_one(name: str, *, force: bool, dry_run: bool) -> dict[str, Any]:
     """Forget a single agent's registry state. Pure-local mutations.
 
     Returns the per-target envelope dict (the JSON shape ``--json``
-    emits). Raises :class:`click.ClickException` on the no-force +
+    emits). Raises :class:`click.ClickException` on the
     live-row refusal path; idempotent + no-op when nothing to drop.
     """
+    if force:
+        raise click.ClickException(
+            "force is unsupported; stop the agent before forgetting it"
+        )
     active = [r for r in list_active_instances() if r.get("name") == name]
-    if active and not force:
+    if active:
         raise click.ClickException(_refusal_message(name, active))
 
     forgotten_rows: list[str] = []
@@ -112,16 +74,6 @@ def _forget_one(name: str, *, force: bool, dry_run: bool) -> dict[str, Any]:
 @click.command(name="forget")
 @click.argument("names", type=str, nargs=-1, required=True)
 @click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Forget even if the shared store shows the agent as live. Without "
-        "--force, a live instance row aborts (use `sac agents stop "
-        "--force <name>` to try the remote stop first)."
-    ),
-)
-@click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
@@ -137,7 +89,6 @@ def _forget_one(name: str, *, force: bool, dry_run: bool) -> dict[str, Any]:
 )
 def forget(
     names: tuple[str, ...],
-    force: bool,
     dry_run: bool,
     as_json: bool,
 ) -> None:
@@ -150,17 +101,18 @@ def forget(
     rows and unregisters the federated ``comms_nodes`` pin so
     future routing does not silently fan out to a dead host.
 
-    Refuses to act on a live agent unless ``--force`` is passed.
-    Use ``sac agents stop --force <name>`` when you want the
-    remote-stop-then-force-release path; use this verb when you
+    Refuses to act on a live agent.
+    Use ``sac agents stop <name>`` when you want the
+    normal remote stop path; use this verb when you
     KNOW there is nothing live to reach.
 
     \b
     Example:
-      $ sac agents forget ghost-agent --force
+      $ sac agents forget ghost-agent
       $ sac agents forget ghost-agent --dry-run
-      $ sac agents forget ghost-1 ghost-2 --force --json
+      $ sac agents forget ghost-1 ghost-2 --json
     """
+    force = False
     any_err = False
     for name in names:
         try:

@@ -185,14 +185,15 @@ def test_build_detached_argv_is_setsid_sh_dash_c():
     assert argv[:3] == ["setsid", "sh", "-c"]
 
 
-def test_build_detached_argv_nonfresh_forces_start_without_fresh():
+def test_build_detached_argv_nonfresh_forces_start_with_explicit_continue():
     # Arrange — non-fresh (resume) bounce.
     name = "agent-x"
     # Act
     argv = _build_detached_restart_argv(_SAC, name, fresh=False, delay_s=3, log_path=_LOG)
-    # Assert — `agents start --force` (spec-policy session == plain restart),
-    # NO --fresh: the resuming restart is preserved.
-    assert "agents start agent-x --force --json" in argv[-1] and "--fresh" not in argv[-1]
+    # Assert — `agents start --force --continue` (explicit resume: a bare
+    # --force would follow the SPEC session policy, default fresh, and
+    # drop context), NO --fresh.
+    assert "agents start agent-x --force --continue --json" in argv[-1] and "--fresh" not in argv[-1]
 
 
 def test_build_detached_argv_fresh_appends_fresh_flag():
@@ -300,8 +301,9 @@ def test_self_restart_spawns_detached_setsid_bounce(client, isolated_env):
     with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
         client.post("/agents/alice/restart", headers=headers, json=_as_node("alice"))
     argv = recorder.calls[0][0]
-    # Assert — a detached (setsid) forced bounce naming the agent was spawned.
-    assert argv[0] == "setsid" and "agents start alice --force --json" in argv[-1]
+    # Assert — a detached (setsid) forced bounce naming the agent was
+    # spawned, resuming the session explicitly (--continue).
+    assert argv[0] == "setsid" and "agents start alice --force --continue --json" in argv[-1]
 
 
 def test_self_restart_fresh_bounce_carries_fresh_flag(client, isolated_env):

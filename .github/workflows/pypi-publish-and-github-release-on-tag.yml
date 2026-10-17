@@ -84,8 +84,8 @@ jobs:
         # this gate exists to be byte-identical to what ships (same SIF, same
         # xdist invocation, same runner expression). Divergence between the
         # release gate and the release itself is what left PyPI at 0.21.17 while
-        # eight tags shipped nothing — see the header of
-        # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+        # eight tags shipped nothing — see the header of ci.yml (which
+        # superseded the old inline pytest-matrix workflow).
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Resolve version

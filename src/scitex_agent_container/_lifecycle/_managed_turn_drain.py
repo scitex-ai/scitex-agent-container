@@ -72,8 +72,7 @@ def guard_managed_turn(
                 f"Refusing to stop Hermes agent {config.name!r}: its native "
                 f"session activity is unavailable ({exc}). Detach safely with "
                 f"`tmux detach`; retry when `sac agents status {config.name}` can "
-                "observe Hermes, or use `--force` only if losing the active turn "
-                "and SGLang prefix cache is acceptable."
+                "observe Hermes."
             ) from exc
         if activity.idle:
             return TurnDrainResult(
@@ -87,8 +86,7 @@ def guard_managed_turn(
                 f"Refusing to stop Hermes agent {config.name!r}: session "
                 f"{activity.session_id!r} is {activity.session_status!r} after "
                 f"waiting {waited:.1f}s. Let the turn finish, or retry with "
-                f"`--drain-timeout SECONDS`; `--force` may lose the active "
-                "response and SGLang prefix cache. Tmux detach is always safe."
+                f"`--drain-timeout SECONDS`. Tmux detach is always safe."
             )
         sleep_fn(min(poll_s, max(0.0, deadline - now)))
 
