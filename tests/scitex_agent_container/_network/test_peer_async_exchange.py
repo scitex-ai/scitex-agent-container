@@ -195,9 +195,11 @@ def test_ssh_turn_receipt_is_polled_over_the_same_transport(ssh_http_shim) -> No
     ssh_http_shim.install()
     with _exchange_server(results=[_result(200, "accepted")]) as (local_url, _paths):
         port = local_url.split(":", 2)[2].split("/", 1)[0]
-        # Act
+        # Act — generous budget: the ssh round trip forks subprocesses and
+        # the poll inherits whatever the POST leg leaves; on a loaded
+        # runner the POST alone can eat a small budget.
         response = post_turn_to_url(
-            f"ssh://compute-03:{port}/v1/turn", "hello", timeout_s=5
+            f"ssh://compute-03:{port}/v1/turn", "hello", timeout_s=30
         )
 
     calls = ssh_http_shim.invocations()

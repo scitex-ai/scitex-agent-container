@@ -400,15 +400,16 @@ def _get(port: int, path: str) -> tuple[int, dict]:
 
 
 def _wait_exchange(port: int, exchange_id: str) -> dict:
-    # 2000 iterations, not 100. Measured 2026-10-16 on the org CI runner:
+    # 10000 iterations, not 2000. Measured 2026-10-16 on the org CI runner:
     # with 32 xdist workers churning, the background visibility retry had
     # completed 2 of 3 native calls when the old ~100 ms budget expired, so
     # test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit
     # read a still-102 exchange (same commit passed the 3.11/3.13 legs —
-    # scheduling, not a defect). The loop still returns the moment the
-    # exchange leaves 202, so a healthy run costs nothing extra; only a
-    # genuinely stuck exchange now waits ~2 s instead of ~0.1 s per probe.
-    for _ in range(2000):
+    # scheduling, not a defect). 2026-10-17: the ~2 s budget flaked the
+    # same way under heavier matrix load. The loop still returns the moment
+    # the exchange leaves 202, so a healthy run costs nothing extra; only a
+    # genuinely stuck exchange now waits ~10 s instead of ~2 s per probe.
+    for _ in range(10000):
         _status, body = _get(port, f"/v1/exchanges/{exchange_id}")
         if body["status_code"]["code"] != 202:
             return body

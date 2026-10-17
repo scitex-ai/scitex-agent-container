@@ -77,15 +77,15 @@ __all__ = [
 # outlived the ``node_tokens`` table (deleted 2026-08-28).
 _TOKEN_BYTES = 32
 
-# Default health-poll cap PER ATTEMPT. 15s is generous enough for a
-# cold-import + uvicorn bind on a SLURM node under sibling-task CPU
-# contention OR a CI box running pytest-xdist with N workers each
-# spawning subprocesses simultaneously. Shorter (5s) flaked CI under
-# 16-way parallel load (``-n auto`` on a 16-core runner). Longer would
-# mask a real bind failure with a stalled CLI. Combined with the
-# 3-attempt retry in :func:`self_broker_listen_context`, total
-# worst-case wait is 45s.
-_DEFAULT_HEALTH_TIMEOUT_S = 15.0
+# Default health-poll cap PER ATTEMPT. 30s absorbs a cold-import +
+# uvicorn bind on a CI box running pytest-xdist with N workers each
+# spawning subprocesses simultaneously (15s flaked under 2026-10-17
+# matrix load: the child was alive but had not finished importing).
+# Longer is safe against masking a real bind failure because
+# _wait_for_health fails fast when the child process exits.
+# Combined with the 3-attempt retry in :func:`self_broker_listen_context`,
+# total worst-case wait is 90s.
+_DEFAULT_HEALTH_TIMEOUT_S = 30.0
 
 
 class BrokerSelfError(RuntimeError):
@@ -127,12 +127,19 @@ def _wait_for_health(
     bearer: str,
     *,
     timeout_s: float,
+    proc: subprocess.Popen | None = None,
 ) -> None:
     """Poll ``GET <base_url>/v1/health`` until 200 or timeout.
 
     The health endpoint is unauthenticated on the canonical sac
     listen, but pass the bearer anyway so a future auth-tightening
     cannot break this caller silently.
+
+    When `proc` (the listen child) is given and it exits before
+    health turns green, fail immediately with its exit code instead
+    of burning the whole timeout: a dead child will never become
+    healthy, and the fast error carries the real cause. A live-but-slow
+    child (cold import on a loaded runner) keeps the full `timeout_s`.
     """
     deadline = time.monotonic() + timeout_s
     url = f"{base_url.rstrip('/')}/v1/health"
@@ -141,6 +148,12 @@ def _wait_for_health(
         req.add_header("Authorization", f"Bearer {bearer}")
     last_err: Exception | None = None
     while time.monotonic() < deadline:
+        if proc is not None and proc.poll() is not None:
+            raise BrokerSelfError(
+                f"--broker-self: local `sac listen` at {base_url} exited "
+                f"with code {proc.returncode} before becoming healthy. "
+                f"Last error: {last_err!r}."
+            )
         try:
             with urllib.request.urlopen(req, timeout=1.0) as resp:
                 if 200 <= resp.status < 300:
@@ -261,7 +274,7 @@ def self_broker_listen_context(
                 tmp_dir.rmdir()
             raise
         try:
-            _wait_for_health(base_url, token, timeout_s=timeout_s)
+            _wait_for_health(base_url, token, timeout_s=timeout_s, proc=proc)
             break  # success — exit the retry loop with proc still alive
         except BaseException as exc:
             last_err = exc

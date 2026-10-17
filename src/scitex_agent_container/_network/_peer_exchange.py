@@ -100,6 +100,14 @@ def _poll_exchange(
     from ._peer_timeout import PeerTimeoutPending
     from .peer import PeerError
 
+    # Floor for the first probe: the POST leg may have consumed the whole
+    # budget on a loaded runner (observed: an ssh POST ate the 5 s budget,
+    # the poll inherited 0 s and raised without ever probing). One bounded
+    # probe still returns instantly when the exchange is already final;
+    # only a genuinely non-final exchange costs the floor. An explicitly
+    # zero budget (timeout_s=0) still never probes: that contract is pinned
+    # by test_zero_poll_budget_preserves_initial_pending_receipt.
+    _FIRST_PROBE_FLOOR_S = 2.0
     status_url = _exchange_url(url, exchange_id)
     hint = _poll_hint(status_url)
     deadline = time.monotonic() + max(0.0, timeout_s)
@@ -107,9 +115,11 @@ def _poll_exchange(
     # first GET. Consumers can then surface optional fields such as Hermes'
     # delivery_mode instead of replacing a valid receipt with an empty guess.
     last_body: dict[str, Any] | None = accepted_body
+    polled = False
+    first_floor = _FIRST_PROBE_FLOOR_S if timeout_s > 0 else 0.0
     while True:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= 0 and (polled or first_floor <= 0):
             message = (
                 f"Turn exchange {exchange_id} is still non-final after "
                 f"{timeout_s:g}s. The turn was accepted; do not resend it. "
@@ -125,7 +135,11 @@ def _poll_exchange(
                 poll_hint=hint,
             )
 
-        status_code, body = _get_exchange(status_url, timeout_s=remaining)
+        status_code, body = _get_exchange(
+            status_url,
+            timeout_s=max(remaining, first_floor) if not polled else remaining,
+        )
+        polled = True
         if status_code != 200:
             raise PeerError(
                 f"peer exchange probe returned HTTP {status_code}: {body!r}; "
