@@ -1,0 +1,12 @@
+└─ ● ⣶ Write File("/home/ywatanabe/.dotfiles/src/.scitex/agent-container/agents/sc…") (58s)
+
+ ╔══════════════════════════════════════════════════════════════════════════╗
+ ║ ⚠ approval required · Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior;
+ ║ approval is always required (not bypassed by auto-approve).
+ ║  <write to AGENTS.md>
+ ║ ▸ 1. Allow once
+ ║   2. Deny
+ ║ ↑/↓ select · Enter confirm · 1-2 quick pick · Esc/Ctrl+C deny
+ ╚══════════════════════════════════════════════════════════════════════════╝
+
+ ⊙ goal · 0/99999 turns · complete all the requested tasks

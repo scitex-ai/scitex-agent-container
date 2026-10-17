@@ -12,7 +12,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
-PR_GATE_WORKFLOW = WORKFLOW_DIR / "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
+PR_GATE_WORKFLOW = WORKFLOW_DIR / "ci.yml"
 NIGHTLY_WORKFLOW = WORKFLOW_DIR / "nightly-python-matrix-on-github-hosted.yml"
 RELEASE_WORKFLOW = WORKFLOW_DIR / "pypi-publish-and-github-release-on-tag.yml"
 
@@ -178,10 +178,26 @@ def test_the_newest_declared_version_is_on_the_pr_gate():
 def test_pr_gate_job_names_match_the_required_status_checks():
     """The thin leaf caller stays attached to the central required-check job."""
     # Arrange
-    job = _load(PR_GATE_WORKFLOW)["jobs"]["tests"]
+    jobs = _load(PR_GATE_WORKFLOW)["jobs"]
 
-    # Act
-    target = (job.get("uses"), job.get("with", {}).get("suite"))
+    # Act: every caller job must be a bare `uses:` at the pinned org SHA —
+    # a caller-local `runs-on` or `steps` would fork execution policy back
+    # into this repo, which is exactly what ci.yml exists to end.
+    central = "scitex-ai/.github/.github/workflows/"
+    pin = "@8c646081e9f1352077d3d8674052cce7ec75a1b7"
+    expected = {
+        "pytest-matrix": f"{central}pytest-matrix.yml{pin}",
+        "import-smoke": f"{central}import-smoke.yml{pin}",
+        "quality-audit": f"{central}quality-audit.yml{pin}",
+        "rtd-sphinx-build": f"{central}rtd-sphinx-build.yml{pin}",
+    }
+    actual = {job_id: job.get("uses") for job_id, job in jobs.items()}
 
     # Assert
-    assert target == ("scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main", "matrix")
+    assert actual == expected, (
+        f"{PR_GATE_WORKFLOW.name} drifted: {actual}. The caller-job ids are "
+        "the left half of the branch-protection contexts "
+        "(`pytest-matrix / pytest-matrix-on-ubuntu-py3.11`, ...) — renaming "
+        "one silently detaches protection, and moving the pin without "
+        "review re-points every gate at unreviewed org code."
+    )
