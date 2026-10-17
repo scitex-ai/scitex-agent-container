@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
+WORKFLOW = ROOT / ".github/workflows/ci.yml"
 HOSTED = ROOT / ".github/ci/run-on-hosted.sh"
 
 
@@ -150,12 +150,23 @@ def test_hook_guard_failure_is_preserved_without_fallback(workflow_hook_process)
 def test_leaf_ci_is_only_a_central_reusable_workflow_call(workflow_doc):
     """Execution policy belongs to the organization workflow, not this leaf."""
     # Arrange
-    job = workflow_doc["jobs"]["tests"]
-    # Act
-    matches_central_contract = job == {
-        "uses": "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml@main",
-        "with": {"suite": "matrix"},
-    } and set(workflow_doc["jobs"]) == {"tests"}
+    jobs = workflow_doc["jobs"]
+    # Act: four caller jobs, each a bare `uses:` at the pinned org SHA with
+    # no caller-local `runs-on` or `steps`.
+    pin = "@8c646081e9f1352077d3d8674052cce7ec75a1b7"
+    central = "scitex-ai/.github/.github/workflows/"
+    expected_uses = {
+        "pytest-matrix": f"{central}pytest-matrix.yml{pin}",
+        "import-smoke": f"{central}import-smoke.yml{pin}",
+        "quality-audit": f"{central}quality-audit.yml{pin}",
+        "rtd-sphinx-build": f"{central}rtd-sphinx-build.yml{pin}",
+    }
+    matches_central_contract = set(jobs) == set(expected_uses) and all(
+        job.get("uses") == expected_uses[job_id]
+        and "runs-on" not in job
+        and "steps" not in job
+        for job_id, job in jobs.items()
+    )
     # Assert
     assert matches_central_contract
 

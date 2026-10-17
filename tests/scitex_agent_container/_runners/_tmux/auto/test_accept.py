@@ -123,12 +123,27 @@ def _field_captured_hermes_approval_pane() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_respond_hermes_approval_sends_one_for_instruction_file_class() -> None:
+def test_respond_hermes_approval_returns_true_for_instruction_file_class() -> None:
     # Arrange — field-captured prompt for an AGENTS.md write.
-    keys: list = []
     pane = _field_captured_hermes_approval_pane()
     # Act
     sent = A.respond(
+        "cap-002",
+        "hermes_approval",
+        pane_text=pane,
+        send_fn=lambda *k: None,
+        dm_fn=lambda _channel, _msg: None,
+    )
+    # Assert
+    assert sent is True
+
+
+def test_respond_hermes_approval_sends_one_then_enter_for_instruction_file() -> None:
+    # Arrange — the same field-captured AGENTS.md prompt.
+    keys: list = []
+    pane = _field_captured_hermes_approval_pane()
+    # Act
+    A.respond(
         "cap-002",
         "hermes_approval",
         pane_text=pane,
@@ -136,25 +151,53 @@ def test_respond_hermes_approval_sends_one_for_instruction_file_class() -> None:
         dm_fn=lambda _channel, _msg: None,
     )
     # Assert
-    assert sent is True
     assert keys == ["1", "Enter"]
 
 
-def test_respond_hermes_approval_escalates_outside_instruction_class() -> None:
+def test_respond_hermes_approval_returns_false_for_destructive_command() -> None:
     # Arrange — same box shape, but a destructive command, not an
     # instruction-file write: must escalate, never auto-send.
-    keys: list = []
-    notes: list = []
     pane = "approval required\n 1. Allow once\n 2. Deny\nrm -rf /scratch/data"
     # Act
     sent = A.respond(
         "cap-002",
         "hermes_approval",
         pane_text=pane,
-        send_fn=lambda *k: keys.append(k[0]),
-        dm_fn=lambda channel, msg: notes.append((channel, msg)),
+        send_fn=lambda *k: None,
+        dm_fn=lambda _channel, _msg: None,
     )
     # Assert
     assert sent is False
+
+
+def test_respond_hermes_approval_sends_no_keys_for_destructive_command() -> None:
+    # Arrange — the same destructive-command box; nothing may be auto-sent.
+    keys: list = []
+    pane = "approval required\n 1. Allow once\n 2. Deny\nrm -rf /scratch/data"
+    # Act
+    A.respond(
+        "cap-002",
+        "hermes_approval",
+        pane_text=pane,
+        send_fn=lambda *k: keys.append(k[0]),
+        dm_fn=lambda _channel, _msg: None,
+    )
+    # Assert
     assert keys == []
+
+
+def test_respond_hermes_approval_escalates_destructive_command_to_manager() -> None:
+    # Arrange — the same destructive-command box; the escalation must reach
+    # the infra manager channel.
+    notes: list = []
+    pane = "approval required\n 1. Allow once\n 2. Deny\nrm -rf /scratch/data"
+    # Act
+    A.respond(
+        "cap-002",
+        "hermes_approval",
+        pane_text=pane,
+        send_fn=lambda *k: None,
+        dm_fn=lambda channel, msg: notes.append((channel, msg)),
+    )
+    # Assert
     assert notes and notes[0][0] == "mgr-infra"

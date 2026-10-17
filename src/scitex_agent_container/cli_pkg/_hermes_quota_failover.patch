@@ -49,17 +49,26 @@ diff --git a/agent/error_classifier.py b/agent/error_classifier.py
 index 6523ac7ba..25c32aa21 100644
 --- a/agent/error_classifier.py
 +++ b/agent/error_classifier.py
-@@ -173,2 +173,12 @@ _USAGE_LIMIT_TRANSIENT_SIGNALS = (
+@@ -173,2 +173,22 @@ _USAGE_LIMIT_TRANSIENT_SIGNALS = (
  
 +
 +def is_usage_cap_error(*, reason: str = "", message: str = "") -> bool:
 +    """An exhausted subscription allowance needs another account, not a timed retry."""
-+    return any(token in str(reason).lower() for token in ("usage_limit_reached", "gousagelimit")) or any(\
-+        token in str(message).lower() for token in (\
-+            "usage limit reached", "usage limit has been reached", "usage limit exceeded",\
-+            "reached its usage limit", "hit your usage limit",\
-+            "insufficient credits", "purchase more credits", "insufficient balance",\
-+        )\
++    return any(
++        token in str(reason).lower()
++        for token in ("usage_limit_reached", "gousagelimit")
++    ) or any(
++        token in str(message).lower()
++        for token in (
++            "usage limit reached",
++            "usage limit has been reached",
++            "usage limit exceeded",
++            "reached its usage limit",
++            "hit your usage limit",
++            "insufficient credits",
++            "purchase more credits",
++            "insufficient balance",
++        )
 +    )
 +
  # 413 detected from message text (proxies embed the status or re-wrap

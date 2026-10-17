@@ -60,6 +60,9 @@ class _AccountsGroup(HelpRecursiveGroup):
                 # hand in the normal case, and both are inert if their timer
                 # is not running.
                 "probe-entitlement",
+                # Same shape again (operator order 2026-10-16):
+                # TUI-independent key-liveness sweep, read from cache.
+                "probe-api-keys",
             ],
         ),
     ]
