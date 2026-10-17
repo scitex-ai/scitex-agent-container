@@ -166,6 +166,25 @@ def _result_row(target, previous, result):
     return row
 
 
+def _accept_fetch(rows, completed, index, final, result):
+    """Record a worker-delivered fetch, tracking completion."""
+    if result.get("qualified_id") is not None:
+        rows[index] = result
+    elif index not in completed:
+        rows[index]["error"] = "metadata-worker-failed"
+    if final:
+        completed.add(index)
+
+
+# Bounded grace for workers still spinning up when the collection deadline
+# expires (loaded runner): a result arriving inside the window still counts.
+# Sized for spawn-context startup on loaded runners (a cold SAC import in a
+# fresh interpreter costs seconds under xdist; observed 2026-10-17: delivery
+# past deadline+2.0s on an org runner). The suite's elapsed bounds (<10s)
+# still hold.
+_WORKER_GRACE_SECONDS = 5.0
+
+
 def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             fetcher=fetch, now=None, cache_writer=_save):
     """Bound provider collection only, including cache I/O; not the whole CLI."""
@@ -217,14 +236,26 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                             process.join(timeout=0.02)
                         del active[index]
                         continue
-                    if result.get("qualified_id") is not None:
-                        rows[index] = result
-                    elif index not in completed:
-                        rows[index]["error"] = "metadata-worker-failed"
-                    if final:
-                        completed.add(index)
+                    _accept_fetch(rows, completed, index, final, result)
                 elif not process.is_alive():
-                    if index not in completed:
+                    # A dead worker with no pending pipe data may still hold an
+                    # unread final message already queued: receive.poll() can
+                    # race a fast exit (observed: known fetch + blocked cache
+                    # write lands the final row microseconds after is_alive
+                    # flips). Drain once before declaring failure.
+                    drained = False
+                    if receive.poll(0.05):
+                        try:
+                            _final, _result = receive.recv()
+                        except (EOFError, OSError):
+                            pass
+                        else:
+                            if _result.get("qualified_id") is not None:
+                                rows[index] = _result
+                            if _final:
+                                completed.add(index)
+                            drained = _final
+                    if index not in completed and not drained:
                         rows[index]["error"] = "metadata-worker-failed"
                     receive.close()
                     process.join(timeout=0.02)
@@ -234,6 +265,25 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
             if active:
                 time.sleep(0.01)
     finally:
+        # Same grace as the observation collector: workers still spinning up
+        # when the deadline expires may deliver just past it.
+        grace_until = time.monotonic() + _WORKER_GRACE_SECONDS
+        while active and time.monotonic() < grace_until:
+            for index, (process, receive, _target) in list(active.items()):
+                if receive.poll():
+                    try:
+                        final, result = receive.recv()
+                    except (EOFError, OSError):
+                        continue
+                    _accept_fetch(rows, completed, index, final, result)
+                    receive.close()
+                    process.join(timeout=0.02)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(timeout=0.02)
+                    del active[index]
+            if active:
+                time.sleep(0.01)
         for index, (process, receive, _) in active.items():
             if index not in completed:
                 rows[index]["error"] = "metadata-deadline"

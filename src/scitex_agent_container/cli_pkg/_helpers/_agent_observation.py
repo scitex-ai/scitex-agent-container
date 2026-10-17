@@ -261,6 +261,30 @@ def _worker(send, record, snapshot, detail, salt, observer):
         send.close()
 
 
+# Bounded grace for workers still spinning up when the collection deadline
+# expires (loaded runner): a result arriving inside the window still counts.
+# Sized for spawn-context startup on loaded runners (a cold SAC import in a
+# fresh interpreter costs seconds under xdist; observed 2026-10-17: delivery
+# past deadline+2.0s on an org runner). The suite's elapsed bounds (<12s)
+# still hold.
+_WORKER_GRACE_SECONDS = 5.0
+
+
+def _accept_observation(outputs, rows, index, observation, host, salt):
+    """Record a worker-delivered observation, flipping row status on alive."""
+    observation["canonical_instance_present"] = True
+    outputs[index]["observation"] = observation
+    observation["observation_scope"] = {
+        "host": host,
+        "batch_id": hashlib.sha256(salt).hexdigest()[:16],
+    }
+    if observation.get("process") == "alive":
+        outputs[index]["status"] = (
+            "auth-failed" if rows[index].get("auth_failed") else "running"
+        )
+        outputs[index]["liveness_unknown"] = False
+
+
 def enrich_rows(
     rows,
     instances,
@@ -357,19 +381,9 @@ def enrich_rows(
                 if receive.poll():
                     try:
                         observation = receive.recv()
-                        observation["canonical_instance_present"] = True
-                        outputs[index]["observation"] = observation
-                        observation["observation_scope"] = {
-                            "host": host,
-                            "batch_id": hashlib.sha256(salt).hexdigest()[:16],
-                        }
-                        if observation.get("process") == "alive":
-                            outputs[index]["status"] = (
-                                "auth-failed"
-                                if rows[index].get("auth_failed")
-                                else "running"
-                            )
-                            outputs[index]["liveness_unknown"] = False
+                        _accept_observation(
+                            outputs, rows, index, observation, host, salt
+                        )
                     except (EOFError, OSError):
                         outputs[index]["observation"] = unknown(
                             "observation-worker-failed"
@@ -386,6 +400,24 @@ def enrich_rows(
                             child.join(0.02)
                         del active[index]
                 elif not child.is_alive():
+                    # A dead worker with no pending pipe data may still hold an
+                    # unread observation already queued: receive.poll() can race
+                    # a fast exit (observed: fast-row result lands microseconds
+                    # after is_alive flips while the suite's slow row burns the
+                    # budget). Drain once before declaring failure.
+                    if receive.poll(0.05):
+                        try:
+                            observation = receive.recv()
+                        except (EOFError, OSError):
+                            pass
+                        else:
+                            _accept_observation(
+                                outputs, rows, index, observation, host, salt
+                            )
+                            receive.close()
+                            child.join(0.01)
+                            del active[index]
+                            continue
                     receive.close()
                     child.join(0.01)
                     outputs[index]["observation"] = unknown("observation-worker-failed")
@@ -393,6 +425,26 @@ def enrich_rows(
             if active:
                 time.sleep(0.005)
     finally:
+        # A worker that is still spinning up (loaded runner) may deliver just
+        # past the collection deadline. Grant a bounded grace window before
+        # terminating: genuinely stuck workers (the slow row) still time out.
+        grace_until = time.monotonic() + _WORKER_GRACE_SECONDS
+        while active and time.monotonic() < grace_until:
+            for index, (child, receive) in list(active.items()):
+                if receive.poll():
+                    try:
+                        observation = receive.recv()
+                    except (EOFError, OSError):
+                        continue
+                    _accept_observation(outputs, rows, index, observation, host, salt)
+                    receive.close()
+                    child.join(0.01)
+                    if child.is_alive():
+                        child.terminate()
+                        child.join(0.02)
+                    del active[index]
+            if active:
+                time.sleep(0.005)
         for index, (child, receive) in active.items():
             receive.close()
             if child.is_alive():

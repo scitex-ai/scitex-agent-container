@@ -51,32 +51,6 @@ def _session_for(name: str) -> tuple[str, str]:
         return name, f"tui-{name}"
 
 
-def _running_sessions_hint(limit: int = 8) -> str:
-    """Comma-joined live tmux session names, or "" when none are visible.
-
-    Best-effort hint for failure notices: never raises, never blocks.
-    """
-    try:
-        proc = subprocess.run(
-            ["tmux", "ls", "-F", "#{session_name}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:  # stx-allow: fallback (tmux absent/broken → no hint)
-        return ""
-    if proc.returncode != 0:
-        return ""
-    names = sorted(
-        part.strip() for part in proc.stdout.splitlines() if part.strip()
-    )
-    if not names:
-        return ""
-    shown = names[:limit]
-    more = "" if len(names) <= limit else f", +{len(names) - limit} more"
-    return ", ".join(shown) + more
-
-
 def _classify_agent_host(name: str) -> tuple[str, str | None]:
     """Return ``(kind, peer)`` for the agent's ``spec.host``.
 
@@ -121,28 +95,33 @@ def _classify_agent_host(name: str) -> tuple[str, str | None]:
         return ("local", None)
 
 
-def _remote_attach_argv(session: str, peer: str) -> list[str]:
-    """Build the ``ssh -t <target> tmux attach -t <session>`` argv for a remote agent.
-
-    The ssh alias comes from ``host_config.peers[peer].ssh`` (the same
-    source ``sac agents start`` dispatches through); it falls back to the
-    peer name when no explicit ``ssh:`` is set. ``tmux`` is invoked DIRECTLY on
-    the peer's non-login PATH: a login shell (``bash -lc``) triggers the
-    profile's interactive-tmux and fails with "open terminal failed: not a
-    terminal", so attach must not wrap the command. ``-t`` still forces a PTY so
-    tmux gets a terminal.
-    """
-    ssh_target = peer
+def ssh_target_for(peer: str) -> str:
+    """Resolve the ssh target for a peer (alias when set, else peer name)."""
     try:
         from ..._state.host_config import load as _load_host_config
 
         spec = _load_host_config().peers.get(peer)
         if spec is not None and getattr(spec, "ssh", None):
-            ssh_target = spec.ssh
+            return spec.ssh
     except (
         Exception
     ):  # stx-allow: fallback (peer without an ssh alias → use the peer name)
         pass
+    return peer
+
+
+def _remote_attach_argv(session: str, peer: str) -> list[str]:
+    """Build the ``ssh -t <target> tmux attach -t <session>`` argv for a remote agent.
+
+    The ssh alias comes from ``host_config.peers[peer].ssh`` (see
+    :func:`ssh_target_for`, the same source ``sac agents start`` dispatches
+    through); it falls back to the peer name when no explicit ``ssh:`` is set. ``tmux`` is invoked DIRECTLY on
+    the peer's non-login PATH: a login shell (``bash -lc``) triggers the
+    profile's interactive-tmux and fails with "open terminal failed: not a
+    terminal", so attach must not wrap the command. ``-t`` still forces a PTY so
+    tmux gets a terminal.
+    """
+    ssh_target = ssh_target_for(peer)
     return [
         "ssh",
         "-t",
@@ -178,6 +157,29 @@ def attach(name: str) -> None:
 
     if kind == "remote" and peer is not None:
         # Control-plane attach: the session lives on the peer, not here.
+        # Pre-check over ssh so a missing session fails HERE with the start
+        # hint — not as tmux's bare "can't find session" after the PTY closes
+        # (operator report 2026-10-10: attach to a never-started agent showed
+        # only tmux's line plus a dropped connection, no next step).
+        try:
+            probe = subprocess.run(
+                ["ssh", ssh_target_for(peer), "tmux", "has-session",
+                 "-t", exact_target(session)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            remote_exists = probe.returncode == 0
+        except Exception:  # stx-allow: fallback (ssh broken → let attach surface it)
+            remote_exists = True
+        if not remote_exists:
+            system_msg(
+                f"no running session '{session}' for agent '{agent}' "
+                f"on '{peer}'. "
+                f"Start it first: `sac agents start {agent}`.",
+                style="red",
+            )
+            raise SystemExit(1)
         system_msg(
             f"'{agent}' runs on remote host '{peer}'; attaching over ssh. "
             f"Ctrl-b d detaches (back to {peer}'s shell); Ctrl-d returns here.",
@@ -201,11 +203,25 @@ def attach(name: str) -> None:
     except FileNotFoundError:  # stx-allow: fallback (tmux absent → no session)
         exists = False
     if not exists:
-        running = _running_sessions_hint()
+        # Operator order 2026-10-16: a miss should suggest, not just
+        # refuse. Offer substring matches over known agent names so a
+        # short or misremembered name ("lead") finds its candidates
+        # instead of dying at a dead end.
+        hint = f"Start it first: `sac agents start {agent}`."
+        try:
+            from ...config._resolve import enumerate_agent_names
+
+            matches = sorted(
+                n for n in enumerate_agent_names() if agent.lower() in n.lower()
+            )[:8]
+            if matches and agent not in matches:
+                hint += " Did you mean: " + ", ".join(
+                    f"`sac agents start {m}`" for m in matches
+                ) + "?"
+        except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+            pass
         system_msg(
-            f"no running session '{session}' for agent '{agent}'. "
-            f"Start it first: `sac agents start {agent}`."
-            + (f" Running now: {running}." if running else ""),
+            f"no running session '{session}' for agent '{agent}'. {hint}",
             style="red",
         )
         raise SystemExit(1)

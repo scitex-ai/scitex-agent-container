@@ -104,6 +104,14 @@ dependencies = [
     # public durable poll/confirm API and confirms only after terminal-visible
     # delivery.  This is a runtime dependency, not an optional MCP tool.
     "scitex-cards>=0.53.4",
+    # Skip-dead Hermes failover proves declared credential slots with a
+    # native inference probe before launch
+    # (``runtimes/_hermes_key_probe.py`` -> ``scitex_genai.availability``).
+    # The availability surface ships in 0.2.3 (unpublished as of 2026-10-08,
+    # so the floor stays at 0.2.1 until it lands on the index): on older
+    # genai the probe degrades to assume-live instead of ImportError, so a
+    # higher floor here would only make the package uninstallable.
+    "scitex-genai>=0.2.1",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
@@ -259,6 +267,12 @@ dev = [
     # ~285 MB native wheel to a bare `[dev]` install. Floor kept in step
     # with the `[codex-sdk]` extra above.
     "openai-codex>=0.144.4",
+    # PS-210 §2 (dev-extras-incomplete): the skip-dead Hermes failover
+    # probes slots via ``scitex_genai.availability`` (function-level import
+    # with degrade-to-assume-live, so no importorskip — the degrade path
+    # itself is tested). A fresh `pip install -e .[dev]` must run the full
+    # suite, so `[dev]` carries the same floor as the extra above.
+    "scitex-genai>=0.2.1",
     # Historical scitex-dev floor evidence; the runtime requirement is now
     # declared in project.dependencies above, not in this maintainer extra.
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
