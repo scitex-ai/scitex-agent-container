@@ -173,15 +173,18 @@ def hung_observation(child):
         slow = dict(_record(other.pid, "slow"), id="slow-instance")
         started = time.monotonic()
         # A real sleeping worker and separate fast process exercise the budget.
-        # Generous budget: the property is ordering (slow row unknown, fast
-        # row alive), not the 1.3s bound — which flakes on loaded CI nodes.
-        # 8.0 s still kills the 10 s sleeper (deadline 7.8 s), so the
-        # isolation property is intact; the headroom is spawn latency only.
+        # The property is ordering (slow row unknown, fast row alive), not
+        # a wall-clock bound. NOTE the collector clamps every budget above
+        # 2 s back to a 1.8 s deadline (product bound — see enrich_rows),
+        # so delivery headroom here comes from lean spawn payloads (see
+        # tests/scitex_agent_container/spawn_probes.py), not from raising
+        # this number. The 10 s sleeper always dies at the deadline, so
+        # the isolation property holds at any budget.
         rows = enrich_rows(
             [{"name": "slow"}, {"name": "fast"}],
             [slow, fast],
             "owned-host",
-            budget=8.0,
+            budget=2.0,
             observer=_delayed_observer,
         )
     finally:
@@ -243,7 +246,6 @@ def test_observed_live_row_overrides_false_adapter_stopped(child):
         [{"name": "owned", "status": "stopped"}],
         [record],
         "owned-host",
-        budget=4.0,
         observer=_immediate_observer,
     )
     # Assert
@@ -861,7 +863,7 @@ def test_genuinely_alive_kernel_evidence_is_not_a_spec_missing_ghost(child):
 
     rows = [{"name": "owned", "host": "local", "validation_errors": ["File not found"]}]
     # Act
-    observed = enrich_rows(rows, [_record(child.pid)], "owned-host", budget=4.0)
+    observed = enrich_rows(rows, [_record(child.pid)], "owned-host")
     # Assert
     assert not _is_ghost_row(observed[0])
 

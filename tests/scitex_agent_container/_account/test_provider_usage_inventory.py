@@ -244,7 +244,7 @@ def test_passive_fifo_cache_retains_its_alias(tmp_path):
     path.parent.mkdir(parents=True)
     os.mkfifo(path, 0o600)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2, fetcher=refusing_fetch)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["aliases"] == account.aliases
 
@@ -270,7 +270,7 @@ def test_fifo_does_not_hide_another_current_cache(tmp_path):
     os.mkfifo(path, 0o600)
     _seed_known_cache(cache_path(tmp_path, accounts[1]))
     # Act
-    rows = collect(accounts, home=tmp_path, passive=True, budget=2, now=FIXED_NOW, fetcher=refusing_fetch)
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[1]["usage_state"] == "known"
 
@@ -282,7 +282,7 @@ def test_valid_oversized_cache_is_not_trusted(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(_fixed_snapshot()) + " " * 65536)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2, now=FIXED_NOW, fetcher=refusing_fetch)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["usage_state"] == "unknown"
 
@@ -295,7 +295,7 @@ def test_malformed_oversized_cache_stays_row_local(tmp_path):
     path.write_text("{" + "x" * 131072)
     _seed_known_cache(cache_path(tmp_path, accounts[1]))
     # Act
-    rows = collect(accounts, home=tmp_path, passive=True, budget=2, now=FIXED_NOW, fetcher=refusing_fetch)
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[1]["usage_state"] == "known"
 
@@ -309,7 +309,7 @@ def test_cache_symlink_is_not_followed(tmp_path):
     path.parent.mkdir(parents=True)
     path.symlink_to(sentinel)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2, now=FIXED_NOW, fetcher=refusing_fetch)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["usage_state"] == "unknown"
 
