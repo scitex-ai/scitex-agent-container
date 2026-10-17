@@ -28,6 +28,7 @@ forecloses operator review.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -269,6 +270,61 @@ def _has_unpushed_commits(worktree: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _proc_fd_holders(path: Path) -> tuple[bool, str] | None:
+    """Linux fast-path: scan ``/proc/*/fd`` readlinks for `path` prefix.
+
+    ``lsof +D`` forks a subprocess that walks every fd of every process
+    and can exceed its timeout on loaded CI runners (observed: the
+    fd-held prune test flakes when the runner is saturated), silently
+    falling through to "not held". A direct ``/proc`` scan answers the
+    same question in-process in milliseconds with identical visibility
+    (same uid, same mount namespace).
+
+    Returns ``None`` when ``/proc`` is unavailable (non-Linux) or the
+    scan is incomplete (any PID whose fd dir we could not read) so the
+    caller falls back to ``lsof`` rather than declaring "not held" on
+    partial evidence. Vanished PIDs/fds (ESRCH/ENOENT races) are simply
+    skipped: a process that is gone holds nothing.
+    """
+    prefix = os.path.realpath(path)
+    # readlink reports the as-opened path, which may differ from the
+    # resolved prefix when the caller reached the file via a symlink
+    # (e.g. a symlinked TMPDIR): match both spellings.
+    raw = os.path.normpath(str(path))
+    prefixes = {prefix, raw}
+    if not os.path.isdir("/proc"):
+        return None
+    try:
+        pids = [entry for entry in os.listdir("/proc") if entry.isdigit()]
+    except OSError:
+        return None
+    holders = 0
+    for pid in pids:
+        fd_dir = f"/proc/{pid}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except FileNotFoundError:
+            continue  # PID exited mid-scan; holds nothing now.
+        except (PermissionError, OSError):
+            return None  # Incomplete evidence; let lsof decide.
+        for fd in fds:
+            try:
+                target = os.readlink(f"{fd_dir}/{fd}")
+            except OSError:
+                continue  # fd closed mid-scan.
+            if target.endswith(" (deleted)"):
+                target = target[: -len(" (deleted)")]
+            if target in prefixes or any(
+                target.startswith(p + os.sep) for p in prefixes
+            ):
+                holders += 1
+    return (
+        (True, f"{holders} process(es) holding fd(s) under worktree")
+        if holders
+        else (False, "")
+    )
+
+
 def _has_open_fds(path: Path) -> tuple[bool, str]:
     """Lead's predicate #3 — a live process holds a file descriptor
     into the worktree.
@@ -284,7 +340,14 @@ def _has_open_fds(path: Path) -> tuple[bool, str]:
     failure (binary missing, timeout, permissions) the predicate
     falls through to "not held" so the other safety predicates
     decide.
+
+    On Linux the in-process ``/proc`` scan runs first: same answer,
+    no subprocess, no timeout cliff under load. ``lsof`` remains the
+    fallback (non-Linux, or an incomplete ``/proc`` scan).
     """
+    fast = _proc_fd_holders(path)
+    if fast is not None:
+        return fast
     if shutil.which("lsof") is None:
         return False, ""
     # stx-allow: fallback (reason: lsof can timeout or fail with
