@@ -175,8 +175,11 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
             return True
 
         return wait_for_hermes_boot(
-            config, exists_fn=lambda: self._mux.exists(name),
-            timeout_s=timeout_s, poll_s=poll_s, poll_ui=poll_ui,
+            config,
+            exists_fn=lambda: self._mux.exists(name),
+            timeout_s=timeout_s,
+            poll_s=poll_s,
+            poll_ui=poll_ui,
         )
 
     @staticmethod

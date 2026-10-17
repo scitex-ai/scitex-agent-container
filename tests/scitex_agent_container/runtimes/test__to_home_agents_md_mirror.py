@@ -70,11 +70,11 @@ class TestAgentsMdMirror:
     def test_changed_source_rematerializes_to_changed_output(
         self, tmp_path, env_save_restore
     ):
-        # Arrange — v1 deployed first.
+        # Arrange — v1 deployed first (v1 projection itself is pinned by
+        # test_to_home_agents_md_projects_byte_identical above).
         _isolate_baselines(tmp_path, env_save_restore)
         spec_dir, home = _stage(tmp_path, V1)
         materialize_to_home(spec_dir, home)
-        assert (home / "AGENTS.md").read_bytes() == V1.encode()
         # Act — source flips to v2, re-materialize.
         (spec_dir / "to_home" / "AGENTS.md").write_text(V2)
         materialize_to_home(spec_dir, home)

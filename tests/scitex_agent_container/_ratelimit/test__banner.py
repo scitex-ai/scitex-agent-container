@@ -71,6 +71,16 @@ def test_timed_captured_specimens_yield_a_reset(pane: str) -> None:
     assert observation.reset_at is not None
 
 
+@pytest.mark.parametrize("pane", _BILLING_SPECIMENS)
+def test_billing_exhaustion_specimens_yield_no_reset(pane: str) -> None:
+    # Arrange — an empty allowance has no reset by construction, and the
+    # rule treats it as already-lifted.
+    # Act
+    observation = _observe(pane)
+    # Assert
+    assert observation.reset_at is None
+
+
 def test_billing_exhaustion_specimen_reads_as_lifted_wall() -> None:
     # Arrange — the exact 2026-10-15/16 killer: frozen billing banner.
     from dataclasses import replace
@@ -91,16 +101,6 @@ def test_billing_exhaustion_specimen_reads_as_lifted_wall() -> None:
     )
     # Assert
     assert (decision.verdict, decision.reason) == (Verdict.RESUME, "billing-exhausted")
-
-
-@pytest.mark.parametrize("pane", _BILLING_SPECIMENS)
-def test_billing_exhaustion_specimens_yield_no_reset(pane: str) -> None:
-    # Arrange — an empty allowance has no reset by construction, and the
-    # rule treats it as already-lifted.
-    # Act
-    observation = _observe(pane)
-    # Assert
-    assert observation.reset_at is None
 
 
 def test_the_incident_banner_resolves_to_its_real_reset() -> None:

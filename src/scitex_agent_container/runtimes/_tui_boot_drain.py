@@ -21,9 +21,9 @@ retain the separate idle-input contract below.
 
 from __future__ import annotations
 
-import logging
 import time
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._tui_drain import (
     drain_modals_until_ready,
@@ -72,14 +72,16 @@ def wait_for_hermes_boot(
                 timeout_s=min(2.0, max(0.01, deadline - time_fn())),
             )
             if activity.session_id and activity.session_status in {
-                "idle", "working", "waiting"
+                "idle",
+                "working",
+                "waiting",
             }:
                 return bool(exists_fn())
             last_error = f"native session status {activity.session_status!r}"
         except (HermesTuiRpcError, FileNotFoundError) as error:
             last_error = str(error)
         sleep_fn(max(0.01, min(poll_s, deadline - time_fn())))
-    logging.getLogger(__name__).error(
+    get_logger(__name__).error(
         "Hermes boot not ready for %s: %s", config.name, last_error
     )
     return False
@@ -124,8 +126,10 @@ class TuiBootDrainMixin:
             return False
         if str(getattr(config, "harness", "") or "").lower() == "hermes":
             return wait_for_hermes_boot(
-                config, exists_fn=lambda: self._mux.exists(name),
-                timeout_s=timeout_s, poll_s=poll_s,
+                config,
+                exists_fn=lambda: self._mux.exists(name),
+                timeout_s=timeout_s,
+                poll_s=poll_s,
             )
         return self._drain_modals_until_ready(name, timeout_s=timeout_s, poll_s=poll_s)
 

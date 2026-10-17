@@ -186,7 +186,21 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
-            allowed.update({"background_review", "compression", "failover", "run_budget_seconds"})
+            allowed.update(
+                {
+                    "background_review",
+                    "compression",
+                    "failover",
+                    "run_budget_seconds",
+                    # Operator order: goal budget + judge engine live in the
+                    # hermes harness entry (specs carry goals.max_turns 99999
+                    # + judge_engine). The validator must accept what specs
+                    # declare, or every restart red-fails.
+                    "goals",
+                    "max_turns",
+                    "judge_engine",
+                }
+            )
         elif family == "opencode":
             allowed.update({"approval_policy", "run_budget_seconds", "serve"})
         missing = sorted(required - entry_keys)
@@ -201,6 +215,17 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 "spec.comms.channels so the same declaration drives Claude Code, "
                 "Hermes, and Codex"
             )
+
+        if "max_turns" in raw_entry or "goals" in raw_entry:
+            if family != "hermes":
+                errors.append(f"{path}.max_turns/goals are only valid for Hermes")
+            else:
+                from ._hermes_goals import validate_hermes_turn_controls
+
+                try:
+                    validate_hermes_turn_controls(raw_entry, path=path)
+                except ValueError as exc:
+                    errors.append(str(exc))
 
         if "compression" in raw_entry:
             if family != "hermes":
@@ -249,9 +274,7 @@ def canonical_surface_errors(raw: object) -> list[str]:
 
         if "serve" in raw_entry:
             if family != "opencode":
-                errors.append(
-                    f"{path}.serve is only valid for the opencode harness"
-                )
+                errors.append(f"{path}.serve is only valid for the opencode harness")
             else:
                 serve = raw_entry.get("serve")
                 if not isinstance(serve, Mapping):

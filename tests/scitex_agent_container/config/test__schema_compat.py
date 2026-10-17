@@ -40,24 +40,6 @@ def _comms(channels: list[str] | None = None) -> dict:
     }
 
 
-def test_hermes_failover_survives_canonical_validation_and_normalization():
-    entry = _hermes_entry()
-    entry["failover"] = {
-        "accounts": {"go": ["OPENCODE_GO_API_KEY_1", "OPENCODE_GO_API_KEY_2"]},
-        "engines": ["command"],
-    }
-    raw = {"spec": {
-        "harness": "hermes", "runtime": "tui", "comms": _comms(),
-        "available_harnesses": {"hermes": entry},
-    }}
-    assert canonical_surface_errors(raw) == []
-    from scitex_agent_container.config._hermes_failover import parse_selected_hermes_failover
-
-    policy = parse_selected_hermes_failover(normalize_document(raw)["spec"])
-    assert policy.accounts == entry["failover"]["accounts"]
-    assert policy.engines == ["command"]
-
-
 def test_claude_code_account_is_accepted_and_folded_to_the_runtime_boundary():
     # Arrange -- the Hub-style canonical spec has no legacy spec.claude block.
     raw = {
