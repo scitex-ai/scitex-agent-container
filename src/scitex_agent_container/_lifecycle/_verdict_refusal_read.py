@@ -96,6 +96,15 @@ _QUOTA_MARKERS = (
     "limit reached",
     "limit · resets",
     "resets at",
+    # Billing-exhaustion phrasing (prepaid / credit-balance providers).
+    # Measured 2026-10-15/16: commandcode 400 "insufficient credits"
+    # stopped agents with turns refused; the failover pool has headroom
+    # accounts, so a RESTART (which rotates onto a live key) IS the
+    # remedy here — unlike a subscription-window cap where restarting
+    # destroys context for nothing.
+    "insufficient credits",
+    "purchase more credits",
+    "insufficient balance",
 )
 _CREDENTIAL_MARKERS = (
     "login expired",

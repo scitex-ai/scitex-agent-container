@@ -48,6 +48,10 @@ def test_selected_provider_engine_is_not_blocked_by_default_oauth(
     # Arrange — a real, authoritative spec defaults to an expired Claude pin.
     config, path = _config_with_expired_default_auth(tmp_path, env_save_restore)
     env_save_restore.set(_TOKEN_ENV, "provider-fixture-value")
+    # Admin path: no SAC_NAME, so the spawn gate takes the admin branch
+    # and skips the lineage Postgres write (this host has no DB for it).
+    env_save_restore.delete("SAC_NAME")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_NAME")
     # Act — the start requests the valid provider engine instead.
     _prelaunch(config, path, "qwen38-27b")
     # Assert

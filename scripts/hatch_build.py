@@ -131,10 +131,15 @@ def main() -> None:
         target.write_text(stamp_mod.render_module(stamp), encoding="utf-8")
     elif sys.argv[1:]:
         raise SystemExit("usage: hatch_build.py [--write]")
-    print(f"version:    {stamp['version']}")
-    print(f"commit:     {stamp['commit'] or 'unknown'} ({stamp['commit_source']})")
-    print(f"code_hash:  {stamp['code_hash']}")
-    print(f"built_at:   {stamp['built_at']}")
+    # The hook imports no runtime dependency during isolated wheel builds.
+    # Direct invocation reports through the same logging API as installed SAC.
+    from scitex_logging import getLogger
+
+    logger = getLogger(__name__)
+    logger.info(f"version:    {stamp['version']}")
+    logger.info(f"commit:     {stamp['commit'] or 'unknown'} ({stamp['commit_source']})")
+    logger.info(f"code_hash:  {stamp['code_hash']}")
+    logger.info(f"built_at:   {stamp['built_at']}")
 
 
 if __name__ == "__main__":

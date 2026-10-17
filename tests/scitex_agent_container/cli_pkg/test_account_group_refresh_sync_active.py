@@ -177,14 +177,17 @@ def test_all_refreshes_account_with_low_ttl(sandbox_home, opener_swap) -> None:
     assert json.loads(creds.read_text())["claudeAiOauth"]["accessToken"] == "NEW-ACCESS"
 
 
-def test_force_refreshes_fresh_account(sandbox_home, opener_swap) -> None:
+def test_removed_force_cannot_rotate_a_fresh_account(sandbox_home, opener_swap) -> None:
     # Arrange — a fresh token that would otherwise be skipped.
     creds = _seed_account(sandbox_home, "fresh", expires_ms=_FUTURE_MS)
     runner = CliRunner()
     # Act
-    runner.invoke(account, ["refresh", "--all", "--force"])
-    # Assert — --force bypasses the TTL gate.
-    assert json.loads(creds.read_text())["claudeAiOauth"]["accessToken"] == "NEW-ACCESS"
+    result = runner.invoke(account, ["refresh", "--all", "--force"])
+    # Assert — rejected options leave the stored credential untouched.
+    assert (
+        result.exit_code,
+        json.loads(creds.read_text())["claudeAiOauth"]["accessToken"],
+    ) == (2, "OLD-ACCESS")
 
 
 # ---------------------------------------------------------------------------

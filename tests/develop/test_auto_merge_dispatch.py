@@ -19,10 +19,18 @@ _AUTO_MERGE = _WORKFLOWS / "auto-merge-to-develop.yaml"
 # The develop-facing gates. Keep in lockstep with POST_MERGE_GATES in
 # auto-merge-to-develop.yaml — test_gate_list_is_exactly_the_required_set
 # fails on any drift in either direction.
+#
+# ci.yml is the one caller (pytest matrix + import smoke + quality audit +
+# Sphinx docs behind a single dispatch). The two inline workflows it
+# supersedes that USED TO BE IN THIS LIST —
+# `pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml` and
+# `import-smoke-on-ubuntu-py3-12.yml` — were DELETED with the workflow
+# files themselves: dispatching a deleted workflow 404s and develop's head
+# would sit un-checked again, which is exactly the drift the tests below
+# exist to catch.
 REQUIRED_GATES = (
-    "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml",
+    "ci.yml",
     "lint.yml",
-    "import-smoke-on-ubuntu-py3-12.yml",
 )
 
 # `quality-audit-on-ubuntu-latest.yml` USED TO BE IN THIS LIST and was removed

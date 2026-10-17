@@ -39,9 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
-import click
-
-from ..._logging import render_rich
+from ..._logging import get_logger, render_rich
 from ..._sac_binary import sac_binary as _sac_binary
 
 
@@ -78,7 +76,7 @@ def build_child_argv(
     if no_preflight:
         argv.append("--no-preflight")
     if force:
-        argv.append("--force")
+        raise ValueError("start cannot replace a running agent; use sac agents restart")
     if session_mode:
         argv += ["--session", session_mode]
     if strict_drift:
@@ -114,8 +112,11 @@ def run_parallel_targets(
     workers = max(1, int(concurrency))
     pause = max(0.0, float(stagger))
 
-    render_rich(f"=== [blue]Starting {len(targets)} agents[/blue] "
-        f"[dim](concurrency={workers}, stagger={pause:g}s)[/dim] ===", __name__)
+    render_rich(
+        f"=== [blue]Starting {len(targets)} agents[/blue] "
+        f"[dim](concurrency={workers}, stagger={pause:g}s)[/dim] ===",
+        __name__,
+    )
 
     def _launch(target: str) -> _Result:
         proc = subprocess.run(
@@ -157,8 +158,11 @@ def run_parallel_targets(
             any_error = True
             tail = (res.stderr or res.stdout or "").strip().splitlines()
             hint = tail[-1] if tail else f"rc={res.returncode}"
-            render_rich(f"  [red]FAILED[/red] {res.target} "
-                f"[dim](rc={res.returncode}: {hint})[/dim]", __name__)
+            render_rich(
+                f"  [red]FAILED[/red] {res.target} "
+                f"[dim](rc={res.returncode}: {hint})[/dim]",
+                __name__,
+            )
 
     if any_error:
         sys.exit(1)
@@ -202,9 +206,8 @@ def maybe_run_parallel(
     if len(all_targets) <= 1 or not parallel_safe:
         return False
     if bulk_yamls and not yes:
-        click.echo(
+        get_logger(__name__).warning(
             f"Refusing to start {len(all_targets)} agents without --yes/-y.",
-            err=True,
         )
         sys.exit(2)
     preflight_runner()

@@ -15,10 +15,8 @@ from __future__ import annotations
 
 from typing import Callable
 
-import click
-
 from ..._lifecycle.lifecycle import agent_start
-from ..._logging import render_rich
+from ..._logging import get_logger, render_rich
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ._common import _local_host_names, _singleton_skip_reason
@@ -50,10 +48,7 @@ def run_bulk_path(
             explicit confirmation).
     """
     if not yes:
-        click.echo(
-            f"Refusing to start {len(yamls)} agents without --yes/-y.",
-            err=True,
-        )
+        get_logger(__name__).warning(f"Refusing to start {len(yamls)} agents without --yes/-y.")
         raise SystemExit(2)
     preflight_runner()
     # stx-allow: fallback (reason: runtime state error — handled gracefully)

@@ -370,4 +370,40 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             on_boot_sec="1min",
             on_unit_active_sec="2min",
         ),
+        JobSpec(
+            name="scitex-agent-container-accounts-key-liveness",
+            schedule="*/15 * * * *",  # every 15min (cron form; timer below)
+            # SELF-BOUNDING (300s). One cheap billing-endpoint GET per
+            # declared slot (fleet holds ~13 distinct aliases); 300s covers
+            # slow providers with wide headroom. A pass killed at this
+            # timeout writes NOTHING, and the previous cache stands with
+            # its checked_at honestly aging. Stale verdicts never take a
+            # slot out of service, so a missed pass degrades to older
+            # data, never to a wrong action.
+            #
+            # WHY THIS EXISTS (operator order 2026-10-16): TUI pattern
+            # detection is unstable and does not scale to new providers.
+            # This is the TUI-independent measurement half of key health:
+            # probe every declared API-key slot, map each slot to its
+            # consumer agents from the specs' own failover pools, and
+            # record alive/exhausted/dead/unknown where the boot picker
+            # and the listen key-health endpoint read them. The 2026-10-15
+            # infra-lead stop (commandcode 400 insufficient credits, no
+            # pattern matched, no ROTATE) is what happens without it.
+            command=(
+                "/usr/bin/timeout 300 "
+                f"{sac} accounts probe-api-keys --all"
+            ),
+            description=(
+                "TUI-independent API-key liveness sweep: one read-only "
+                "billing-endpoint GET per declared key slot with key to "
+                "agent mapping from specs' failover pools; records "
+                "alive/exhausted/dead/unknown verdicts for the boot picker "
+                "and key-health readers. Read-only: rotates nothing, spends "
+                "no turns. NOT armed by this declaration."
+            ),
+            kind="timer",
+            on_boot_sec="5min",
+            on_unit_active_sec="15min",
+        ),
     ]
