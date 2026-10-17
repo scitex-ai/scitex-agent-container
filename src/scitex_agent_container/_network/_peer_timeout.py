@@ -113,6 +113,21 @@ class PeerTimeoutPending(PeerError):
         self.poll_hint = poll_hint
 
 
+class _ProbeTransportError(PeerError):
+    """One exchange-probe round trip failed at the transport layer.
+
+    Private to the poll loop: a descheduled loopback server or a
+    thrashed ssh spawn can stall a single GET without the accepted
+    exchange itself failing (observed 2026-10-17: one stalled probe
+    aborted a whole poll with ``peer exchange probe unreachable``).
+    :func:`_poll_exchange <scitex_agent_container._network._peer_exchange._poll_exchange>`
+    retries these until the deadline instead of aborting. Anything the
+    peer actually ANSWERED (HTTP error status, malformed body) stays a
+    plain fatal :class:`PeerError`. A subclass so existing ``except
+    PeerError`` callers are unaffected.
+    """
+
+
 def interpret_timeout_body(
     body: dict | None, *, fallback_label: str
 ) -> PeerTimeoutPending:
