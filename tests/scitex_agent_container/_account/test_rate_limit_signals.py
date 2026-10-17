@@ -359,3 +359,29 @@ def test_an_auth_banner_alone_is_still_not_a_cap():
     result = detect_signal_from_text(text)
     # Assert
     assert result is None
+
+
+def test_billing_exhaustion_is_a_cap_not_a_fatal_error():
+    # Arrange — the exact 400 that stopped infra-lead on 2026-10-15.
+    # Before this pattern existed both the textual scan and the
+    # status map returned None, so no ROTATE fired and the session
+    # died (operator manual restart).
+    text = (
+        "Error code: 400 - {'error': {'message': 'You have insufficient "
+        "credits to make this request. Please purchase more credits to "
+        "continue using the service.', 'type': 'invalid_request_error', "
+        "'code': 'BAD_REQUEST'}}"
+    )
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
+
+
+def test_insufficient_balance_is_a_cap():
+    # Arrange — the DeepSeek 402 shape this list already anticipates.
+    text = "402 insufficient balance for this request"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
