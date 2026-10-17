@@ -297,7 +297,7 @@ def post_turn_to_url(
             url,
             payload,
             http_status=http_status,
-            timeout_s=max(0.0, timeout_s - (time.monotonic() - started_at)),
+            timeout_s=_poll_remainder(timeout_s, time.monotonic() - started_at),
             wait_for_final=wait_for_final,
         )
     except PeerError as exc:
@@ -350,6 +350,26 @@ def post_turn(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _poll_remainder(timeout_s: float, elapsed_s: float) -> float:
+    """Poll budget left after the POST leg, with one bounded first probe.
+
+    The POST and the exchange poll share the caller's ``timeout_s``. On
+    a loaded runner the POST alone can consume a small budget, which
+    would otherwise raise ``PeerTimeoutPending`` "after 0s" without ever
+    probing the accepted exchange. When the caller gave a POSITIVE
+    budget, guarantee one bounded first probe (``POLL_INTERVAL_S``) so
+    the poll always observes the exchange at least once. An explicit
+    ``timeout_s=0`` still never probes (pinned by
+    ``test_zero_poll_budget_preserves_initial_pending_receipt``).
+    """
+    from ._peer_exchange import POLL_INTERVAL_S
+
+    if timeout_s <= 0:
+        return 0.0
+    remainder = timeout_s - elapsed_s
+    return remainder if remainder > 0 else POLL_INTERVAL_S
 
 
 def _interpret_504(err_body: str, *, fallback_label: str) -> PeerError:
@@ -466,7 +486,7 @@ def _post_turn_via_ssh(
         url,
         payload,
         http_status=None,
-        timeout_s=max(0.0, timeout_s - elapsed),
+        timeout_s=_poll_remainder(timeout_s, elapsed),
         wait_for_final=wait_for_final,
     )
 
