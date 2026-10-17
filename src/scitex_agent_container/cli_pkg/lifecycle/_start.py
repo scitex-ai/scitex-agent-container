@@ -14,7 +14,7 @@ from pathlib import Path
 
 import click
 
-from ..._logging import render_rich
+from ..._logging import get_logger, render_content, render_rich
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._start_engine_options import engine_options
@@ -38,13 +38,6 @@ from ._start_session_options import session_options
     is_flag=True,
     default=False,
     help="Skip preflight checks (useful for slow SSH hosts).",
-)
-@click.option(
-    "--force",
-    "force",
-    is_flag=True,
-    default=False,
-    help="If already running or stale, replace the process; session policy is unchanged.",
 )
 @session_options
 @engine_options
@@ -193,7 +186,6 @@ def start(
     targets: tuple[str, ...],
     groups: tuple[str, ...],
     no_preflight: bool,
-    force: bool,
     resume_id: str | None,
     session_mode: str | None,
     continue_session: bool,
@@ -232,7 +224,7 @@ def start(
     Cold-start writes ``~/.scitex/agent-container/agents/<label>/{spec.yaml,
     to_home/}`` then launches it; ``@<host>`` dispatches to that host. Re-running
     a cold-start form reuses the spec when workdir+host match, else fails loud
-    (use ``--force`` to overwrite). ``--dry-run`` prints the plan without writing
+    (choose another label when the existing spec differs). ``--dry-run`` prints the plan without writing
     or starting; ``--json`` emits it as structured output. Malformed forms fail
     loud (no silent fallback).
 
@@ -249,10 +241,11 @@ def start(
       $ sac start .                                     # cold-start the cwd
       $ sac start . --dry-run --json                    # preview the plan only
     """
+    force = False
     import json as _json
 
     def _emit_json(payload: dict) -> None:
-        click.echo(_json.dumps(payload, ensure_ascii=False))
+        render_content(_json.dumps(payload, ensure_ascii=False))
 
     targets = apply_group_targets(targets, groups)  # --group -> TARGETS merge
     # Session-continuity shorthand flags (--continue/-c, --fresh) fold into
@@ -332,7 +325,7 @@ def start(
         if as_json:
             _emit_json({"error": str(exc)})
         else:
-            click.echo(f"Error: {exc}", err=True)
+            get_logger(__name__).error(str(exc))
         sys.exit(2)
 
     render_cold_start_plans(
@@ -356,10 +349,9 @@ def start(
     is_bulk = bool(bulk_yamls_from_dirs)
 
     if (resume_id or session_mode) and is_bulk:
-        click.echo(
-            "Error: --resume / --session cannot be combined with directory "
+        get_logger(__name__).error(
+            "--resume / --session cannot be combined with directory "
             "targets (they would apply the same value to every agent).",
-            err=True,
         )
         sys.exit(2)
     # --engine names ONE engine key, and engine keys are per-spec: the
@@ -371,12 +363,11 @@ def start(
     # the fallback-by-dropped-field this whole axis refuses. Fail loud on
     # BOTH shapes instead.
     if engine and (is_bulk or len(single_targets) > 1):
-        click.echo(
-            f"Error: --engine {engine} cannot be combined with directory or "
+        get_logger(__name__).error(
+            f"--engine {engine} cannot be combined with directory or "
             "multi-agent targets — engine keys are declared per spec, so one "
             "key does not name the same backend across agents. Start each "
             "agent separately.",
-            err=True,
         )
         sys.exit(2)
     # --foreground semantics:
@@ -390,9 +381,8 @@ def start(
     if multi_foreground:
         foreground = False  # disable per-runtime attach; we multiplex.
     if resume_id and session_mode and session_mode != "resume":
-        click.echo(
-            f"Error: --resume requires --session resume, got --session {session_mode}.",
-            err=True,
+        get_logger(__name__).error(
+            f"--resume requires --session resume, got --session {session_mode}."
         )
         sys.exit(2)
     if resume_id and session_mode is None:

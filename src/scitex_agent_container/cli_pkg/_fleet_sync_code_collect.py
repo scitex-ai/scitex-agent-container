@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
+
+from .._logging import render_content
 
 __all__ = ["collect_checkout_state"]
 
@@ -127,8 +128,7 @@ def emit_collect(sac_version: str | None) -> int:
         checkouts=state["checkouts"],
         errors=state["errors"],
     )
-    json.dump(manifest, sys.stdout, indent=2)
-    sys.stdout.write("\n")
+    render_content(json.dumps(manifest, indent=2))
     return 0 if not state["errors"] else 2
 
 

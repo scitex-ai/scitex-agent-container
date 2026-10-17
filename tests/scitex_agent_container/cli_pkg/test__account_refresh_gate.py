@@ -115,13 +115,15 @@ def test_unknown_expiry_is_refreshed():
     assert result is True
 
 
-def test_force_refreshes_a_fresh_token():
+def test_force_cannot_bypass_expiry_gate():
     # Arrange
     expires_ms = _FRESH_MS
     # Act
-    result = needs_refresh(expires_ms, force=True, min_ttl_hours=2.0, now=_NOW_S)
+    def act():
+        needs_refresh(expires_ms, force=True, min_ttl_hours=2.0, now=_NOW_S)
     # Assert
-    assert result is True
+    with pytest.raises(ValueError, match="cannot bypass the expiry gate"):
+        act()
 
 
 def test_gate_takes_no_do_all_parameter():
@@ -188,13 +190,13 @@ def test_iso_ms_is_none_for_absent_expiry():
 # ------------------------------------------------------- refusal message
 
 
-def test_refusal_names_the_override_flag():
+def test_refusal_names_the_required_wait():
     # Arrange
     expiry = "2026-08-09T17:38:54+00:00"
     # Act
     message = refusal_message("acct", expiry, 2.0, is_pinned=True)
     # Assert
-    assert "--force" in message
+    assert "Wait for the active users to finish" in message
 
 
 def test_refusal_names_the_account():

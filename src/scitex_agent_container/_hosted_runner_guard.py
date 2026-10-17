@@ -18,11 +18,10 @@ Three ways the naive grep is wrong, all of them live in this repo today:
 1. It MISSES ``ubuntu-24.04`` / ``macos-14`` / ``windows-2022``. We match
    the runner-image FAMILY (``ubuntu-`` / ``macos-`` / ``windows-``), not
    one literal.
-2. It FALSE-FLAGS our own migrated files. Both the workflow FILENAMES
-   (``rtd-sphinx-build-on-ubuntu-latest.yml``) and the job ``name:`` fields
-   (``ruff-on-ubuntu-latest``) still carry the legacy string. Only a job's
-   ``runs-on:`` decides where it executes, so we parse YAML and read
-   ``runs-on`` — nothing else.
+2. It FALSE-FLAGS our own legacy spellings. Job ``name:`` fields such as
+   (``ruff-on-ubuntu-latest`` in ``lint.yml``) still carry the legacy
+   string. Only a job's ``runs-on:`` decides where it executes, so we parse
+   YAML and read ``runs-on`` — nothing else.
 3. It cannot resolve ``runs-on: ${{ fromJSON(vars.CI_RUNS_ON ||
    '["self-hosted","Linux","X64","scitex-ci"]') }}`` — the expression our
    11 migrated jobs actually use.

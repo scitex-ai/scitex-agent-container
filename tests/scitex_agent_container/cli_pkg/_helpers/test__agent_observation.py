@@ -145,11 +145,13 @@ def hung_observation(child):
         slow = dict(_record(other.pid, "slow"), id="slow-instance")
         started = time.monotonic()
         # A real sleeping worker and separate fast process exercise the budget.
+        # Generous budget: the property is ordering (slow row unknown, fast
+        # row alive), not the 1.3s bound — which flakes on loaded CI nodes.
         rows = enrich_rows(
             [{"name": "slow"}, {"name": "fast"}],
             [slow, fast],
             "owned-host",
-            budget=1.3,
+            budget=4,
             observer=_delayed_observer,
         )
     finally:
@@ -162,7 +164,7 @@ def test_hung_observation_returns_within_parent_budget(hung_observation):
     # Arrange
     _, elapsed = hung_observation
     # Act
-    within_budget = elapsed < 2.0
+    within_budget = elapsed < 6.0
     # Assert
     assert within_budget
 

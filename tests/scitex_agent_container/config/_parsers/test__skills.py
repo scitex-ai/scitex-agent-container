@@ -182,7 +182,7 @@ def test_required_list_deduplicates_per_spec_against_base_defaults():
     # Act
     result = parse_skills(spec)
     # Assert
-    assert result.required == ["scitex-todo", "a"]
+    assert result.required == [*BASE_REQUIRED_SKILLS, "a"]
 
 
 def test_available_list_is_passed_through_verbatim():

@@ -27,12 +27,12 @@
 <p align="center">
   <a href="https://pypi.org/project/scitex-agent-container/"><img src="https://img.shields.io/pypi/v/scitex-agent-container?label=PyPI" alt="PyPI"></a>
   <a href="https://pypi.org/project/scitex-agent-container/"><img src="https://img.shields.io/pypi/pyversions/scitex-agent-container?label=Python" alt="Python"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/rtd-sphinx-build-on-ubuntu-latest.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/rtd-sphinx-build-on-ubuntu-latest.yml?branch=develop&label=RTD" alt="RTD"></a>
+  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/ci.yml?branch=develop&label=RTD" alt="RTD"></a>
   <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg?label=License" alt="License"></a>
 </p>
 <p align="center">
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml?branch=develop&label=Tests" alt="Tests"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/import-smoke-on-ubuntu-py3-12.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/import-smoke-on-ubuntu-py3-12.yml?branch=develop&label=Install-Check" alt="Install-Check"></a>
+  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/ci.yml?branch=develop&label=Tests" alt="Tests"></a>
+  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/ci.yml?branch=develop&label=Install-Check" alt="Install-Check"></a>
   <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container"><img src="https://img.shields.io/codecov/c/github/ywatanabe1989/scitex-agent-container/develop?label=CodeCov" alt="CodeCov"></a>
 </p>
 <!-- scitex-badges:end -->
@@ -256,10 +256,9 @@ sac agents start  <name> [--foreground]   # daemon by default; --foreground stre
                                            # inside a SIF: auto-brokers to host listen
                                            # (no apptainer-in-apptainer needed)
 sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
-                                           # --force tolerates an unreachable bound host
 sac agents restart <name>
 sac agents delete <name>                  # stop + remove spec dir + runtime dir + registry
-sac agents forget <name> [--force]        # shared-store bookkeeping cleanup for the
+sac agents forget <name>        # shared-store bookkeeping cleanup for the
                                            # "agent is gone, only stale rows persist" case
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session

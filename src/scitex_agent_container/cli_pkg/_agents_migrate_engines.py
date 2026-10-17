@@ -368,7 +368,7 @@ def migrate_engines(
       $ sac agents migrate-engines --host scitex-compute-04 --limit 5 --apply
     \b
     Somewhere other than the live copy:
-      $ sac agents migrate-engines --root ~/.dotfiles/src/.scitex/agent-container/agents
+      $ sac agents migrate-engines --root ~/.scitex/agent-container/agents
     \b
     Gateway reachability, named states (it dials /v1/models, not the base):
       $ sac agents migrate-engines --preflight --no-diff

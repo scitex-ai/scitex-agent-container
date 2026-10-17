@@ -77,7 +77,6 @@ RETAIN=3
 MIN_FREE_GB=40
 MIN_FREE_INODES=100000
 CPUS=8
-FORCE=0
 MODULES="slurm/default GCCcore/11.3.0 Apptainer/1.3.3"
 
 while [ $# -gt 0 ]; do
@@ -90,7 +89,6 @@ while [ $# -gt 0 ]; do
         --retain) RETAIN="$2"; shift 2 ;;
         --min-free-gb) MIN_FREE_GB="$2"; shift 2 ;;
         --cpus) CPUS="$2"; shift 2 ;;
-        --force) FORCE=1; shift ;;
         --modules) MODULES="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
@@ -220,7 +218,7 @@ if [ "$LAYER" = "scitex" ]; then
     BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"
 fi
 STATE_KEY="$HEAD_SHA:$BASE_KEY"
-if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
+if [ -f "$STATE_FILE" ]; then
     read -r LAST_KEY LAST_SIF < "$STATE_FILE" || true
     if [ "${LAST_KEY:-}" = "$STATE_KEY" ] && [ -f "${LAST_SIF:-/nonexistent}" ]; then
         echo "skip: source unchanged since last successful bake ($STATE_KEY)"
@@ -239,7 +237,11 @@ fi
 # ---------------------------------------------------------------------------
 STEP="stage"
 CTX="$WORKDIR/build-context/$LAYER"
-rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/scripts" || fail "stage-mkdir"
+rm -rf "$CTX" && mkdir -p "$CTX/scitex-agent-container-src/scripts" "$CTX/scitex-agent-container-src/src/scitex_agent_container" || fail "stage-mkdir"
+# NOTE 2026-10-15: the src/scitex_agent_container dir MUST pre-exist, or the
+# cp below RENAMES the package into src/ (flat tree) instead of nesting it,
+# and stage-provenance fails on the missing _provenance/_stamp.py. This
+# matches the canonical staged shape in cli_pkg/_image_source_build.py.
 DEF_SRC="$REPO/src/scitex_agent_container/containers/apptainer-$LAYER.def"
 [ -f "$DEF_SRC" ] || fail "def-missing" "$DEF_SRC"
 cp -f "$DEF_SRC" "$CTX/" || fail "stage-def"
@@ -496,9 +498,20 @@ plain.emit("OK: artifact symbol probe passed")
 PYEOF
 # --input=none: see the STDIN RULE at the top of this file. The probe is a
 # FILE argument; this task has no use for stdin.
+# SCITEX_DIR: the probe imports scitex_logging, which mkdirs its log tree on
+# first use. On Spartan ~/.scitex is a symlink into an unrelated read-only
+# project tree (punim0264/paper-scitex-clew), so without this the gate dies
+# EROFS (measured 2026-10-15). Point it at purpose-built workdir state; the
+# probe asserts symbols, never real agent state.
+mkdir -p "$WORKDIR/.scitex-gate" || fail "gate-statedir"
+# Plain `export` (no srun flag): this srun relies on SLURM's default
+# full-environment propagation, and the invariant pinned in
+# test_spartan_sif_bake_scratch_filesystem.py allows exactly one export
+# line in this file (the build srun's). Do not add another.
+export SCITEX_DIR="$WORKDIR/.scitex-gate"
 "$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 \
     --job-name="sac-sif-gate-$LAYER" \
-    "$APPTAINER" exec --bind "$WORKDIR" "$PARTIAL_SIF" \
+    "$APPTAINER" exec --env "SCITEX_DIR=$WORKDIR/.scitex-gate" --bind "$WORKDIR" "$PARTIAL_SIF" \
     /opt/venv-sac/bin/python "$PROBE" < /dev/null
 GATE_RC=$?
 [ "$GATE_RC" -eq 0 ] || fail "gate-failed" "rc=$GATE_RC — artifact is stale/wrong; NOT published"
