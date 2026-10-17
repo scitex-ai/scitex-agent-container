@@ -105,7 +105,7 @@ def _turn_observation(status: dict) -> Dimension[TurnState]:
         )
 
     pane_state = str(status.get("pane_state") or "unknown")
-    if pane_state in {"y_n_prompt", "auth_error", "login_url", "limit_reached"}:
+    if pane_state in {"y_n_prompt", "hermes_approval", "auth_error", "login_url", "limit_reached"}:
         return Dimension(
             state=TurnState.BLOCKED,
             evidence=_evidence("terminal.pane_state", pane_state),

@@ -40,6 +40,8 @@ without a debounce is exactly the hot loop the budget exists to prevent.
 
 from __future__ import annotations
 
+from .._logging import write_stream
+
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -130,11 +132,11 @@ def record_switch(
         save_history(history_file, budget.history, now=now)
     except OSError as exc:
         budget.spent = budget.pass_cap
-        print(
+        write_stream(
             f"[rate-limit-resume] CANNOT RECORD model switches to "
             f"{history_file}: {exc} — capping this pass so no other agent's "
             f"model is changed without memory",
-            file=stream,
+            stream,
         )
 
 

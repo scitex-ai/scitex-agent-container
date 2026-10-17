@@ -216,6 +216,17 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 "Hermes, and Codex"
             )
 
+        if "max_turns" in raw_entry or "goals" in raw_entry:
+            if family != "hermes":
+                errors.append(f"{path}.max_turns/goals are only valid for Hermes")
+            else:
+                from ._hermes_goals import validate_hermes_turn_controls
+
+                try:
+                    validate_hermes_turn_controls(raw_entry, path=path)
+                except ValueError as exc:
+                    errors.append(str(exc))
+
         if "compression" in raw_entry:
             if family != "hermes":
                 errors.append(

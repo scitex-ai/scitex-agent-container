@@ -50,7 +50,6 @@ from .._helpers import agent_name_complete
 from ._restart_local import (  # noqa: F401
     _NOT_CYCLED,
     _print_local_outcome,
-    _refuse_fresh_on_bare_host,
     _restart_locally,
     _restart_via_broker,
 )
@@ -132,7 +131,7 @@ def _restart_one(
                 "listen`, whose request body has no engine field, so the "
                 "engine would be silently dropped and the agent would "
                 "restart on its DEFAULT engine. Run on the host: sac "
-                f"agents start {name} --force --yes --engine {engine}"
+                f"agents restart {name} --yes --engine {engine}"
             )
             if not as_json:
                 render_rich(f"[red]{msg}[/red]", __name__)
@@ -142,10 +141,10 @@ def _restart_one(
             if drain_timeout_s > 0:
                 broker_kwargs["drain_timeout_s"] = drain_timeout_s
             out, ok = _restart_via_broker(name, **broker_kwargs)
-        elif fresh:
-            out, ok = _refuse_fresh_on_bare_host(name, as_json=as_json)
         else:
             local_kwargs = {"as_json": as_json, "engine": engine}
+            if fresh:
+                local_kwargs["fresh"] = True
             if drain_timeout_s > 0:
                 local_kwargs["drain_timeout_s"] = drain_timeout_s
             out, ok = _restart_locally(name, **local_kwargs)
@@ -206,11 +205,9 @@ def _restart_one(
     is_flag=True,
     default=False,
     help=(
-        "Start a NEW Claude session instead of resuming (brokers "
-        "'start --force --fresh' to the host). The deterministic recovery for "
-        "an agent wedged on a boot prompt whose queued input keeps returning "
-        "on a plain restart. In-container only; on a bare host run "
-        "'sac agents start <name> --force --fresh' directly."
+        "Start a new session after stopping the current process. "
+        "Available on the host and through the host broker; active Hermes "
+        "turns must finish before the restart proceeds."
     ),
 )
 @click.option(
@@ -335,22 +332,6 @@ def restart(
                 err=True,
             )
         raise SystemExit(2)
-
-    if fresh and drain_timeout_s > 0:
-        click.echo(
-            "Error: --fresh force-bounces into a new harness session and cannot "
-            "honour --drain-timeout. Use a plain restart to drain the current "
-            "turn, or retry --fresh without --drain-timeout only when discarding "
-            "the active turn/session is intentional.",
-            err=True,
-        )
-        raise SystemExit(2)
-    if fresh:
-        click.echo(
-            "WARNING: --fresh force-bounces the harness; an active response, "
-            "session context, and SGLang prefix-cache continuity may be lost.",
-            err=True,
-        )
 
     results: list[dict] = []
     any_failed = False

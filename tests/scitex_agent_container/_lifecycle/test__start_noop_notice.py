@@ -79,13 +79,13 @@ def test_offers_the_stop_then_start_sequence(notice):
     assert expected in actual
 
 
-def test_offers_the_force_escape_hatch(notice):
+def test_offers_guarded_restart_for_a_new_session(notice):
     # Arrange
-    expected = "sac agents start dotfiles --force"
+    expected = "sac agents restart dotfiles --fresh -y"
     # Act
     actual = notice
     # Assert
-    assert expected in actual
+    assert expected in actual and "--force" not in actual
 
 
 # ---------------------------------------------------------------------------

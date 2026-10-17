@@ -33,7 +33,7 @@ def _announce_start_verdict(verdict) -> None:
             f"cannot CONFIRM '{verdict.agent}' is alive, and nothing answers "
             f"for it — starting it. NOT destructive: if it is in fact alive, "
             f"the runtime's own duplicate-session guard no-ops instead of "
-            f"relaunching over it (`--force` is the only verb that tears an "
-            f"existing session down).",
+            f"relaunching over it. Use `sac agents restart` to replace an "
+            f"existing session.",
             style="warn",
         )

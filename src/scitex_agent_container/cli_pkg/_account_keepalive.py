@@ -194,17 +194,6 @@ def register_keepalive_command(group: click.Group) -> None:
         ),
     )
     @click.option(
-        "--force",
-        is_flag=True,
-        default=False,
-        help=(
-            "Publish even when the peer already holds the master's exact "
-            "token. Default is CONVERGENT: fingerprints are compared and a "
-            "peer that is already current is verified but not rewritten, so "
-            "a frequent schedule does not bury it in hourly backups."
-        ),
-    )
-    @click.option(
         "--sweep",
         is_flag=True,
         default=False,
@@ -244,7 +233,6 @@ def register_keepalive_command(group: click.Group) -> None:
         peers: tuple[str, ...],
         min_validity: int | None,
         remote_path: str | None,
-        force: bool,
         sweep: bool,
         optional_peers: tuple[str, ...],
         as_json: bool,
@@ -271,6 +259,7 @@ def register_keepalive_command(group: click.Group) -> None:
           $ sac accounts send-credentials --all --to scitex-compute-04 --to ywata-note-win
           $ sac accounts send-credentials --all --to scitex-compute-04 --sweep
         """
+        force = False
         import json as _json
         import sys
 

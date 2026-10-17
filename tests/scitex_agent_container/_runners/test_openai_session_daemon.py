@@ -54,9 +54,14 @@ from scitex_agent_container._runners._session_state import (
     read_heartbeat,
 )
 
-#: Generous ceiling for "the daemon must EXIT on its own" — a regression
-#: back to parking turns into a visible TimeoutError, not a hang.
-_EXIT_DEADLINE_S = 10.0
+#: Ceiling for "the daemon must EXIT on its own" — a regression back
+#: to parking turns into a visible TimeoutError, not a hang. Absolute
+#: wall-clock, so it must absorb loaded shared runners: CI run
+#: 38998486642 (py3.12 leg, 548 s suite on runner-org-05) showed the
+#: crash path taking >10 s end-to-end on a saturated box while the same
+#: file runs in ~2 s locally — the deadline measures scheduling luck,
+#: not daemon behaviour. Parking still fails, just after a minute.
+_EXIT_DEADLINE_S = 60.0
 
 
 # ---------------------------------------------------------------------------

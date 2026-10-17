@@ -1,37 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``--force`` must survive the in-SIF broker hop (incident 2026-07-12).
-
-``agent_restart`` calls ``agent_start(force=True)`` precisely because a
-restart's contract is to REPLACE the process. But when the caller runs
-INSIDE a SIF, ``agent_start`` brokers the spawn to the host's ``sac
-listen`` BEFORE that ``force`` is ever consulted locally — and the broker
-used to have no ``force`` parameter at all, so the flag was silently
-dropped at the boundary.
-
-The host then ran a plain, unforced ``sac agents start <name>``, hit the
-idempotent "already running -> no-op" branch, printed ``SUCC: <name>
-started`` and exited 0. Observed consequence on ``scitex-storage``::
-
-    Agent 'scitex-storage' is already running. No-op. Use --force to restart.
-    SUCC: scitex-storage started (...)
-
-    [listen post-ack liveness probe] post_ack_no_apptainer_pid: `sac agents
-    start` returned rc=0 but no apptainer_pid file appeared ... within 5.0s.
-
-The restart reported success while NOTHING cycled — same process, same
-pid, same stale credentials — and because no new container was launched,
-no ``apptainer_pid`` was ever written, which is what tripped the
-post-ack probe.
-
-These tests pin the wire contract end to end: the spawn client emits the
-field, the broker forwards it, and the host handler turns it into a real
-``--force`` on the inner argv.
-"""
+"""The in-SIF spawn broker rejects legacy force without lifecycle work."""
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 from pathlib import Path
@@ -39,7 +11,14 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from scitex_agent_container._lifecycle._spawn_client import request_spawn
+from scitex_agent_container._lifecycle._spawn_client import (
+    SpawnRequestError,
+    request_spawn,
+)
+from scitex_agent_container._lifecycle._in_sif_broker import (
+    InSifBrokerError,
+    broker_start_to_host,
+)
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
@@ -102,23 +81,26 @@ class _RecordingOpener:
         return _FakeResponse({"name": "victim", "returncode": 0})
 
 
-class TestSpawnClientPutsForceOnTheWire:
-    """The field has to leave the container before anything can honour it."""
+class TestSpawnClientRefusesForce:
+    """Force must be refused before the client performs a POST."""
 
-    def test_force_true_is_emitted_in_the_post_body(self):
+    def test_force_true_is_refused_before_a_network_request(self):
         # Arrange
         opener = _RecordingOpener()
+        refusal = ""
         # Act
-        request_spawn(
-            "victim",
-            base_url="http://listen.invalid",
-            bearer="tok",
-            opener=opener,
-            force=True,
-        )
-        # Assert: THE regression guard — before the fix this key did not
-        # exist, so the host could not tell a restart from a plain start.
-        assert opener.bodies[0].get("force") is True
+        try:
+            request_spawn(
+                "victim",
+                base_url="http://listen.invalid",
+                bearer="tok",
+                opener=opener,
+                force=True,
+            )
+        except SpawnRequestError as exc:
+            refusal = str(exc)
+        # Assert
+        assert ("force is unsupported" in refusal, opener.bodies) == (True, [])
 
     def test_force_is_absent_by_default_for_back_compat(self):
         # Arrange
@@ -135,62 +117,30 @@ class TestSpawnClientPutsForceOnTheWire:
         assert "force" not in opener.bodies[0]
 
 
-class TestBrokerForwardsForce:
-    """The chokepoint agent_start calls must accept and forward force."""
-
-    def test_maybe_broker_in_sif_spawn_accepts_force(self):
+class TestBrokerRefusesForce:
+    def test_broker_refuses_force_before_a_network_request(self):
         # Arrange
-        from scitex_agent_container._lifecycle._in_sif_broker import (
-            maybe_broker_in_sif_spawn,
-        )
-
+        opener = _RecordingOpener()
+        refusal = ""
         # Act
-        params = inspect.signature(maybe_broker_in_sif_spawn).parameters
+        try:
+            broker_start_to_host(
+                "victim",
+                base_url="http://listen.invalid",
+                bearer="tok",
+                opener=opener,
+                force=True,
+            )
+        except InSifBrokerError as exc:
+            refusal = str(exc)
         # Assert
-        assert "force" in params
-
-    def test_broker_start_to_host_accepts_force(self):
-        # Arrange
-        from scitex_agent_container._lifecycle._in_sif_broker import (
-            broker_start_to_host,
-        )
-
-        # Act
-        params = inspect.signature(broker_start_to_host).parameters
-        # Assert
-        assert "force" in params
-
-    def test_agent_start_passes_force_into_the_broker_call(self):
-        # Arrange: read the real production source. This is the exact line
-        # whose absence caused the incident.
-        from scitex_agent_container._lifecycle import _start
-
-        source = inspect.getsource(_start.agent_start)
-        broker_call = source.split("maybe_broker_in_sif_spawn(", 1)[1].split("):", 1)[0]
-        # Act
-        forwards_force = "force=force" in broker_call
-        # Assert
-        assert forwards_force is True, (
-            "agent_start must forward its own `force` into the in-SIF "
-            "broker; the broker fires BEFORE the local force branch, so "
-            "omitting it downgrades a RESTART into an unforced start that "
-            "no-ops over the live agent and still reports SUCC (2026-07-12)"
-        )
+        assert ("force is unsupported" in refusal, opener.bodies) == (True, [])
 
 
-class TestHostHandlerHonoursForce:
-    """The host must turn the wire field into a REAL ``--force`` argv.
+class TestHostHandlerRefusesForce:
+    """Real HTTP requests carrying force must not spawn any host command."""
 
-    These drive the actual handler over HTTP and read back the argv a
-    real fake ``sac`` binary on ``$PATH`` recorded — no mocks, and no
-    source-text assertions. An earlier draft of this class asserted that
-    ``'inner_argv.append("--force")'`` appeared in the module source;
-    mutating the guard to ``if False:`` left that string in place, so the
-    test stayed GREEN over dead code. A test whose evidence cannot
-    disagree with it is not a test.
-    """
-
-    def test_force_true_appends_force_to_the_inner_argv(
+    def test_force_true_is_refused_before_any_host_command(
         self, isolated_listen_env, env_save_restore, subprocess_shim
     ):
         # Arrange: the post-ack liveness probe is stood down (the shim
@@ -200,15 +150,14 @@ class TestHostHandlerHonoursForce:
         app = create_app(token=_TOKEN)
         # Act
         with TestClient(app) as client:
-            client.post(
+            response = client.post(
                 "/agents",
                 json={"name": "broker-child", "force": True},
                 headers={"authorization": f"Bearer {_TOKEN}"},
             )
         argv = subprocess_shim.argv_for("sac")
-        # Assert: THE regression guard — without this flag the host start
-        # no-ops over the live agent and still reports SUCC + rc=0.
-        assert "--force" in (argv or []), argv
+        # Assert
+        assert response.status_code == 400 and not argv
 
     def test_force_absent_leaves_the_inner_argv_unforced(
         self, isolated_listen_env, env_save_restore, subprocess_shim

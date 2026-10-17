@@ -9,7 +9,7 @@ skeleton through the SAME backend as `sac agents create`. The template
 select is live-scanned from the agents root on every GET (inline
 `minimal`/`full` plus any `_template_*` dir-templates), so the list cannot
 go stale. The GUI never overwrites: an existing spec fails loud (409) and
-the operator re-runs with `sac agents create --force` on the leaf.
+the operator edits that spec directly or chooses another agent name.
 {% endcomment %}
 <div class="agents-app" data-page="create">
   <header class="agents-head">

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import shlex
 import stat
-import tempfile
 
 import pytest
 from click.testing import CliRunner
@@ -313,19 +312,23 @@ def test_ssh_control_options_does_not_partially_create_target_on_eros(
 # ---------------------------------------------------------------------------
 
 
-def test_ssh_control_options_default_dir_starts_with_tempdir(env_save_restore):
+def test_ssh_control_options_default_dir_stays_in_sac_runtime(
+    env_save_restore, tmp_path
+):
     # Arrange
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
     env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.set(
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
+    )
     from scitex_agent_container._state.host_config import ssh_control_options
 
     # Act
     opts = ssh_control_options()
-    control_path = next(o for o in opts if o.startswith("ControlPath="))
-    path = control_path.split("=", 1)[1]
 
-    # Assert
-    assert path.startswith(tempfile.gettempdir())
+    # Assert — long temporary roots can disable multiplexing, but cannot
+    # redirect SAC state into a global temporary directory.
+    assert not opts or f"ControlPath={tmp_path / 'runtime' / 'ssh-cm' / '%C'}" in opts
 
 
 def test_ssh_control_options_default_dir_ends_with_sac_ssh_cm_percent_C(
@@ -338,11 +341,25 @@ def test_ssh_control_options_default_dir_ends_with_sac_ssh_cm_percent_C(
 
     # Act
     opts = ssh_control_options()
-    control_path = next(o for o in opts if o.startswith("ControlPath="))
-    path = control_path.split("=", 1)[1]
 
     # Assert
-    assert path.endswith("/.sac-ssh-cm/%C")
+    assert not opts or any(o.endswith("/ssh-cm/%C") for o in opts)
+
+
+def test_long_default_socket_path_disables_multiplexing_without_other_writes(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    runtime = tmp_path / ("long-runtime-" * 12)
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
+    # Act
+    opts = ssh_control_options()
+    # Assert
+    assert opts == [] and not runtime.exists()
 
 
 # ---------------------------------------------------------------------------

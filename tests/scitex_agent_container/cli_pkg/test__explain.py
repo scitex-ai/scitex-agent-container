@@ -138,10 +138,16 @@ def test_engine_explain_exposes_the_effective_timeout_contract() -> None:
 def test_channel_explain_separates_cards_ingress_from_tools() -> None:
     # Arrange: Cards delivery is a declared rail, but no Cards MCP tool is
     # exposed to the model. These are intentionally independent facts.
+    # The store check shells `scitex-cards health` (subprocess + DB) — out
+    # of scope here; stub the lifecycle module's function (save/restore,
+    # no monkeypatch) and assert the declaration/tool separation.
+    from scitex_agent_container.runtimes import _channel_inbox_dispatcher_lifecycle as inbox
+
     config = AgentConfig(name="worker", harness="hermes", runtime="tui")
 
     # Act
-    rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
+    with _replace_attribute(inbox, "cards_store_check", lambda *a, **k: _ok_check()):
+        rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
 
     # Assert
     assert (
@@ -151,13 +157,22 @@ def test_channel_explain_separates_cards_ingress_from_tools() -> None:
     ) == (True, True, True)
 
 
+def _ok_check():
+    from scitex_dev.status import Check
+
+    return Check.ok("cards_store_ready", "synthetic ready for explain test")
+
+
 def test_channel_explain_reports_cards_tools_independently() -> None:
     # Arrange
+    from scitex_agent_container.runtimes import _channel_inbox_dispatcher_lifecycle as inbox
+
     config = AgentConfig(name="worker", harness="hermes", runtime="tui")
     config.mcp_servers["scitex-cards"] = {"command": "scitex-cards-mcp"}
 
     # Act
-    rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
+    with _replace_attribute(inbox, "cards_store_check", lambda *a, **k: _ok_check()):
+        rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
 
     # Assert
     assert (
