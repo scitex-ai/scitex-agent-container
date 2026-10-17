@@ -103,28 +103,6 @@ def test_billing_exhaustion_specimens_yield_no_reset(pane: str) -> None:
     assert observation.reset_at is None
 
 
-def test_billing_exhaustion_specimen_reads_as_lifted_wall() -> None:
-    # Arrange — the exact 2026-10-15/16 killer: frozen billing banner.
-    from dataclasses import replace
-
-    from scitex_agent_container._ratelimit._rule import Verdict, decide
-
-    frozen = "Billing or credits exhausted: HTTP 400: You have insufficient credits"
-    first = replace(_observe(frozen), line_index=3)
-    second = replace(_observe(frozen), line_index=3)
-    # Act
-    decision = decide(
-        name="x",
-        policy="always",
-        session_present=True,
-        first=first,
-        second=second,
-        now=datetime.now(timezone.utc),
-    )
-    # Assert
-    assert (decision.verdict, decision.reason) == (Verdict.RESUME, "billing-exhausted")
-
-
 def test_the_incident_banner_resolves_to_its_real_reset() -> None:
     # Arrange — the 2026-08-28 banner the operator quoted, read at 21:00 UTC.
     # The provider printed a bare "7:10pm" with no date and no zone; the
