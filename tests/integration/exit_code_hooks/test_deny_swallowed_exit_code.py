@@ -36,7 +36,14 @@ def _run_self_test() -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        # 24 cases x ~4 cold-interpreter spawns (bash + python3 per
+        # case, plus two python3 per hook invocation): under 96-way
+        # xdist load with `nice -n 10` on shared runners this exceeds
+        # 60s without anything being wrong (observed 2026-10-17). The
+        # script performs no I/O waits and cannot hang — each case is
+        # a fixed pipeline over a canned command — so a generous cap
+        # only buys spawn latency, never masks a wedge.
+        timeout=240,
     )
 
 
