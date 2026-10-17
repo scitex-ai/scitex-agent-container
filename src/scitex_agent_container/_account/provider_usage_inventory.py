@@ -187,11 +187,13 @@ def _accept_fetch(rows, completed, index, final, result):
 # expires (loaded runner): a result arriving inside the window still counts.
 # Sized for spawn-context startup on loaded runners (a cold SAC import in a
 # fresh interpreter costs seconds under xdist; observed 2026-10-17: delivery
-# past deadline+2.0s on an org runner). The suite's elapsed bounds (<10s)
-# still hold. collect() hands workers deadline+this-window as their FETCH
-# bound, so the grace drain collects real results instead of rows the
-# workers self-censored to metadata-deadline/unknown at startup.
-_WORKER_GRACE_SECONDS = 5.0
+# past deadline+2.0s on an org runner, and tail startup past 5s on the most
+# thrashed legs). 8s keeps the suite's elapsed bounds (<10s) green: every
+# test asserting elapsed uses budget=1 (0.75s collection deadline), so the
+# worst case is 0.75+8.0=8.75s. collect() hands workers deadline+this-window
+# as their FETCH bound, so the grace drain collects real results instead of
+# rows the workers self-censored to metadata-deadline/unknown at startup.
+_WORKER_GRACE_SECONDS = 8.0
 
 
 def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
@@ -212,7 +214,8 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
     # still enforces both windows — collection stops at `deadline`,
     # late results count only inside the grace drain, stragglers are
     # terminated — so the suite's overall elapsed bounds (<10s) hold:
-    # worst case is still min(4, budget)-0.25 + 5.0s.
+    # worst case is still min(4, budget)-0.25 + 8.0s (8.75s at budget=1,
+    # the only budget the elapsed-bound tests use).
     fetch_deadline = deadline + _WORKER_GRACE_SECONDS
     rows = [_row(target, error="metadata-not-observed") for target in targets]
     pending = list(enumerate(targets))
