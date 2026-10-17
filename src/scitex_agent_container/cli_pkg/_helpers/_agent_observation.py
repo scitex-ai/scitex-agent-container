@@ -263,8 +263,9 @@ def _worker(send, record, snapshot, detail, salt, observer):
 
 # Bounded grace for workers still spinning up when the collection deadline
 # expires (loaded runner): a result arriving inside the window still counts.
-# Kept small so the suite's elapsed bounds (hung <2.0s, inventory <1.5s) hold.
-_WORKER_GRACE_SECONDS = 0.5
+# Sized for spawn-context startup on loaded runners (spawn alone can cost
+# 1s+ under xdist); the suite's elapsed bounds (<12s) still hold.
+_WORKER_GRACE_SECONDS = 2.0
 
 
 def _accept_observation(outputs, rows, index, observation, host, salt):

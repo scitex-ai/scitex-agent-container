@@ -178,8 +178,9 @@ def _accept_fetch(rows, completed, index, final, result):
 
 # Bounded grace for workers still spinning up when the collection deadline
 # expires (loaded runner): a result arriving inside the window still counts.
-# Kept small so the suite's elapsed bounds hold.
-_WORKER_GRACE_SECONDS = 0.5
+# Sized for spawn-context startup on loaded runners (spawn alone can cost
+# 1s+ under xdist); the suite's elapsed bounds (<10s) still hold.
+_WORKER_GRACE_SECONDS = 2.0
 
 
 def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
