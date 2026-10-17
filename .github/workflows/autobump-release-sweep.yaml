@@ -439,16 +439,20 @@ jobs:
             nochecks)
               # Releasing an un-CI'd tree is worse than merging one. Do NOT proceed
               # (unlike auto-merge). Force develop's matrix so a later tick can gate
-              # on real checks, then wait. (Only `tests` is the required, dispatchable
-              # gate; import-smoke lacks workflow_dispatch. This used to name
-              # quality-audit alongside it — that workflow was deleted for
-              # auditing nothing, and it did in fact declare workflow_dispatch,
-              # so the old parenthetical was stale twice over.)
+              # on real checks, then wait. (Only `ci` is the required, dispatchable
+              # gate; it fans out to the matrix, import smoke, audit, and docs
+              # behind one `gh workflow run`. This used to name
+              # quality-audit alongside the old inline matrix — that workflow
+              # was deleted for auditing nothing, and it did in fact declare
+              # workflow_dispatch, so the old parenthetical was stale twice over.
+              # The inline matrix named here before that was deleted with the
+              # ci.yml migration for the same reason: dispatching a deleted
+              # workflow 404s.)
               log "develop head has NO non-advisory checks (likely a github.token merge). Not releasing un-CI'd code."
               if acting; then
-                gh workflow run "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml" --repo "$REPO" --ref develop >/dev/null 2>&1 \
-                  && log "dispatched the pytest matrix on develop head; will gate on it next tick." \
-                  || log "note: could not dispatch the pytest matrix; next tick re-reads."
+                gh workflow run "ci.yml" --repo "$REPO" --ref develop >/dev/null 2>&1 \
+                  && log "dispatched ci on develop head; will gate on it next tick." \
+                  || log "note: could not dispatch ci; next tick re-reads."
               fi
               exit 0 ;;
             green) log "develop head is green (all non-advisory checks passed) — proceeding to v$NEXT." ;;

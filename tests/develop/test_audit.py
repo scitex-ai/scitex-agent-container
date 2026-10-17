@@ -171,6 +171,15 @@ def test_audit_target_is_the_checkout_under_test():
 def test_audit_all_clean(scitex_dev_audit):
     # Arrange — name the tree under test; never let scitex-dev guess one.
     repo_root = _verified_repo_root()
+    # Seed the repo runtime gitignore BEFORE the auditors run: the audit
+    # subprocesses import the package (runtime_path() materialises
+    # runtime/ + seeds on first access) and PS-234 requires the
+    # catch-all gitignore to be present and untracked.
+    runtime_dir = repo_root / ".scitex" / "agent-container" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    policy = runtime_dir / ".gitignore"
+    if not policy.is_file():
+        policy.write_text("*\n")
     # Act — RAISES AssertionError (carrying the offending rule lines) on any
     # error-severity violation. That raise is the real gate; the documented
     # return contract is `-> None`.

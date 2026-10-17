@@ -21,8 +21,27 @@ Before a write-capable `kind: Agent` task starts, SAC:
 4. changes the in-memory runtime workdir to that linked worktree; and
 5. authorizes edit context there immediately before launch.
 
-The linked path and branch are deterministic for the agent identity. Ownership
-is recorded at
+`spec.workdir` is the authored project path. When it names the primary checkout,
+SAC chooses the topic branch automatically from the agent name; there is no
+branch-name field in the spec. The slug lowercases the name, replaces groups of
+non-alphanumeric characters with `-`, strips edge hyphens, and keeps at most 48
+characters. SAC appends the first eight hexadecimal characters of SHA-256 of
+the original name:
+
+- Folder: `<spec.workdir>/.worktrees/sac-<slug>-<name-hash>`.
+- Branch: `feature/sac-<slug>-<name-hash>`.
+
+For `scitex-infrastructure-lead`, these become
+`.worktrees/sac-scitex-infrastructure-lead-68bd473b` and
+`feature/sac-scitex-infrastructure-lead-68bd473b`.
+
+To choose an existing topic branch explicitly, set `spec.workdir` to its linked
+worktree path. The checker must approve that branch, and SAC records ownership
+of a clean explicitly selected worktree. A dirty unowned linked worktree is
+refused. An existing automatically selected target without SAC ownership is
+also refused, even if clean; SAC does not silently adopt it.
+
+Ownership is recorded at
 `~/.scitex/agent-container/runtime/<agent>/worktree-owner.json`, including the
 spec, session/resume, and incarnation identity. A subsequent incarnation of
 the same agent reuses the owned worktree, including unfinished changes, and
@@ -40,7 +59,7 @@ Dry-run and explain execute the same projection checks and render the authored
 workdir, planned resolved workdir, branch, action, and hashes without creating
 the worktree. A dry-run plan is evidence, not reusable permission. Production
 launch repeats validation and obtains edit authorization against the created or
-reused worktree. A forced restart is checked before the old process is stopped;
+reused worktree. A restart is checked before the old process is stopped;
 a supervisor restart repeats the gate.
 
 Any timeout, denial, stale generated projection, invalid hash, identity

@@ -14,8 +14,7 @@ Design constraints:
   (audit-cli §2; the rotate is destructive on the GitHub side).
 * GitHub returns secret names + ``updated_at`` only — never values.
   "Inconsistent" therefore means *slot present but older than ~1 day*
-  or *slot missing entirely*. Operators rotating mid-day can force
-  with ``--force``.
+  or *slot missing entirely*.
 
 No-mocks seams (PA-306): ``_load_scitex_git`` is a real callable that
 returns a backend exposing ``format_age``, ``get_variable``,

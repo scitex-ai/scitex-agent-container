@@ -185,8 +185,7 @@ def static_verdict(
         if resolve_provider(declared.strip()) is None:
             return _no(
                 engine,
-                f"provider={declared.strip()!r} is not a registered provider "
-                "name",
+                f"provider={declared.strip()!r} is not a registered provider name",
                 "use one of the registered providers "
                 f"({', '.join(list_providers())}), write the inline "
                 "{base_url, auth_token_env} form, or append the backend to "
@@ -196,9 +195,7 @@ def static_verdict(
         native = str(declared.get("hermes_provider") or "").strip()
         required = ("auth_token_env",) if native else ("base_url", "auth_token_env")
         missing = [
-            field
-            for field in required
-            if not str(declared.get(field) or "").strip()
+            field for field in required if not str(declared.get(field) or "").strip()
         ]
         if missing:
             hint = (
@@ -291,8 +288,7 @@ def probe_verdict(
             VERDICT_NOT_HONOURABLE,
             f"{host}:{port} REFUSED the connection — the endpoint declared "
             f"by provider.base_url={base_url!r} is not listening",
-            "start the backend that serves that URL, or select a different "
-            "--engine",
+            "start the backend that serves that URL, or select a different --engine",
             probed=True,
         )
     except OSError as exc:

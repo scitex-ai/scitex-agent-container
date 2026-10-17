@@ -217,6 +217,42 @@ the existing start preflight checks that exact stored-account preference and
 the auth bind resolves its snapshot. `account` is rejected on other harness
 entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
 
+### `spec.available_harnesses.hermes.max_turns` and `.goals`
+
+Hermes has separate per-response tool-turn and standing-goal continuation
+limits. Set both explicitly when a long-running agent needs the same budget:
+
+```yaml
+spec:
+  engine: opencode-go-muse-spark-1.3-contributor
+  available_harnesses:
+    hermes:
+      session: {mode: continue, max_age_minutes: null}
+      max_turns: 99999
+      goals:
+        max_turns: 99999
+        judge_engine: opencode-go-muse-spark-1.3-contributor
+  autonomous:
+    enabled: true
+    max_turns: 99999
+```
+
+The two Hermes limits accept positive integers; booleans, strings, null, and
+non-positive limits are rejected. Omitted controls preserve the existing
+Hermes configuration: unlimited per-response turns and its default goal
+budget. SAC's `autonomous.max_turns` separately limits the headless daemon
+loop; it does not set either Hermes limit.
+`goals.max_turns` supplies the default for newly created goals. Existing
+persisted goals retain their own budgets; a profile refresh does not rewrite them.
+
+An explicit `goals.judge_engine` must name the declared selected agent engine.
+SAC renders the pinned Hermes API `auxiliary.goal_judge.provider: main` with
+the selected model, so the goal judge shares the live primary provider and
+credential pool. It cannot silently select a cheaper auxiliary model.
+This configures the judge used by an active `/goal`; it does not create a goal
+or enable background memory/skill review. The generated runtime Hermes
+profile owns these settings and overwrites an authored `to_home/.hermes/config.yaml`.
+
 ### `spec.available_harnesses.hermes.failover`
 
 `accounts` maps engine keys to explicit credential environment-name lists.

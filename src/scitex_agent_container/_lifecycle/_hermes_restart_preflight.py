@@ -49,6 +49,10 @@ def _binding(config):
         config.claude.session,
         deepcopy(config.claude.provider),
         deepcopy(config.engines),
+        # The pool policy is part of the proof identity: a reordered or
+        # replaced failover pool between probe and stop must refuse, not
+        # silently rebind the verified route to different credentials.
+        deepcopy(getattr(config, "hermes_failover", None)),
         # ``hermes_goals`` exists only where the generalized goal spec has
         # landed; older trees pin the judge inline. Absence is a stable
         # binding value either way.

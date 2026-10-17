@@ -359,7 +359,7 @@ def test_cct_mcp_receives_store_identity_without_template_placeholders():
     def replacement(value):
         return {
             "PGUSER": "ywatanabe__hub",
-            "PGPASSFILE": "/home/agent/.sac-pgpass",
+            "PGPASSFILE": "/home/agent/.scitex/agent-container/runtime/pgpass",
             "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
         }
 
@@ -369,7 +369,7 @@ def test_cct_mcp_receives_store_identity_without_template_placeholders():
     # Assert
     assert servers["claude-code-telegrammer"]["env"] == {
         "PGUSER": "ywatanabe__hub",
-        "PGPASSFILE": "/home/agent/.sac-pgpass",
+        "PGPASSFILE": "/home/agent/.scitex/agent-container/runtime/pgpass",
         "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     }
 
@@ -378,7 +378,8 @@ def test_mcp_pg_binding_derives_and_validates_provisioned_project_role(tmp_path)
     # Arrange
     profile_home = tmp_path / "runtime-home"
     profile_home.mkdir()
-    passfile = profile_home / ".sac-pgpass"
+    passfile = profile_home / ".scitex" / "agent-container" / "runtime" / "pgpass"
+    passfile.parent.mkdir(parents=True, exist_ok=True)
     passfile.write_text(
         "*:*:*:operator__scitex-agent-container:secret\n", encoding="utf-8"
     )
@@ -431,7 +432,7 @@ def test_signup_variant_gets_project_role_passfile_and_cards_target():
         profile._bind_mcp_runtime_env(config, servers)
     # Assert
     assert servers["scitex-cards"]["env"] == {
-        "PGPASSFILE": "/home/agent/.sac-pgpass",
+        "PGPASSFILE": "/home/agent/.scitex/agent-container/runtime/pgpass",
         "PGUSER": "operator__scitex-hub",
         "SCITEX_CARDS_AGENT_ID": "scitex-hub-signup",
         "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
@@ -466,6 +467,7 @@ def test_cards_mcp_removes_retired_store_alias():
 def test_mcp_pg_validation_refuses_unprovisioned_variant_role(tmp_path):
     # Arrange
     passfile = tmp_path / ".pgpass"
+    passfile.parent.mkdir(parents=True, exist_ok=True)
     passfile.write_text(
         "*:*:*:operator__scitex-agent-container:secret\n", encoding="utf-8"
     )
@@ -813,6 +815,7 @@ def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(
         }
     )
     passfile = tmp_path / "synthetic.pgpass"
+    passfile.parent.mkdir(parents=True, exist_ok=True)
     passfile.write_text(
         "fixture.invalid:65432:fixture_db:fixture__business:synthetic-password\n",
         encoding="utf-8",

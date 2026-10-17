@@ -45,10 +45,9 @@ def _contains_commit(repo: Path) -> bool:
 
 def cards_cache_repo() -> Path:
     """Return the stable, user-owned upstream cache location."""
-    cache_root = Path(
-        os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-    ).expanduser()
-    return cache_root / "scitex-agent-container" / "upstream" / "scitex-cards.git"
+    from .._runtime_paths import runtime_base_dir
+
+    return runtime_base_dir() / "upstream" / "scitex-cards.git"
 
 
 def resolve_cards_repo() -> Path:

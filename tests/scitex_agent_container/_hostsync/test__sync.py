@@ -374,30 +374,37 @@ def test_unknown_ci_state_blocks_the_fast_forward():
     assert remote.applied is False
 
 
-def test_force_overrides_a_busy_ci_guard():
+def test_force_cannot_override_a_busy_ci_guard():
     # Arrange
     remote = _Remote(
         _probe(head=_OLD, target_sha=_NEW, behind=3),
         _probe(head=_NEW, target_sha=_NEW),
         runners=_BUSY_RUNNERS,
     )
+    refusal = ""
     # Act
-    result = sync_peer("spartan", _peers("spartan"), force=True, runner=remote)
+    try:
+        sync_peer("spartan", _peers("spartan"), force=True, runner=remote)
+    except ValueError as exc:
+        refusal = str(exc)
     # Assert
-    assert result.outcome is Outcome.SYNCED
+    assert "force is unsupported" in refusal
 
 
-def test_force_records_what_it_overrode():
-    # Arrange — an override must never be silent.
+def test_force_is_refused_before_any_remote_io():
+    # Arrange — rejected requests must not touch the remote checkout.
     remote = _Remote(
         _probe(head=_OLD, target_sha=_NEW, behind=3),
         _probe(head=_NEW, target_sha=_NEW),
         runners=_BUSY_RUNNERS,
     )
     # Act
-    result = sync_peer("spartan", _peers("spartan"), force=True, runner=remote)
+    try:
+        sync_peer("spartan", _peers("spartan"), force=True, runner=remote)
+    except ValueError:
+        pass
     # Assert
-    assert any("OVERRODE the CI guard" in note for note in result.notes)
+    assert remote.seen == []
 
 
 # ---------------------------------------------------------------------------

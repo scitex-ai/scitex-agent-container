@@ -45,6 +45,14 @@ def test_base_required_skills_first_entry_is_scitex_todo():
     assert first == "scitex-todo"
 
 
+def test_base_required_skills_carries_scitex_bundle_second():
+    # Arrange — operator order 2026-10-16: sac agents carry sac skills.
+    # Act
+    constant = BASE_REQUIRED_SKILLS
+    # Assert
+    assert constant[1] == "scitex"
+
+
 def test_base_required_skills_has_no_duplicates():
     # Arrange
     constant = BASE_REQUIRED_SKILLS
@@ -93,7 +101,7 @@ def test_apply_dedupes_when_spec_already_lists_a_base_default():
     # Act
     merged = apply_base_required_skills(per_spec)
     # Assert
-    assert merged == ["scitex-todo", "alpha"]
+    assert merged == ["scitex-todo", "scitex", "alpha"]
 
 
 def test_apply_dedupe_keeps_base_default_position_first():
@@ -102,7 +110,7 @@ def test_apply_dedupe_keeps_base_default_position_first():
     # Act
     merged = apply_base_required_skills(per_spec)
     # Assert (base position wins; per-spec duplicate dropped)
-    assert merged == ["scitex-todo", "alpha"]
+    assert merged == ["scitex-todo", "scitex", "alpha"]
 
 
 def test_apply_is_idempotent():

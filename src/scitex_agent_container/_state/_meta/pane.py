@@ -135,6 +135,20 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
         return "limit_reached", ""
     if re.search(r"\(y/n\)|\[y/n\]|\(yes/no\)|\[yes/no\]", lower):
         return "y_n_prompt", tail.strip().splitlines()[-1][:200]
+    # hermes_approval: the Hermes TUI approval box (operator order
+    # 2026-10-16). Fixed phrasing: "approval required" + numbered options
+    # ("1. Allow once") + "quick pick" footer. Distinct from y_n_prompt
+    # (no y/n marker) so it needs its own state — otherwise the
+    # auto-accept daemon never sees Hermes approvals at all.
+    if "approval required" in lower and ("allow once" in lower or "quick pick" in lower):
+        snippet = ""
+        for ln in reversed(tail.strip().splitlines()):
+            if "approval required" in ln.lower():
+                snippet = ln.strip()[:200]
+                break
+        if not snippet:
+            snippet = tail.strip().splitlines()[-1][:200]
+        return "hermes_approval", snippet
     # compose_pending: ❯ followed by non-whitespace on the SAME line.
     # Use `[^\s\n]` (non-newline, non-whitespace) to avoid matching the
     # decorative dashed separator that lives a line below the empty

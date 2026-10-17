@@ -30,9 +30,8 @@ Two templates ship out of the box:
     operator-agnostic). Edit the labels + prompt for the real mission;
     delete blocks you don't need.
 
-The CLI refuses to overwrite an existing ``spec.yaml`` unless ``--force``
-is passed — protects the "60 stale ``*-quality`` specs already pending
-uncommitted" scenario the card calls out.
+The CLI refuses to overwrite an existing ``spec.yaml``. Edit that spec
+explicitly or choose a different agent name.
 
 Named ``create`` (renamed from ``new``, card
 refactor/consolidate-create-into-new-templates): CRUD naming
@@ -257,15 +256,6 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
         "primary agents root (resolver search-chain entry #1)."
     ),
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Overwrite an existing spec.yaml. Off by default so accidental "
-        "re-runs cannot clobber a customised spec."
-    ),
-)
 def create(
     name: str,
     template_name: str,
@@ -273,7 +263,6 @@ def create(
     agent_id: str | None,
     set_pairs: tuple[str, ...],
     base_dir: Path | None,
-    force: bool,
 ) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
@@ -293,6 +282,7 @@ def create(
         sac agents create dev1 --template python_developer --project myproj
         sac agents create r1 --template researcher --project p --set TEAM=x
     """
+    force = False
     if not _is_valid_agent_name(name):
         raise click.UsageError(
             f"Invalid agent name {name!r}. Use lowercase letters, "
@@ -319,6 +309,7 @@ def create(
         force=force,
     )
 
+
 def scaffold_agent(
     name: str,
     *,
@@ -336,12 +327,16 @@ def scaffold_agent(
     its own copy of this logic: one template set, one validation
     chain, one failure shape. Raises :class:`click.UsageError` for an
     unknown template and :class:`click.ClickException` for an
-    existing spec without ``--force`` (callers map these to their own
+    existing spec (callers map these to their own
     loud failure surface). Returns the written ``spec.yaml`` path.
 
     Name-shape validation (dir-as-SSoT chars + reserved slots) stays
     with the CALLERS — both must refuse before anything is written.
     """
+    if force:
+        raise click.ClickException(
+            "force is unsupported; edit an existing spec explicitly"
+        )
     base = base_dir if base_dir is not None else _default_base_dir()
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
@@ -381,10 +376,10 @@ def scaffold_agent(
         system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return agent_dir / "spec.yaml"
 
-    if spec_path.exists() and not force:
+    if spec_path.exists():
         raise click.ClickException(
             f"Refusing to overwrite existing spec at {spec_path}. "
-            "Re-run with --force to replace, or pick a different name."
+            "Choose a different name or edit the existing spec explicitly."
         )
 
     template = _TEMPLATES[kind]

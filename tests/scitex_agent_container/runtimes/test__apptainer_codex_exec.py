@@ -107,11 +107,18 @@ def test_an_operator_set_binary_path_wins(env_save_restore):
 
 def test_the_bundled_binary_is_the_default(env_save_restore):
     # Arrange -- the image venv ships openai-codex-cli-bin; nothing overrides it.
+    # On hosts without the wheel the resolver falls back to bare `codex`.
     env_save_restore.delete(CODEX_BIN_ENV)
+    try:
+        from codex_cli_bin import bundled_codex_path  # noqa: F401
+
+        bundled = True
+    except ImportError:
+        bundled = False
     # Act
     binary = resolve_codex_binary()
     # Assert
-    assert binary.endswith("/codex")
+    assert binary.endswith("/codex") if bundled else binary == "codex"
 
 
 def _settings(tmp_path, document: dict):
