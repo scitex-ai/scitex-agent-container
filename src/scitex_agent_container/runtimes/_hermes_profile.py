@@ -153,6 +153,9 @@ def validate_hermes_tui_profile(
     config: AgentConfig, *, state_dir: Path, launch_argv: Sequence[str]
 ) -> None:
     """Validate the materialized profile against the real finalized argv."""
+    from ._hermes_sac_runtime import validate_sac_runtime
+
+    validate_sac_runtime(config, launch_argv=launch_argv)
     targets = [state_dir / "home"]
     upper = resolve_overlay_upper_home(config)
     if upper is not None:
@@ -307,6 +310,9 @@ def _mcp_servers(
 def _bind_mcp_runtime_env(
     config: AgentConfig, servers: dict[str, dict[str, Any]]
 ) -> None:
+    from ._hermes_sac_runtime import bind_sac_mcp_command
+
+    bind_sac_mcp_command(config, servers)
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
@@ -473,6 +479,8 @@ def _verified_route(config: AgentConfig, home: Path, *, launch_mode: str):
 
 
 def _apply_verified_route(rendered: dict, selection: dict) -> None:
+    authored = rendered.get("model")
+    authored_default = authored.get("default") if isinstance(authored, dict) else None
     for key in (
         "model",
         "providers",
@@ -488,16 +496,26 @@ def _apply_verified_route(rendered: dict, selection: dict) -> None:
         for provider in rendered.get("providers", {}).values():
             provider["key_env"] = ""
             provider.pop("api_key", None)
-        judge = rendered.get("auxiliary", {}).get("goal_judge")
-        if judge:
-            from .._lifecycle._hermes_restart_preflight import same_goal_model
+    judge = rendered.get("auxiliary", {}).get("goal_judge")
+    verified = selection.get("model")
+    verified_default = verified.get("default") if isinstance(verified, dict) else None
+    if (
+        judge
+        and authored_default is not None
+        and verified_default is not None
+        and verified_default != authored_default
+    ):
+        # The verified fallback moved the model: the authored judge must
+        # follow within its lane. An unchanged route keeps the authored
+        # judge (notably the operator-pinned Muse judge on non-Muse lanes).
+        from .._lifecycle._hermes_restart_preflight import same_goal_model
 
-            actual = rendered["model"]["default"]
-            if not same_goal_model(judge.get("model"), actual):
-                raise ValueError(
-                    "Hermes verified fallback changes the authored goal judge model"
-                )
-            judge["model"] = actual
+        actual = rendered["model"]["default"]
+        if not same_goal_model(judge.get("model"), actual):
+            raise ValueError(
+                "Hermes verified fallback changes the authored goal judge model"
+            )
+        judge["model"] = actual
 
 
 def _profile_primary_key(config):
@@ -533,6 +551,8 @@ def materialize_hermes_profile(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
+        max_turns=config.hermes_max_turns,
+        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
@@ -617,6 +637,8 @@ def materialize_hermes_tui_profile(
         plan,
         workdir=str(config.workdir),
         run_budget_seconds=config.hermes_run_budget_seconds,
+        max_turns=config.hermes_max_turns,
+        goals=config.hermes_goals,
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,

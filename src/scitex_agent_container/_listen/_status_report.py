@@ -63,7 +63,7 @@ def render_status_lines(payload: dict) -> list[str]:
     Returns a list of lines (the CLI echoes them). The headline names
     the three distinct states explicitly — UP / WEDGED / DOWN — so the
     operator can tell "bound but not serving" (needs ``restart
-    --force``) from "fully down" (needs ``restart``) at a glance.
+    ``) from "fully down" (needs ``restart``) at a glance.
     """
     serving = bool(payload["running"])
     port_bound = bool(payload["port_bound"])
@@ -94,7 +94,7 @@ def render_status_lines(payload: dict) -> list[str]:
     lines.append(f"  health probe:   {payload['health_url']} -> {probe}")
     if not serving:
         lines.append(
-            "  hint: run `sac listen restart` (add --force if a wedged "
+            "  hint: run `sac listen restart` (inspect the process if a wedged "
             "remnant holds the port)."
         )
     return lines

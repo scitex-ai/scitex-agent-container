@@ -180,7 +180,7 @@ def request_restart(
     drain_timeout_s: float = 0.0,
     base_url: str | None = None,
     bearer: str | None = None,
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
     opener: Callable | None = None,
 ) -> dict:
     """POST a restart request to the host listen server; FAIL LOUD on error.
@@ -196,9 +196,12 @@ def request_restart(
         the container env via :func:`_resolve_caller`.
     fresh
         When True, ask the host to start a NEW Claude session
-        (``start --force --fresh``) instead of a plain resuming restart —
+        (``restart --fresh``) instead of a plain resuming restart —
         the deterministic recovery for an agent wedged on a boot prompt
         whose queued-input buffer returns on every resuming restart.
+    drain_timeout_s
+        Maximum host-side wait for an active turn to finish. The default
+        transport budget includes this wait in addition to the restart budget.
     base_url
         Override ``SAC_LISTEN_BASE_URL``. Tests pass an in-process
         listen URL; production passes ``None``.
@@ -206,8 +209,9 @@ def request_restart(
         Override ``SAC_LISTEN_BEARER``. Tests pass an explicit value or
         ``""`` to force the unauthenticated branch.
     timeout_s
-        Per-request HTTP timeout (seconds). Defaults to 60 — a restart
-        does a stop + settle + start on the host, longer than a spawn.
+        Per-request HTTP timeout (seconds). ``None`` gives the requested drain
+        wait plus 60 seconds for stop, settle, and start. An explicit value
+        overrides that derived budget.
     opener
         Optional ``urllib.request.urlopen``-shaped callable for tests.
 
@@ -237,6 +241,11 @@ def request_restart(
         raise RestartRequestError(
             "drain_timeout_s must be a finite non-negative number"
         )
+    request_timeout_s = (
+        timeout_s
+        if timeout_s is not None
+        else _DEFAULT_TIMEOUT_S + parsed_drain_timeout
+    )
 
     base = _resolve_base_url(base_url)
     tok = _resolve_bearer(bearer)
@@ -262,7 +271,7 @@ def request_restart(
     opener_fn = opener if opener is not None else urlrequest.urlopen
 
     try:
-        with opener_fn(req, timeout=timeout_s) as resp:
+        with opener_fn(req, timeout=request_timeout_s) as resp:
             raw = resp.read()
             status = int(getattr(resp, "status", 200))
     except urlerror.HTTPError as exc:
@@ -329,7 +338,7 @@ def request_restart(
                 base=base,
                 route=f"POST /agents/{name}/restart",
                 exc=exc,
-                timeout_s=timeout_s,
+                timeout_s=request_timeout_s,
                 probe=probe,
                 authed_probe=authed,
             )

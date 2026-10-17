@@ -61,8 +61,8 @@ nothing but `uv` and a Python:
 |---|---|---|
 | `ruff` | `lint.yml` | 12 s |
 | `no-hosted-runners` | `no-hosted-runners-guard-on-self-hosted.yml` | 13 s |
-| `import-smoke` | `import-smoke-on-ubuntu-py3-12.yml` | 47 s |
-| `rtd-sphinx-build` | `rtd-sphinx-build-on-ubuntu-latest.yml` | 51 s |
+| `import-smoke` | `ci.yml` | 47 s |
+| `rtd-sphinx-build` | `ci.yml` | 51 s |
 
 This table had a fifth row, `scitex-dev-quality-audit` /
 `quality-audit-on-ubuntu-latest.yml` (44 s), until that workflow was deleted.

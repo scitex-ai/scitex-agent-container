@@ -259,9 +259,9 @@ jobs:
           fi
           rm -rf "$probe"
 
-      # THE SAME BYTES THE REAL GATE RUNS. Not "an equivalent setup" — the same
-      # script with the same argument shape as
-      # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml, so a green here is a
+      # THE SAME SCRIPT SHAPE THE REAL GATE RUNS. Not "an equivalent setup" —
+      # the same exec-in-sif.sh entrypoint the release gate uses
+      # (pypi-publish-and-github-release-on-tag.yml), so a green here is a
       # statement about the real gate and not about a simplified stand-in.
       - name: Run the real gate script in the CI SIF
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ inputs.python-version || '3.12' }}

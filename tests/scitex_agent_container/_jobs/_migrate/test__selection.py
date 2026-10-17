@@ -50,6 +50,18 @@ def test_a_trailing_comment_is_stripped() -> None:
     assert got == frozenset({"worktree-gc"})
 
 
+def test_commas_in_comments_cannot_select_omitted_jobs():
+    # Arrange
+    body = (
+        "# Omitted: fleet-reconcile, restart-login-expired-agents, unknown-job.\n"
+        "worktree-gc # maintain workspace, fleet-reconcile\n"
+    )
+    # Act
+    # Assert
+    assert _selection.parse_selection(body) == frozenset({"worktree-gc"})
+
+
+
 def test_commas_separate_names_exactly_like_newlines() -> None:
     # Arrange — one grammar for the env form and the file form, so an
     # operator who learns one has learned the other.

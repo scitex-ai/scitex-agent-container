@@ -30,9 +30,22 @@ def _record_argv() -> Iterator[list[list[str]]]:
     """Swap ``_agent.invoke_cli_text`` with a recording fake.
 
     Yields the list of captured argv lists (one per wrapper call). No
-    mocks — the original is saved and restored.
+    mocks — the original is saved and restored. Pins the bare-host CLI
+    path: inside a SIF the wrapper redirects through the host broker,
+    so clear the SIF markers (and any host-authority URL) for the
+    duration, then restore.
     """
+    import os
+
     captured: list[list[str]] = []
+    previous: dict[str, str | None] = {}
+    for name in (
+        "APPTAINER_CONTAINER",
+        "SINGULARITY_CONTAINER",
+        "SAC_LISTEN_BASE_URL",
+        "SCITEX_AGENT_CONTAINER_LISTEN_BASE_URL",
+    ):
+        previous[name] = os.environ.pop(name, None)
 
     def fake_text(argv):
         captured.append(list(argv))
@@ -44,6 +57,9 @@ def _record_argv() -> Iterator[list[list[str]]]:
         yield captured
     finally:
         _agent.invoke_cli_text = saved  # type: ignore[assignment]
+        for name, value in previous.items():
+            if value is not None:
+                os.environ[name] = value
 
 
 def test_start_passes_yes_flag() -> None:

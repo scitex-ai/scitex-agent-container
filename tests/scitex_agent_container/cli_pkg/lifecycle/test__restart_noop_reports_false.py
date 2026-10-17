@@ -131,7 +131,7 @@ class TestNoOpRestartIsReportedAsFailure:
                 "victim", as_json=True, fresh=False
             )
         # Assert
-        assert "--force" in envelope["hint"]
+        assert "sac agents restart victim -y" in envelope["hint"]
 
 
 class TestRealRestartStillReportsSuccess:

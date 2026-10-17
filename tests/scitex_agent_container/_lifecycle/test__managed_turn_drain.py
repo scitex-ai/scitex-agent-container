@@ -64,13 +64,13 @@ def _hermes_spec(tmp_path: Path) -> Path:
             "  harness: hermes\n"
             "  host: ${HOSTNAME}\n"
             f"  workdir: {tmp_path}\n"
-            "  available_harnesses:\n"
-            "    hermes:\n"
-            "      session:\n"
-            "        mode: continue\n"
-            "        max_age_minutes: null\n"
-            "      channels:\n"
-            "        - server:sac\n"
+            "  available_engines:\n"
+            "    test-engine:\n"
+            "      model: test-model\n"
+            "      provider:\n"
+            "        base_url: http://synthetic.invalid/v1\n"
+            "        auth_token_env: SAC_TEST_START_ENGINE_KEY\n"
+            "  engine: test-engine\n"
         )
     )
     return path
@@ -171,7 +171,7 @@ def test_unobservable_native_session_fails_closed():
     run = action
     # Assert
     with pytest.raises(
-        ManagedTurnDrainRefusal, match=r"activity is unavailable.*--force"
+        ManagedTurnDrainRefusal, match=r"activity is unavailable.*tmux detach"
     ):
         run()
 
@@ -237,10 +237,45 @@ def test_remote_lifecycle_argv_preserves_explicit_drain_policy():
     assert observed == (expected_stop, expected_restart)
 
 
-def test_remote_force_stop_stays_explicit_and_visible_in_peer_argv():
+def test_remote_force_stop_is_refused():
     # Arrange
-    expected = "--force"
     # Act
-    final_arg = remote_stop_argv("hub", force=True)[-1]
     # Assert
-    assert final_arg == expected
+    with pytest.raises(ValueError, match="stop cannot bypass teardown checks"):
+        remote_stop_argv("hub", force=True)
+
+
+@pytest.mark.parametrize("session_override", [None, "fresh"])
+def test_restart_preserves_active_turn_guard(tmp_path, session_override, env_save_restore):
+    # Arrange
+    spec = _hermes_spec(tmp_path)
+    # Admin path: no SAC_NAME, so the spawn gate takes the admin branch
+    # and skips the lineage Postgres write (this host has no DB for it).
+    env_save_restore.delete("SAC_NAME")
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_NAME")
+    # The declared test engine's key is synthetic and exported, so the
+    # pre-stop static engine check passes on any host; the turn-guard
+    # under test is unrelated to gateway credentials.
+    env_save_restore.set("SAC_TEST_START_ENGINE_KEY", "sk-test-key")
+    runtime = HermesTuiSessionRuntime(multiplexer=_LiveMux())
+    runtime.stop = lambda _config: (_ for _ in ()).throw(
+        AssertionError("teardown reached after active-turn refusal")
+    )
+    from scitex_agent_container._lifecycle import _stop as stop_module
+
+    saved = stop_module.resolve_local_stop_instance
+    stop_module.resolve_local_stop_instance = lambda _config, _runtime: None
+    # Act
+    try:
+        # Assert — the real stop runs; only its database lookup is isolated.
+        with pytest.raises(ManagedTurnDrainRefusal, match="is 'working'"):
+            lc.agent_restart(
+                "hub",
+                registry=_Registry(spec),
+                runtime_factory=lambda _config: runtime,
+                successor_auth_check=lambda _path: None,
+                managed_turn_probe=lambda _config: _activity("working"),
+                session_override=session_override,
+            )
+    finally:
+        stop_module.resolve_local_stop_instance = saved

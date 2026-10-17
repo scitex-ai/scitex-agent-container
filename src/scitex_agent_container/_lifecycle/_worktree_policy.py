@@ -13,6 +13,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -32,12 +33,16 @@ __all__ = [
     "worktree_policy_artifact",
 ]
 
+PolicyCLI = Path | str | tuple[str, ...]
 # Legacy external-CLI location, kept as an explicit opt-in for operators who
 # maintain their own policy executable. The default path is the in-process
 # engine; nothing resolves this constant unless a caller passes it as
 # ``cli_path``.
 DEFAULT_WORKTREE_POLICY_CLI = (
-    Path.home() / ".dotfiles" / "src" / ".bin" / "scitex-worktree-policy"
+    sys.executable,
+    str(
+        Path(__file__).resolve().parent.parent / "_worktree_policy_cli" / "__main__.py"
+    ),
 )
 _SHA256_LENGTH = 64
 _OWNER_FILE = "worktree-owner.json"
@@ -76,10 +81,11 @@ def _diagnostic(stderr: str) -> str:
     return stderr.strip() or "no diagnostic on stderr"
 
 
-def _invoke(cli: Path, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+def _invoke(cli: PolicyCLI, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+    command = list(cli) if isinstance(cli, tuple) else [str(Path(cli).expanduser())]
     try:
         result = subprocess.run(
-            [str(cli), *args],
+            [*command, *args],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

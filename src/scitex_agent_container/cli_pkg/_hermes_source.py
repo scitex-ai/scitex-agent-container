@@ -9,6 +9,8 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+from .._runtime_paths import runtime_base_dir
+
 # SciTeX-org Hermes fork (operator, 2026-09-29): bake the fleet's own
 # fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
 # ship in the hermes SIF. Always export this immutable commit; the branch
@@ -49,11 +51,8 @@ def _contains_commit(repo: Path) -> bool:
 
 
 def hermes_cache_repo() -> Path:
-    """Return the stable, user-owned upstream cache location."""
-    cache_root = Path(
-        os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-    ).expanduser()
-    return cache_root / "scitex-agent-container" / "upstream" / "hermes-agent.git"
+    """Return the upstream cache inside SAC's runtime namespace."""
+    return runtime_base_dir() / "upstream" / "hermes-agent.git"
 
 
 def resolve_hermes_repo() -> Path:

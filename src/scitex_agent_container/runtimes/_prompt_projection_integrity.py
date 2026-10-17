@@ -12,7 +12,10 @@ from ..config import AgentConfig
 from ._to_home_resolve import materialization_layer_dirs
 
 SCHEMA = "scitex-agent-container/prompt-projections/v1"
-MANIFEST_RELATIVE_PATH = Path(".sac") / "prompt-projections.json"
+MANIFEST_RELATIVE_PATH = (
+    Path(".scitex") / "agent-container" / "runtime" / "prompt-projections.json"
+)
+_LEGACY_MANIFEST_RELATIVE_PATH = Path(".sac") / "prompt-projections.json"
 HERMES_INSTRUCTION_RELATIVE_PATH = Path("AGENTS.md")
 _INSTRUCTION_NAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _PROMPT_DIRECTORIES = frozenset({"commands", "skills"})
@@ -192,6 +195,12 @@ def verify_prompt_projection_manifest(
     """Verify source, effective startup prompt, and runtime projection hashes."""
     home_path = Path(home)
     manifest = home_path / MANIFEST_RELATIVE_PATH
+    # Existing capsules can be inspected during an upgrade. New assembly only
+    # writes the canonical path above; no new state is created in ~/.sac.
+    if not manifest.exists() and not manifest.is_symlink():
+        legacy = home_path / _LEGACY_MANIFEST_RELATIVE_PATH
+        if legacy.is_file():
+            manifest = legacy
     if not manifest.is_file():
         raise PromptProjectionDriftError(
             f"prompt projection manifest is missing for agent {config.name!r}: "

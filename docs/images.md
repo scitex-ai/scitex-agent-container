@@ -155,9 +155,9 @@ artifact built on one host may never have been distributed to another.
 Audit and migrate an existing spec tree before deploying this schema:
 
 ```bash
-sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents
-sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents --apply
-sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents --check
+sac agents migrate-images --root ~/.scitex/agent-container/agents
+sac agents migrate-images --root ~/.scitex/agent-container/agents --apply
+sac agents migrate-images --root ~/.scitex/agent-container/agents --check
 ```
 
 Dry-run is the default. `--apply` writes each changed spec atomically and
