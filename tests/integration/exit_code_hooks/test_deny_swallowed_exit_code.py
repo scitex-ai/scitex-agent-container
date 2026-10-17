@@ -53,11 +53,13 @@ def _run_hook(command: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_self_test_suite_is_green() -> None:
-    # Arrange + Act
+    # Arrange — the hook binary plus its canned contract cases.
+    # Act
     result = _run_self_test()
-    # Assert
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fail=0" in result.stdout
+    # Assert — exit zero AND zero recorded failures, one fact.
+    assert (result.returncode, "fail=0" in result.stdout) == (0, True), (
+        result.stdout + result.stderr
+    )
 
 
 def test_refuses_bare_pipeline() -> None:
@@ -65,9 +67,8 @@ def test_refuses_bare_pipeline() -> None:
     command = "pytest tests/ -q | tail -5"
     # Act
     result = _run_hook(command)
-    # Assert
-    assert result.returncode == 2
-    assert "pipefail" in result.stderr
+    # Assert — refused with exit 2 that names pipefail, one fact.
+    assert (result.returncode, "pipefail" in result.stderr) == (2, True)
 
 
 def test_refuses_or_true_swallow() -> None:
@@ -75,9 +76,8 @@ def test_refuses_or_true_swallow() -> None:
     command = "grep foo file || true"
     # Act
     result = _run_hook(command)
-    # Assert
-    assert result.returncode == 2
-    assert "|| true" in result.stderr
+    # Assert — refused with exit 2 that names the swallow, one fact.
+    assert (result.returncode, "|| true" in result.stderr) == (2, True)
 
 
 def test_refuses_trailing_semicolon_true() -> None:
