@@ -400,7 +400,15 @@ def _get(port: int, path: str) -> tuple[int, dict]:
 
 
 def _wait_exchange(port: int, exchange_id: str) -> dict:
-    for _ in range(100):
+    # 2000 iterations, not 100. Measured 2026-10-16 on the org CI runner:
+    # with 32 xdist workers churning, the background visibility retry had
+    # completed 2 of 3 native calls when the old ~100 ms budget expired, so
+    # test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit
+    # read a still-102 exchange (same commit passed the 3.11/3.13 legs —
+    # scheduling, not a defect). The loop still returns the moment the
+    # exchange leaves 202, so a healthy run costs nothing extra; only a
+    # genuinely stuck exchange now waits ~2 s instead of ~0.1 s per probe.
+    for _ in range(2000):
         _status, body = _get(port, f"/v1/exchanges/{exchange_id}")
         if body["status_code"]["code"] != 202:
             return body
@@ -2134,18 +2142,35 @@ def test_extract_turn_text_rejects_an_empty_envelope() -> None:
     assert text is None
 
 
-def test_tui_endpoint_gone_fires_only_on_connection_class_errno() -> None:
+def test_tui_endpoint_gone_fires_on_connection_errno() -> None:
     """A wedged-live TUI must never be restarted; only a gone endpoint kicks."""
     # Arrange
     from scitex_dev.status import StatusCode
 
     gone = StatusCode(kind="errno", code="ECONNREFUSED", message="refused")
-    visibility = StatusCode(kind="http", code=502, message="delivery failed")
     # Act
     fires = bridge._tui_endpoint_gone(gone)
-    silent = bridge._tui_endpoint_gone(visibility)
-    missing = bridge._tui_endpoint_gone(None)
     # Assert
     assert fires is True
+
+
+def test_tui_endpoint_gone_ignores_a_visibility_failure() -> None:
+    """An HTTP delivery failure is a visibility problem, not a gone endpoint."""
+    # Arrange
+    from scitex_dev.status import StatusCode
+
+    visibility = StatusCode(kind="http", code=502, message="delivery failed")
+    # Act
+    silent = bridge._tui_endpoint_gone(visibility)
+    # Assert
     assert silent is False
-    assert missing is False
+
+
+def test_tui_endpoint_gone_ignores_a_missing_status() -> None:
+    """No status at all must never read as a gone endpoint."""
+    # Arrange
+    missing = None
+    # Act
+    silent = bridge._tui_endpoint_gone(missing)
+    # Assert
+    assert silent is False

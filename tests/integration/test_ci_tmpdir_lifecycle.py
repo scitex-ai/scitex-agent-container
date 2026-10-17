@@ -39,8 +39,10 @@ _CLEAN = _CI / "clean-tmpdir.sh"
 _PREPARE_BARE = _CI / "prepare-bare-scratch.sh"
 _EXEC = _CI / "exec-in-sif.sh"
 _WORKFLOWS = _REPO / ".github" / "workflows"
-_DOCS_WORKFLOW = _WORKFLOWS / "rtd-sphinx-build-on-ubuntu-latest.yml"
-_IMPORT_WORKFLOW = _WORKFLOWS / "import-smoke-on-ubuntu-py3-12.yml"
+_DOCS_WORKFLOW = _WORKFLOWS / "ci.yml"
+_DOCS_JOB = "rtd-sphinx-build"
+_IMPORT_WORKFLOW = _WORKFLOWS / "ci.yml"
+_IMPORT_JOB = "import-smoke"
 
 # The run identity the sandbox pretends to be running under.
 _RUN_ID = "77770001"
@@ -875,21 +877,21 @@ def test_every_cleanup_step_is_guarded_by_always(wiring):
     assert not unguarded, f"cleanup steps not guarded by `if: always()`: {unguarded}"
 
 
-def _docs_steps() -> list[dict]:
+def _docs_steps() -> dict:
     doc = yaml.safe_load(_DOCS_WORKFLOW.read_text(encoding="utf-8"))
-    return doc["jobs"]["sphinx"]
+    return doc["jobs"][_DOCS_JOB]
 
 
 def test_docs_job_uses_the_central_sphinx_workflow():
     # Arrange
     job = _docs_steps()
     # Act
-    actual = (job["uses"], job["with"]["docs_dir"], job["with"]["bundle_dir"])
+    actual = (job["uses"], job["with"]["runs_on"])
     # Assert
     assert actual == (
-        "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@main",
-        "docs/sphinx",
-        "src/scitex_agent_container/_sphinx_html",
+        "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml"
+        "@8c646081e9f1352077d3d8674052cce7ec75a1b7",
+        '${{ vars.CI_RUNS_ON || \'["ubuntu-latest"]\' }}',
     )
 
 
@@ -916,20 +918,21 @@ def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
     )
 
 
-def _import_steps() -> list[dict]:
+def _import_steps() -> dict:
     doc = yaml.safe_load(_IMPORT_WORKFLOW.read_text(encoding="utf-8"))
-    return doc["jobs"]["install-check"]
+    return doc["jobs"][_IMPORT_JOB]
 
 
 def test_import_job_uses_the_central_import_workflow():
     # Arrange
     job = _import_steps()
     # Act
-    actual = (job["uses"], job["with"]["console_script"])
+    actual = (job["uses"], job["with"]["runs_on"])
     # Assert
     assert actual == (
-        "scitex-ai/.github/.github/workflows/import-smoke.yml@main",
-        "sac",
+        "scitex-ai/.github/.github/workflows/import-smoke.yml"
+        "@8c646081e9f1352077d3d8674052cce7ec75a1b7",
+        '${{ vars.CI_RUNS_ON || \'["ubuntu-latest"]\' }}',
     )
 
 

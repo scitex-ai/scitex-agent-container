@@ -100,9 +100,23 @@ def test_classify_detects_hermes_approval_box():
         "up/down select · Enter confirm · 1-2 quick pick"
     )
     # Act
-    state, snippet = _classify_pane_state(pane)
+    state, _snippet = _classify_pane_state(pane)
     # Assert
     assert state == "hermes_approval"
+
+
+def test_classify_hermes_approval_snippet_keeps_anchor_phrase():
+    # Arrange — the same Hermes TUI approval box; the snippet must carry
+    # the anchor phrase a human greps for.
+    pane = (
+        "approval required · Write to protected agent-instruction file(s): AGENTS.md.\n"
+        " 1. Allow once\n"
+        " 2. Deny\n"
+        "up/down select · Enter confirm · 1-2 quick pick"
+    )
+    # Act
+    _state, snippet = _classify_pane_state(pane)
+    # Assert
     assert "approval required" in snippet
 
 
