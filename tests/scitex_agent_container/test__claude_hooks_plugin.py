@@ -68,6 +68,24 @@ def test_declared_process_wait_script_is_executable():
     assert script.stat().st_mode & 0o111
 
 
+def test_declared_exit_code_script_resolves_to_a_real_file():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SWALLOWED_EXIT_CODE
+    # Assert
+    assert script.is_file()
+
+
+def test_declared_exit_code_script_is_executable():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SWALLOWED_EXIT_CODE
+    # Assert
+    assert script.stat().st_mode & 0o111
+
+
 def test_bundle_dir_matches_declared_relative_path():
     # Arrange
     package_root = Path(plugin.__file__).resolve().parent
@@ -139,6 +157,20 @@ def test_process_wait_rule_denies_on_bash_pre_tool_use():
         r
         for r in plugin.provide_hooks()
         if r.id == "sac.no-self-matching-pgrep-wait"
+    ]
+    # Act
+    shape = (rule.event, rule.severity, rule.matches)
+    # Assert
+    assert shape == ("pre-tool-use", "deny", ("Bash",))
+
+
+@_needs_contract
+def test_exit_code_rule_denies_on_bash_pre_tool_use():
+    # Arrange
+    (rule,) = [
+        r
+        for r in plugin.provide_hooks()
+        if r.id == "sac.no-swallowed-exit-code"
     ]
     # Act
     shape = (rule.event, rule.severity, rule.matches)
