@@ -195,9 +195,16 @@ def test_ssh_turn_receipt_is_polled_over_the_same_transport(ssh_http_shim) -> No
     ssh_http_shim.install()
     with _exchange_server(results=[_result(200, "accepted")]) as (local_url, _paths):
         port = local_url.split(":", 2)[2].split("/", 1)[0]
-        # Act
+        # Act — budget covers TWO cold-interpreter shim spawns (POST +
+        # GET, each a fresh `sys.executable` + httpx import): under
+        # xdist load on a shared runner the POST alone can consume
+        # several seconds, starving the poll phase of a tight budget
+        # and raising PeerTimeoutPending "after 0s" without ever
+        # polling. (Zero-budget immediate-raise stays pinned by
+        # test_zero_poll_budget_preserves_initial_pending_receipt —
+        # this is test budget, not product semantics.)
         response = post_turn_to_url(
-            f"ssh://compute-03:{port}/v1/turn", "hello", timeout_s=5
+            f"ssh://compute-03:{port}/v1/turn", "hello", timeout_s=30
         )
 
     calls = ssh_http_shim.invocations()
@@ -293,8 +300,13 @@ def test_nonfinal_timeout_preserves_exchange_and_says_not_to_resend() -> None:
         url,
         _paths,
     ):
-        # Act
-        error = _capture_error(url, timeout_s=0.03)
+        # Act — 2s, not 30ms: the single budget covers the POST first,
+        # and on a loaded runner even a loopback POST can exceed tens
+        # of milliseconds (then the POST itself raises plain PeerError
+        # instead of reaching the poll). The exchange server answers
+        # 102 forever, so the POLL still exhausts its remainder and
+        # raises PeerTimeoutPending with the no-resend hint.
+        error = _capture_error(url, timeout_s=2)
     # Assert
     assert (
         isinstance(error, PeerTimeoutPending),
