@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,9 +26,11 @@ def _exchange_server(
     receipt_code: int = 202,
     receipt_body: dict | None = None,
     results: list[dict] | None = None,
+    fail_first_gets: int = 0,
 ) -> Iterator[tuple[str, list[str]]]:
     paths: list[str] = []
     bodies = list(results or [])
+    get_count = 0
     receipt = receipt_body or {
         "exchange_id": EXCHANGE_ID,
         "receipt": {"state": "pending", "final": False, "delivery_mode": "steer"},
@@ -54,7 +57,19 @@ def _exchange_server(
             self._write(receipt_code, receipt)
 
         def do_GET(self) -> None:  # noqa: N802
+            nonlocal get_count
             paths.append(self.path)
+            get_count += 1
+            if get_count <= fail_first_gets:
+                # Transport-level stall, not an answered error: drop the
+                # connection so the client's probe fails transiently
+                # (like a descheduled server thread under load).
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                self.connection.close()
+                return
             result = bodies.pop(0) if len(bodies) > 1 else bodies[0]
             self._write(200, result)
 
@@ -188,6 +203,22 @@ def test_nonfinal_exchange_is_polled_until_final() -> None:
         True,
         2,
     )
+
+
+def test_stalled_probe_is_retried_until_final() -> None:
+    # Arrange — the first exchange poll dies at the transport layer
+    # (dropped connection, as from a descheduled server thread under
+    # load); the retry answers final.
+    with _exchange_server(
+        results=[_result(200, "accepted")], fail_first_gets=1
+    ) as (url, paths):
+        # Act
+        response = post_turn_to_url(url, "hello", timeout_s=10)
+    # Assert — delivery confirmed after the retry, both polls attempted.
+    assert (
+        "Turn accepted" in response,
+        paths.count(f"/v1/exchanges/{EXCHANGE_ID}"),
+    ) == (True, 2)
 
 
 def test_ssh_turn_receipt_is_polled_over_the_same_transport(ssh_http_shim) -> None:
