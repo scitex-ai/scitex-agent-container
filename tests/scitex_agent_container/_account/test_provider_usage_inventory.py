@@ -42,6 +42,13 @@ def _seed_known_cache(path):
     path.write_text(json.dumps(_fixed_snapshot()))
 
 
+# Lands just past the 0.75s collection deadline but inside the 5.0s grace
+# window: fails without grace, passes with it.
+def slow_fetch(target, deadline):
+    time.sleep(0.7)
+    return known_fetch(target, deadline)
+
+
 def _new_owned_pids(before, timeout=5.0):
     """Poll for owned-worker exit; immediate reads flake under xdist load."""
     deadline = time.monotonic() + timeout
@@ -361,3 +368,14 @@ def test_blocking_cache_write_leaves_no_owned_child(tmp_path):
     new_pids = _new_owned_pids(before)
     # Assert
     assert new_pids == set()
+
+
+def test_slow_starting_fetch_accepted_within_grace(tmp_path):
+    # Arrange — a fetch worker that delivers just past the collection
+    # deadline on a loaded runner must still count, not read as unknown.
+    account = targets()[1]
+
+    # Act
+    rows = collect([account], home=tmp_path, budget=1, fetcher=slow_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "known"

@@ -896,3 +896,27 @@ def test_declared_hermes_pool_does_not_claim_primary_alias_is_active(tmp_path):
     # Assert
     with pytest.raises(ValueError, match="active-pool-selection-unavailable"):
         selected_account(snapshot, tmp_path, {alias: "primary-key"}, b"salt")
+
+
+def _slow_starter_observer(record, snapshot, detail, salt):
+    # Sleep lands just past the 1.1s collection deadline but inside the 5.0s
+    # grace window (with spawn overhead): fails without grace, passes with it.
+    if record["name"] == "slow-starter":
+        time.sleep(1.05)
+    return observe_instance(record, snapshot, detail, salt)
+
+
+def test_slow_starting_worker_result_accepted_within_grace(child):
+    # Arrange — a worker that starts slowly (loaded runner) but delivers a
+    # genuine observation just past the collection deadline.
+    starter = _record(child.pid, "slow-starter")
+    # Act
+    rows = enrich_rows(
+        [{"name": "slow-starter"}],
+        [starter],
+        "owned-host",
+        budget=1.3,
+        observer=_slow_starter_observer,
+    )
+    # Assert
+    assert rows[0]["observation"]["process"] == "alive"
