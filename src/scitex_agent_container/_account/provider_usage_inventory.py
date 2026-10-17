@@ -109,6 +109,13 @@ def _worker(send, target, deadline, fetcher, path, passive, refresh, observed, c
         send.send((False, row))
         needs_fetch = not passive and (refresh or cached is None or cached["usage_state"] != "known")
         if needs_fetch:
+            # NOTE: `deadline` here is the FETCH bound handed by
+            # collect(), already extended by the grace window (see
+            # below). A worker whose spawn startup outlasted the
+            # parent's collection deadline must still attempt its
+            # fetch — the parent enforces the windows by terminating
+            # stragglers, not by workers self-censoring to
+            # metadata-deadline/unknown before doing any work.
             if time.monotonic() >= deadline:
                 row["error"] = "metadata-deadline"
             else:
@@ -181,7 +188,9 @@ def _accept_fetch(rows, completed, index, final, result):
 # Sized for spawn-context startup on loaded runners (a cold SAC import in a
 # fresh interpreter costs seconds under xdist; observed 2026-10-17: delivery
 # past deadline+2.0s on an org runner). The suite's elapsed bounds (<10s)
-# still hold.
+# still hold. collect() hands workers deadline+this-window as their FETCH
+# bound, so the grace drain collects real results instead of rows the
+# workers self-censored to metadata-deadline/unknown at startup.
 _WORKER_GRACE_SECONDS = 5.0
 
 
@@ -192,6 +201,19 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
     observed = now or datetime.now(timezone.utc)
     # Reserve bounded worker cleanup inside the requested overall budget.
     deadline = time.monotonic() + max(0, min(4.0, budget) - 0.25)
+    # Workers pay spawn startup (cold-interpreter import under xdist)
+    # BEFORE executing a line of fetch: a worker that starts just past
+    # `deadline` on a loaded runner would otherwise self-censor to
+    # metadata-deadline/unknown without ever calling its fetcher, and
+    # no grace window could recover the row (proven by probe: an
+    # already-expired worker deadline yields unknown/metadata-deadline
+    # with zero fetcher calls). Hand workers the deadline EXTENDED by
+    # the grace window, so a slow starter still fetches. The parent
+    # still enforces both windows — collection stops at `deadline`,
+    # late results count only inside the grace drain, stragglers are
+    # terminated — so the suite's overall elapsed bounds (<10s) hold:
+    # worst case is still min(4, budget)-0.25 + 5.0s.
+    fetch_deadline = deadline + _WORKER_GRACE_SECONDS
     rows = [_row(target, error="metadata-not-observed") for target in targets]
     pending = list(enumerate(targets))
     if not pending:
@@ -207,7 +229,7 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                 index, target = pending.pop(0)
                 receive, send = context.Pipe(duplex=False)
                 process = context.Process(target=_worker, args=(
-                    send, target, deadline, fetcher, _cache_path(root, target),
+                    send, target, fetch_deadline, fetcher, _cache_path(root, target),
                     passive, refresh, observed, cache_writer,
                 ), daemon=True)
                 try:
