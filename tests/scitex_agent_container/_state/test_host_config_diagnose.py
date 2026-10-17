@@ -35,6 +35,29 @@ peers:
 _CONTAINER_HOME = "/home/agent"
 
 
+@pytest.fixture(autouse=True)
+def _empty_homes_root(tmp_path):
+    """Pin the shadowing scan to an empty tmp tree.
+
+    ``find_shadowing_configs`` scans the REAL ``/home`` whenever the
+    resolved config sits under it — which is exactly where pytest's
+    ``tmp_path`` lands on runners whose TMPDIR is under ``/home``. The
+    runner's own config then leaks an ANOTHER-home warning into tests
+    that assert warning-free diagnoses. The positive shadowing behaviour
+    stays covered by ``test_host_config_shadow.py`` (same save/restore
+    shape, pointed at a populated tmp homes tree).
+    """
+    from scitex_agent_container._state import host_config_diagnose as diag
+
+    homes = tmp_path / "homes"
+    homes.mkdir(exist_ok=True)
+    saved, diag.HOMES_ROOT = diag.HOMES_ROOT, homes
+    try:
+        yield
+    finally:
+        diag.HOMES_ROOT = saved
+
+
 def _set_env(name: str, value: str | None):
     """Set/clear an env var, returning the previous value for restoration."""
     prev = os.environ.get(name)
