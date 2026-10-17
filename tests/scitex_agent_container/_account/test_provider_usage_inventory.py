@@ -16,6 +16,7 @@ from scitex_agent_container._account.provider_usage_inventory import (
 from scitex_agent_container._account.provider_usage_projection import project
 from tests.scitex_agent_container.spawn_probes import (
     blocked_fifo_writer,
+    deadline_probe_fetch,
     known_fetch,
     mixed_fetch,
     parallel_fetch,
@@ -379,3 +380,21 @@ def test_slow_starting_fetch_accepted_within_grace(tmp_path):
     rows = collect([account], home=tmp_path, budget=1, fetcher=slow_fetch)
     # Assert
     assert rows[0]["usage_state"] == "known"
+
+
+def test_slow_starting_worker_receives_grace_extended_fetch_bound(tmp_path):
+    # Arrange — the fetch bound handed to workers must cover the
+    # collection deadline PLUS the grace window: with budget=4 the
+    # collection deadline leaves at most 3.75s remaining at fetch time,
+    # so a remaining bound above that proves the worker got the
+    # extended fetch deadline (pins the grace-window wiring: without
+    # it, a worker starting past the collection deadline self-censors
+    # to metadata-deadline/unknown without ever fetching).
+    witnesses = tmp_path / "witnesses"
+    witnesses.mkdir()
+    account = UsageTarget("opencode-go", "OPENCODE_GO_API_KEY_1", ["OPENCODE_GO_API_KEY_1"], secret="synthetic", auth_path=witnesses)
+    # Act
+    rows = collect([account], home=tmp_path, budget=4.0, fetcher=deadline_probe_fetch)
+    remaining = float((witnesses / "OPENCODE_GO_API_KEY_1.deadline").read_text())
+    # Assert
+    assert (rows[0]["usage_state"], remaining > 3.75) == ("known", True)

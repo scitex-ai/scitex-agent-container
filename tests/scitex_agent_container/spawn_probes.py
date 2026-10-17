@@ -67,6 +67,18 @@ def parallel_fetch(target, deadline):
     return known_fetch(target, deadline)
 
 
+def deadline_probe_fetch(target, deadline):
+    """Record the fetch bound handed to the worker, then deliver.
+
+    ``target.auth_path`` is a scratch directory (same shape as
+    :func:`parallel_fetch`); the remaining fetch budget at fetch time
+    lands in ``<name>.deadline`` for the collection test to assert.
+    """
+    directory = target.auth_path
+    (directory / (target.name + ".deadline")).write_text(str(deadline - time.monotonic()))
+    return known_fetch(target, deadline)
+
+
 def immediate_observer(record, snapshot, detail, salt):
     return observe_instance(record, snapshot, detail, salt)
 
