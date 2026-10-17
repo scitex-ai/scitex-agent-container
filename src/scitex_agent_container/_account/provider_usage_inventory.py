@@ -327,8 +327,29 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                     try:
                         final, result = receive.recv()
                     except (EOFError, OSError):
+                        logger.warning(
+                            "account-usage worker for %s pipe broke during "
+                            "grace (exitcode=%r)", _target.name,
+                            process.exitcode,
+                        )
+                        receive.close()
+                        process.join(timeout=0.02)
+                        if process.is_alive():
+                            process.terminate()
+                            process.join(timeout=0.02)
+                        del active[index]
                         continue
                     _accept_fetch(rows, completed, index, final, result)
+                    # Retire the worker only on its FINAL message. The
+                    # first message is the intermediate cache-state row
+                    # (usage_state unknown on a cache miss); closing the
+                    # pipe here would discard the fetch result arriving
+                    # just behind it — the exact slow-starter case the
+                    # grace window exists for (observed 2026-10-17:
+                    # deterministic unknown whenever the worker's first
+                    # message landed past the collection deadline).
+                    if not final:
+                        continue
                     receive.close()
                     process.join(timeout=0.02)
                     if process.is_alive():
