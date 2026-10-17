@@ -327,22 +327,30 @@ _HELP_IMPORT_CLOSURE = frozenset((
 ))
 _CLOSURE_PROBE = """
 import json, sys
+output_path = sys.argv[1]
 sys.argv = ["sac", "--help"]
 try:
     import _scitex_agent_container_bootstrap as entry
     entry.cli_entry_point()
 except SystemExit:
     pass
-sys.stderr.write(json.dumps(sorted(sys.modules)))
+with open(output_path, "w") as fh:
+    fh.write(json.dumps(sorted(sys.modules)))
 """
 
 
-def _help_import_closure() -> set[str]:
+def _help_import_closure(tmp_path: Path) -> set[str]:
     """Run the REAL ``sac --help`` entry and return its sac import closure.
 
-    ``--help`` text goes to stdout; the module list to stderr. A
-    non-zero exit (a broken entry) fails loudly here rather than
-    producing an empty closure that would pass the comparison below.
+    ``--help`` text goes to stdout; the module list is written to a
+    FILE, not stderr: CI run 38997604525 (py3.11 leg) showed the probe
+    exiting 0 with an unparsable stderr (``json.loads`` failing at char
+    0 while the rc==0 assert passed), so stderr is not a trustworthy
+    exfil channel here — interpreter noise, a swapped/redirected
+    stream, or swallowed stderr all produce exactly that signature. A
+    file is byte-exact. A missing/unparsable payload fails loudly with
+    the child's returncode, stdout tail, stderr and ambient env
+    markers rather than a bare JSONDecodeError.
 
     ``cwd`` is the checkout's ``src/`` (NOT the installed package):
     pytest's ``pythonpath`` pinning lives in-process and does not cross
@@ -350,8 +358,9 @@ def _help_import_closure() -> set[str]:
     copy the interpreter happens to have installed.
     """
     repo_src = Path(__file__).resolve().parents[2] / "src"
+    payload_path = tmp_path / "help_import_closure.json"
     proc = subprocess.run(
-        [sys.executable, "-c", _CLOSURE_PROBE],
+        [sys.executable, "-c", _CLOSURE_PROBE, str(payload_path)],
         capture_output=True,
         text=True,
         env=_lean_child_env(),
@@ -360,9 +369,28 @@ def _help_import_closure() -> set[str]:
     assert proc.returncode == 0, (
         f"closure probe exited {proc.returncode}; stderr: {proc.stderr[-2000:]}"
     )
+    assert payload_path.is_file(), (
+        "closure probe exited 0 but wrote no module payload — "
+        f"stdout tail: {proc.stdout[-1000:]!r}; "
+        f"stderr: {proc.stderr[-2000:]!r}; "
+        f"PYTHONPATH={os.environ.get('PYTHONPATH')!r} "
+        f"PYTHONVERBOSE={os.environ.get('PYTHONVERBOSE')!r} "
+        f"PYTHONWARNINGS={os.environ.get('PYTHONWARNINGS')!r} "
+        f"PYTHONDEVMODE={os.environ.get('PYTHONDEVMODE')!r} "
+        f"COVERAGE_PROCESS_START={os.environ.get('COVERAGE_PROCESS_START')!r}"
+    )
+    try:
+        modules = json.loads(payload_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            "closure probe payload is not JSON — "
+            f"payload head: {payload_path.read_text(encoding='utf-8')[:500]!r}; "
+            f"stdout tail: {proc.stdout[-1000:]!r}; "
+            f"stderr: {proc.stderr[-2000:]!r}"
+        ) from exc
     return {
         m
-        for m in json.loads(proc.stderr)
+        for m in modules
         if m == "scitex_agent_container"
         or m.startswith(
             ("scitex_agent_container.", "_scitex_agent_container_bootstrap")
@@ -370,7 +398,7 @@ def _help_import_closure() -> set[str]:
     }
 
 
-def test_cli_help_import_closure_has_no_new_modules() -> None:
+def test_cli_help_import_closure_has_no_new_modules(tmp_path: Path) -> None:
     """``--help`` must not import sac modules beyond the recorded closure.
 
     LOAD-INDEPENDENT startup-budget teeth: an eager import adds modules
@@ -381,7 +409,7 @@ def test_cli_help_import_closure_has_no_new_modules() -> None:
     closure is the goal.
     """
     # Arrange
-    observed = _help_import_closure()
+    observed = _help_import_closure(tmp_path)
     # Act
     new_modules = observed - _HELP_IMPORT_CLOSURE
     # Assert
