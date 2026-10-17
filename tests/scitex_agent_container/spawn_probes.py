@@ -34,6 +34,20 @@ def known_fetch(target, deadline):
     }}}}, now)
 
 
+def slow_fetch(target, deadline):
+    """Land just past the 0.75s collection deadline but inside the 5.0s
+    grace window: fails without grace, passes with it.
+
+    Lives HERE, not in the test module, on purpose: spawn children
+    re-import the fetcher's module, and a test-module fetcher would
+    bill every owned worker a full ``pytest`` (+ plugins) import
+    before a millisecond of work — seconds under xdist load, enough
+    to blow the grace drain itself. See the module docstring.
+    """
+    time.sleep(0.7)
+    return known_fetch(target, deadline)
+
+
 def mixed_fetch(target, deadline):
     if target.name == "OPENCODE_GO_API_KEY_hung":
         time.sleep(10)
