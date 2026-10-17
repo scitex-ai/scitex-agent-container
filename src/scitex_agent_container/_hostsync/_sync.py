@@ -223,19 +223,20 @@ def sync_peer(
 
     One-way by construction: code moves centre → peer, never back. The
     only mutation possible is a fast-forward; ``AHEAD`` / ``DIVERGED`` /
-    dirty peers are refused with their offending commits printed, and
-    ``force`` does not unlock them (see :func:`.._model.sync_decision`).
+    dirty peers are refused with their offending commits logged. The CI-idle
+    guard cannot be bypassed.
 
     Args:
         peer: peer key from config.yaml.
         peers: parsed peers map.
         ref: target git ref; ``""`` = the peer's ``@{upstream}``.
-        force: override the CI-idle guard ONLY, recording what it
-            overrode so the override is never silent.
+        force: obsolete compatibility argument; true is refused before I/O.
         repo: ``owner/name`` whose runners the CI guard inspects.
         timeout: per-ssh wall-clock cap.
         runner: injectable ``subprocess.run``-shaped callable.
     """
+    if force:
+        raise ValueError("force is unsupported; host sync preserves the CI-idle guard")
     before = probe_peer(peer, peers, ref=ref, timeout=timeout, runner=runner)
     decision = sync_decision(before, force=force)
 
@@ -252,32 +253,23 @@ def sync_peer(
     ci = check_ci_idle(peer, repo=repo, runner=runner)
     notes: list[str] = []
     if not ci.may_mutate:
-        if force:
-            notes.append(
-                f"--force OVERRODE the CI guard: {ci.state.value} — {ci.detail}"
-            )
-        else:
-            hint = (
-                "Wait for CI to finish, or re-run with --force to override "
-                "(it will print exactly what it overrides)."
-                if ci.state is CiState.BUSY
-                else "Fix gh access, or re-run with --force if you are certain "
-                "CI is idle."
-            )
-            return SyncResult(
-                peer=peer,
-                outcome=(
-                    Outcome.UNDETERMINED
-                    if ci.state is CiState.UNKNOWN
-                    else Outcome.REFUSED
-                ),
-                before=before,
-                decision=SyncDecision(
-                    allowed=False,
-                    reason=(f"refusing to sync '{peer}': {ci.detail}\n  {hint}"),
-                ),
-                ci=ci,
-            )
+        hint = (
+            "Wait for CI to finish, then retry."
+            if ci.state is CiState.BUSY
+            else "Fix gh access so SAC can verify that CI is idle, then retry."
+        )
+        return SyncResult(
+            peer=peer,
+            outcome=(
+                Outcome.UNDETERMINED if ci.state is CiState.UNKNOWN else Outcome.REFUSED
+            ),
+            before=before,
+            decision=SyncDecision(
+                allowed=False,
+                reason=(f"refusing to sync '{peer}': {ci.detail}\n  {hint}"),
+            ),
+            ci=ci,
+        )
 
     applied = apply_fast_forward(
         peer,

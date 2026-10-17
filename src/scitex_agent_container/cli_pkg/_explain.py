@@ -14,6 +14,7 @@ from pathlib import Path
 
 import click
 
+from .._logging import get_logger
 from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
 from .._state._meta.secrets import _redact_env_entry as _redact
 from ..config import AgentConfig, load_config
@@ -606,4 +607,4 @@ def explain(name: str) -> None:
             "~/.scitex/agent-container/agents/). Run `sac agents list`."
         )
     config = load_config(str(spec))
-    click.echo(render_plan(config, spec_path=spec))
+    get_logger(__name__).info(render_plan(config, spec_path=spec))

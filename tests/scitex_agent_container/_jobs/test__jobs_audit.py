@@ -1,7 +1,8 @@
 """Tests for the inert-feature detector (``_jobs_audit``).
 
-This file IS the gate. It runs in ``pytest-matrix-on-ubuntu-py{3.11,3.12,
-3.13}``, a REQUIRED status check on both ``develop`` and ``main``, which
+This file IS the gate. It runs in the org-owned pytest matrix behind
+``ci.yml`` (``pytest-matrix / pytest-matrix-on-ubuntu-py3.{11,12,13}``),
+a REQUIRED status check on both ``develop`` and ``main``, which
 is the whole point: a checker nobody runs is another instance of the
 disease it claims to detect, so the checker had to be hung off something
 that already fails builds. It was deliberately NOT put in the old

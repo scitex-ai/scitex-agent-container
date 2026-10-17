@@ -28,6 +28,25 @@ from .conftest import (
 
 
 class TestWorktreeRemove:
+    def test_remove_preserves_dirty_worktree_and_its_changes(
+        self, ephemeral_repo: Path
+    ) -> None:
+        # Arrange
+        created = _run_hook(
+            CREATE_SCRIPT, _create_payload("dirty-remove-probe", ephemeral_repo)
+        ).stdout.strip()
+        changed = Path(created) / "README.md"
+        changed.write_text("valuable uncommitted work\n")
+        # Act
+        result = _run_hook(REMOVE_SCRIPT, _remove_payload(created, ephemeral_repo))
+        listed = _git(ephemeral_repo, "worktree", "list", "--porcelain")
+        # Assert
+        assert (
+            result.returncode == 2
+            and f"worktree {created}" in listed
+            and changed.read_text() == "valuable uncommitted work\n"
+        )
+
     def test_remove_unregisters_a_created_worktree(self, ephemeral_repo: Path) -> None:
         # Arrange — create one via the create-hook, then run the
         # remove-hook against the path it returned.

@@ -21,19 +21,6 @@ _ERROR_FIELDS = (
 )
 
 
-def _availability():
-    """Return scitex_genai.availability, or None when the installed scitex-genai
-    predates the availability surface (0.2.3, unpublished at the time of
-    writing). Callers degrade to assume-live instead of ImportError so the
-    package stays installable and restarts keep working on older genai."""
-    try:
-        from scitex_genai import availability
-
-        return availability
-    except ImportError:
-        return None
-
-
 def probe_spec(plan, compiled: dict) -> dict:
     protocol, url = plan.endpoint.protocol, plan.endpoint.url
     headers = {
@@ -45,15 +32,11 @@ def probe_spec(plan, compiled: dict) -> dict:
     headers.update(custom.get("extra_headers", {}))
     provider = compiled["model"]["provider"]
     if protocol.startswith("hermes-native:"):
-        availability = _availability()
-        if availability is not None:
-            provider = protocol.split(":", 1)[1]
-            route = availability.provider_route(provider, plan.engine.model_id)
-            protocol, url = route.protocol, route.endpoint_url
-        else:
-            logger.debug(
-                "scitex_genai.availability missing — keeping compiled route unresolved"
-            )
+        from ._availability import provider_route
+
+        provider = protocol.split(":", 1)[1]
+        route = provider_route(provider, plan.engine.model_id)
+        protocol, url = route.protocol, route.endpoint_url
     return {
         "url": url,
         "protocol": protocol,
@@ -66,19 +49,10 @@ def probe_spec(plan, compiled: dict) -> dict:
 
 
 def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
-    """Adapt GenAI's native status result to Hermes' persistent pool state.
+    """Adapt the local availability result to Hermes' persistent pool state."""
+    from ._availability import probe_provider_key
 
-    When scitex_genai.availability is missing, every slot is assumed live
-    (pre-feature behaviour) instead of raising ImportError.
-    """
-    availability = _availability()
-    if availability is None:
-        logger.debug(
-            "scitex_genai.availability missing — assuming slot live without probing"
-        )
-        return {"last_status": "ok", "last_status_at": time.time()}
-
-    result = availability.probe_provider_key(
+    result = probe_provider_key(
         spec["provider"],
         spec["model"],
         token,
@@ -100,6 +74,17 @@ def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
     )
     if result.available is True:
         return {"last_status": "ok", "last_status_at": now}
+    if result.available is None:
+        # Unknown is absence of evidence: skip temporarily, never reject.
+        return {
+            "last_status": "exhausted",
+            "last_status_at": now,
+            "last_error_code": None,
+            "last_error_reason": status.kind,
+            "last_error_message": result.check.detail,
+            "last_error_reset_at": now + 60,
+            "failure_reason": "transient",
+        }
     code = status.code if status.kind == "http" else None
     detail = result.check.detail.lower()
     billing = code == 402 or any(

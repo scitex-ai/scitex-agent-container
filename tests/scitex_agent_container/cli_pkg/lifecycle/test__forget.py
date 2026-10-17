@@ -96,16 +96,13 @@ def _run_forget(*argv: str) -> object:
 # ---------------------------------------------------------------------------
 
 
-def test_forget_tombstones_stale_instances_row(isolated_state: Path) -> None:
-    # Arrange — a SLURM-reclaimed agent: instances row still active,
-    # but no live local process. ``forget`` must tombstone it without
-    # SSH or runtime probing.
+def test_forget_rejects_force_and_preserves_active_row(isolated_state):
+    # Arrange
     _seed_active_instance("ghost-agent", db_path=isolated_state)
     # Act
-    _run_forget("ghost-agent", "--force")
-    # Assert — no active rows remain for ghost-agent.
-    active = [r["name"] for r in list_active_instances()]
-    assert "ghost-agent" not in active
+    result = _run_forget("ghost-agent", "--force")
+    # Assert
+    assert (result.exit_code, "ghost-agent" in [r["name"] for r in list_active_instances()]) == (2, True)
 
 
 def test_forget_clears_comms_nodes_pin(
@@ -114,30 +111,15 @@ def test_forget_clears_comms_nodes_pin(
     # Arrange — federated routing still pins ghost-agent at a dead
     # host. Without this, future a2a sends silently fan out to the
     # dead host even after the instance row is gone.
-    _seed_active_instance("ghost-agent", db_path=isolated_state)
     _seed_comms_node("ghost-agent")
     from scitex_agent_container._state.state_store_nodes import (
         resolve_node_host,
     )
 
     # Act
-    _run_forget("ghost-agent", "--force")
+    _run_forget("ghost-agent")
     # Assert — the comms_nodes routing tuple is gone.
     assert resolve_node_host(name="ghost-agent") is None
-
-
-def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
-    # Arrange — distinct exit_reason so post-hoc state.db inspection
-    # tells "operator forgot this" apart from a graceful stop /
-    # liveness sweep / peer-unreachable force-release.
-    _seed_active_instance("ghost-agent", db_path=isolated_state)
-    from scitex_agent_container._state.state_store_instances import last_known_instance
-
-    # Act
-    _run_forget("ghost-agent", "--force")
-    row = last_known_instance("ghost-agent")
-    # Assert
-    assert row is not None and row["exit_reason"] == "operator-forget"
 
 
 def test_forget_no_active_row_succeeds_silently(isolated_state: Path) -> None:
@@ -165,7 +147,7 @@ def test_forget_refuses_live_instance_without_force(isolated_state: Path) -> Non
     assert result.exit_code != 0
 
 
-def test_refusal_message_names_the_force_flag(isolated_state: Path) -> None:
+def test_refusal_message_names_normal_stop(isolated_state: Path) -> None:
     # Arrange — the operator-facing error MUST name the remedy
     # (``--force``) so the next step is obvious. Mirrors the
     # ``stop --force`` UX.
@@ -173,14 +155,14 @@ def test_refusal_message_names_the_force_flag(isolated_state: Path) -> None:
     # Act
     result = _run_forget("live-agent")
     # Assert
-    assert "--force" in (result.output or "") + (
+    assert "sac agents stop live-agent" in (result.output or "") + (
         getattr(result, "stderr_bytes", b"").decode()
         if hasattr(result, "stderr_bytes")
         else ""
     )
 
 
-def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
+def test_forget_force_cannot_override_live_safety_gate(isolated_state: Path) -> None:
     # Arrange — operator KNOWS the agent is dead despite the live-
     # looking row (SLURM-reclaimed node, peer-OS-rebooted, etc.).
     # --force MUST tombstone the row.
@@ -189,7 +171,7 @@ def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
     _run_forget("live-but-dead", "--force")
     # Assert
     active = [r["name"] for r in list_active_instances()]
-    assert "live-but-dead" not in active
+    assert "live-but-dead" in active
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +192,9 @@ def test_forget_does_not_spawn_ssh_subprocess(
     # PATH lookup, finds the shim, and the shim's argv log is what we
     # read back.
     subprocess_shim.install("ssh", stdout="", exit=0)
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_comms_node("ghost")
     # Act
-    _run_forget("ghost", "--force")
+    _run_forget("ghost")
     # Assert — the shim records zero invocations because forget never
     # shelled out to ssh in the first place.
     assert subprocess_shim.call_count("ssh") == 0
@@ -225,9 +207,9 @@ def test_forget_does_not_spawn_ssh_subprocess(
 
 def test_forget_json_envelope_carries_exit_reason(isolated_state: Path) -> None:
     # Arrange
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_comms_node("ghost")
     # Act
-    result = _run_forget("ghost", "--force", "--json")
+    result = _run_forget("ghost", "--json")
     payload = json.loads(result.stdout)
     # Assert
     assert payload.get("exit_reason") == "operator-forget"
@@ -235,9 +217,9 @@ def test_forget_json_envelope_carries_exit_reason(isolated_state: Path) -> None:
 
 def test_forget_json_envelope_carries_name(isolated_state: Path) -> None:
     # Arrange
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_comms_node("ghost")
     # Act
-    result = _run_forget("ghost", "--force", "--json")
+    result = _run_forget("ghost", "--json")
     payload = json.loads(result.stdout)
     # Assert
     assert payload.get("name") == "ghost"
