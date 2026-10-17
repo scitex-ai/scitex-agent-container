@@ -300,8 +300,13 @@ def test_nonfinal_timeout_preserves_exchange_and_says_not_to_resend() -> None:
         url,
         _paths,
     ):
-        # Act
-        error = _capture_error(url, timeout_s=0.03)
+        # Act — 2s, not 30ms: the single budget covers the POST first,
+        # and on a loaded runner even a loopback POST can exceed tens
+        # of milliseconds (then the POST itself raises plain PeerError
+        # instead of reaching the poll). The exchange server answers
+        # 102 forever, so the POLL still exhausts its remainder and
+        # raises PeerTimeoutPending with the no-resend hint.
+        error = _capture_error(url, timeout_s=2)
     # Assert
     assert (
         isinstance(error, PeerTimeoutPending),
