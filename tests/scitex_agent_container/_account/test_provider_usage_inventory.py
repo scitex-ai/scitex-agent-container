@@ -42,7 +42,7 @@ def _seed_known_cache(path):
     path.write_text(json.dumps(_fixed_snapshot()))
 
 
-# Lands just past the 0.75s collection deadline but inside the 2.0s grace
+# Lands just past the 0.75s collection deadline but inside the 5.0s grace
 # window: fails without grace, passes with it.
 def slow_fetch(target, deadline):
     time.sleep(0.7)

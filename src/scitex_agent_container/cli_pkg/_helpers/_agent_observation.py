@@ -263,9 +263,11 @@ def _worker(send, record, snapshot, detail, salt, observer):
 
 # Bounded grace for workers still spinning up when the collection deadline
 # expires (loaded runner): a result arriving inside the window still counts.
-# Sized for spawn-context startup on loaded runners (spawn alone can cost
-# 1s+ under xdist); the suite's elapsed bounds (<12s) still hold.
-_WORKER_GRACE_SECONDS = 2.0
+# Sized for spawn-context startup on loaded runners (a cold SAC import in a
+# fresh interpreter costs seconds under xdist; observed 2026-10-17: delivery
+# past deadline+2.0s on an org runner). The suite's elapsed bounds (<12s)
+# still hold.
+_WORKER_GRACE_SECONDS = 5.0
 
 
 def _accept_observation(outputs, rows, index, observation, host, salt):

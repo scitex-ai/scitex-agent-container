@@ -899,7 +899,7 @@ def test_declared_hermes_pool_does_not_claim_primary_alias_is_active(tmp_path):
 
 
 def _slow_starter_observer(record, snapshot, detail, salt):
-    # Sleep lands just past the 1.1s collection deadline but inside the 2.0s
+    # Sleep lands just past the 1.1s collection deadline but inside the 5.0s
     # grace window (with spawn overhead): fails without grace, passes with it.
     if record["name"] == "slow-starter":
         time.sleep(1.05)
