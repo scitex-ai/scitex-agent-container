@@ -362,6 +362,16 @@ def _scan_tree(root):
             tree = ast.parse(source)
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover
             continue
+        except FileNotFoundError:
+            # TOCTOU, not a finding. Measured 2026-10-17 on the org CI
+            # runner: this scan walks `tests/` while 31 sibling xdist workers
+            # create and clean worker state under `tests/results/` — a file
+            # globbed here can be deleted before it is read, which read as
+            # FileNotFoundError and failed one leg on a tree every other leg
+            # ran clean. A file that no longer exists cannot be a
+            # noise-floor hit; skipping it keeps the gate about the code
+            # that is actually there.
+            continue
         config = SimpleNamespace(disable=set(), per_rule_severity={})
         checker = _SacSpecSentinelChecker(source.splitlines(), config)
         checker.visit(tree)
