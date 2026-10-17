@@ -175,9 +175,25 @@ def attach(name: str) -> None:
     except FileNotFoundError:  # stx-allow: fallback (tmux absent → no session)
         exists = False
     if not exists:
+        # Operator order 2026-10-16: a miss should suggest, not just
+        # refuse. Offer substring matches over known agent names so a
+        # short or misremembered name ("lead") finds its candidates
+        # instead of dying at a dead end.
+        hint = f"Start it first: `sac agents start {agent}`."
+        try:
+            from ...config._resolve import enumerate_agent_names
+
+            matches = sorted(
+                n for n in enumerate_agent_names() if agent.lower() in n.lower()
+            )[:8]
+            if matches and agent not in matches:
+                hint += " Did you mean: " + ", ".join(
+                    f"`sac agents start {m}`" for m in matches
+                ) + "?"
+        except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+            pass
         system_msg(
-            f"no running session '{session}' for agent '{agent}'. "
-            f"Start it first: `sac agents start {agent}`.",
+            f"no running session '{session}' for agent '{agent}'. {hint}",
             style="red",
         )
         raise SystemExit(1)
