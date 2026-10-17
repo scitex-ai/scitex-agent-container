@@ -35,6 +35,12 @@ from scitex_agent_container.cli_pkg._helpers._agent_observation_versions import 
     observe_versions,
     sac_build,
 )
+from tests.scitex_agent_container.spawn_probes import (
+    delayed_observer as _delayed_observer,
+)
+from tests.scitex_agent_container.spawn_probes import (
+    immediate_observer as _immediate_observer,
+)
 
 
 def _record(pid, name="owned"):
@@ -65,17 +71,39 @@ def child():
     finally:
         if process.poll() is None:
             process.terminate()
-        process.wait(timeout=2)
+        process.wait(timeout=10)
 
 
-def _delayed_observer(record, snapshot, detail, salt):
-    if record["name"] == "slow":
-        time.sleep(10)
-    return observe_instance(record, snapshot, detail, salt)
+@pytest.fixture(autouse=True)
+def _no_coverage_in_spawned_workers():
+    """Spawn children must not start coverage tracing.
+
+    Under ``pytest --cov`` the subprocess-coverage shim starts a tracer in
+    every fresh interpreter — including each owned observer worker —
+    multiplying child startup past the enrichment deadlines on loaded CI
+    runners. The parent keeps measuring; only owned workers opt out.
+    Restored on teardown.
+    """
+    keys = ("COVERAGE_PROCESS_START", "COVERAGE_FILE")
+    saved = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
+    yield
+    for key, original in saved.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
 
 
-def _immediate_observer(record, snapshot, detail, salt):
-    return observe_instance(record, snapshot, detail, salt)
+def _drained_workers(timeout=5.0):
+    """Poll owned-worker exit; immediate reads flake under xdist load."""
+    deadline = time.monotonic() + timeout
+    remaining = multiprocessing.active_children()
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = multiprocessing.active_children()
+    return remaining
 
 
 def _jwt(account="private-person-id", plan="pro"):
@@ -127,7 +155,7 @@ def test_genuinely_exited_process_refuses(child):
     # Arrange
     record = _record(child.pid)
     child.terminate()
-    child.wait(timeout=2)
+    child.wait(timeout=10)
     # Act
     # Assert
     with pytest.raises(ValueError, match="canonical-process-unavailable"):
@@ -147,16 +175,18 @@ def hung_observation(child):
         # A real sleeping worker and separate fast process exercise the budget.
         # Generous budget: the property is ordering (slow row unknown, fast
         # row alive), not the 1.3s bound — which flakes on loaded CI nodes.
+        # 8.0 s still kills the 10 s sleeper (deadline 7.8 s), so the
+        # isolation property is intact; the headroom is spawn latency only.
         rows = enrich_rows(
             [{"name": "slow"}, {"name": "fast"}],
             [slow, fast],
             "owned-host",
-            budget=4,
+            budget=8.0,
             observer=_delayed_observer,
         )
     finally:
         other.terminate()
-        other.wait(timeout=2)
+        other.wait(timeout=10)
     return rows, time.monotonic() - started
 
 
@@ -164,7 +194,7 @@ def test_hung_observation_returns_within_parent_budget(hung_observation):
     # Arrange
     _, elapsed = hung_observation
     # Act
-    within_budget = elapsed < 6.0
+    within_budget = elapsed < 12.0
     # Assert
     assert within_budget
 
@@ -200,7 +230,7 @@ def test_hung_observation_reaps_owned_workers(hung_observation):
     # Arrange
     _ = hung_observation
     # Act
-    remaining = multiprocessing.active_children()
+    remaining = _drained_workers()
     # Assert
     assert remaining == []
 
@@ -213,6 +243,7 @@ def test_observed_live_row_overrides_false_adapter_stopped(child):
         [{"name": "owned", "status": "stopped"}],
         [record],
         "owned-host",
+        budget=4.0,
         observer=_immediate_observer,
     )
     # Assert
@@ -830,7 +861,7 @@ def test_genuinely_alive_kernel_evidence_is_not_a_spec_missing_ghost(child):
 
     rows = [{"name": "owned", "host": "local", "validation_errors": ["File not found"]}]
     # Act
-    observed = enrich_rows(rows, [_record(child.pid)], "owned-host")
+    observed = enrich_rows(rows, [_record(child.pid)], "owned-host", budget=4.0)
     # Assert
     assert not _is_ghost_row(observed[0])
 

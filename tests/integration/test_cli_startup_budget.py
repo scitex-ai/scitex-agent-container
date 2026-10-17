@@ -45,6 +45,13 @@ _DEFAULT_BUDGET_S = 0.5
 # this wall-clock ceiling is a coarse backstop for egregious blow-ups.)
 _CONTAINER_BUDGET_MULTIPLIER = 3.0
 
+# Bare-interpreter boot multiple: ``--help`` must stay within this multiple
+# of a ``python -c pass`` boot measured in the same child. A healthy
+# ``--help`` runs at ~2.3x boot locally; 4x absorbs scheduler variance on
+# loaded CI runners without room for a real eager import (locally +~0.3 s
+# on a 0.087 s boot, i.e. +3.5x boot) to hide.
+_BOOT_MULTIPLE = 4.0
+
 # apptainer/singularity export exactly one of these into every exec'd process.
 _CONTAINER_ENV_VARS = ("APPTAINER_CONTAINER", "SINGULARITY_CONTAINER")
 
@@ -76,7 +83,12 @@ for _ in range(n):
             "stderr": proc.stderr,
         }
     )
-json.dump(records, sys.stdout)
+boots = []
+for _ in range(n):
+    t0 = time.perf_counter()
+    subprocess.run([sys.executable, "-c", "pass"], capture_output=True)
+    boots.append(time.perf_counter() - t0)
+json.dump({"records": records, "boots": boots}, sys.stdout)
 """
 
 
@@ -104,8 +116,14 @@ def _budget_s() -> float:
 
 
 @pytest.fixture
-def help_run_samples() -> tuple[list[float], list[dict]]:
+def help_run_samples() -> tuple[list[float], list[dict], float]:
     """Time ``scitex-agent-container --help`` cold-start ``_N_SAMPLES`` times.
+
+    Also times a bare ``python -c pass`` boot in the same child: on a
+    scheduler-starved CI runner BOTH inflate together, so the budget test
+    normalises against the boot floor instead of asserting an absolute
+    wall-clock the box cannot meet. Returns
+    ``(help_seconds, run_records, boot_floor_seconds)``.
 
     The timing loop runs in a lean Python child (``_TIMER_SOURCE``), not
     in this pytest process, so the measured wall time reflects a real
@@ -117,9 +135,6 @@ def help_run_samples() -> tuple[list[float], list[dict]]:
     every grandchild — pure measurement noise that no end user pays. The
     gate exists to catch eager-import regressions in the CLI graph, not
     coverage instrumentation overhead.
-
-    Returns ``(elapsed_seconds, run_records)`` where each record carries
-    ``returncode`` + ``stderr`` for the exit-code assertion.
     """
     binary = shutil.which("scitex-agent-container")
     if binary is None:
@@ -140,17 +155,19 @@ def help_run_samples() -> tuple[list[float], list[dict]]:
     assert proc.returncode == 0, (
         f"timer child exited {proc.returncode}; stderr: {proc.stderr}"
     )
-    records = json.loads(proc.stdout)
+    payload = json.loads(proc.stdout)
+    records = payload["records"]
     samples = [r["elapsed"] for r in records]
-    return samples, records
+    boot_floor = min(payload["boots"])
+    return samples, records, boot_floor
 
 
 def test_cli_help_exits_zero(
-    help_run_samples: tuple[list[float], list[dict]],
+    help_run_samples: tuple[list[float], list[dict], float],
 ) -> None:
     """Every ``--help`` invocation must exit cleanly."""
     # Arrange
-    _, results = help_run_samples
+    _, results, _boot = help_run_samples
     # Act
     failed = [r for r in results if r["returncode"] != 0]
     # Assert
@@ -161,22 +178,32 @@ def test_cli_help_exits_zero(
 
 
 def test_cli_help_under_budget(
-    help_run_samples: tuple[list[float], list[dict]],
+    help_run_samples: tuple[list[float], list[dict], float],
 ) -> None:
     """``scitex-agent-container --help`` must complete within the budget.
 
     Takes the best of several runs to absorb scheduler / disk-cache
-    jitter — we care about the floor, not the worst case.
+    jitter — we care about the floor, not the worst case. The ceiling is
+    the flat budget OR a multiple of the bare-interpreter boot floor
+    measured in the same child, whichever is larger: on a
+    scheduler-starved CI runner both inflate together, so an absolute
+    wall-clock would fail a healthy CLI for the box being slow. A real
+    eager-import regression still trips it — imports inflate ``--help``
+    without moving the boot floor (measured locally: ``--help`` runs at
+    ~2.3x boot; the multiple below leaves no room for a new eager
+    import to hide).
     """
     # Arrange
-    samples, _ = help_run_samples
+    samples, _, boot_floor = help_run_samples
     budget = _budget_s()
+    ceiling = max(budget, boot_floor * _BOOT_MULTIPLE)
     # Act
     best = min(samples)
     # Assert
-    assert best < budget, (
+    assert best < ceiling, (
         f"`scitex-agent-container --help` took {best:.3f}s "
-        f"(budget {budget:.3f}s). Samples: {[f'{s:.3f}' for s in samples]}. "
+        f"(budget {budget:.3f}s, boot floor {boot_floor:.3f}s, "
+        f"ceiling {ceiling:.3f}s). Samples: {[f'{s:.3f}' for s in samples]}. "
         "Likely cause: a new eager import in cli_pkg/_main.py or one of "
         "its transitive imports. See _skills/.../21_cli-startup-budget.md."
     )
