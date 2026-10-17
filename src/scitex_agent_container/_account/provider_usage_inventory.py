@@ -18,8 +18,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import scitex_logging as slogging
+
 from .provider_usage_http import fetch
 from .provider_usage_projection import safe_snapshot
+
+logger = slogging.getLogger(__name__)
 
 _ALIASES = re.compile(r"^(COMMANDCODE_API_KEY(?:_[A-Za-z0-9]+)?|OPENCODE_GO_API_KEY(?:_[A-Za-z0-9]+)?)$")
 _CACHE_BYTES = 65536
@@ -230,20 +234,39 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                 break
             while pending and len(active) < 4 and time.monotonic() < deadline:
                 index, target = pending.pop(0)
-                receive, send = context.Pipe(duplex=False)
-                process = context.Process(target=_worker, args=(
-                    send, target, fetch_deadline, fetcher, _cache_path(root, target),
-                    passive, refresh, observed, cache_writer,
-                ), daemon=True)
-                try:
-                    process.start()
-                except (OSError, RuntimeError):
-                    rows[index]["error"] = "metadata-worker-failed"
-                    receive.close()
+                # fork/exec can fail transiently when the box is thrashed
+                # by sibling xdist workers (EAGAIN, spawn-pipe breakage):
+                # an unretried start failure surfaces minutes later as a
+                # bare unknown row with no other trace (observed
+                # 2026-10-17: sub-3s unknown verdict on a loaded leg).
+                # Retry twice on a fresh Process/Pipe pair before failing
+                # the row; each failure is logged with the attempt count.
+                launched = None
+                for attempt in range(3):
+                    if attempt:
+                        time.sleep(0.2 * attempt)
+                    receive, send = context.Pipe(duplex=False)
+                    process = context.Process(target=_worker, args=(
+                        send, target, fetch_deadline, fetcher, _cache_path(root, target),
+                        passive, refresh, observed, cache_writer,
+                    ), daemon=True)
+                    try:
+                        process.start()
+                    except (OSError, RuntimeError) as exc:
+                        logger.warning(
+                            "account-usage worker for %s failed to start "
+                            "(attempt %d/3): %r", target.name, attempt + 1, exc,
+                        )
+                        receive.close()
+                        send.close()
+                        continue
                     send.close()
+                    launched = (process, receive)
+                    break
+                if launched is None:
+                    rows[index]["error"] = "metadata-worker-failed"
                     continue
-                send.close()
-                active[index] = (process, receive, target)
+                active[index] = (launched[0], launched[1], target)
             for index, (process, receive, target) in list(active.items()):
                 if receive.poll():
                     try:
@@ -282,6 +305,11 @@ def collect(targets, *, home=None, passive=False, refresh=False, budget=4.0,
                             drained = _final
                     if index not in completed and not drained:
                         rows[index]["error"] = "metadata-worker-failed"
+                        logger.warning(
+                            "account-usage worker for %s died without a "
+                            "final row (exitcode=%r)", target.name,
+                            process.exitcode,
+                        )
                     receive.close()
                     process.join(timeout=0.02)
                     del active[index]
