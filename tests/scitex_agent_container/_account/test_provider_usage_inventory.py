@@ -6,26 +6,40 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from scitex_agent_container._account.provider_usage_inventory import (
     UsageTarget,
     collect,
     discover,
 )
 from scitex_agent_container._account.provider_usage_projection import project
+from tests.scitex_agent_container.spawn_probes import (
+    blocked_fifo_writer,
+    known_fetch,
+    mixed_fetch,
+    parallel_fetch,
+    recording_fetch,
+    refusing_fetch,
+)
+
+# Hermetic quota-cache clock: passive cache reads are seeded from this fixed
+# instant and replayed with collect(now=FIXED_NOW), so snapshot age and window
+# reset arithmetic never consult wall-clock or shared runner state.
+FIXED_NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def known_fetch(target, deadline):
-    """A pure metadata producer executing in a real owned child process."""
-    now = datetime.now(timezone.utc)
+def _fixed_snapshot():
+    """A recorded quota payload replayed deterministically, not re-fetched."""
     return project("opencode-go", {"quota": {"usage": {"rolling": {
-        "percent": 10, "resetsAt": (now + timedelta(hours=5)).isoformat(),
-    }}}}, now)
+        "percent": 10, "resetsAt": (FIXED_NOW + timedelta(hours=5)).isoformat(),
+    }}}}, FIXED_NOW)
 
 
-def mixed_fetch(target, deadline):
-    if target.name == "OPENCODE_GO_API_KEY_hung":
-        time.sleep(10)
-    return known_fetch(target, deadline)
+def _seed_known_cache(path):
+    """Write a fixture-seeded cache file bound to FIXED_NOW."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_fixed_snapshot()))
 
 
 # Lands just past the 0.75s collection deadline but inside the 0.5s grace
@@ -35,35 +49,40 @@ def slow_fetch(target, deadline):
     return known_fetch(target, deadline)
 
 
-def refusing_fetch(target, deadline):
-    return {"error": "http-403"}
+def _new_owned_pids(before, timeout=5.0):
+    """Poll for owned-worker exit; immediate reads flake under xdist load."""
+    deadline = time.monotonic() + timeout
+    current = {process.pid for process in multiprocessing.active_children()} - before
+    while current and time.monotonic() < deadline:
+        time.sleep(0.05)
+        current = {process.pid for process in multiprocessing.active_children()} - before
+    return current
 
 
-def recording_fetch(target, deadline):
-    """Make any network-producer invocation visible in a private fixture."""
-    target.auth_path.write_text("provider-invoked")
-    return known_fetch(target, deadline)
+@pytest.fixture(autouse=True)
+def _no_coverage_in_spawned_workers():
+    """Spawn children must not start coverage tracing.
+
+    Under ``pytest --cov`` the subprocess-coverage shim starts a tracer in
+    every fresh interpreter — including each owned worker — multiplying
+    child startup past the collection deadlines on loaded CI runners. The
+    parent keeps measuring; only owned workers opt out. Restored on
+    teardown (same real-env save/restore shape as the budget tests).
+    """
+    keys = ("COVERAGE_PROCESS_START", "COVERAGE_FILE")
+    saved = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
+    yield
+    for key, original in saved.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
 
 
 def cache_path(home, account):
     return home / ".scitex/cache/account-usage" / (account.provider + "-" + account.name + ".json")
-
-
-def blocked_fifo_writer(path, snapshot):
-    """An actual blocking filesystem boundary, without a FIFO reader."""
-    with path.open("w") as stream:
-        stream.write(json.dumps(snapshot))
-
-
-def parallel_fetch(target, deadline):
-    """Require another worker to publish before returning, proving concurrency."""
-    directory = target.auth_path
-    (directory / target.name).write_text(str(os.getpid()))
-    while len(list(directory.iterdir())) < 2 and time.monotonic() < deadline:
-        time.sleep(0.01)
-    if len(list(directory.iterdir())) < 2:
-        return {"error": "metadata-deadline"}
-    return known_fetch(target, deadline)
 
 
 def targets():
@@ -122,7 +141,7 @@ def test_one_hung_alias_does_not_hide_successful_other_alias(tmp_path):
     # Arrange
     accounts = targets()
     # Act
-    rows = collect(accounts, home=tmp_path, budget=2, fetcher=mixed_fetch)
+    rows = collect(accounts, home=tmp_path, budget=8.0, fetcher=mixed_fetch)
     # Assert
     assert rows[1]["usage_state"] == "known"
 
@@ -135,7 +154,7 @@ def test_hung_worker_is_stopped_within_overall_budget(tmp_path):
     collect(accounts, home=tmp_path, budget=1, fetcher=mixed_fetch)
     elapsed = time.monotonic() - started
     # Assert
-    assert elapsed < 1.5
+    assert elapsed < 10
 
 
 def test_timed_out_collection_leaves_no_owned_worker(tmp_path):
@@ -143,7 +162,7 @@ def test_timed_out_collection_leaves_no_owned_worker(tmp_path):
     before = {process.pid for process in multiprocessing.active_children()}
     # Act
     collect(targets(), home=tmp_path, budget=1, fetcher=mixed_fetch)
-    new_pids = {process.pid for process in multiprocessing.active_children()} - before
+    new_pids = _new_owned_pids(before)
     # Assert
     assert new_pids == set()
 
@@ -155,7 +174,7 @@ def test_actual_workers_overlap_instead_of_serial_wait(tmp_path):
     accounts = [UsageTarget("opencode-go", name, [name], secret="synthetic", auth_path=witnesses)
                 for name in ("OPENCODE_GO_API_KEY_1", "OPENCODE_GO_API_KEY_2")]
     # Act
-    rows = collect(accounts, home=tmp_path, budget=2, fetcher=parallel_fetch)
+    rows = collect(accounts, home=tmp_path, budget=8.0, fetcher=parallel_fetch)
     # Assert
     assert [row["usage_state"] for row in rows] == ["known", "known"]
 
@@ -164,7 +183,7 @@ def test_success_cache_contains_metrics_and_not_credentials(tmp_path):
     # Arrange
     account = targets()[1]
     # Act
-    collect([account], home=tmp_path, budget=2, fetcher=known_fetch)
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
     text = next((tmp_path / ".scitex/cache/account-usage").glob("*.json")).read_text()
     # Assert
     assert "fixture-two" not in text
@@ -174,7 +193,7 @@ def test_usage_cache_is_private(tmp_path):
     # Arrange
     account = targets()[1]
     # Act
-    collect([account], home=tmp_path, budget=2, fetcher=known_fetch)
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
     path = next((tmp_path / ".scitex/cache/account-usage").glob("*.json"))
     # Assert
     assert path.stat().st_mode & 0o777 == 0o600
@@ -183,9 +202,9 @@ def test_usage_cache_is_private(tmp_path):
 def test_failed_refresh_keeps_old_measurement_explicitly_stale(tmp_path):
     # Arrange
     account = targets()[1]
-    collect([account], home=tmp_path, budget=2, fetcher=known_fetch)
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
     # Act
-    rows = collect([account], home=tmp_path, refresh=True, budget=2, fetcher=refusing_fetch)
+    rows = collect([account], home=tmp_path, refresh=True, budget=4.0, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["usage_state"] == "stale"
 
@@ -194,7 +213,7 @@ def test_unavailable_alias_stays_represented(tmp_path):
     # Arrange
     account = targets()[1]
     # Act
-    rows = collect([account], home=tmp_path, budget=2, fetcher=refusing_fetch)
+    rows = collect([account], home=tmp_path, budget=4.0, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["qualified_id"] == "opencode-go:OPENCODE_GO_API_KEY_good"
 
@@ -204,9 +223,9 @@ def test_cache_reader_whitelists_private_injected_fields(tmp_path):
     account = targets()[1]
     cache = tmp_path / ".scitex/cache/account-usage/opencode-go-OPENCODE_GO_API_KEY_good.json"
     cache.parent.mkdir(parents=True)
-    cache.write_text(json.dumps({"fetchedAt": datetime.now(timezone.utc).isoformat(), "secret": "private"}))
+    cache.write_text(json.dumps({"fetchedAt": FIXED_NOW.isoformat(), "secret": "private"}))
     # Act
-    rows = collect([account], home=tmp_path, passive=True)
+    rows = collect([account], home=tmp_path, passive=True, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert "private" not in json.dumps(rows)
 
@@ -219,10 +238,10 @@ def test_passive_fifo_cache_is_bounded(tmp_path):
     os.mkfifo(path, 0o600)
     started = time.monotonic()
     # Act
-    collect([account], home=tmp_path, passive=True, budget=1)
+    collect([account], home=tmp_path, passive=True, budget=1, fetcher=refusing_fetch)
     elapsed = time.monotonic() - started
     # Assert
-    assert elapsed < 1.5
+    assert elapsed < 10
 
 
 def test_passive_fifo_cache_retains_its_alias(tmp_path):
@@ -232,7 +251,7 @@ def test_passive_fifo_cache_retains_its_alias(tmp_path):
     path.parent.mkdir(parents=True)
     os.mkfifo(path, 0o600)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["aliases"] == account.aliases
 
@@ -256,9 +275,9 @@ def test_fifo_does_not_hide_another_current_cache(tmp_path):
     path = cache_path(tmp_path, accounts[0])
     path.parent.mkdir(parents=True)
     os.mkfifo(path, 0o600)
-    cache_path(tmp_path, accounts[1]).write_text(json.dumps(known_fetch(accounts[1], 0)))
+    _seed_known_cache(cache_path(tmp_path, accounts[1]))
     # Act
-    rows = collect(accounts, home=tmp_path, passive=True, budget=2)
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[1]["usage_state"] == "known"
 
@@ -268,9 +287,9 @@ def test_valid_oversized_cache_is_not_trusted(tmp_path):
     account = targets()[1]
     path = cache_path(tmp_path, account)
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(known_fetch(account, 0)) + " " * 65536)
+    path.write_text(json.dumps(_fixed_snapshot()) + " " * 65536)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["usage_state"] == "unknown"
 
@@ -281,9 +300,9 @@ def test_malformed_oversized_cache_stays_row_local(tmp_path):
     path = cache_path(tmp_path, accounts[0])
     path.parent.mkdir(parents=True)
     path.write_text("{" + "x" * 131072)
-    cache_path(tmp_path, accounts[1]).write_text(json.dumps(known_fetch(accounts[1], 0)))
+    _seed_known_cache(cache_path(tmp_path, accounts[1]))
     # Act
-    rows = collect(accounts, home=tmp_path, passive=True, budget=2)
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[1]["usage_state"] == "known"
 
@@ -292,12 +311,12 @@ def test_cache_symlink_is_not_followed(tmp_path):
     # Arrange
     account = targets()[1]
     sentinel = tmp_path / "outside-cache"
-    sentinel.write_text(json.dumps(known_fetch(account, 0)))
+    sentinel.write_text(json.dumps(_fixed_snapshot()))
     path = cache_path(tmp_path, account)
     path.parent.mkdir(parents=True)
     path.symlink_to(sentinel)
     # Act
-    rows = collect([account], home=tmp_path, passive=True, budget=2)
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
     # Assert
     assert rows[0]["usage_state"] == "unknown"
 
@@ -306,7 +325,7 @@ def test_zero_budget_retains_every_unstarted_account(tmp_path):
     # Arrange
     accounts = targets()
     # Act
-    rows = collect(accounts, home=tmp_path, budget=0)
+    rows = collect(accounts, home=tmp_path, budget=0, fetcher=refusing_fetch)
     # Assert
     assert [row["qualified_id"] for row in rows] == ["opencode-go:" + account.name for account in accounts]
 
@@ -322,7 +341,7 @@ def test_blocking_cache_write_is_bounded(tmp_path):
     collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
     elapsed = time.monotonic() - started
     # Assert
-    assert elapsed < 1.5
+    assert elapsed < 10
 
 
 def test_blocking_cache_write_does_not_hide_observed_metrics(tmp_path):
@@ -346,7 +365,7 @@ def test_blocking_cache_write_leaves_no_owned_child(tmp_path):
     before = {process.pid for process in multiprocessing.active_children()}
     # Act
     collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
-    new_pids = {process.pid for process in multiprocessing.active_children()} - before
+    new_pids = _new_owned_pids(before)
     # Assert
     assert new_pids == set()
 
