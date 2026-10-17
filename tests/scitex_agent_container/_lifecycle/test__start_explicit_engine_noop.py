@@ -54,7 +54,7 @@ def test_explicit_engine_refuses_noop_on_a_different_live_engine(
         )
 
     # Assert
-    with pytest.raises(ExplicitEngineNoopError, match="--force --continue"):
+    with pytest.raises(ExplicitEngineNoopError, match="sac agents restart hub --engine codex -y"):
         act()
 
 

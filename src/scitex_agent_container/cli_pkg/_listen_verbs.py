@@ -133,12 +133,6 @@ def listen_start(
     help="SIGTERM-to-SIGKILL escalation deadline (seconds).",
 )
 @click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help="Skip SIGTERM and go straight to SIGKILL.",
-)
-@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -149,7 +143,6 @@ def listen_start(
 def listen_stop(
     ctx: click.Context,
     grace_secs: float,
-    force: bool,
     as_json: bool,
 ) -> None:
     """Stop the running sac listen daemon.
@@ -169,7 +162,7 @@ def listen_stop(
     \b
     Example:
         sac listen stop                  # SIGTERM, 10s grace, then SIGKILL
-        sac listen stop --force          # SIGKILL daemon + wedged port holder
+        sac listen stop                  # stop the daemon
         sac listen stop --json           # machine-readable envelope
 
     \b
@@ -177,6 +170,7 @@ def listen_stop(
         0  stopped, or already down (idempotent)
         1  could not stop (PID survived SIGKILL / port still wedged)
     """
+    force = False
     import json as _json
 
     from .._listen._restart import format_escalation_warning

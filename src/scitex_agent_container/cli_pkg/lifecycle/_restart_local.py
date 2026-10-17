@@ -34,7 +34,6 @@ from ._restart_verify import (
 __all__ = [
     "_NOT_CYCLED",
     "_print_local_outcome",
-    "_refuse_fresh_on_bare_host",
     "_restart_locally",
     "_restart_via_broker",
 ]
@@ -50,24 +49,6 @@ _NOT_CYCLED = "not-cycled"
 # instant "cannot verify" into real runner-side testimony. Only paid on
 # the fallback path — an agent whose tmux session answered never waits.
 _BEAT_WITNESS_WAIT_S = 12.0
-
-
-def _refuse_fresh_on_bare_host(name: str, *, as_json: bool) -> tuple[dict, bool]:
-    """``--fresh`` outside a container: fail loud with the direct command.
-
-    A fresh (no-resume) restart is implemented as ``start --force
-    --fresh`` on the HOST, so there is nothing to broker to when we are
-    already on the host. Silently downgrading to a resuming restart would
-    re-wedge exactly the agent this flag exists to recover.
-    """
-    msg = (
-        f"--fresh restart requires the host broker (run inside a "
-        f"container). On a bare host run: sac agents start {name} "
-        f"--force --fresh"
-    )
-    if not as_json:
-        system_msg(msg, style="error")
-    return {"name": name, "error": msg, "fresh": True}, False
 
 
 def _observe_run(name: str, *, min_ts: float | None = None, wait_s: float = 0.0):
@@ -93,6 +74,7 @@ def _restart_locally(
     as_json: bool,
     engine: str | None = None,
     drain_timeout_s: float = 0.0,
+    fresh: bool = False,
 ) -> tuple[dict, bool]:
     """Perform the restart on THIS host (ssh-dispatching to a peer if needed).
 
@@ -139,8 +121,11 @@ def _restart_locally(
         _holder=envelope_holder,
         _engine=engine,
         _drain_timeout_s=drain_timeout_s,
+        _fresh=fresh,
     ):
         dispatch_kwargs = {}
+        if _fresh:
+            dispatch_kwargs["fresh"] = True
         if _drain_timeout_s > 0:
             dispatch_kwargs["drain_timeout_s"] = _drain_timeout_s
         _holder.update(
@@ -237,6 +222,8 @@ def _restart_locally(
     session_before = _observe_run(name)
     restart_began = time.time()
     restart_kwargs = {"engine_override": engine}
+    if fresh:
+        restart_kwargs["session_override"] = "fresh"
     if drain_timeout_s > 0:
         restart_kwargs["drain_timeout_s"] = drain_timeout_s
     _result = agent_restart(name, **restart_kwargs)
@@ -271,8 +258,7 @@ def _restart_locally(
         out["reason"] = no_op_reason
         out["hint"] = (
             f"the agent did not cycle, so NOTHING was restarted — it is "
-            f"still the OLD process on its OLD credentials. Force the "
-            f"cycle with: sac agents start {name} -y --force"
+            f"still the OLD process on its OLD credentials. Retry with: sac agents restart {name} -y"
         )
     if not as_json:
         _print_local_outcome(name, restarted, no_op_reason, verdict)
@@ -304,7 +290,7 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
     if no_op_reason == _NOT_CYCLED:
         system_msg(
             f"Agent '{name}' NOT restarted — {verdict.reason}\n"
-            f"Force the cycle with:\n  sac agents start {name} -y --force",
+            f"Retry the restart with:\n  sac agents restart {name} -y",
             style="error",
         )
         return
@@ -313,7 +299,7 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
             f"Agent '{name}' NOT restarted — it was already "
             f"running and the start leg no-op'd, so nothing cycled. "
             f"It is still the OLD process on its OLD credentials.\n"
-            f"Force the cycle with:\n  sac agents start {name} -y --force",
+            f"Retry the restart with:\n  sac agents restart {name} -y",
             style="error",
         )
         return

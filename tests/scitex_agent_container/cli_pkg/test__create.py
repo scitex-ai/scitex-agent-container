@@ -273,17 +273,17 @@ def test_create_refuses_to_overwrite_existing_spec(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_create_force_overwrites_existing_spec(tmp_path: Path) -> None:
+def test_create_rejects_force_and_preserves_existing_spec(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     (base / "dupe2").mkdir(parents=True)
     (base / "dupe2" / "spec.yaml").write_text("# stale\n")
     # Act
-    runner.invoke(create_cmd, ["dupe2", "--base-dir", str(base), "--force"])
+    result = runner.invoke(create_cmd, ["dupe2", "--base-dir", str(base), "--force"])
     text = (base / "dupe2" / "spec.yaml").read_text()
-    # Assert — fresh template replaces the stale stub (apiVersion line is canonical).
-    assert "scitex-agent-container/v3" in text
+    # Assert — rejection happens before any write.
+    assert (result.exit_code, text) == (2, "# stale\n")
 
 
 def test_create_rejects_unknown_template(tmp_path: Path) -> None:

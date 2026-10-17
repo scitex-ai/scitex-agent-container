@@ -77,28 +77,31 @@ def _write_local_spec(home: Path, name: str) -> Path:
     agents_dir.mkdir(parents=True)
     yaml_path = agents_dir / f"{name}.yaml"
     yaml_path.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        # sac-builtin: off — opts out of the default server:sac push channel,
-        # which otherwise requires a live `sac listen` bearer token file this
-        # test has no need to materialise (unrelated to the plan-gate under
-        # test).
-        "metadata:\n  labels:\n    sac-builtin: \"off\"\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        "  workdir: /home/agent/work\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  claude:\n    model: sonnet\n"
-        "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  a2a:\n    port: null\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            # sac-builtin: off — opts out of the default server:sac push channel,
+            # which otherwise requires a live `sac listen` bearer token file this
+            # test has no need to materialise (unrelated to the plan-gate under
+            # test).
+            'metadata:\n  labels:\n    sac-builtin: "off"\n'
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  claude:\n    model: sonnet\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  a2a:\n    port: null\n"
+        )
     )
     return yaml_path
 
 
 class _Preview(NamedTuple):
     stdout: str
+    stderr: str
     log_text: str
 
 
@@ -129,7 +132,8 @@ def _run_interactive(yaml_path: Path, *, verbose: bool, capsys, caplog) -> _Prev
                 verbose=verbose,
             )
     assert exc_info.value.code == 1
-    return _Preview(stdout=capsys.readouterr().out, log_text=caplog.text)
+    captured = capsys.readouterr()
+    return _Preview(stdout=captured.out, stderr=captured.err, log_text=caplog.text)
 
 
 class TestVerbosePlanGateDefaultIsShort:
@@ -142,7 +146,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         out = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert _MOUNTS_MARKER not in out
 
@@ -155,7 +159,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         out = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert _HOST_MERGE_MARKER not in out
 
@@ -181,7 +185,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         out = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert "Agent: alpha" in out
 
@@ -194,7 +198,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         out = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert "Workdir (--pwd):" in out
 
@@ -207,7 +211,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         out = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert "Model:" in out
 
@@ -222,7 +226,7 @@ class TestVerbosePlanGateFlagShowsFullPlan:
         # Act
         out = _run_interactive(
             yaml_path, verbose=True, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert _MOUNTS_MARKER in out
 
@@ -235,7 +239,7 @@ class TestVerbosePlanGateFlagShowsFullPlan:
         # Act
         out = _run_interactive(
             yaml_path, verbose=True, capsys=capsys, caplog=caplog
-        ).stdout
+        ).log_text
         # Assert
         assert _HOST_MERGE_MARKER in out
 
@@ -260,6 +264,42 @@ def test_start_command_exposes_short_verbose_flag() -> None:
     has_flag = "-v" in flag_names
     # Assert
     assert has_flag is True
+
+
+def test_preview_is_logged_on_stderr_and_leaves_stdout_empty(
+    tmp_path, env_save_restore, capsys, caplog
+):
+    import scitex_logging
+
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    yaml_path = _write_local_spec(tmp_path, "alpha")
+    log_path = tmp_path / "preview.log"
+    handler = logging.FileHandler(log_path)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    saved_level = scitex_logging.get_level()
+    scitex_logging.set_level(scitex_logging.INFO)
+    # Act
+    try:
+        preview = _run_interactive(
+            yaml_path, verbose=False, capsys=capsys, caplog=caplog
+        )
+    finally:
+        root.removeHandler(handler)
+        handler.close()
+        scitex_logging.set_level(saved_level)
+    logged = log_path.read_text()
+    observed = (
+        preview.stdout,
+        "INFO:" in preview.stderr,
+        "Agent: alpha" in preview.stderr,
+        "Agent: alpha" in preview.log_text,
+        "Agent: alpha" in logged,
+        "[✓ backed by a bind]" in logged,
+    )
+    # Assert
+    assert observed == ("", True, True, True, True, True)
 
 
 def test_start_command_exposes_long_verbose_flag() -> None:

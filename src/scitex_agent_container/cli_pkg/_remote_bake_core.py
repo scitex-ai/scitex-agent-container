@@ -397,9 +397,20 @@ def _reference_size(layer_dir: Path, layer: str) -> int | None:
     candidates = [
         p for p in layer_dir.glob(f"sac-{layer}-*.sif") if SIF_RE.match(p.name)
     ]
-    if not candidates:
+    # Dangling live symlinks (pruned targets) match the glob but raise on
+    # stat. Skip them: a vanished artifact answers nothing about size.
+    # Measured 2026-10-15: two dangling sac-base links killed bake-remote
+    # before any remote work.
+    live = []
+    for p in candidates:
+        try:
+            p.stat().st_mtime
+        except OSError:
+            continue
+        live.append(p)
+    if not live:
         return None
-    return max(candidates, key=lambda p: p.stat().st_mtime).stat().st_size
+    return max(live, key=lambda p: p.stat().st_mtime).stat().st_size
 
 
 def pull_and_publish(

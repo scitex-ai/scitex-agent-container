@@ -123,15 +123,6 @@ def _print_result(result: SyncResult) -> None:
     default="",
     help="Git ref to reconcile to. Default: the peer's own @{upstream}.",
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Override the CI-idle guard ONLY, printing what it overrides. It does "
-        "NOT unlock ahead/diverged/dirty — sac never discards remote work."
-    ),
-)
 @click.option("--repo", default=DEFAULT_REPO, help="owner/name for the CI guard.")
 @click.option("--timeout", type=int, default=120, help="Per-ssh wall-clock cap (s).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
@@ -166,7 +157,6 @@ def host_sync(
     check_only: bool,
     all_peers: bool,
     ref: str,
-    force: bool,
     repo: str,
     timeout: int,
     as_json: bool,
@@ -210,6 +200,7 @@ def host_sync(
     is decided they should ride this same one-way, precondition-guarded
     channel rather than growing a second path to the same hosts.
     """
+    force = False
     if bool(peer) == all_peers:
         raise click.UsageError(
             "give exactly one of PEER or --all  "

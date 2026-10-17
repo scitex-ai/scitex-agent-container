@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -13,21 +12,36 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-import scitex_logging as slogging
-
 from .._listen._config import listen_base_url
 from ..config import AgentConfig
 from ._apptainer_build import _read_listen_bearer
+from ._channel_inbox_dispatcher_ownership import (
+    DispatcherStopOutcome,
+    _owns_dispatcher_process,
+)
+from ._channel_inbox_dispatcher_ownership import (
+    pid_alive as _pid_alive,
+)
+from ._channel_inbox_dispatcher_ownership import (
+    read_dispatcher_pidfile as _read_dispatcher_pidfile,
+)
+from ._channel_inbox_dispatcher_ownership import (
+    registry_known_config_paths as _registry_known_config_paths,
+)
+from ._channel_inbox_dispatcher_ownership import (
+    stop_inbox_dispatcher_detailed as _stop_detailed,
+)
+from ._channel_inbox_dispatcher_ownership import (
+    write_dispatcher_pidfile as _write_dispatcher_pidfile,
+)
 from ._inbox_sidecar_reconcile import CURRENT_MODULE, CURRENT_ROLE
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
-log = slogging.getLogger(__name__)
 MODULE_PATH = CURRENT_MODULE
 PID_FILENAME = "channel-inbox-dispatcher.pid"
 LOG_FILENAME = "channel-inbox-dispatcher.log"
 PROCESS_ROLE = CURRENT_ROLE
-_STOP_GRACE_S = 5.0
 _CARDS_HEALTH_PROGRAM = """
 import json
 import sys
@@ -43,42 +57,55 @@ def _pid_path(config: AgentConfig) -> Path:
     return state_dir_for_config(config) / PID_FILENAME
 
 
-def _argv_value(argv: list[str], flag: str) -> str | None:
+def _audit(action: str, config: AgentConfig, **fields: Any) -> None:
+    """Best-effort lifecycle audit row (never raises, never blocks)."""
     try:
-        return argv[argv.index(flag) + 1]
-    except (ValueError, IndexError):
-        return None
+        from .._lifecycle._lifecycle_audit import (
+            record_lifecycle_invocation,
+        )
+
+        record_lifecycle_invocation(
+            action,
+            name=getattr(config, "name", None),
+            flags={
+                "config_path": str(getattr(config, "config_path", "") or ""),
+                **fields,
+            },
+        )
+    except Exception:  # stx-allow: fallback (audit is best-effort)
+        pass
 
 
-def _owns_dispatcher_process(
-    pid: int,
+def dispatcher_running(
+    config: AgentConfig,
     *,
-    name: str,
-    config_path: str,
-    proc_root: Path = Path("/proc"),
+    known_config_paths: Any = None,
 ) -> bool:
-    """Prove a PID is this bridge for this agent and exact authored spec."""
-    try:
-        raw = (proc_root / str(pid) / "cmdline").read_bytes().split(b"\0")
-    except OSError:
-        return False
-    argv = [part.decode(errors="replace") for part in raw if part]
-    return (
-        MODULE_PATH in argv
-        and _argv_value(argv, "--name") == name
-        and _argv_value(argv, "--config-path") == config_path
-    )
+    """Whether the pidfile names a live dispatcher proven to be ours.
 
-
-def dispatcher_running(config: AgentConfig) -> bool:
+    A demonstrably dead pid is reaped (pidfile removed) the way stale
+    leases are reaped — a dead pointer must not read as "running".
+    """
     try:
-        pid = int(_pid_path(config).read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+        pid_path = _pid_path(config)
+    except Exception:  # stx-allow: fallback (no state dir, not running)
         return False
-    return _owns_dispatcher_process(
-        pid,
-        name=config.name,
-        config_path=str(getattr(config, "config_path", "") or ""),
+    record = _read_dispatcher_pidfile(pid_path)
+    if record is None:
+        return False
+    if _pid_alive(record.pid) is False:
+        pid_path.unlink(missing_ok=True)
+        return False
+    spellings = [str(getattr(config, "config_path", "") or "")]
+    if known_config_paths is None:
+        spellings += _registry_known_config_paths(config.name)
+    else:
+        spellings += [str(item) for item in known_config_paths]
+    return any(
+        _owns_dispatcher_process(
+            record.pid, name=config.name, config_path=candidate
+        )
+        for candidate in spellings
     )
 
 
@@ -90,37 +117,36 @@ def stop_inbox_dispatcher(
     state_dir: Path | None = None,
     owns: Callable[..., bool] = _owns_dispatcher_process,
 ) -> bool:
-    """Stop only the identity-proven bridge recorded for this agent."""
-    path = (state_dir / PID_FILENAME) if state_dir is not None else _pid_path(config)
-    try:
-        pid = int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        path.unlink(missing_ok=True)
-        return False
-    config_path = str(getattr(config, "config_path", "") or "")
-    if not owns(pid, name=config.name, config_path=config_path):
-        log.warning(
-            "channel inbox dispatcher PID %s is not owned by %s; not signalling",
-            pid,
-            config.name,
-        )
-        path.unlink(missing_ok=True)
-        return False
-    try:
-        kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        path.unlink(missing_ok=True)
-        return False
-    deadline = time.monotonic() + _STOP_GRACE_S
-    while time.monotonic() < deadline:
-        if not owns(pid, name=config.name, config_path=config_path):
-            path.unlink(missing_ok=True)
-            return True
-        sleep(0.05)
-    if owns(pid, name=config.name, config_path=config_path):
-        kill(pid, signal.SIGKILL)
-    path.unlink(missing_ok=True)
-    return True
+    """Stop only the identity-proven bridge recorded for this agent.
+
+    Thin bool wrapper over :func:`stop_inbox_dispatcher_detailed` —
+    see :mod:`._channel_inbox_dispatcher_ownership` for the decision
+    table and structured refusal codes. Audits the verdict.
+    """
+    outcome = _stop_detailed(
+        config,
+        kill=kill,
+        sleep=sleep,
+        state_dir=state_dir,
+        owns=owns,
+    )
+    _audit(
+        "dispatcher-stop",
+        config,
+        pid=outcome.pid,
+        code=outcome.code,
+        stopped=outcome.stopped,
+    )
+    return outcome.stopped
+
+
+def stop_inbox_dispatcher_detailed(config: AgentConfig, **kwargs: Any) -> Any:
+    """Structured stop verdict (codes for lead-side handling).
+
+    Thin pass-through to the ownership module's detailed stop; kept
+    here so the lifecycle module stays the single import surface.
+    """
+    return _stop_detailed(config, **kwargs)
 
 
 def _listener_accepts_bearer(url: str, bearer: str) -> None:
@@ -357,7 +383,15 @@ def start_inbox_dispatcher(
     if not isinstance(pid, int):
         raise RuntimeError("channel inbox dispatcher spawn returned no PID")
     pid_path = state_dir / PID_FILENAME
-    pid_path.write_text(f"{pid}\n", encoding="utf-8")
+    _write_dispatcher_pidfile(
+        pid_path, pid, incarnation_id=incarnation_id, module=MODULE_PATH
+    )
+    _audit(
+        "dispatcher-start",
+        config,
+        pid=pid,
+        incarnation_id=incarnation_id,
+    )
     sleep(0.2)
     poll = getattr(process, "poll", None)
     if callable(poll) and poll() is not None:
@@ -373,8 +407,10 @@ __all__ = [
     "LOG_FILENAME",
     "MODULE_PATH",
     "PID_FILENAME",
+    "DispatcherStopOutcome",
     "declared_durable_channels",
     "dispatcher_running",
     "start_inbox_dispatcher",
     "stop_inbox_dispatcher",
+    "stop_inbox_dispatcher_detailed",
 ]

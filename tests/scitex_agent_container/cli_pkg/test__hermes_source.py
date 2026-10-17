@@ -43,6 +43,18 @@ def test_pin_names_the_validated_sac_hermes_source() -> None:
     assert pin == expected
 
 
+def test_default_cache_stays_in_sac_runtime(tmp_path, env_save_restore):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
+    )
+    env_save_restore.set("XDG_CACHE_HOME", str(tmp_path / "unrelated-cache"))
+    # Act
+    observed = source.hermes_cache_repo()
+    # Assert
+    assert observed == tmp_path / "runtime" / "upstream" / "hermes-agent.git"
+
+
 def test_explicit_source_must_contain_pinned_commit(tmp_path):
     # Arrange
     repository = tmp_path / "repository"

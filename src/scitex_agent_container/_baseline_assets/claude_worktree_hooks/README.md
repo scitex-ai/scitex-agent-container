@@ -23,7 +23,7 @@ prevention and cleanup meet in the same tree.
   `claude/<name>` branch off `origin/develop` (or HEAD as fallback),
   echoes the absolute path on stdout. Idempotent on re-trigger.
 - `worktree_remove.py` — reads hook input on stdin, runs
-  `git worktree remove` (with a `--force` second pass on failure).
+  `git worktree remove`; a refusal preserves the worktree for review.
   Idempotent.
 - `settings.local.json.fragment.json` — the hooks-section snippet to
   merge into the baseline `to_home/.claude/settings.local.json`.

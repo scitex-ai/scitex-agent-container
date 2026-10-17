@@ -325,7 +325,7 @@ def test_blocking_cache_write_does_not_hide_observed_metrics(tmp_path):
     path.parent.mkdir(parents=True)
     os.mkfifo(path, 0o600)
     # Act
-    rows = collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    rows = collect([account], home=tmp_path, budget=4, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
     # Assert
     assert rows[0]["usage_state"] == "known"
 

@@ -106,6 +106,32 @@ _CHANNEL_OPEN_RE = re.compile(r"^<channel\s+(?P<attrs>[^>]+)>")
 _CHANNEL_ATTR_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
 _CCT_SOURCE_ALIASES = frozenset({"cct", "claude-code-telegrammer"})
 
+#: Errno names that mean the TUI endpoint itself is GONE (not wedged):
+#: the delivery failed because there is nobody to deliver to, so a
+#: restart is the remedy. Anything else (visibility failures, 502s from a
+#: live-but-unresponsive harness) must NEVER restart — a restart does not
+#: fix a wedged session and would destroy its context.
+_TUI_GONE_ERRNOS = frozenset(
+    {
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "EPIPE",
+        "ENOENT",
+        "ENXIO",
+        "EHOSTUNREACH",
+        "ENETUNREACH",
+    }
+)
+
+
+def _tui_endpoint_gone(native_cause) -> bool:
+    """True when the native cause proves the TUI endpoint is gone."""
+    return (
+        native_cause is not None
+        and native_cause.kind == "errno"
+        and str(native_cause.code) in _TUI_GONE_ERRNOS
+    )
+
 
 def _native_cause(exc: BaseException) -> StatusCode | None:
     """Preserve the first native errno through the turn HTTP boundary."""
@@ -692,6 +718,34 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # stx-allow: fallback (reason: visibility failure must remain explicitly retryable on the accepted durable operation, never be acknowledged or rewritten from a terminal failure)
                 detail = str(exc).strip() or "no native error detail"
                 native_cause = _native_cause(exc)
+                if _tui_endpoint_gone(native_cause):
+                    # Start-on-delivery (operator order 2026-10-16): the
+                    # TUI endpoint is GONE, so the message cannot wait for
+                    # a reconcile beat that restarts the corpse WITHOUT
+                    # it. Attempt a doctrine-guarded autostart (managed
+                    # restart.policy only, deliberate stops sacred, shared
+                    # budget); the exchange stays retryable either way, so
+                    # a declined/failed start loses nothing.
+                    try:
+                        from .._reconcile._autostart import (
+                            maybe_autostart_for_send,
+                        )
+
+                        _started, _note = maybe_autostart_for_send(
+                            srv.agent_name
+                        )
+                        log.info(
+                            "tui-down autostart agent=%s started=%s note=%s",
+                            srv.agent_name,
+                            _started,
+                            _note,
+                        )
+                    except Exception as hook_exc:  # stx-allow: fallback (reason: the autostart hook must never break the retryable exchange path — a hook failure leaves the exchange retryable exactly as before)
+                        log.warning(
+                            "tui-down autostart hook failed agent=%s: %s",
+                            srv.agent_name,
+                            hook_exc,
+                        )
                 harness_name = (
                     "Hermes" if native_visibility_required else "TUI harness"
                 )
