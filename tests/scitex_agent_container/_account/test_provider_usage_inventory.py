@@ -22,6 +22,7 @@ from tests.scitex_agent_container.spawn_probes import (
     parallel_fetch,
     recording_fetch,
     refusing_fetch,
+    slow_fetch,
 )
 
 # Hermetic quota-cache clock: passive cache reads are seeded from this fixed
@@ -41,13 +42,6 @@ def _seed_known_cache(path):
     """Write a fixture-seeded cache file bound to FIXED_NOW."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_fixed_snapshot()))
-
-
-# Lands just past the 0.75s collection deadline but inside the 5.0s grace
-# window: fails without grace, passes with it.
-def slow_fetch(target, deadline):
-    time.sleep(0.7)
-    return known_fetch(target, deadline)
 
 
 def _new_owned_pids(before, timeout=5.0):
