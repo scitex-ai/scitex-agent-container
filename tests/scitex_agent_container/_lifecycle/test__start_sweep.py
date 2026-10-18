@@ -8,6 +8,9 @@ the liveness verdict, and the verdict announcement reports what it
 cleared. These tests pin: the sweep runs on the start path, a raising
 sweeper never breaks the start, dry runs never sweep, and the
 announcement names the cleared rows.
+
+STRICT scitex doctrine: no unittest.mock, no monkeypatch, AAA markers each
+on its own line, one assertion per test.
 """
 
 from __future__ import annotations
@@ -34,36 +37,64 @@ from tests.scitex_agent_container._helpers.spec_authority import (
 
 
 def test_sweep_returns_counters_from_the_injected_sweeper() -> None:
-    assert sweep_before_start(sweep_fn=lambda: {"reboot-swept": 2}) == {
-        "reboot-swept": 2
-    }
+    # Arrange
+    # Act
+    swept = sweep_before_start(sweep_fn=lambda: {"reboot-swept": 2})
+    # Assert
+    assert swept == {"reboot-swept": 2}
 
 
 def test_sweep_folds_a_raising_sweeper_to_empty() -> None:
+    # Arrange
     def _boom() -> dict:
         raise RuntimeError("store unreachable")
 
-    assert sweep_before_start(sweep_fn=_boom) == {}
+    # Act
+    swept = sweep_before_start(sweep_fn=_boom)
+    # Assert
+    assert swept == {}
 
 
 def test_sweep_folds_a_non_dict_result_to_empty() -> None:
-    assert sweep_before_start(sweep_fn=lambda: ["reboot-swept"]) == {}  # type: ignore[return-value]
+    # Arrange
+    # Act
+    swept = sweep_before_start(sweep_fn=lambda: ["reboot-swept"])  # type: ignore[return-value]
+    # Assert
+    assert swept == {}
 
 
 def test_sweep_drops_zero_counters_and_non_int_values() -> None:
-    assert sweep_before_start(
+    # Arrange
+    # Act
+    swept = sweep_before_start(
         sweep_fn=lambda: {"reboot-swept": 0, "crashed": 3, "note": "x"}
-    ) == {"crashed": 3}
+    )
+    # Assert
+    assert swept == {"crashed": 3}
 
 
-def test_sweep_skips_entirely_on_dry_run() -> None:
+def test_sweep_returns_empty_on_dry_run() -> None:
+    # Arrange
+    def _recorder() -> dict:
+        raise AssertionError("dry run must not call the sweeper")
+
+    # Act
+    swept = sweep_before_start(dry_run=True, sweep_fn=_recorder)
+    # Assert
+    assert swept == {}
+
+
+def test_sweep_never_calls_the_sweeper_on_dry_run() -> None:
+    # Arrange
     calls: list[None] = []
 
     def _recorder() -> dict:
         calls.append(None)
         return {"crashed": 1}
 
-    assert sweep_before_start(dry_run=True, sweep_fn=_recorder) == {}
+    # Act
+    sweep_before_start(dry_run=True, sweep_fn=_recorder)
+    # Assert
     assert calls == []
 
 
@@ -144,9 +175,26 @@ def _write_spec(tmp_path: Path, *, name: str = "alpha") -> Path:
     return establish_test_spec_authority(spec)
 
 
+def _start_with_sweeper(spec, registry, sweep_fn, *, dry_run=False) -> bool:
+    """Run agent_start against the fakes; return its verdict."""
+    return bool(
+        agent_start(
+            str(spec),
+            thread_factory=FakeThread,
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(running=False),
+            handover_mod=FakeHandover(),
+            sleep_fn=lambda _s: None,
+            instance_sweep_fn=sweep_fn,
+            dry_run=dry_run,
+        )
+    )
+
+
 def test_start_runs_the_sweep_before_the_verdict(
     pg_schema: str, tmp_path: Path
 ) -> None:
+    # Arrange
     spec = _write_spec(tmp_path)
     registry = Registry(registry_dir=tmp_path / "reg")
     calls: list[None] = []
@@ -155,21 +203,16 @@ def test_start_runs_the_sweep_before_the_verdict(
         calls.append(None)
         return {"pid_absent_at_sweep": 1}
 
-    agent_start(
-        str(spec),
-        thread_factory=FakeThread,
-        registry=registry,
-        runtime_factory=lambda _c: FakeRuntime(running=False),
-        handover_mod=FakeHandover(),
-        sleep_fn=lambda _s: None,
-        instance_sweep_fn=_recorder,
-    )
+    # Act
+    _start_with_sweeper(spec, registry, _recorder)
+    # Assert
     assert len(calls) == 1
 
 
 def test_start_on_dry_run_never_sweeps(
     pg_schema: str, tmp_path: Path
 ) -> None:
+    # Arrange
     spec = _write_spec(tmp_path)
     registry = Registry(registry_dir=tmp_path / "reg")
     calls: list[None] = []
@@ -178,38 +221,26 @@ def test_start_on_dry_run_never_sweeps(
         calls.append(None)
         return {"pid_absent_at_sweep": 1}
 
-    agent_start(
-        str(spec),
-        thread_factory=FakeThread,
-        registry=registry,
-        runtime_factory=lambda _c: FakeRuntime(running=False),
-        handover_mod=FakeHandover(),
-        sleep_fn=lambda _s: None,
-        instance_sweep_fn=_recorder,
-        dry_run=True,
-    )
+    # Act
+    _start_with_sweeper(spec, registry, _recorder, dry_run=True)
+    # Assert
     assert calls == []
 
 
 def test_start_survives_a_raising_sweeper(
     pg_schema: str, tmp_path: Path
 ) -> None:
+    # Arrange
     spec = _write_spec(tmp_path)
     registry = Registry(registry_dir=tmp_path / "reg")
 
     def _boom() -> dict:
         raise RuntimeError("store unreachable")
 
-    ok = agent_start(
-        str(spec),
-        thread_factory=FakeThread,
-        registry=registry,
-        runtime_factory=lambda _c: FakeRuntime(running=False),
-        handover_mod=FakeHandover(),
-        sleep_fn=lambda _s: None,
-        instance_sweep_fn=_boom,
-    )
-    assert bool(ok) is True
+    # Act
+    ok = _start_with_sweeper(spec, registry, _boom)
+    # Assert
+    assert ok is True
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +256,13 @@ def _fake_verdict(*, unknown: bool = True) -> LivenessVerdict:
 
 
 def test_announce_names_swept_rows(caplog) -> None:
+    # Arrange
+    # Act
     with caplog.at_level(logging.INFO):
         _announce_start_verdict(
             _fake_verdict(), swept={"pid_absent_at_sweep": 2}
         )
+    # Assert
     assert any(
         "sweep: cleared 2 stale instance row(s) (pid_absent_at_sweep=2)"
         in rec.getMessage()
@@ -237,8 +271,11 @@ def test_announce_names_swept_rows(caplog) -> None:
 
 
 def test_announce_stays_silent_on_empty_sweep(caplog) -> None:
+    # Arrange
+    # Act
     with caplog.at_level(logging.INFO):
         _announce_start_verdict(_fake_verdict(), swept={})
+    # Assert
     assert not any(
         "stale instance row" in rec.getMessage() for rec in caplog.records
     )
