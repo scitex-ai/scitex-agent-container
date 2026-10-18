@@ -84,6 +84,7 @@ def agent_start(
     managed_turn_probe: Callable[[AgentConfig], Any] | None = None,
     stop_instance_resolver: Callable[[AgentConfig, Any], dict | None] | None = None,
     prepared_hermes_route: Any = None,
+    instance_sweep_fn: Callable[[], dict] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -143,6 +144,9 @@ def agent_start(
             replacement. The stop guard always preserves active Hermes turns.
         stop_instance_resolver: Resolve the exact instance during an internal
             process replacement; defaults to the stop backend's resolver.
+        instance_sweep_fn: Injectable dead-instance sweeper for the
+            self-cleaning start-path sweep (default is the real
+            ``gc_dead_instances``). Never blocks the start.
 
     Truthy on success, False on failure; the already-running no-op
     returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
@@ -253,6 +257,16 @@ def agent_start(
 
         clear_stale_instance_lease(config.name)
 
+    # Self-cleaning sweep (card infra-start-silent-noop-and-stale-rows):
+    # ``sac store clean``/``tick`` previously ran only by hand — no timer
+    # ships and nothing invoked them — so dead rows accumulated until an
+    # operator looked. Every start now runs the same host-scoped sweep
+    # best-effort BEFORE the verdict, and the announcement below reports
+    # what it cleared. Never blocks the start (see _start_sweep).
+    from ._start_sweep import sweep_before_start
+
+    swept = sweep_before_start(dry_run=dry_run, sweep_fn=instance_sweep_fn)
+
     # Only observed ALIVE pins the no-op; UNKNOWN proceeds to the runtime's
     # duplicate-session guard without destroying a live session. See
     # _start_verdict for the decision rule. verdict_override supplies a real
@@ -281,7 +295,7 @@ def agent_start(
         # silently with no session — the storage 2026-10-15 incident, ten
         # no-op starts nobody could distinguish from success. A no-op must
         # name the evidence that vouched the agent alive.
-        _announce_start_verdict(verdict)
+        _announce_start_verdict(verdict, swept=swept)
     if uses_production_runtime and force and not dry_run:
         from ..runtimes._native_tui_admission import preflight_native_tui
 
