@@ -16,13 +16,7 @@ Two halves, both projections of state the console already reads:
    with the operator gate + audit trail.
 {% endcomment %}
 <div class="agents-app" data-page="a2a">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      <h1><i class="fas fa-share-nodes"></i> A2A peers</h1>
-      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    </div>
-  </header>
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-share-nodes" header_title="A2A peers" header_back_href=url_base|add:"/" header_identity=identity|default:"(unidentified)" %}
 
   {% if notice %}
   <div class="agents-bannor {% if notice.state == 'completed' %}ok{% elif notice.state == 'replay' %}{% else %}err{% endif %}" role="status">

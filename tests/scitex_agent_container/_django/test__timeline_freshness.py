@@ -122,6 +122,10 @@ def test_undated_render_has_no_machine_timestamp_or_just_now_claim():
     # Act
     html = render_to_string("scitex_agent_container/_timeline_content.html", {
         "entries": entries, "refresh_seconds": 15, "stale_after_seconds": 300,
+        # The lede now arrives via the shared-header contract vars the timeline
+        # view supplies (header_meta), not a template literal.
+        "header_meta": "Published signals from the SAC control plane — test",
+        "header_identity": "tester",
     })
     result = ("Age unknown" in html, "0s ago" in html, '<time class="tl-when"' in html,
               "Published signals from the SAC control plane" in html)

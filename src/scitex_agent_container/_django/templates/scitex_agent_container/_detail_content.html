@@ -5,19 +5,11 @@ adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 back link and the lifecycle form action are correct at any mount.
 {% endcomment %}
 <div class="agents-app" data-page="detail">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      {% if agent %}
-      <h1><i class="fas fa-robot"></i> {{ agent.name }}</h1>
-      {% else %}
-      <h1><i class="fas fa-ghost"></i> Agent not in scope</h1>
-      {% endif %}
-      {% if agent %}
-      <span class="agents-sub">{{ agent.host }} · acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-      {% endif %}
-    </div>
-  </header>
+  {% if agent %}
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title=agent.name header_back_href=url_base|add:"/" header_meta=agent.host header_identity=identity|default:"(unidentified)" %}
+  {% else %}
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-ghost" header_title="Agent not in scope" header_back_href=url_base|add:"/" header_identity=identity|default:"(unidentified)" %}
+  {% endif %}
 
   {% if not agent %}
   <div class="agents-bannor err" role="alert">

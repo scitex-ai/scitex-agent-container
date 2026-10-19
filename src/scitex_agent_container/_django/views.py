@@ -18,8 +18,10 @@ at any mount.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -106,6 +108,25 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     return ctx
 
 
+def _leaf_version() -> str:
+    """The installed leaf package version serving this page, never raised.
+
+    Read from the manifest's ``pip_package`` (Writer pattern) so the header
+    states which installed distribution renders the page, not a source-tree
+    constant. ``"unknown"`` when the distribution metadata is absent (e.g. an
+    uninstalled source checkout serving tests) — a header must degrade, not 500.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:
+        return "unknown"
+    try:
+        manifest = json.loads((Path(__file__).parent / "manifest.json").read_text(encoding="utf-8"))
+        return version(manifest["pip_package"])
+    except (OSError, ValueError, KeyError, PackageNotFoundError):
+        return "unknown"
+
+
 def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> dict:
     """Build the render context for the documented SDK app-shell adapter.
 
@@ -122,6 +143,7 @@ def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> di
     base = _mount_base(request, view_path)
     ctx = dict(data)
     ctx["url_base"] = base
+    ctx["app_version"] = _leaf_version()
     ctx.update(_shell_context(request, title, view_path))
     return ctx
 
@@ -206,6 +228,13 @@ def _fleet_context(request: HttpRequest) -> dict:
         agents=agents,
         summary=_summary(agents),
         identity=identity,
+        # Shared-header lede (Writer pattern): plain text composed HERE, where
+        # the number is a float the server minted — the partial autoescapes it
+        # and keeps the fleet.js `fleet-age` tick hook.
+        header_meta=(
+            f"Last known {observed_age:.0f}s ago" if observed_age is not None else "Fleet"
+        ),
+        header_meta_role="fleet-age" if observed_age is not None else "",
         crosshost_authorized=identity in _crosshost_allowlist(),
         can_launch=can_control(identity, cross_host=False, request=request),
         # One decided cross-host grant for the whole fleet render (audited, like
@@ -269,6 +298,8 @@ def timeline(request: HttpRequest):
         stale_after_seconds=STALE_AFTER_SECONDS,
         identity=identity,
         listener=fleet.base_url,
+        header_meta=f"Published signals from the SAC control plane — {fleet.base_url}",
+        header_identity=identity,
         comm_error=comm_error,
         page="timeline",
     )

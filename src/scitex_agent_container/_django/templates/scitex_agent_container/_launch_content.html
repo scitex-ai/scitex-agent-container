@@ -9,13 +9,7 @@ node. The form carries a name only — never an inline spec (a spec written
 from a web form would be arbitrary code execution behind one POST).
 {% endcomment %}
 <div class="agents-app" data-page="launch">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      <h1><i class="fas fa-rocket"></i> Launch agent</h1>
-      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    </div>
-  </header>
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-rocket" header_title="Launch agent" header_back_href=url_base|add:"/" header_identity=identity|default:"(unidentified)" %}
 
   {% if can_launch %}
   <div class="detail-card">

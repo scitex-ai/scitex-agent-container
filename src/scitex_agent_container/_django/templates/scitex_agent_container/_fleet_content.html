@@ -7,20 +7,15 @@ mounted) so the per-row links are correct at any mount.
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
-  <header class="agents-head">
-    <div class="agents-title">
-      <h1><i class="fas fa-robot"></i> Agents</h1>
-      <span class="agents-sub">{% if observed_age is not None %}<span data-role="fleet-age">Last known {{ observed_age|floatformat:0 }}s ago</span>{% else %}Fleet{% endif %}</span>
-    </div>
-    <div class="agents-summary">
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title="Agents" header_meta=header_meta header_meta_role=header_meta_role %}
+  <div class="agents-summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
       <div class="sum-card warn"><span class="sum-num">{{ summary.attention }}</span><span class="sum-label">need attention</span></div>
       {% if summary.cross_host %}
       <div class="sum-card cross"><span class="sum-num">{{ summary.cross_host }}</span><span class="sum-label">cross-host</span></div>
       {% endif %}
-    </div>
-  </header>
+  </div>
 
   {% comment %}
   P0: this banner used to print the raw listener URL, the env-var names and a
