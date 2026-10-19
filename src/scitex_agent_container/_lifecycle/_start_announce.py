@@ -5,7 +5,7 @@ from __future__ import annotations
 __all__ = ["_announce_start_verdict"]
 
 
-def _announce_start_verdict(verdict) -> None:
+def _announce_start_verdict(verdict, *, swept: dict | None = None) -> None:
     """Announce the liveness verdict + its evidence before a non-no-op start.
 
     An operator staring at ``running | pid=None`` learns nothing, so this says
@@ -27,6 +27,19 @@ def _announce_start_verdict(verdict) -> None:
     """
     from ..cli_pkg._helpers._console import system_msg
 
+    if swept:
+        total = sum(v for v in swept.values() if isinstance(v, int))
+        if total:
+            detail = ", ".join(
+                f"{k}={v}"
+                for k, v in sorted(swept.items())
+                if isinstance(v, int) and v
+            )
+            system_msg(
+                f"sweep: cleared {total} stale instance row(s) ({detail}) "
+                f"before verdict",
+                style="info",
+            )
     system_msg(f"{verdict.agent}: {verdict.render()}", style="info")
     if verdict.is_unknown:
         system_msg(
