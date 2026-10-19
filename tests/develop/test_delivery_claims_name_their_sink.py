@@ -170,8 +170,15 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:189",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:290",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:329",
-        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:207",
-        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:231",
+        # THESE TWO MOVED, they did not change. The tui-prefix-drop
+        # (2026-10-19) added the session-alias lookup above each of them,
+        # so the coordinates shifted 207->215 and 231->239. The `stx-allow`
+        # reasons are byte-for-byte the ones frozen before, and no new
+        # unnamed claim was introduced. Re-pinned, not closed: closing one
+        # means writing a sink into the comment, and a plausible sink that
+        # nothing writes to is worse than the honest unnamed claim.
+        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:215",
+        "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:239",
         "scitex_agent_container/_listen/_deploy_freshness.py:229",
         "scitex_agent_container/_listen/_liveness_tick.py:124",
         # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason
@@ -198,8 +205,13 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_network/_peer_dispatch.py:80",
         "scitex_agent_container/_network/probe.py:457",
         "scitex_agent_container/_reconcile/_budget.py:164",
-        "scitex_agent_container/_reconcile/_pass.py:371",
-        "scitex_agent_container/_reconcile/_pass.py:429",
+        # THESE TWO MOVED, they did not change. The tui-prefix-drop
+        # (2026-10-19) added the session-alias lookup above each of them,
+        # so the coordinates shifted 371->374 and 429->432. Same
+        # byte-for-byte reasons, no new unnamed claim; re-pinned, not
+        # closed, for the reason stated above.
+        "scitex_agent_container/_reconcile/_pass.py:374",
+        "scitex_agent_container/_reconcile/_pass.py:432",
         "scitex_agent_container/_runners/_session_conversation.py:269",
         "scitex_agent_container/_runners/_session_hooks.py:226",
         "scitex_agent_container/_runners/_tmux/claude_code.py:518",
