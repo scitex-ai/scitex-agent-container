@@ -110,7 +110,7 @@ def _warn_manual_accept(config: Any, host: str, *, dry_run: bool) -> None:
             )
         )
     ):
-        render_rich(f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]", __name__)
+        render_rich(f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]", __name__, level="warning")
 
 
 def _skip_reason(*, foreground: bool, one_shot: bool) -> str | None:

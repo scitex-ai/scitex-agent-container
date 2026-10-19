@@ -158,10 +158,13 @@ def run_parallel_targets(
             any_error = True
             tail = (res.stderr or res.stdout or "").strip().splitlines()
             hint = tail[-1] if tail else f"rc={res.returncode}"
+            # level="error": colour is not severity — the default info
+            # level filters this line when SCITEX_LOGGING_LEVEL > INFO.
             render_rich(
                 f"  [red]FAILED[/red] {res.target} "
                 f"[dim](rc={res.returncode}: {hint})[/dim]",
                 __name__,
+                level="error",
             )
 
     if any_error:

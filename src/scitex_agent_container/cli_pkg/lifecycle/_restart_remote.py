@@ -165,9 +165,29 @@ def _dispatch_remote_restart(
         check=False,
     )
     if result.returncode != 0:
+        # A peer-side REFUSAL (e.g. the agent is actively working, so
+        # the peer's own turn guard refused and its CLI exited 1 with a
+        # `{"name", "error", ...}` envelope on stdout) is not a
+        # transport failure — quote the peer's own words instead of
+        # filing it as a failed ssh.
+        refusal_note = ""
+        try:
+            peer_envelope = _json.loads(result.stdout)
+        except _json.JSONDecodeError:
+            peer_envelope = None
+        if isinstance(peer_envelope, dict) and peer_envelope.get("error"):
+            refusal_note = (
+                f"Peer refused the restart (NOT a transport failure): "
+                f"{peer_envelope.get('error')}\n"
+            )
+            if peer_envelope.get("reason"):
+                refusal_note += f"Peer reason: {peer_envelope.get('reason')}\n"
+            if peer_envelope.get("hint"):
+                refusal_note += f"Peer hint: {peer_envelope.get('hint')}\n"
         raise RuntimeError(
             f"Remote `sac agents restart {name}` failed on {peer!r} "
             f"(rc={result.returncode}):\n"
+            f"{refusal_note}"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
