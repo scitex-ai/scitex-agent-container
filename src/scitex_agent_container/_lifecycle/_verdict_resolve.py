@@ -253,7 +253,7 @@ def process_signal(
         ran: bool | None = tmux_probe_ran()
         seen: bool | None = None
     else:
-        from .._tui_session_names import session_aliases
+        from ..runtimes._tui_session_names import session_aliases
 
         observe = session_observation or (
             lambda s: tmux_session_observation(

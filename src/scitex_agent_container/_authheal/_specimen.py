@@ -41,7 +41,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .._runners._tmux._target import exact_target
-from .._tui_session_names import resolve_live_session
+from ..runtimes._tui_session_names import resolve_live_session
 
 __all__ = [
     "Specimen",

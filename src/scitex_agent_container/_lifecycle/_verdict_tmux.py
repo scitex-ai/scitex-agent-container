@@ -213,7 +213,7 @@ def tmux_session_observation(
 
     ``aliases`` names further sessions that count as present — the legacy
     ``tui-`` name for a bare ``session_name`` (see
-    :mod:`.._tui_session_names.session_aliases`), so pre-cutover sessions
+    :mod:`..runtimes._tui_session_names.session_aliases`), so pre-cutover sessions
     still read as live. Preferred (canonical) first, legacy second; callers
     pass them rather than this module re-deriving names, so the grammar stays
     in one place.

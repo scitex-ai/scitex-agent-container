@@ -137,7 +137,7 @@ def remote_process_signal(
     code); production uses :func:`_run_ssh_rc`.
     """
     session = session_name_for_config(config)
-    from .._tui_session_names import session_aliases
+    from ..runtimes._tui_session_names import session_aliases
 
     # Bare canonical first, legacy ``tui-`` second: a pre-cutover session is
     # still live under its old name on the peer, and probing only the bare

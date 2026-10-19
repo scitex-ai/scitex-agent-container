@@ -193,7 +193,7 @@ def _session_present(
     name = row.get("name")
     if not isinstance(name, str) or not name:
         return None
-    from .._tui_session_names import session_present
+    from ..runtimes._tui_session_names import session_present
 
     if session_present(name, snapshot) is True:
         return True

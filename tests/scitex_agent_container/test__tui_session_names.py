@@ -9,7 +9,7 @@ STX-TQ002 AAA-marker + STX-TQ007 one-assert. No mocks.
 
 from __future__ import annotations
 
-from scitex_agent_container._tui_session_names import (
+from scitex_agent_container.runtimes._tui_session_names import (
     agent_of_session,
     candidate_session_names,
     canonical_session_name,

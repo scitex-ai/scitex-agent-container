@@ -58,7 +58,7 @@ logger = slogging.getLogger(__name__)
 DISABLE_ENV = "SAC_TUI_BRIDGE_SUPERVISION_DISABLED"
 
 # Pre-cutover tmux session-name prefix (``tui-<name>``): recognised, never
-# minted. The spelling lives in :data:`.._tui_session_names.LEGACY_TUI_PREFIX`
+# minted. The spelling lives in :data:`..runtimes._tui_session_names.LEGACY_TUI_PREFIX`
 # — no second literal here, so a future rename moves this with it.
 
 # Pre-spawn port-free wait for a SUPERVISOR respawn, deliberately much shorter
@@ -190,7 +190,7 @@ def _supervise_one(
     port_lookup_fn: Callable[[str], int | None] | None,
 ) -> str:
     """Re-assert one agent's bridge. Returns a ``VERDICT_*``. Never raises."""
-    from .._tui_session_names import session_aliases
+    from ..runtimes._tui_session_names import session_aliases
 
     live = snapshot.get(name)
     if live is None:

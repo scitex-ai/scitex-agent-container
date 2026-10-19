@@ -81,7 +81,7 @@ def observe_running(
     entry or a refusal, and "could not determine" with no account of what was
     tried is not something anyone can act on.
     """
-    from .._tui_session_names import candidate_session_names
+    from ..runtimes._tui_session_names import candidate_session_names
 
     bare, legacy = candidate_session_names(agent)
     body = (

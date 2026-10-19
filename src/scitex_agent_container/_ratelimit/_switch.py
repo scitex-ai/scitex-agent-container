@@ -113,10 +113,10 @@ def _session_for(agent: str, sessions: list[str] | None = None) -> str:
     """The DEFAULT tmux server's session for this agent — live bare preferred.
 
     Bare canonical first, legacy ``tui-`` second (see
-    :mod:`.._tui_session_names`). ``sessions`` is an optional live listing;
+    :mod:`..runtimes._tui_session_names`). ``sessions`` is an optional live listing;
     without one this is the canonical bare name — the minting default.
     """
-    from .._tui_session_names import resolve_live_session
+    from ..runtimes._tui_session_names import resolve_live_session
 
     return resolve_live_session(agent, sessions)
 

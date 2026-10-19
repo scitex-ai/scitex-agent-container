@@ -57,7 +57,7 @@ def _session_for(name: str) -> tuple[str, str]:
 
 def _candidates_for(session: str) -> tuple[str, ...]:
     """Bare session first, legacy ``tui-`` second (deduped)."""
-    from ..._tui_session_names import session_and_aliases
+    from ...runtimes._tui_session_names import session_and_aliases
 
     return session_and_aliases(session)
 

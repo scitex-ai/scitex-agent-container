@@ -30,7 +30,7 @@ from .._runners._tmux.tmux import (
     TmuxManager,
     TuiInputNotReadyError,
 )
-from .._tui_session_names import (
+from ._tui_session_names import (
     candidate_session_names,
     canonical_session_name,
     legacy_session_name,
@@ -151,7 +151,7 @@ def candidate_session_names_for(config: AgentConfig) -> tuple[str, str]:
     """Every session name this agent could be running under, preferred first.
 
     Canonical bare first, legacy ``tui-`` second — the same order
-    :func:`.._tui_session_names.candidate_session_names` defines.
+    :func:`._tui_session_names.candidate_session_names` defines.
     """
     return candidate_session_names(config.name)
 

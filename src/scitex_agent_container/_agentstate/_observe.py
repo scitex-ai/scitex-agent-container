@@ -35,7 +35,7 @@ import time
 from typing import Callable, Sequence
 
 from .._runners._tmux._target import exact_target
-from .._tui_session_names import (
+from ..runtimes._tui_session_names import (
     candidate_session_names,
     resolve_live_session,
 )

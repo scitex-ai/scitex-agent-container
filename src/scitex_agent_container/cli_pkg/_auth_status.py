@@ -181,7 +181,7 @@ def _prefer_canonical(sessions: list[str]) -> list[str]:
 
 def _agent_of(session: str) -> str:
     """The agent a session belongs to: one legacy ``tui-`` level stripped."""
-    from .._tui_session_names import agent_of_session
+    from ..runtimes._tui_session_names import agent_of_session
 
     return agent_of_session(session)
 

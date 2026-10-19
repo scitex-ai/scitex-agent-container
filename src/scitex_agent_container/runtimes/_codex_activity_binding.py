@@ -15,7 +15,7 @@ from .._runners._tmux._process_group import (
     _identity,
     capture_owned_process_tree,
 )
-from .._tui_session_names import candidate_session_names
+from ._tui_session_names import candidate_session_names
 from ._codex_activity import CodexActivityError
 
 MAX_ROLLOUT_HEADER_BYTES = 1024 * 1024

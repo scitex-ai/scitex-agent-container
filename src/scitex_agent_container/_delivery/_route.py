@@ -54,7 +54,7 @@ __all__ = [
 #:
 #: Sessions minted before the cutover carry the ``tui-`` prefix and are still
 #: recognised: resolution tries the bare name first and the legacy name
-#: second (see :mod:`.._tui_session_names`). Kept exported so older callers
+#: second (see :mod:`..runtimes._tui_session_names`). Kept exported so older callers
 #: keep importing; new code should resolve through that module instead of
 #: spelling the prefix.
 TUI_SESSION_PREFIX = "tui-"
@@ -145,7 +145,7 @@ def resolve_route(
     """Pick a strategy and PROVE the target exists on it. Pure but for the seams.
 
     The TUI target is the agent's LIVE session: bare canonical first, legacy
-    ``tui-`` second (see :mod:`.._tui_session_names`), so pre-cutover sessions
+    ``tui-`` second (see :mod:`..runtimes._tui_session_names`), so pre-cutover sessions
     keep routing until they are restarted.
 
     ``strategy`` is ``"auto"`` (prefer SDK when a session id exists, else TUI),
@@ -179,7 +179,7 @@ def resolve_route(
             )
 
     sessions = list_sessions_fn()
-    from .._tui_session_names import candidate_session_names
+    from ..runtimes._tui_session_names import candidate_session_names
 
     bare, legacy = candidate_session_names(agent)
     wanted = bare
