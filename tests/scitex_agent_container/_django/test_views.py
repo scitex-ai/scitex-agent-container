@@ -882,3 +882,80 @@ def test_host_shadow_maps_the_content_block_into_host_chrome(client, loopback, e
         html = client.get("/").content.decode()
     # Assert
     assert "data-host-chrome='1'" in html and "agents-app" in html and "agents.css" in html and 'name="stx-mount"' not in html
+
+
+# ── fleet shell: full-bleed, dock clearance, live polling ─────────────────────
+def test_fleet_shell_is_full_bleed_not_a_centered_column():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+    # Assert: the shell owns the width (SDK SSoT); no narrow centered column.
+    assert "max-width: 1240px" not in css and "margin: 0 auto" not in css
+
+
+def test_fleet_shell_clears_the_floating_site_dock():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+    # Assert: bottom padding follows the hub's measured dock height SSoT.
+    assert "--site-dock-scroll-clearance" in css
+
+
+def test_fleet_page_loads_the_fleet_poller(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    client.get("/api/fleet")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert
+    assert "fleet.js" in html and html.index("fleet.js") > html.index('data-page="fleet"')
+
+
+def test_mounted_fleet_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    hub_client.get("/apps/agents/api/fleet")
+    # Act
+    html = hub_client.get("/apps/agents/").content.decode()
+    # Assert
+    assert 'id="hub-global-header"' in html and "fleet.js" in html and html.index("fleet.js") > html.index('data-page="fleet"')
+
+
+def test_fleet_shell_exposes_the_poll_contract(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    client.get("/api/fleet")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert: the poller gets its endpoint, TTL and snapshot age from the DOM.
+    assert 'data-fleet-api="/api/fleet"' in html and 'data-cache-ttl="45' in html and "data-observed-age" in html
+
+
+def test_cached_fleet_marks_the_banner_for_retry(client):
+    # Arrange
+    context = {
+        "agents": [], "summary": {}, "identity": "alice",
+        "crosshost_authorized": False, "can_launch": False,
+        "can_control_crosshost": False, "comm_error": "",
+        "observed_age": 178, "cache_ttl": 45, "page": "fleet",
+        "fleet_state": "cached", "diagnostic_reason": "",
+        "url_base": "",
+    }
+    # Act
+    html = render_to_string("scitex_agent_container/_fleet_content.html", context)
+    # Assert: the poller can find the banner, tick the age and offer a Retry.
+    assert 'data-role="fleet-banner"' in html and 'data-role="fleet-age-short"' in html
