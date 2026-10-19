@@ -179,7 +179,8 @@ def _session_present(
     """Is this row's tmux session live? ``None`` when absence proves nothing.
 
     Presence is read straight from the batched snapshot and needs no knowledge
-    of the agent's runtime: a live ``tui-<name>`` session is positive evidence
+    of the agent's runtime: a live session for this agent — bare canonical, or
+    legacy ``tui-<name>`` from before the cutover — is positive evidence
     whoever launched it.
 
     ABSENCE is the asymmetric half. A non-TUI agent (apptainer, claude-session)
@@ -192,7 +193,9 @@ def _session_present(
     name = row.get("name")
     if not isinstance(name, str) or not name:
         return None
-    if f"tui-{name}" in snapshot:
+    from ..runtimes._tui_session_names import session_present
+
+    if session_present(name, snapshot) is True:
         return True
     if runtime_is_tui_fn(name) is True:
         return False
@@ -229,7 +232,7 @@ def classify_fault(
 
     # A LIVE SUBSCRIBER OUTRANKS A MISSING SESSION. The broker watched
     # something attach to this agent's inbox stream, which is first-hand proof
-    # that a process is home; "no tmux session named tui-<name>" is an absence,
+    # that a process is home; "no tmux session for this agent" is an absence,
     # and an absence never beats a positive reading. They can legitimately
     # disagree — a session renamed out from under us, an adapter started
     # outside the tmux pane — and when they do, the fault must be NEITHER,

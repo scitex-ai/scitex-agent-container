@@ -13,7 +13,7 @@ WHY THIS COMMAND EXISTS INSTEAD OF A RESTARTER
     ``auth-heal`` has logged 167 such auto-restarts in 7 days across 21 agents.
 
 WHAT IT DOES
-    For every live ``tui-<agent>`` pane it prints, side by side:
+    For every live agent pane it prints, side by side:
 
       * VERDICT — what ``sac agents auth-status`` says (the shipped detector);
       * LAYOUT  — what the POSITIONAL predicate says (:mod:`.._authheal
@@ -61,9 +61,9 @@ _LAYOUT_STYLE = {
 def _rows(observe_s: float, journal: Journal) -> list[dict]:
     """Capture each live pane twice, classify it three ways, log everything."""
     from .._authheal._detect import detect_login_expired
-    from ._auth_status import _agent_of, _capture, _list_tui_sessions
+    from ._auth_status import _agent_of, _capture, _list_tui_sessions, _prefer_canonical
 
-    sessions = _list_tui_sessions()
+    sessions = _prefer_canonical(_list_tui_sessions())
     before = {_agent_of(s): _capture(s) for s in sessions}
     journal.event("OBSERVE", f"{len(sessions)} live pane(s); waiting {observe_s:.0f}s")
     time.sleep(max(0.0, observe_s))
@@ -179,7 +179,7 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
         raise SystemExit(1 if bad else 0)
 
     if not rows:
-        render_rich("[dim](no running tui-* agents on this host)[/dim]", __name__)
+        render_rich("[dim](no running agent sessions on this host)[/dim]", __name__)
         return
 
     table = Table(title="auth verdict vs pane layout (read-only audit)")

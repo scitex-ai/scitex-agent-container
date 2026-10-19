@@ -79,7 +79,7 @@ DELIVERY_SIGNALS: tuple[DeliverySignalSpec, ...] = (
     DeliverySignalSpec(
         name="is_route_resolved",
         reads=(
-            "whether a delivery route to this agent exists — a tui-<agent> "
+            "whether a delivery route to this agent exists — the agent's tmux "
             "session on the DEFAULT tmux server the live fleet runs on, or a "
             "recorded session_id for the SDK send path"
         ),

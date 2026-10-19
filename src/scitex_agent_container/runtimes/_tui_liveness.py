@@ -17,7 +17,7 @@ process). LIVENESS and RESPONSIVENESS were conflated.
 
 FIX: separate the two.
 
-  * :func:`pane_process_alive` — LIVENESS. The ``tui-<name>`` session
+  * :func:`pane_process_alive` — LIVENESS. The agent's session
     exists AND its pane's process is alive (``os.kill(pane_pid, 0)`` —
     identity-based, namespace-robust: it sees a live pid where
     ``ps -p <pid>`` returns empty on this host). No activity gate — an

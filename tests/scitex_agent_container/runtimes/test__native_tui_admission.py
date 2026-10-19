@@ -214,8 +214,9 @@ def test_injected_launch_seam_keeps_the_requested_resident_replacement(
     resident, _ = injected_launch_attempt
     # Act
     stops = resident.stops
-    # Assert
-    assert stops == ["tui-resident-native"]
+    # Assert — force clears EVERY live candidate (bare canonical first,
+    # legacy second); the fixture reports both names live, so both stop.
+    assert stops == ["resident-native", "tui-resident-native"]
 
 
 @pytest.mark.parametrize(

@@ -1,10 +1,12 @@
 """``sac agents auth-status`` — which running TUI agents cannot reach the API.
 
 The reliable, prompt-anchored auth health check (TG 1497: "a command to see if
-any running agent shows login-required"). For each live ``tui-<agent>`` tmux
-session it captures the pane TWICE (``--interval`` apart), runs the near-prompt
-+ distance-frozen matcher (:mod:`.._runners._tmux.auth_status`), and prints OK /
-AUTH-FAILED. Exit code is 1 when any agent is failing, so cron / CI can alarm.
+any running agent shows login-required"). For each live agent tmux session —
+bare ``<agent>`` for sessions minted after the cutover, ``tui-<agent>`` for
+older ones — it captures the pane TWICE (``--interval`` apart), runs the
+near-prompt + distance-frozen matcher (:mod:`.._runners._tmux.auth_status`),
+and prints OK / AUTH-FAILED. Exit code is 1 when any agent is failing, so
+cron / CI can alarm.
 
 AUTH-FAILED means: a SYSTEM auth-rejection banner sits in the conversation tail
 directly above the input prompt AND it did not move between the two captures
@@ -42,10 +44,11 @@ from .._runners._tmux._target import exact_target
 from .._runners._tmux.auth_status import evaluate, probe_to_state
 from ._helpers import _json_flag
 
-# The TUI runtime names its sessions ``tui-<agent>`` on the DEFAULT tmux server
-# (``runtimes/tui_session.session_name_for``) — NOT the ``-L sac`` server that
-# ``_runners/_tmux/pane_capture`` targets — so we enumerate + capture on the
-# server the live fleet actually runs on.
+# The TUI runtime mints sessions BARE now — the session name IS the agent name
+# (``runtimes/tui_session.session_name_for``) — on the DEFAULT tmux server, NOT
+# the ``-L sac`` server that ``_runners/_tmux/pane_capture`` targets. Sessions
+# minted before the cutover are ``tui-<agent>`` and are still recognised.
+# Enumeration + capture therefore happen on the server the live fleet runs on.
 _TUI_PREFIX = "tui-"
 
 # THREE verdicts, never two. A pane we could not READ has produced no evidence,
@@ -67,8 +70,8 @@ _VERDICT_STYLE: dict[str, tuple[str, str]] = {
 }
 
 
-def _list_tui_sessions() -> list[str]:
-    """Live ``tui-<agent>`` tmux sessions on the default server (sorted)."""
+def _list_all_sessions() -> list[str]:
+    """Every tmux session on the default server (sorted)."""
     # stx-allow: fallback (reason: tmux may be absent or have no server; an
     # empty list is the correct "nothing to check" result, never a crash)
     try:
@@ -82,16 +85,68 @@ def _list_tui_sessions() -> list[str]:
         return []
     if out.returncode != 0:
         return []
-    return sorted(s for s in out.stdout.split() if s.startswith(_TUI_PREFIX))
+    return sorted(s for s in out.stdout.split() if s)
+
+
+def _known_agent_names() -> set[str]:
+    """Agent names sac knows: registry rows + on-disk specs. Best-effort.
+
+    Bare sessions are indistinguishable from operator-owned tmux sessions by
+    name alone, so a bare session is only treated as an agent's when the name
+    is a KNOWN agent. Both sources are best-effort: an unreadable one simply
+    contributes no names (see :func:`_list_tui_sessions` for the degraded
+    shape when BOTH are unreadable).
+    """
+    names: set[str] = set()
+    # stx-allow: fallback (reason: the registry is a cache — an unreadable one
+    # degrades the scan's coverage, never crashes the command)
+    try:
+        from .._state.registry import Registry
+
+        for entry in Registry().list_all() or []:
+            if isinstance(entry, dict) and entry.get("name"):
+                names.add(str(entry["name"]))
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        pass
+    # stx-allow: fallback (reason: same — specs are a second source, not a requirement)
+    try:
+        from ._helpers._agent_list_discover import _discover_defined_agents
+
+        for agent_name, _spec_path in _discover_defined_agents():
+            names.add(str(agent_name))
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        pass
+    return names
+
+
+def _list_tui_sessions() -> list[str]:
+    """Live agent tmux sessions on the default server (sorted).
+
+    Legacy ``tui-<agent>`` sessions are unambiguous by prefix and always
+    included. Bare sessions are included only when they name a KNOWN agent
+    (see :func:`_known_agent_names`) — otherwise an operator's personal tmux
+    session would be captured and reported as an agent. When no agent name
+    is known at all (registry + specs both unreadable), degrades to
+    legacy-only, which is exactly the pre-cutover behaviour.
+    """
+    sessions = _list_all_sessions()
+    if not sessions:
+        return []
+    known = _known_agent_names()
+    if not known:
+        return sorted(s for s in sessions if s.startswith(_TUI_PREFIX))
+    return sorted(
+        s for s in sessions if s.startswith(_TUI_PREFIX) or s in known
+    )
 
 
 def _capture(session: str) -> str | None:
     """Capture a session's visible pane; ``None`` on any error.
 
     Reuses the capture SHAPE of ``pane_capture`` (``-p -J`` — ``-J`` joins a
-    banner wrapped across physical lines) but on the default server + ``tui-``
-    session where the live fleet runs. ``None`` lets the matcher distinguish
-    "uncapturable" from "clean pane".
+    banner wrapped across physical lines) but on the default server + the
+    agent's live session, where the live fleet runs. ``None`` lets the matcher
+    distinguish "uncapturable" from "clean pane".
     """
     # stx-allow: fallback (reason: the session can vanish between list and
     # capture; None is the honest "could not read" sentinel — never a crash)
@@ -107,8 +162,28 @@ def _capture(session: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
+def _prefer_canonical(sessions: list[str]) -> list[str]:
+    """One session per agent, preferring the bare canonical name.
+
+    A cutover-straddling host can briefly carry BOTH ``foo`` and ``tui-foo``;
+    mapping both to agent ``foo`` would collide downstream (one capture
+    silently wins). The bare session is the live line — ``start`` refuses to
+    mint it over a live legacy one, so a live bare session is always the
+    newer line. Sorted input keeps this deterministic.
+    """
+    by_agent: dict[str, str] = {}
+    for session in sorted(sessions):
+        agent = _agent_of(session)
+        if agent not in by_agent or not session.startswith(_TUI_PREFIX):
+            by_agent[agent] = session
+    return sorted(by_agent.values())
+
+
 def _agent_of(session: str) -> str:
-    return session[len(_TUI_PREFIX) :]
+    """The agent a session belongs to: one legacy ``tui-`` level stripped."""
+    from ..runtimes._tui_session_names import agent_of_session
+
+    return agent_of_session(session)
 
 
 def evaluate_agents(
@@ -306,7 +381,7 @@ def _render_table(rows: list[dict]) -> None:
 def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
     """Report each RUNNING TUI agent as OK or AUTH-FAILED, and cache the result.
 
-    Captures every live ``tui-<agent>`` pane twice (``--interval`` apart) and
+    Captures every live agent pane twice (``--interval`` apart) and
     flags an agent only when a system auth banner sits directly above its prompt
     AND stays frozen across the two reads — so an agent QUOTING the banner while
     it works is never mistaken for a wedged one. Each failure is then diagnosed
@@ -323,12 +398,12 @@ def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
       $ sac agents auth-status --json --interval 6
     """
     use_json = _json_flag(ctx, as_json)
-    sessions = _list_tui_sessions()
+    sessions = _prefer_canonical(_list_tui_sessions())
     if not sessions:
         if use_json:
             click.echo(json_mod.dumps({"agents": [], "auth_failed": 0}))
         else:
-            render_rich("[dim](no running tui-* agents on this host)[/dim]", __name__)
+            render_rich("[dim](no running agent sessions on this host)[/dim]", __name__)
         return
     run1 = {_agent_of(s): _capture(s) for s in sessions}
     time.sleep(max(0.0, interval))

@@ -146,19 +146,19 @@ class Registry:
     def session_candidates(self, data: dict) -> list[str]:
         """Every session name this entry could legitimately be running under.
 
-        The stored ``screen`` field holds the BARE agent name, but the runtime
-        creates ``tui-<name>`` (``runtimes.tui_session.session_name_for``, the
-        SSOT). Probing the stored value alone therefore misses EVERY live
-        agent — measured 2026-08-02 on the live host:
+        The stored ``screen`` field holds the BARE agent name, and the runtime
+        now mints ``<name>`` too (``runtimes.tui_session.session_name_for``,
+        the SSOT) — but entries from before the cutover run as ``tui-<name>``.
+        Probe the stored value, the SSOT's canonical name, AND the legacy
+        name, because missing a live legacy session is exactly the false
+        absence this sweep must never manufacture (measured 2026-08-02 on
+        the live host, in the other direction:
 
             tmux has-session -t scitex-dev      -> not found
             tmux has-session -t tui-scitex-dev  -> ALIVE
 
-        So resolve through the SSOT and keep the stored value as well, because
-        entries written by older sac versions carry only the bare name. The
-        prefix is NOT hardcoded here: hardcoding ``tui-`` would be the same
-        brittleness pointing the other way, and would break again the next time
-        the runtime renames its sessions.
+        ). The prefix is NOT hardcoded here: ``legacy_session_name_for``
+        owns the legacy format, so the grammar stays in one module.
         """
         names: list[str] = []
         # stx-allow: fallback (reason: a spec that no longer loads, or an entry
@@ -167,7 +167,7 @@ class Registry:
         # risk of being swept while alive.)
         try:
             from ..config import AgentConfig, load_config
-            from ..runtimes.tui_session import session_name_for
+            from ..runtimes.tui_session import candidate_session_names_for
 
             config_path = str(data.get("config") or "")
             config = None
@@ -182,7 +182,9 @@ class Registry:
                 # so a future rename moves this with it.
                 config = AgentConfig(name=str(data["name"]))
             if config is not None:
-                names.append(session_name_for(config))
+                for candidate in candidate_session_names_for(config):
+                    if candidate not in names:
+                        names.append(candidate)
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             pass
         stored = str(data.get("screen") or "")

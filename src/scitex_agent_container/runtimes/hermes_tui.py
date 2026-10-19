@@ -271,11 +271,9 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
     def autonomous_control_is_idle(self, config: AgentConfig) -> bool:
         """Observe whether SAC may safely use Hermes' shared composer now."""
-        name = self.session_name(config)
+        name = self._live_session_name(config)
         return bool(
-            name
-            and self._mux.exists(name)
-            and _hermes_pane_is_idle(self._mux.capture_content(name))
+            name and _hermes_pane_is_idle(self._mux.capture_content(name))
         )
 
     def send_visible_turn(

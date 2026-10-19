@@ -173,11 +173,13 @@ def test_port_busy_error_names_port_and_remediation() -> None:
     port = _free_port()
     # Act
     msg = str(portmod.port_busy_error(_HOST, port, "figrecipe"))
-    # Assert — the operator gets the port + the exact one-liner remediation.
+    # Assert — the operator gets the port + the exact one-liner remediation
+    # (bare canonical session, with the pre-cutover name named too).
     assert (
         str(port) in msg
         and f"fuser -k {port}/tcp" in msg
-        and "tmux kill-session -t tui-figrecipe" in msg
+        and "tmux kill-session -t figrecipe" in msg
+        and "pre-cutover: tui-figrecipe" in msg
         and "sac agents restart figrecipe" in msg
     )
 

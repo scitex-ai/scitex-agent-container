@@ -310,7 +310,7 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
         f"Most common cause: the previous session ignored "
         f"SIGTERM, so start hit the duplicate-session guard.\n"
         f"Recover with:\n"
-        f"  tmux kill-session -t tui-{name}\n"
+        f"  tmux kill-session -t {name}\n"
         f"  sac agents start {name} -y --fresh",
         style="error",
     )

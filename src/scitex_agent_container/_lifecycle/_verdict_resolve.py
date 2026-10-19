@@ -253,8 +253,12 @@ def process_signal(
         ran: bool | None = tmux_probe_ran()
         seen: bool | None = None
     else:
+        from ..runtimes._tui_session_names import session_aliases
+
         observe = session_observation or (
-            lambda s: tmux_session_observation(s, in_sif_fn=in_sif_fn)
+            lambda s: tmux_session_observation(
+                s, aliases=session_aliases(s), in_sif_fn=in_sif_fn
+            )
         )
         ran, seen = observe(session_name_for_config(config))
 

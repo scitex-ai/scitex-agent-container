@@ -145,7 +145,7 @@ def screen_signal(
             SOURCE_SCREEN,
             WEDGED,
             f"a frozen auth banner sits above the prompt ({banner!r}) — the "
-            f"tui-{name} pane is PRESENT but NOT WORKING; remedy: {remedy}",
+            f"{name} pane is PRESENT but NOT WORKING; remedy: {remedy}",
             INSTRUMENT_TUI_SCREEN,
         )
     return Signal(

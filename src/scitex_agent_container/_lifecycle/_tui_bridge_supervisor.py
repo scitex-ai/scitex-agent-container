@@ -57,9 +57,9 @@ logger = slogging.getLogger(__name__)
 # Kill switch, mirroring SAC_TUI_HEARTBEAT_DISABLED / SAC_SDK_HEARTBEAT_DISABLED.
 DISABLE_ENV = "SAC_TUI_BRIDGE_SUPERVISION_DISABLED"
 
-# tmux session-name prefix the heartbeat snapshot is keyed by (``tui-<name>``),
-# the same convention ``_tui_heartbeat_loop._beat_one`` looks agents up under.
-_SESSION_PREFIX = "tui-"
+# Pre-cutover tmux session-name prefix (``tui-<name>``): recognised, never
+# minted. The spelling lives in :data:`..runtimes._tui_session_names.LEGACY_TUI_PREFIX`
+# — no second literal here, so a future rename moves this with it.
 
 # Pre-spawn port-free wait for a SUPERVISOR respawn, deliberately much shorter
 # than ``start_turn_bridge``'s 10 s default. We only ever call the launcher
@@ -190,7 +190,15 @@ def _supervise_one(
     port_lookup_fn: Callable[[str], int | None] | None,
 ) -> str:
     """Re-assert one agent's bridge. Returns a ``VERDICT_*``. Never raises."""
-    if snapshot.get(f"{_SESSION_PREFIX}{name}") is None:
+    from ..runtimes._tui_session_names import session_aliases
+
+    live = snapshot.get(name)
+    if live is None:
+        for alias in session_aliases(name):
+            live = snapshot.get(alias)
+            if live is not None:
+                break
+    if live is None:
         # No live tmux session: the agent is stopped/absent, so it must NOT
         # have a bridge. Never resurrect one for a deliberately-stopped agent.
         return VERDICT_NO_SESSION
