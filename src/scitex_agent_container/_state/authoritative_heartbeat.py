@@ -321,6 +321,82 @@ def write_challenge_nonce(state_dir: Path, nonce: str) -> str:
     return token
 
 
+ROTATE_ENV = "SAC_NONCE_CHALLENGE_ROTATION"
+ROTATE_MIN_INTERVAL_S = 300.0
+
+
+def plan_challenge_rotation(
+    *,
+    enrolled: str | None,
+    echo: str | None,
+    now: float,
+    last_rotated_at: float | None,
+    min_interval_s: float = ROTATE_MIN_INTERVAL_S,
+) -> str:
+    """Decide the next challenge action: ``enroll`` | ``rotate`` | ``keep``.
+
+    Pure (no IO): the listen server issues a fresh random nonce each
+    heartbeat and the agent must echo it (turn/steer path), but rotation
+    is lockstep, not wall-clock — a fresh token is minted only after the
+    current one is confirmed echoed, so beats never flap on a challenge
+    the agent has not yet had a turn to see. A missing or mismatched
+    echo keeps the current challenge (the verdict side already reads
+    that as not agentically alive).
+    """
+    import hmac as _hmac
+
+    if _nonce_token(enrolled) is None:
+        return "enroll"
+    confirmed = _nonce_token(echo) is not None and _hmac.compare_digest(
+        enrolled, echo  # type: ignore[arg-type]
+    )
+    if confirmed and (
+        last_rotated_at is None or now - last_rotated_at >= min_interval_s
+    ):
+        return "rotate"
+    return "keep"
+
+
+def maybe_rotate_challenge_nonce(
+    state_dir: Path,
+    challenge: str | None,
+    echo: str | None,
+    *,
+    now: float | None = None,
+) -> str | None:
+    """Enroll or lockstep-rotate this agent's challenge nonce (listen side).
+
+    Dark unless ``SAC_NONCE_CHALLENGE_ROTATION=1``. Returns the active
+    challenge (freshly minted on enroll/rotate, unchanged on keep, or
+    the input when disabled). Reads the last-rotation time from the
+    challenge file's mtime so no format change is needed. NEVER raises:
+    any failure returns the input challenge unchanged.
+    """
+    import os as _os
+
+    if _os.environ.get(ROTATE_ENV) not in ("1", "true", "yes"):
+        return challenge
+    try:
+        current = float(now) if now is not None else time.time()
+        try:
+            last_rotated: float | None = (
+                Path(state_dir).joinpath("nonce-challenge.txt").stat().st_mtime
+            )
+        except OSError:
+            last_rotated = None
+        action = plan_challenge_rotation(
+            enrolled=challenge,
+            echo=echo,
+            now=current,
+            last_rotated_at=last_rotated,
+        )
+        if action == "keep":
+            return challenge
+        return write_challenge_nonce(state_dir, issue_challenge_nonce())
+    except Exception:  # stx-allow: never break heartbeat promotion on rotation
+        return challenge
+
+
 def scan_session_echo(
     state_dir: Path, challenge: str | None, *, tail_bytes: int = 16 * 1024
 ) -> str | None:
@@ -463,7 +539,9 @@ __all__ = [
     "clear_card_lease",
     "heartbeat_delta_bytes",
     "issue_challenge_nonce",
+    "maybe_rotate_challenge_nonce",
     "nonce_echo_confirms",
+    "plan_challenge_rotation",
     "read_card_lease",
     "read_challenge_nonce",
     "scan_session_echo",
