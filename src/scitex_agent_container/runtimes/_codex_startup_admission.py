@@ -136,7 +136,7 @@ def capture_startup_admission(
         "host": socket.gethostname(),
         "remote": False,
         "ended_at": None,
-        "screen": f"tui-{config.name}",
+        "screen": config.name,
         "pid": pane.pid,
         "process_start_time": pane.start_time,
         "process_uid": pane.uid,

@@ -15,6 +15,7 @@ from .._runners._tmux._process_group import (
     _identity,
     capture_owned_process_tree,
 )
+from .._tui_session_names import candidate_session_names
 from ._codex_activity import CodexActivityError
 
 MAX_ROLLOUT_HEADER_BYTES = 1024 * 1024
@@ -70,7 +71,7 @@ def _assert_instance(
         or record.get("host") != host
         or record.get("ended_at") is not None
         or record.get("remote") not in {False, 0}
-        or record.get("screen") != f"tui-{agent_name}"
+        or record.get("screen") not in set(candidate_session_names(agent_name))
     ):
         raise CodexActivityError(
             "native owner does not match the active local instance"

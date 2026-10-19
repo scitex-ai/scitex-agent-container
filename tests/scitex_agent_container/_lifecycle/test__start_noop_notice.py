@@ -160,4 +160,4 @@ def test_render_start_noop_notice_names_the_agents_tui_session():
     # Act
     actual = render_start_noop_notice(_Cfg(), _Verdict())
     # Assert — the session sac owns for this agent is named on the first line.
-    assert "(tmux session tui-zz-noop-notice-zz)" in actual
+    assert "(tmux session zz-noop-notice-zz)" in actual

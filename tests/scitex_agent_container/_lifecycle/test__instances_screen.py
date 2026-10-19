@@ -225,7 +225,7 @@ def test_real_tui_runtime_names_its_own_session() -> None:
     # Act
     session = TuiSessionRuntime().session_name(cfg)
     # Assert
-    assert session == "tui-real-tui"
+    assert session == "real-tui"
 
 
 def test_real_tui_runtime_session_name_matches_the_launch_convention() -> None:
@@ -257,4 +257,4 @@ def test_real_tui_runtime_session_name_reaches_the_recorder(tmp_path) -> None:
     # Act
     resolved = _runtime_session_name(cfg, TuiSessionRuntime())
     # Assert
-    assert resolved == "tui-real-recorded"
+    assert resolved == "real-recorded"

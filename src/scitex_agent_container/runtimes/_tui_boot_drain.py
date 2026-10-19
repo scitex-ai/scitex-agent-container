@@ -22,6 +22,7 @@ retain the separate idle-input contract below.
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from .._logging import get_logger
 from ..config import AgentConfig
@@ -87,17 +88,26 @@ def wait_for_hermes_boot(
     return False
 
 
-def _session_name(config: AgentConfig) -> str:
-    """Resolve the agent's ``tui-<name>`` session.
+def _session_name(config: AgentConfig, mux: Any = None) -> str:
+    """Resolve the agent's live session: bare canonical first, legacy second.
 
-    Local import of :func:`tui_session.session_name_for` keeps the session
-    naming on its one canonical implementation without a module-level import
-    cycle (``tui_session`` imports this mixin). Same pattern as
+    ``mux`` is the host's ``TmuxManager``-shaped multiplexer (the mixin host
+    always has one as ``self._mux``). Without it — or when neither candidate
+    is live — this is the canonical bare name, which is also what a fresh
+    :meth:`start` just minted, so the boot path never needs the probe.
+
+    Local import of :func:`tui_session.resolve_live_session_for` keeps the
+    session naming on its one canonical implementation without a module-level
+    import cycle (``tui_session`` imports this mixin). Same pattern as
     :func:`_runners._tmux._tmux_probe._display_field`.
     """
-    from .tui_session import session_name_for
+    if mux is None:
+        from .tui_session import session_name_for
 
-    return session_name_for(config)
+        return session_name_for(config)
+    from .tui_session import resolve_live_session_for
+
+    return resolve_live_session_for(config, mux)
 
 
 class TuiBootDrainMixin:
@@ -121,7 +131,7 @@ class TuiBootDrainMixin:
         wrapper over :meth:`_drain_modals_until_ready`. Best-effort: never
         raises. Returns True iff a ready signal was observed within the window.
         """
-        name = _session_name(config)
+        name = _session_name(config, self._mux)
         if not self._mux.exists(name):
             return False
         if str(getattr(config, "harness", "") or "").lower() == "hermes":
@@ -176,7 +186,7 @@ class TuiBootDrainMixin:
         :class:`TuiInputNotReadyError` on timeout.
         """
         del sleep_fn  # honoured internally by the extracted function's default
-        name = _session_name(config)
+        name = _session_name(config, self._mux)
         return _wait_until_input_ready(
             name,
             capture_fn=self._mux.capture_content,

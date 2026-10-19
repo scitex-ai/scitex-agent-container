@@ -109,17 +109,16 @@ KICK_MESSAGE = (
     "was interrupted; if nothing is outstanding, say so and stop."
 )
 
-def _session_for(agent: str) -> str:
-    """``tui-<agent>`` — the DEFAULT tmux server's session for this agent.
+def _session_for(agent: str, sessions: list[str] | None = None) -> str:
+    """The DEFAULT tmux server's session for this agent — live bare preferred.
 
-    The prefix is imported from the delivery router rather than spelled a
-    second time here: that module carries the measured warning that the
-    ``-L sac`` server is a DIFFERENT server whose emptiness would read as
-    this fleet's death.
+    Bare canonical first, legacy ``tui-`` second (see
+    :mod:`.._tui_session_names`). ``sessions`` is an optional live listing;
+    without one this is the canonical bare name — the minting default.
     """
-    from .._delivery._route import TUI_SESSION_PREFIX
+    from .._tui_session_names import resolve_live_session
 
-    return f"{TUI_SESSION_PREFIX}{agent}"
+    return resolve_live_session(agent, sessions)
 
 
 def model_command(target: str = TARGET_MODEL) -> str:
@@ -206,6 +205,7 @@ def switch_model_now(
     send_keys_fn: Callable[[str, str], None] = _default_send_keys,
     kick_fn: Callable[[str, str], bool | None] = _real_kick,
     capture_fn: Callable[[str], str | None] = _default_capture,
+    list_sessions_fn: Callable[[], list[str] | None] | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     clock_fn: Callable[[], float] = time.monotonic,
     now: datetime | None = None,
@@ -235,7 +235,13 @@ def switch_model_now(
     being judged is the settled one.
     """
     moment = now if now is not None else datetime.now(timezone.utc)
-    session = _session_for(agent)
+    sessions = None
+    if list_sessions_fn is not None:
+        try:
+            sessions = list_sessions_fn()
+        except Exception:  # stx-allow: fallback (an unreadable listing resolves to the canonical name — the paste/capture downstream report their own failure, never a crash here)
+            sessions = None
+    session = _session_for(agent, sessions)
     command = model_command(target)
     steps: list[SwitchStep] = []
 

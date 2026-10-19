@@ -46,10 +46,17 @@ __all__ = [
     "resolve_route",
 ]
 
-#: The TUI runtime names its sessions ``tui-<agent>`` on the DEFAULT tmux server
-#: (``runtimes/tui_session.session_name_for``) — NOT the ``-L sac`` server that
-#: ``_runners/_tmux/pane_capture`` targets. Using that other server here would
-#: read a DIFFERENT server's emptiness as this fleet's death.
+#: The TUI runtime mints its sessions BARE — the session name IS the agent name
+#: (``runtimes/tui_session.session_name_for``) — on the DEFAULT tmux server,
+#: NOT the ``-L sac`` server that ``_runners/_tmux/pane_capture`` targets.
+#: Using that other server here would read a DIFFERENT server's emptiness as
+#: this fleet's death.
+#:
+#: Sessions minted before the cutover carry the ``tui-`` prefix and are still
+#: recognised: resolution tries the bare name first and the legacy name
+#: second (see :mod:`.._tui_session_names`). Kept exported so older callers
+#: keep importing; new code should resolve through that module instead of
+#: spelling the prefix.
 TUI_SESSION_PREFIX = "tui-"
 
 #: Resume the agent's recorded Claude session via the existing ``sac agents
@@ -137,6 +144,10 @@ def resolve_route(
 ) -> Route:
     """Pick a strategy and PROVE the target exists on it. Pure but for the seams.
 
+    The TUI target is the agent's LIVE session: bare canonical first, legacy
+    ``tui-`` second (see :mod:`.._tui_session_names`), so pre-cutover sessions
+    keep routing until they are restarted.
+
     ``strategy`` is ``"auto"`` (prefer SDK when a session id exists, else TUI),
     or one of :data:`STRATEGY_SDK` / :data:`STRATEGY_TUI` to force one. Forcing
     matters for diagnosis: an operator who suspects the SDK route is stale needs
@@ -168,7 +179,10 @@ def resolve_route(
             )
 
     sessions = list_sessions_fn()
-    wanted = f"{TUI_SESSION_PREFIX}{agent}"
+    from .._tui_session_names import candidate_session_names
+
+    bare, legacy = candidate_session_names(agent)
+    wanted = bare
     if sessions is None:
         return Route(
             strategy=STRATEGY_TUI,
@@ -195,6 +209,12 @@ def resolve_route(
             sessions_raw="",
         )
     raw = "\n".join(sessions)
+    if bare in sessions:
+        wanted = bare
+    elif legacy in sessions:
+        # Pre-cutover session, still live under its old name — route to it,
+        # and say so, so the journal shows WHY this row has a prefix.
+        wanted = legacy
     if wanted in sessions:
         return Route(
             strategy=STRATEGY_TUI,

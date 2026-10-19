@@ -137,6 +137,12 @@ def remote_process_signal(
     code); production uses :func:`_run_ssh_rc`.
     """
     session = session_name_for_config(config)
+    from .._tui_session_names import session_aliases
+
+    # Bare canonical first, legacy ``tui-`` second: a pre-cutover session is
+    # still live under its old name on the peer, and probing only the bare
+    # name would read it DEAD.
+    candidates = (session, *session_aliases(session))
 
     # Render the probe argv through sac's canonical dispatch primitive so the
     # peer's ProxyJump chain + env_preamble apply (see docstring). A load/build
@@ -147,14 +153,18 @@ def remote_process_signal(
         from .._state.host_config import load as _load_host_config
 
         peers = _load_host_config().peers
-        argv = build_ssh_argv(
-            # EXACT-match target: a bare -t prefix-matches on the peer's tmux,
-            # so a sibling session would vouch this agent ALIVE (2026-08-14).
-            peer,
-            ["tmux", "has-session", "-t", exact_target(session)],
-            peers,
-            extra_opts=["-n"],
-        )
+        argvs = [
+            build_ssh_argv(
+                # EXACT-match target: a bare -t prefix-matches on the peer's
+                # tmux, so a sibling session would vouch this agent ALIVE
+                # (2026-08-14).
+                peer,
+                ["tmux", "has-session", "-t", exact_target(candidate)],
+                peers,
+                extra_opts=["-n"],
+            )
+            for candidate in candidates
+        ]
     except (
         Exception
     ) as exc:  # stx-allow: fallback (unresolvable peer -> UNKNOWN, never DEAD)
@@ -166,8 +176,22 @@ def remote_process_signal(
             INSTRUMENT_HOST_TMUX,
         )
 
+    live: str | None = None
     try:
-        rc = (run_ssh or _run_ssh_rc)(argv)
+        for argv, candidate in zip(argvs, candidates):
+            rc = (run_ssh or _run_ssh_rc)(argv)
+            if rc == 0:
+                live = candidate
+                break
+            if rc != 1:
+                return Signal(
+                    SOURCE_PROCESS,
+                    UNKNOWN,
+                    f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged "
+                    f"ssh, a failed ProxyJump/env_preamble, bare PATH, or auth) "
+                    f"— remote liveness UNKNOWN, never DEAD",
+                    INSTRUMENT_HOST_TMUX,
+                )
     except (
         Exception
     ) as exc:  # stx-allow: fallback (probe shell-out blew up -> UNKNOWN, never DEAD)
@@ -178,26 +202,18 @@ def remote_process_signal(
             f"({type(exc).__name__}) — remote liveness UNKNOWN, never DEAD",
             INSTRUMENT_HOST_TMUX,
         )
-    if rc == 0:
+    if live is not None:
         return Signal(
             SOURCE_PROCESS,
             ALIVE,
-            f"tmux session {session!r} is up on remote host {peer!r} (ssh probe)",
-            INSTRUMENT_HOST_TMUX,
-        )
-    if rc == 1:
-        return Signal(
-            SOURCE_PROCESS,
-            DEAD,
-            f"ssh to {peer!r} succeeded and its tmux has NO session {session!r} "
-            f"— positive remote absence, from the peer's own bookkeeping",
+            f"tmux session {live!r} is up on remote host {peer!r} (ssh probe)",
             INSTRUMENT_HOST_TMUX,
         )
     return Signal(
         SOURCE_PROCESS,
-        UNKNOWN,
-        f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged ssh, a "
-        f"failed ProxyJump/env_preamble, bare PATH, or auth) — remote liveness "
-        f"UNKNOWN, never DEAD",
+        DEAD,
+        f"ssh to {peer!r} succeeded and its tmux has NO session "
+        f"{' or '.join(repr(c) for c in candidates)} "
+        f"— positive remote absence, from the peer's own bookkeeping",
         INSTRUMENT_HOST_TMUX,
     )

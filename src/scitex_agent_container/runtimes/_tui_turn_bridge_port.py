@@ -158,7 +158,7 @@ def port_busy_error(
     """Build the actionable :class:`TurnBridgePortBusyError` for ``port``.
 
     Names the holder PID(s) and the exact one-liner remediation
-    (``fuser -k <port>/tcp; tmux kill-session -t tui-<name>``) so the
+    (``fuser -k <port>/tcp; tmux kill-session -t <name>``) so the
     operator recovers without diagnosing a bare ``EADDRINUSE``.
     """
     holders = _safe_port_holder_pids(port)
@@ -167,13 +167,15 @@ def port_busy_error(
         if holders
         else "unknown (install lsof/ss/fuser to identify)"
     )
-    session = f"tui-{agent_name}"
+    session = agent_name
+    legacy = f"tui-{agent_name}"
     cause_txt = f" [{cause}]" if cause is not None else ""
     return TurnBridgePortBusyError(
         f"tui-turn-bridge: a2a port {port} on {host} for agent {agent_name!r} is "
         f"STILL held by an old holder{cause_txt} — refusing to bind into an "
         f"EADDRINUSE crash (the restart port-collision incident). Holder "
-        f"PID(s): {who}; tmux session: {session}. Free it, then restart: "
+        f"PID(s): {who}; tmux session: {session} (pre-cutover: {legacy}). "
+        f"Free it, then restart: "
         f"`fuser -k {port}/tcp; tmux kill-session -t {session}; "
         f"sac agents restart {agent_name}`.",
         port=port,

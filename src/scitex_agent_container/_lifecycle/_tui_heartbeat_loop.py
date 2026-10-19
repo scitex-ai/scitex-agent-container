@@ -223,9 +223,13 @@ def _beat_one(
     state_dir = agent.get("state_dir")
     if not name or state_dir is None:
         return False
-    activity = snapshot.get(f"tui-{name}")
+    # Bare canonical first, legacy ``tui-`` second: a pre-cutover session
+    # still beats under its old name until it is restarted.
+    activity = snapshot.get(name)
     if activity is None:
-        # No live ``tui-<name>`` session in the snapshot — nothing to beat.
+        activity = snapshot.get(f"tui-{name}")
+    if activity is None:
+        # No live session for this agent in the snapshot — nothing to beat.
         return False
     try:
         config = agent.get("config")

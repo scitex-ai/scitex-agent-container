@@ -133,7 +133,7 @@ def test_step_one_pastes_the_model_command() -> None:
     # Act
     _run(pane=pane, clock=clock)
     # Assert
-    assert pane.pasted == [("tui-alpha", "/model opus[1m]")]
+    assert pane.pasted == [("alpha", "/model opus[1m]")]
 
 
 def test_step_two_sends_a_named_enter() -> None:
@@ -143,7 +143,7 @@ def test_step_two_sends_a_named_enter() -> None:
     # Act
     _run(pane=pane, clock=clock)
     # Assert
-    assert pane.keys == [("tui-alpha", "Enter")]
+    assert pane.keys == [("alpha", "Enter")]
 
 
 def test_step_three_kicks_the_agent() -> None:
@@ -201,7 +201,28 @@ def test_the_verification_capture_runs() -> None:
     # Act
     _run(pane=pane, clock=clock)
     # Assert
-    assert pane.captured == ["tui-alpha"]
+    assert pane.captured == ["alpha"]
+
+
+def test_legacy_prefixed_live_session_is_used_when_bare_is_absent() -> None:
+    # Arrange — a pre-cutover agent still runs under ``tui-alpha``; the
+    # listing proves the bare name is not live, so the switch must address
+    # the legacy session rather than typing into the void.
+    pane, clock = Pane(), FakeClock()
+    # Act
+    switch_model_now(
+        "alpha",
+        paste_fn=pane.paste,
+        send_keys_fn=pane.send_keys,
+        kick_fn=_kick(True),
+        capture_fn=pane.capture,
+        list_sessions_fn=lambda: ["tui-alpha", "other"],
+        sleep_fn=clock.sleep,
+        clock_fn=clock.clock,
+        now=NOW,
+    )
+    # Assert
+    assert pane.pasted == [("tui-alpha", "/model opus[1m]")]
 
 
 def test_a_clean_pane_and_proven_kick_is_switched() -> None:

@@ -29,6 +29,12 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **New TUI sessions are minted bare — the session name IS the agent name.**
+  The `tui-` prefix is dropped for new sessions; pre-cutover `tui-<agent>`
+  sessions keep resolving everywhere (start guard, stop, delivery routing,
+  liveness probes, auth-status, attach, heartbeat, registry sweep) until
+  they are restarted. No migration step: restart an agent and its session
+  comes back bare.
 - Remove the generic `--force` option from SAC commands. Use `agents restart`
   to replace an agent, including `--fresh` for a new session; restart keeps
   active-turn draining and supports the same behavior locally and remotely.

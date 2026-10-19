@@ -474,6 +474,28 @@ def test_remote_process_signal_rc1_no_remote_session_is_dead(spartan_config):
     assert signal.verdict == DEAD
 
 
+def test_remote_process_signal_falls_back_to_legacy_session(spartan_config):
+    # Arrange — the bare name is absent (rc 1) but the pre-cutover
+    # ``tui-spartan-dev`` session is live (rc 0): the agent is ALIVE under
+    # its old name, not dead under its new one.
+    cfg = _Cfg("spartan-dev", "tui")
+    rcs = iter([1, 0])
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: next(rcs))
+    # Assert
+    assert signal.verdict == ALIVE
+
+
+def test_remote_process_signal_names_the_live_legacy_session(spartan_config):
+    # Arrange — same shape: bare absent, legacy live.
+    cfg = _Cfg("spartan-dev", "tui")
+    rcs = iter([1, 0])
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: next(rcs))
+    # Assert — the verdict names the session that was actually observed.
+    assert "tui-spartan-dev" in signal.detail
+
+
 def test_remote_process_signal_ssh_connect_failure_is_unknown_never_dead(
     spartan_config,
 ):
@@ -593,7 +615,7 @@ def test_remote_process_signal_argv_probes_tmux_has_session_directly(spartan_con
     # Arrange — the target is the EXACT-match form (=name:): a bare -t
     # prefix-matches on the peer's tmux, so a sibling session would vouch
     # this agent ALIVE (incident 2026-08-14).
-    expected_tail = ["tmux", "has-session", "-t", "=tui-spartan-dev:"]
+    expected_tail = ["tmux", "has-session", "-t", "=spartan-dev:"]
     # Act
     argv = _captured_remote_probe_argv()
     # Assert — a DIRECT peer runs `tmux has-session -t <session>` directly.
@@ -647,7 +669,7 @@ def test_remote_process_signal_multihop_argv_wraps_cmd_in_bash_c(spartan_config)
     # Assert — one collapsed element carrying the preamble + the tmux probe
     # (exact-match =name: target; see the direct-peer test above).
     assert any(
-        el.startswith("bash -c ") and "tmux has-session -t =tui-proj-x:" in el
+        el.startswith("bash -c ") and "tmux has-session -t =proj-x:" in el
         for el in argv
     )
 

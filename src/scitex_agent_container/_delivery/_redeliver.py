@@ -254,8 +254,8 @@ def redeliver(
             return _finish(
                 False,
                 f"no route to {agent} on strategy={record.strategy}: do NOT "
-                f"resend — check whether the agent is running (tmux session "
-                f"tui-{agent} / recorded session id), then retry",
+                f"resend — check whether the agent is running (its tmux "
+                f"session / recorded session id), then retry",
             )
 
         if record.exit_code == EXIT_UNSUBMITTED:

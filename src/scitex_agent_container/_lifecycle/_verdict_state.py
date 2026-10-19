@@ -111,7 +111,7 @@ def heartbeat_signal(
     ``heartbeat.json`` for a TUI agent is written by a CENTRALIZED loop inside
     ``sac listen`` (:func:`._tui_heartbeat_loop.tui_heartbeat_loop`), not by
     the agent. That loop takes ONE batched ``tmux list-sessions`` snapshot and
-    beats only for agents whose ``tui-<name>`` session is actually IN it — and
+    beats only for agents whose session (bare canonical, or legacy ``tui-<name>``) is actually IN it — and
     a FAILED probe returns ``None`` and skips the whole tick, so a false beat
     is never written. So:
 

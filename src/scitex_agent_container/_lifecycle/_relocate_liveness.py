@@ -81,7 +81,9 @@ def observe_running(
     entry or a refusal, and "could not determine" with no account of what was
     tried is not something anyone can act on.
     """
-    session = f"tui-{agent}"
+    from .._tui_session_names import candidate_session_names
+
+    bare, legacy = candidate_session_names(agent)
     body = (
         "if ! command -v tmux >/dev/null 2>&1; then "
         f"printf '{MARK_RUN}no-tmux\\n'; exit 0; fi\n"
@@ -90,7 +92,9 @@ def observe_running(
         # EXACT-match target (exact_target): a bare -t prefix-matches, so a
         # sibling session (tui-foo-gui) would vouch tui-foo alive here and the
         # transport would read a dead source as running (incident 2026-08-14).
-        f"if tmux has-session -t '{exact_target(session)}' 2>/dev/null; then "
+        # BOTH names are probed: new sessions are bare, pre-cutover ones are
+        # ``tui-<agent>`` -- either one live means the agent is running.
+        f"if tmux has-session -t '{exact_target(bare)}' 2>/dev/null || tmux has-session -t '{exact_target(legacy)}' 2>/dev/null; then "
         f"printf '{MARK_RUN}yes\\n'; else printf '{MARK_RUN}no\\n'; fi"
     )
     run = shell.run(body, exec_fn=exec_fn)
@@ -101,7 +105,7 @@ def observe_running(
             if ln.startswith(MARK_RUN)
         ],
         host=shell.host,
-        session=session,
+        session=bare,
         exit_code=run.exit_code,
         stderr=run.stderr,
     )

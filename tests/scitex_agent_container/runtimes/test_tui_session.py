@@ -297,18 +297,76 @@ def mux() -> Iterator[type[_MemoryMultiplexer]]:
     yield _PerTestMux
 
 
+def _prime_legacy(mux: type[_MemoryMultiplexer], agent: str) -> None:
+    """Prime a pre-cutover ``tui-<agent>`` session with a live pane pid."""
+    mux.start(f"tui-{agent}", command="apptainer exec img.sif claude", workdir="/tmp")
+
+
+def test_legacy_session_reads_running_without_restart(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a pre-cutover session, never re-minted under the new name.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="legacy-x")
+    _prime_legacy(mux, "legacy-x")
+    # Act
+    alive = runtime.is_running(config)
+    # Assert
+    assert alive is True
+
+
+def test_legacy_session_is_addressed_for_delivery(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — same shape: only the legacy session is live.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="legacy-y")
+    _prime_legacy(mux, "legacy-y")
+    # Act
+    runtime.send_turn(config, "hello-legacy", wait_ready=False)
+    # Assert
+    assert mux._sessions["tui-legacy-y"].pane == ["hello-legacy"]
+
+
+def test_stop_removes_a_live_legacy_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — only the legacy session is live.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="legacy-z")
+    _prime_legacy(mux, "legacy-z")
+    # Act
+    stopped = runtime.stop(config)
+    # Assert
+    assert (stopped, mux.exists("tui-legacy-z")) == (True, False)
+
+
+def test_start_refuses_over_a_live_legacy_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — pre-cutover session live; minting a bare one over it would
+    # leave two TUIs for one agent.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="legacy-w", workdir="/tmp/legacy-w")
+    _prime_legacy(mux, "legacy-w")
+    # Act
+    ok = runtime.start(config)
+    # Assert — duplicate guard fired AND no bare session was minted.
+    assert (ok, mux.exists("legacy-w")) == (True, False)
+
+
 # ---------------------------------------------------------------------------
-# session_name_for — namespacing convention
+# session_name_for — bare canonical convention + legacy recognition
 # ---------------------------------------------------------------------------
 
 
-def test_session_name_for_prefixes_with_tui_namespace() -> None:
+def test_session_name_for_mints_the_bare_agent_name() -> None:
     # Arrange
     config = _Config(name="alpha")
     # Act
     name = session_name_for(config)
     # Assert
-    assert name == "tui-alpha"
+    assert name == "alpha"
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +383,7 @@ def test_tui_runtime_start_creates_named_session(
     # Act
     runtime.start(config)
     # Assert
-    assert mux.exists("tui-beta")
+    assert mux.exists("beta")
 
 
 def test_tui_runtime_start_returns_true_on_success(
@@ -358,7 +416,7 @@ def test_tui_runtime_start_never_stages_heartbeat_over_initial_turn(
     # Assert
     assert not any(
         row.startswith("/heartbeat every ")
-        for row in mux._sessions["tui-hermes-auto"].pane
+        for row in mux._sessions["hermes-auto"].pane
     )
 
 
@@ -554,7 +612,7 @@ def test_codex_cct_start_failure_unwinds_managed_session(
     except RuntimeError as exc:
         error = str(exc)
     # Assert
-    assert (error, events, mux.exists("tui-codex-cct-fail")) == (
+    assert (error, events, mux.exists("codex-cct-fail")) == (
         "poller preflight failed",
         [
             "bridge-start",
@@ -594,7 +652,7 @@ def test_tui_runtime_start_invokes_claude_binary_in_session(
     runtime.start(config)
     # Assert
     assert (
-        mux._sessions["tui-delta"].command.split(" 2> ", 1)[0]
+        mux._sessions["delta"].command.split(" 2> ", 1)[0]
         == "apptainer exec img.sif claude"
     )
 
@@ -622,7 +680,7 @@ def test_tui_runtime_start_dry_run_does_not_create_session(
     # Act
     runtime.start(config, dry_run=True)
     # Assert
-    assert mux.exists("tui-zeta") is False
+    assert mux.exists("zeta") is False
 
 
 def test_tui_runtime_start_dry_run_returns_true(
@@ -652,7 +710,7 @@ def test_tui_runtime_stop_kills_named_session(
     # Act
     runtime.stop(config)
     # Assert
-    assert mux.exists("tui-theta") is False
+    assert mux.exists("theta") is False
 
 
 def test_tui_runtime_stop_returns_true_when_session_existed(
@@ -742,7 +800,7 @@ def test_tui_runtime_is_running_true_when_idle_but_pane_alive(
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="nu-idle")
     runtime.start(config)
-    mux._sessions["tui-nu-idle"].activity_at = time.time() - 99_999.0
+    mux._sessions["nu-idle"].activity_at = time.time() - 99_999.0
     # Act
     alive = runtime.is_running(config)
     # Assert — pane pid is live ⇒ running, regardless of stale activity.
@@ -756,7 +814,7 @@ def test_tui_runtime_is_running_false_when_pane_process_dead(
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="omicron-dead")
     runtime.start(config)
-    mux._sessions["tui-omicron-dead"].pane_pid = 2_147_483_646  # never a live pid
+    mux._sessions["omicron-dead"].pane_pid = 2_147_483_646  # never a live pid
     # Act
     alive = runtime.is_running(config)
     # Assert
@@ -771,7 +829,7 @@ def test_tui_runtime_is_running_false_when_pane_dead_flag_set(
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="pi-retained")
     runtime.start(config)
-    mux._sessions["tui-pi-retained"].pane_dead = True
+    mux._sessions["pi-retained"].pane_dead = True
     # Act
     alive = runtime.is_running(config)
     # Assert
@@ -822,7 +880,7 @@ def test_tui_runtime_is_responsive_false_when_activity_stale_beyond_window(
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="tau-stale")
     runtime.start(config)
-    mux._sessions["tui-tau-stale"].activity_at = time.time() - 9_999.0
+    mux._sessions["tau-stale"].activity_at = time.time() - 9_999.0
     # Act
     responsive = runtime.is_responsive(config)
     # Assert — pane silent past max-idle: responsiveness flips False.
@@ -836,7 +894,7 @@ def test_tui_runtime_is_responsive_respects_max_idle_s_override(
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="upsilon-tight")
     runtime.start(config)
-    mux._sessions["tui-upsilon-tight"].activity_at = time.time() - 100.0
+    mux._sessions["upsilon-tight"].activity_at = time.time() - 100.0
     # Act
     responsive = runtime.is_responsive(config, max_idle_s=50.0)
     # Assert
@@ -913,7 +971,7 @@ def test_tui_runtime_send_turn_delivers_text_to_session_pane(
     # Assert — _MemoryMultiplexer.send_text_and_submit_verified
     # appends to the pane list, so a single send shows up as exactly
     # one entry.
-    assert mux._sessions["tui-omicron"].pane == ["hello-omicron"]
+    assert mux._sessions["omicron"].pane == ["hello-omicron"]
 
 
 def test_tui_runtime_send_turn_returns_true_when_session_alive(
@@ -952,7 +1010,7 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
     # Assert — the multiplexer's session registry stays empty, proving
     # the runtime guarded the send instead of letting it create a
     # phantom entry via the implicit dict-insert path.
-    assert "tui-sigma" not in mux._sessions
+    assert "sigma" not in mux._sessions
 
 
 # A pane frame captured VERBATIM from a live handyman mid-turn on
@@ -1119,7 +1177,7 @@ def test_wait_until_input_ready_dismisses_theme_picker_then_returns(
     # Assert — the registry's "theme-selection" handler keystrokes
     # ["1", "Enter"] landed in the pane via the memory mux's
     # send_keys hook. Sess.pane accumulates them in order.
-    delivered = primed_mux._sessions["tui-theme-dismiss"].pane
+    delivered = primed_mux._sessions["theme-dismiss"].pane
     assert delivered == ["1", "Enter"]
 
 
@@ -1190,7 +1248,7 @@ def test_drain_at_boot_dismisses_bypass_then_exits_on_is_ready(
     # Act
     runtime._drain_at_boot(config, timeout_s=2.0, poll_s=0.0)
     # Assert — the bypass handler's keystrokes ["2", "Enter"] landed.
-    assert primed_mux._sessions["tui-boot-bypass"].pane == ["2", "Enter"]
+    assert primed_mux._sessions["boot-bypass"].pane == ["2", "Enter"]
 
 
 def test_drain_at_boot_returns_true_after_dismissing_bypass(

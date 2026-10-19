@@ -210,7 +210,7 @@ def test_startup_prompt_inject_pastes_text_literally(
     # missed-input read-back ahead of the spec's prompts (see _boot_recovery),
     # so an equality assertion here pins the injected COUNT rather than the
     # property this test is named for.
-    assert ("send_text_literal", "tui-figrecipe", "go work") in _literal_calls(mux)
+    assert ("send_text_literal", "figrecipe", "go work") in _literal_calls(mux)
 
 
 def test_startup_prompt_inject_never_uses_non_literal_submit(
@@ -271,7 +271,7 @@ def test_codex_receives_recovery_and_full_mandate_before_its_first_turn(mux):
             "Read the handoff",
         ],
     )
-    mux.start("tui-lead", "codex", "/tmp")
+    mux.start("lead", "codex", "/tmp")
     # Act
     runtime._inject_startup_prompts(config)
     pastes = _literal_calls(mux)
@@ -295,7 +295,7 @@ def test_codex_boot_refuses_to_continue_when_its_mission_is_not_admitted(mux):
 
     runtime = _Unsubmitted(multiplexer=mux, command_builder=_builder)
     config = _Config(name="lead", harness="codex", startup_prompts=["mission"])
-    mux.start("tui-lead", "codex", "/tmp")
+    mux.start("lead", "codex", "/tmp")
     # Act
     # Assert
     with pytest.raises(RuntimeError, match="not admitted"):

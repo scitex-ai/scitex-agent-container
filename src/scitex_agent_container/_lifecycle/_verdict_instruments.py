@@ -168,7 +168,7 @@ INSTRUMENT_INDEPENDENCE: dict[str, InstrumentSpec] = {
     INSTRUMENT_HOST_TMUX: InstrumentSpec(
         reads=(
             "the host tmux server's own session bookkeeping "
-            "(``tmux list-sessions``) — whether a ``tui-<name>`` session exists."
+            "(``tmux list-sessions``) — whether the agent's session exists (bare canonical, or legacy ``tui-<name>``)."
         ),
         verdicts=frozenset({ALIVE, DEAD, UNKNOWN}),
         blind_when=(
@@ -213,7 +213,7 @@ INSTRUMENT_INDEPENDENCE: dict[str, InstrumentSpec] = {
     ),
     INSTRUMENT_TUI_SCREEN: InstrumentSpec(
         reads=(
-            "the rendered CONTENT of the tui-<name> pane — whether a FROZEN auth "
+            "the rendered CONTENT of the agent's pane — whether a FROZEN auth "
             "banner sits directly above the input prompt (read from the cached "
             "``sac agents auth-status`` verdict, itself produced by the "
             "2-run-frozen matcher). It observes whether the agent is WORKING, as "
@@ -231,7 +231,7 @@ INSTRUMENT_INDEPENDENCE: dict[str, InstrumentSpec] = {
         # CONVICTING_INSTRUMENTS — it can NEVER arm a destroy.
         verdicts=frozenset({WEDGED, UNKNOWN}),
         blind_when=(
-            "the pane is uncapturable, there is no tui-<name> session on this "
+            "the pane is uncapturable, there is no session for this agent on this "
             "host, we are inside a container (the host's tmux is in another mount "
             "namespace), or the auth-status cache is stale or absent — all of "
             "which degrade to UNKNOWN, never a false WEDGE"
