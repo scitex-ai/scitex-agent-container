@@ -134,7 +134,10 @@ def _restart_one(
                 f"agents restart {name} --yes --engine {engine}"
             )
             if not as_json:
-                render_rich(f"[red]{msg}[/red]", __name__)
+                # level="error": colour is not severity (see
+                # lifecycle/_stop.py) — this refusal must survive
+                # SCITEX_LOGGING_LEVEL > INFO.
+                render_rich(f"[red]{msg}[/red]", __name__, level="error")
             out, ok = {"name": name, "error": msg, "restarted": False}, False
         elif broker:
             broker_kwargs = {"as_json": as_json, "fresh": fresh}
@@ -149,9 +152,37 @@ def _restart_one(
                 local_kwargs["drain_timeout_s"] = drain_timeout_s
             out, ok = _restart_locally(name, **local_kwargs)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if not as_json:
-            render_rich(f"[red]Error: {exc}[/red]", __name__)
-        out, ok = {"name": name, "error": str(exc)}, False
+        # A stop-leg REFUSAL (the agent is actively working, so the
+        # turn guard refused before anything was torn down) must read
+        # as what it is — a restart that never happened, with the
+        # agent still intact on its OLD process — never as a generic
+        # "Error: ..." with no cause and no remedy. The envelope
+        # always carries "restarted": False (absence of the key once
+        # read as unknown-but-not-failure one hop away).
+        out = {"name": name, "error": str(exc), "restarted": False}
+        ok = False
+        from ..._lifecycle._managed_turn_drain import ManagedTurnDrainRefusal
+
+        if isinstance(exc, ManagedTurnDrainRefusal):
+            out["reason"] = "stop-refused-active-turn"
+            out["hint"] = (
+                f"the agent is still the OLD process and nothing cycled "
+                f"— wait for the turn to finish, or retry with: "
+                f"sac agents restart {name} -y --drain-timeout SECONDS"
+            )
+            if not as_json:
+                render_rich(
+                    f"[red]Agent '{name}' NOT restarted — it is actively "
+                    f"working, so the stop leg was refused and nothing "
+                    f"cycled. It is still the OLD process.[/red]\n"
+                    f"[yellow]Wait for the turn to finish, or retry with:\n"
+                    f"  sac agents restart {name} -y --drain-timeout "
+                    f"SECONDS[/yellow]",
+                    __name__,
+                    level="error",
+                )
+        elif not as_json:
+            render_rich(f"[red]Error: {exc}[/red]", __name__, level="error")
     log_restart_decision(
         event="completed",
         agent=name,

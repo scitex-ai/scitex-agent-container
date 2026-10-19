@@ -73,6 +73,18 @@ def render_rich(
         Logger name — pass ``__name__`` from the call site.
     level : str
         One of ``info``/``warning``/``error``/``success``.
+
+        COLOUR IS NOT SEVERITY — READ THIS BEFORE CALLING. Rich
+        markup (``[red]``/``[yellow]``/``[green]``) only tints the
+        glyphs; the record's level is this argument, and the default
+        ``"info"`` is filtered whenever ``SCITEX_LOGGING_LEVEL`` is
+        raised above INFO. Every ``[red]`` failure line MUST pass
+        ``level="error"`` (and every ``[yellow]`` heads-up
+        ``level="warning"``), or the failure exits non-zero with
+        EMPTY stdout/stderr — the silent-exit-1 class of incident.
+        Audit 2026-10-19: the stop/restart/start lifecycle paths were
+        fixed to pass explicit levels; ~460 remaining call sites still
+        rely on the default and go quiet above INFO.
     width : int | None
         Render width. ``None`` (default) keeps the previous behaviour —
         a fresh default-width console. Pass the caller's console width

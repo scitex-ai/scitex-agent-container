@@ -32,6 +32,7 @@ from .._helpers import system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
+from ._start_progress import starting_progress
 
 
 def should_preflight_claude_resume(config, resume_id: str | None) -> bool:
@@ -223,7 +224,9 @@ def run_single_targets(
                             }
                         )
                     else:
-                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__)
+                        # level="warning": the default info level hides
+                        # this skip when SCITEX_LOGGING_LEVEL > INFO.
+                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__, level="warning")
                     continue
                 # Location reads as `host@<host-workdir>:<container-workdir>`.
                 host = resolve_hostname() or "local"
@@ -346,20 +349,25 @@ def run_single_targets(
                 # Wall-clock stamp taken BEFORE the launch — heartbeat
                 # freshness in the launch verdict is judged against it.
                 _launched_at = time.time()
-                _outcome = agent_start(
-                    config_path,
-                    no_preflight=no_preflight,
-                    force=force,
-                    dry_run=dry_run,
-                    session_override=session_mode,
-                    resume_id_override=resume_id,
-                    engine_override=engine,
-                    probe_engine=probe_engine,
-                    foreground=foreground,
-                    one_shot=one_shot,
-                    assume_yes=effective_yes,
-                    strict_drift=strict_drift,
-                )
+                # Long silent launch (boot drain / image / hooks can take
+                # minutes): heartbeat progress lines while agent_start
+                # blocks, human console only — never in --json, where
+                # stdout must stay a pure envelope.
+                with starting_progress(config.name, enabled=not as_json):
+                    _outcome = agent_start(
+                        config_path,
+                        no_preflight=no_preflight,
+                        force=force,
+                        dry_run=dry_run,
+                        session_override=session_mode,
+                        resume_id_override=resume_id,
+                        engine_override=engine,
+                        probe_engine=probe_engine,
+                        foreground=foreground,
+                        one_shot=one_shot,
+                        assume_yes=effective_yes,
+                        strict_drift=strict_drift,
+                    )
                 _noop = outcome_kind(_outcome) == KIND_ALREADY_RUNNING
                 # v4 step 1 — the launch VERDICT: the launch only counts
                 # as STARTED once evidence shows the agent actually came

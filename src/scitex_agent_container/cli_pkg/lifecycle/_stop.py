@@ -108,9 +108,27 @@ def _dispatch_remote_stop(
         check=False,
     )
     if result.returncode != 0:
+        # A peer-side REFUSAL (e.g. the agent is actively working, so
+        # the peer's own guard refused and its CLI exited 1 with a
+        # `{"name", "error"}` envelope on stdout) is not a transport
+        # failure — say so, quoting the peer's own words, instead of
+        # filing it as an unreachable peer.
+        refusal_note = ""
+        try:
+            peer_envelope = _json.loads(result.stdout)
+        except _json.JSONDecodeError:
+            peer_envelope = None
+        if isinstance(peer_envelope, dict) and peer_envelope.get("error"):
+            refusal_note = (
+                f"Peer refused the stop (NOT a transport failure): "
+                f"{peer_envelope.get('error')}\n"
+            )
+            if peer_envelope.get("reason"):
+                refusal_note += f"Peer reason: {peer_envelope.get('reason')}\n"
         raise _PeerUnreachableError(
             f"Remote `sac agents stop {name}` failed on {peer!r} "
             f"(rc={result.returncode}):\n"
+            f"{refusal_note}"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
@@ -306,7 +324,11 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": yaml_path, "error": str(exc)}))
             else:
-                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__)
+                # level="error": colour is not severity — the default
+                # "info" level is filtered when SCITEX_LOGGING_LEVEL >
+                # INFO, which made this failure line vanish entirely
+                # (silent non-zero exit).
+                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__, level="error")
     for raw_target in single_targets:
         try:
             name: str = raw_target
@@ -320,7 +342,8 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": raw_target, "error": str(exc)}))
             else:
-                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
+                # level="error": see the bulk-yaml branch above.
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__, level="error")
 
     # Dispatch loop — try remote first, fall back to local agent_stop.
     peers = _load_host_config().peers
@@ -395,10 +418,56 @@ def stop(
                 render_rich(f"[green]Agent '{name}' stopped[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining targets; surfaces via the per-target JSON envelope or red console line)
             any_error = True
-            if as_json:
-                click.echo(_json.dumps({"name": name, "error": str(exc)}))
+            # A refused stop is the LOUD case, not the quiet one: the
+            # agent is actively working, NOTHING was torn down (the
+            # guard fires before handover snapshots, hooks, or runtime
+            # teardown), and the operator must hear both the refusal
+            # and the remedy. Matched BEFORE the generic branch; the
+            # lazy import keeps this CLI module clear of the lifecycle
+            # import graph at startup.
+            from ..._lifecycle._managed_turn_drain import (
+                ManagedTurnDrainRefusal,
+            )
+
+            if isinstance(exc, ManagedTurnDrainRefusal):
+                if as_json:
+                    click.echo(
+                        _json.dumps(
+                            {
+                                "name": name,
+                                "stopped": False,
+                                "reason": "stop-refused-active-turn",
+                                "error": str(exc),
+                            }
+                        )
+                    )
+                else:
+                    render_rich(
+                        f"[red]NOT stopped: agent '{name}' is actively "
+                        f"working — {exc}[/red]\n"
+                        f"[yellow]Nothing was torn down: the session, "
+                        f"runtime and registry row are intact. Wait for "
+                        f"the turn to finish, or retry with "
+                        f"`sac agents stop {name} --drain-timeout "
+                        f"SECONDS`.[/yellow]",
+                        __name__,
+                        level="error",
+                    )
+            elif as_json:
+                click.echo(
+                    _json.dumps(
+                        {"name": name, "stopped": False, "error": str(exc)}
+                    )
+                )
             else:
-                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
+                # level="error": a red line at the default info level
+                # is filtered when SCITEX_LOGGING_LEVEL > INFO — the
+                # silent-exit-1 the operator reported.
+                render_rich(
+                    f"[red]Error ({raw_target}): {exc}[/red]",
+                    __name__,
+                    level="error",
+                )
 
     if any_error:
         sys.exit(1)

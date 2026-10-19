@@ -71,7 +71,9 @@ def run_bulk_path(
                 config, current_host, local_names=local_names
             )
             if skip:
-                render_rich(f"  [yellow]SKIP[/yellow] {config.name}: {skip}", __name__)
+                # level="warning": skips must survive
+                # SCITEX_LOGGING_LEVEL > INFO (colour is not severity).
+                render_rich(f"  [yellow]SKIP[/yellow] {config.name}: {skip}", __name__, level="warning")
                 continue
             # ``config.remote`` was deleted in WI-6. Host pinning under
             # v3 lives in ``spec.host`` / ``spec.hosts`` and is shown
@@ -86,7 +88,10 @@ def run_bulk_path(
             )
             render_rich("[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-            render_rich(f"[red]FAILED: {exc}[/red]", __name__)
+            # level="error": a FAILED line at the default info level is
+            # filtered when SCITEX_LOGGING_LEVEL > INFO — a silent
+            # non-zero bulk exit.
+            render_rich(f"[red]FAILED: {exc}[/red]", __name__, level="error")
 
 
 __all__ = ["run_bulk_path"]
