@@ -28,6 +28,8 @@ PA-306: no ``unittest.mock`` / ``monkeypatch``. Collaborators are
 swapped at the module namespace with an explicit save/restore
 ``_swap``. Fixture agent names use the ``pytest-fixture-`` prefix so
 no real agent can ever be prefix-matched (see ``test__stop.py``).
+PA-307 §3: one assertion per test function; Arrange/Act/Assert each
+on its own line.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from click.testing import CliRunner
 
 import scitex_agent_container.cli_pkg.lifecycle._restart as restart_mod
 import scitex_agent_container.cli_pkg.lifecycle._restart_local as restart_local_mod
+import scitex_agent_container.cli_pkg.lifecycle._restart_remote as remote_mod
 import scitex_agent_container.cli_pkg.lifecycle._stop as stop_mod
 from scitex_agent_container._lifecycle._managed_turn_drain import (
     ManagedTurnDrainRefusal,
@@ -124,116 +127,10 @@ def _drive_restart_local(argv: list[str]):
     with (
         _swap(restart_local_mod, "agent_restart", _raise_refusal),
         _swap(restart_local_mod, "try_dispatch_remote", lambda *a, **k: False),
-        _swap(
-            restart_local_mod, "spec_host_fallback_peer", lambda *a, **k: None
-        ),
-        _swap(
-            restart_mod, "must_broker_to_host", lambda: False
-        ),
-    ):
-        return CliRunner().invoke(restart, argv)
-
-
-# ---------------------------------------------------------------------------
-# sac agents stop — refusal is loud
-# ---------------------------------------------------------------------------
-
-
-def test_stop_refusal_exits_nonzero_with_clear_message():
-    # Arrange / Act
-    result = _drive_stop_local([AGENT])
-    # Assert
-    assert result.exit_code == 1
-    assert f"NOT stopped: agent '{AGENT}' is actively working" in result.output
-    assert "Nothing was torn down" in result.output
-    assert "--drain-timeout" in result.output
-
-
-def test_stop_refusal_stays_loud_above_info_threshold():
-    # Arrange — a fleet host cutting noise with SCITEX_LOGGING_LEVEL=WARNING
-    # Act
-    with _warning_threshold():
-        result = _drive_stop_local([AGENT])
-    # Assert — previously: exit 1 with EMPTY stdout/stderr (the incident).
-    assert result.exit_code == 1
-    assert f"NOT stopped: agent '{AGENT}' is actively working" in result.output
-    assert result.output.strip() != ""
-
-
-def test_stop_refusal_json_envelope_names_failure():
-    # Arrange / Act
-    result = _drive_stop_local([AGENT, "--json"])
-    # Assert
-    assert result.exit_code == 1
-    envelope = json.loads(result.stdout)
-    assert envelope["name"] == AGENT
-    assert envelope["stopped"] is False
-    assert envelope["reason"] == "stop-refused-active-turn"
-    assert "working" in envelope["error"]
-
-
-# ---------------------------------------------------------------------------
-# sac agents restart — refusal aborts loud with reason, never silent
-# ---------------------------------------------------------------------------
-
-
-def test_restart_refusal_exits_nonzero_with_clear_message():
-    # Arrange / Act
-    result = _drive_restart_local([AGENT, "-y"])
-    # Assert
-    assert result.exit_code == 1
-    assert f"Agent '{AGENT}' NOT restarted" in result.output
-    assert "actively working" in result.output
-    assert "still the OLD process" in result.output
-    assert "--drain-timeout" in result.output
-
-
-def test_restart_refusal_stays_loud_above_info_threshold():
-    # Arrange / Act
-    with _warning_threshold():
-        result = _drive_restart_local([AGENT, "-y"])
-    # Assert — previously: exit 1 with EMPTY stdout/stderr (the incident).
-    assert result.exit_code == 1
-    assert f"Agent '{AGENT}' NOT restarted" in result.output
-    assert result.output.strip() != ""
-
-
-def test_restart_refusal_json_envelope_carries_restarted_false():
-    # Arrange / Act
-    result = _drive_restart_local([AGENT, "-y", "--json"])
-    # Assert
-    assert result.exit_code == 1
-    envelope = json.loads(result.stdout)
-    assert envelope["name"] == AGENT
-    assert envelope["restarted"] is False
-    assert envelope["reason"] == "stop-refused-active-turn"
-    assert "--drain-timeout" in envelope["hint"]
-
-
-def test_restart_generic_failure_envelope_carries_restarted_false():
-    # Arrange — a non-refusal fault must not lose the restarted key either.
-    def _boom(*args, **kwargs):
-        raise RuntimeError("start leg exploded")
-
-    with (
-        _swap(restart_local_mod, "agent_restart", _boom),
-        _swap(restart_local_mod, "try_dispatch_remote", lambda *a, **k: False),
-        _swap(
-            restart_local_mod, "spec_host_fallback_peer", lambda *a, **k: None
-        ),
+        _swap(restart_local_mod, "spec_host_fallback_peer", lambda *a, **k: None),
         _swap(restart_mod, "must_broker_to_host", lambda: False),
     ):
-        result = CliRunner().invoke(restart, [AGENT, "-y", "--json"])
-    # Assert
-    assert result.exit_code == 1
-    envelope = json.loads(result.stdout)
-    assert envelope["restarted"] is False
-    assert "start leg exploded" in envelope["error"]
-
-
-# ---------------------------------------------------------------------------
-# Cross-host: a peer-side refusal reads as a refusal, not a dead peer
-# ---------------------------------------------------------------------------
+        return CliRunner().invoke(restart, argv)
 
 
 class _Proc:
@@ -243,8 +140,8 @@ class _Proc:
         self.stderr = stderr
 
 
-def test_remote_stop_refusal_framed_as_refusal_not_unreachable():
-    # Arrange — the peer refused (rc=1) with its own JSON error envelope.
+def _drive_remote_stop_refusal() -> Exception | None:
+    """Run the ssh stop dispatch against a peer that refuses with JSON."""
     peer_stdout = json.dumps(
         {
             "name": AGENT,
@@ -253,9 +150,7 @@ def test_remote_stop_refusal_framed_as_refusal_not_unreachable():
             "error": REFUSAL_TEXT,
         }
     )
-    stub_subprocess = SimpleNamespace(
-        run=lambda *a, **k: _Proc(1, peer_stdout, "")
-    )
+    stub_subprocess = SimpleNamespace(run=lambda *a, **k: _Proc(1, peer_stdout, ""))
     with (
         _swap(stop_mod, "subprocess", stub_subprocess),
         _swap(
@@ -264,21 +159,15 @@ def test_remote_stop_refusal_framed_as_refusal_not_unreachable():
             lambda peer, argv, peers: ["ssh", peer, "--", *argv],
         ),
     ):
-        # Act
         try:
             stop_mod._dispatch_remote_stop("peer-1", {"id": "x"}, {}, AGENT)
-            raised = None
-        except Exception as exc:  # noqa: BLE001 — asserting on the raised shape
-            raised = exc
-    # Assert
-    assert raised is not None
-    assert "Peer refused the stop (NOT a transport failure)" in str(raised)
-    assert "working" in str(raised)
-    assert "stop-refused-active-turn" in str(raised)
+            return None
+        except Exception as exc:  # noqa: BLE001 — the raised shape is the assertion subject
+            return exc
 
 
-def test_remote_restart_refusal_framed_as_refusal_not_transport():
-    # Arrange — the peer refused (rc=1) with its own JSON error envelope.
+def _drive_remote_restart_refusal() -> Exception | None:
+    """Run the ssh restart dispatch against a peer that refuses with JSON."""
     peer_stdout = json.dumps(
         {
             "name": AGENT,
@@ -288,11 +177,7 @@ def test_remote_restart_refusal_framed_as_refusal_not_transport():
             "error": REFUSAL_TEXT,
         }
     )
-    import scitex_agent_container.cli_pkg.lifecycle._restart_remote as remote_mod
-
-    stub_subprocess = SimpleNamespace(
-        run=lambda *a, **k: _Proc(1, peer_stdout, "")
-    )
+    stub_subprocess = SimpleNamespace(run=lambda *a, **k: _Proc(1, peer_stdout, ""))
     with (
         _swap(remote_mod, "subprocess", stub_subprocess),
         _swap(
@@ -301,16 +186,388 @@ def test_remote_restart_refusal_framed_as_refusal_not_transport():
             lambda peer, argv, peers, login=False: ["ssh", peer, "--", *argv],
         ),
     ):
-        # Act
         try:
-            remote_mod._dispatch_remote_restart(
-                "peer-1", {"id": "x"}, {}, AGENT
-            )
-            raised = None
-        except Exception as exc:  # noqa: BLE001 — asserting on the raised shape
-            raised = exc
+            remote_mod._dispatch_remote_restart("peer-1", {"id": "x"}, {}, AGENT)
+            return None
+        except Exception as exc:  # noqa: BLE001 — the raised shape is the assertion subject
+            return exc
+
+
+# ---------------------------------------------------------------------------
+# sac agents stop — refusal is loud
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stop_refusal_result():
+    # Arrange
+    argv = [AGENT]
+    # Act
+    result = _drive_stop_local(argv)
     # Assert
-    assert raised is not None
-    assert "Peer refused the restart (NOT a transport failure)" in str(raised)
-    assert "stop-refused-active-turn" in str(raised)
-    assert "--drain-timeout" in str(raised)
+    return result
+
+
+def test_stop_refusal_exits_nonzero(stop_refusal_result):
+    # Arrange
+    result = stop_refusal_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_stop_refusal_names_agent_not_stopped(stop_refusal_result):
+    # Arrange
+    result = stop_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert f"NOT stopped: agent '{AGENT}' is actively working" in out
+
+
+def test_stop_refusal_names_intactness(stop_refusal_result):
+    # Arrange
+    result = stop_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert "Nothing was torn down" in out
+
+
+def test_stop_refusal_names_remedy(stop_refusal_result):
+    # Arrange
+    result = stop_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert "--drain-timeout" in out
+
+
+@pytest.fixture
+def stop_refusal_warning_result():
+    # Arrange
+    argv = [AGENT]
+    # Act
+    with _warning_threshold():
+        result = _drive_stop_local(argv)
+    # Assert
+    return result
+
+
+def test_stop_refusal_warning_exits_nonzero(stop_refusal_warning_result):
+    # Arrange
+    result = stop_refusal_warning_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_stop_refusal_warning_stays_loud(stop_refusal_warning_result):
+    # Arrange
+    result = stop_refusal_warning_result
+    # Act
+    out = result.output
+    # Assert
+    assert f"NOT stopped: agent '{AGENT}' is actively working" in out
+
+
+@pytest.fixture
+def stop_refusal_json_result():
+    # Arrange
+    argv = [AGENT, "--json"]
+    # Act
+    result = _drive_stop_local(argv)
+    # Assert
+    return result
+
+
+def test_stop_refusal_json_exits_nonzero(stop_refusal_json_result):
+    # Arrange
+    result = stop_refusal_json_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_stop_refusal_json_names_agent(stop_refusal_json_result):
+    # Arrange
+    result = stop_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["name"] == AGENT
+
+
+def test_stop_refusal_json_marks_not_stopped(stop_refusal_json_result):
+    # Arrange
+    result = stop_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["stopped"] is False
+
+
+def test_stop_refusal_json_names_reason(stop_refusal_json_result):
+    # Arrange
+    result = stop_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["reason"] == "stop-refused-active-turn"
+
+
+def test_stop_refusal_json_carries_error(stop_refusal_json_result):
+    # Arrange
+    result = stop_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert "working" in envelope["error"]
+
+
+# ---------------------------------------------------------------------------
+# sac agents restart — refusal aborts loud with reason, never silent
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def restart_refusal_result():
+    # Arrange
+    argv = [AGENT, "-y"]
+    # Act
+    result = _drive_restart_local(argv)
+    # Assert
+    return result
+
+
+def test_restart_refusal_exits_nonzero(restart_refusal_result):
+    # Arrange
+    result = restart_refusal_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_restart_refusal_names_not_restarted(restart_refusal_result):
+    # Arrange
+    result = restart_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert f"Agent '{AGENT}' NOT restarted" in out
+
+
+def test_restart_refusal_names_old_process(restart_refusal_result):
+    # Arrange
+    result = restart_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert "still the OLD process" in out
+
+
+def test_restart_refusal_names_remedy(restart_refusal_result):
+    # Arrange
+    result = restart_refusal_result
+    # Act
+    out = result.output
+    # Assert
+    assert "--drain-timeout" in out
+
+
+@pytest.fixture
+def restart_refusal_warning_result():
+    # Arrange
+    argv = [AGENT, "-y"]
+    # Act
+    with _warning_threshold():
+        result = _drive_restart_local(argv)
+    # Assert
+    return result
+
+
+def test_restart_refusal_warning_exits_nonzero(restart_refusal_warning_result):
+    # Arrange
+    result = restart_refusal_warning_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_restart_refusal_warning_stays_loud(restart_refusal_warning_result):
+    # Arrange
+    result = restart_refusal_warning_result
+    # Act
+    out = result.output
+    # Assert
+    assert f"Agent '{AGENT}' NOT restarted" in out
+
+
+@pytest.fixture
+def restart_refusal_json_result():
+    # Arrange
+    argv = [AGENT, "-y", "--json"]
+    # Act
+    result = _drive_restart_local(argv)
+    # Assert
+    return result
+
+
+def test_restart_refusal_json_exits_nonzero(restart_refusal_json_result):
+    # Arrange
+    result = restart_refusal_json_result
+    # Act
+    code = result.exit_code
+    # Assert
+    assert code == 1
+
+
+def test_restart_refusal_json_marks_not_restarted(restart_refusal_json_result):
+    # Arrange
+    result = restart_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["restarted"] is False
+
+
+def test_restart_refusal_json_names_reason(restart_refusal_json_result):
+    # Arrange
+    result = restart_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["reason"] == "stop-refused-active-turn"
+
+
+def test_restart_refusal_json_names_remedy(restart_refusal_json_result):
+    # Arrange
+    result = restart_refusal_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert "--drain-timeout" in envelope["hint"]
+
+
+@pytest.fixture
+def restart_generic_failure_json_result():
+    # Arrange
+    def _boom(*args, **kwargs):
+        raise RuntimeError("start leg exploded")
+
+    # Act
+    with (
+        _swap(restart_local_mod, "agent_restart", _boom),
+        _swap(restart_local_mod, "try_dispatch_remote", lambda *a, **k: False),
+        _swap(restart_local_mod, "spec_host_fallback_peer", lambda *a, **k: None),
+        _swap(restart_mod, "must_broker_to_host", lambda: False),
+    ):
+        result = CliRunner().invoke(restart, [AGENT, "-y", "--json"])
+    # Assert
+    return result
+
+
+def test_restart_generic_failure_marks_not_restarted(
+    restart_generic_failure_json_result,
+):
+    # Arrange
+    result = restart_generic_failure_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert envelope["restarted"] is False
+
+
+def test_restart_generic_failure_carries_error(
+    restart_generic_failure_json_result,
+):
+    # Arrange
+    result = restart_generic_failure_json_result
+    # Act
+    envelope = json.loads(result.stdout)
+    # Assert
+    assert "start leg exploded" in envelope["error"]
+
+
+# ---------------------------------------------------------------------------
+# Cross-host: a peer-side refusal reads as a refusal, not a dead peer
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def remote_stop_refusal_text():
+    # Arrange
+    raised = _drive_remote_stop_refusal()
+    # Act
+    text = str(raised)
+    # Assert
+    return text
+
+
+def test_remote_stop_refusal_framed_as_refusal(remote_stop_refusal_text):
+    # Arrange
+    text = remote_stop_refusal_text
+    # Act
+    framed = "Peer refused the stop (NOT a transport failure)" in text
+    # Assert
+    assert framed
+
+
+def test_remote_stop_refusal_quotes_peer_reason(remote_stop_refusal_text):
+    # Arrange
+    text = remote_stop_refusal_text
+    # Act
+    quoted = "stop-refused-active-turn" in text
+    # Assert
+    assert quoted
+
+
+def test_remote_stop_refusal_quotes_peer_words(remote_stop_refusal_text):
+    # Arrange
+    text = remote_stop_refusal_text
+    # Act
+    quoted = "working" in text
+    # Assert
+    assert quoted
+
+
+@pytest.fixture
+def remote_restart_refusal_text():
+    # Arrange
+    raised = _drive_remote_restart_refusal()
+    # Act
+    text = str(raised)
+    # Assert
+    return text
+
+
+def test_remote_restart_refusal_framed_as_refusal(remote_restart_refusal_text):
+    # Arrange
+    text = remote_restart_refusal_text
+    # Act
+    framed = "Peer refused the restart (NOT a transport failure)" in text
+    # Assert
+    assert framed
+
+
+def test_remote_restart_refusal_quotes_peer_reason(remote_restart_refusal_text):
+    # Arrange
+    text = remote_restart_refusal_text
+    # Act
+    quoted = "stop-refused-active-turn" in text
+    # Assert
+    assert quoted
+
+
+def test_remote_restart_refusal_quotes_peer_hint(remote_restart_refusal_text):
+    # Arrange
+    text = remote_restart_refusal_text
+    # Act
+    quoted = "--drain-timeout" in text
+    # Assert
+    assert quoted
