@@ -14,22 +14,13 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
      data-refresh-seconds="{{ refresh_seconds }}"
      data-timeline-url="{{ url_base }}/api/timeline">
 
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      <h1><i class="fas fa-wave-square"></i> Activity timeline</h1>
-      <span class="agents-sub">
-        Published signals from the SAC control plane — {{ listener }}
-        {% if identity %} · acting as <strong>{{ identity }}</strong>{% endif %}
-      </span>
-    </div>
-    <div class="agents-summary">
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-wave-square" header_title="Activity timeline" header_back_href=url_base|add:"/" header_meta=header_meta header_identity=header_identity %}
+  <div class="agents-summary">
       <div class="sum-card"><span class="sum-num" data-count="total">{{ summary.total }}</span><span class="sum-label">entries</span></div>
       <div class="sum-card good"><span class="sum-num" data-count="observed">{{ summary.observed }}</span><span class="sum-label">observed</span></div>
       <div class="sum-card warn"><span class="sum-num" data-count="stale">{{ summary.stale }}</span><span class="sum-label">stale</span></div>
       <div class="sum-card"><span class="sum-num" data-count="unreachable">{{ summary.unreachable }}</span><span class="sum-label">unreachable</span></div>
-    </div>
-  </header>
+  </div>
 
   {% comment %}
   Filters are real form controls so they work without JS (they are query

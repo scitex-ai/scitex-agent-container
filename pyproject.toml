@@ -234,8 +234,10 @@ gui = [
     # raises a clear install hint when absent), and the `[gui]` extra is
     # what a deployment adds. The dashboard is a PROJECTION of the host
     # control plane; it adds no state store and no second lifecycle path.
+    # Floor 0.3.7 (2026-10-19): the shared app-header contract
+    # (css/app/app-header.css + data-stx-app-header) the dashboard adopts.
     "django>=4.2",
-    "scitex-sdk[gui]>=0.3.1",
+    "scitex-sdk[gui]>=0.3.7",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -487,7 +489,7 @@ dev = [
     # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
-    "scitex-sdk[gui]>=0.3.1",
+    "scitex-sdk[gui]>=0.3.7",
 ]
 docs = [
     "sphinx>=7.0",
