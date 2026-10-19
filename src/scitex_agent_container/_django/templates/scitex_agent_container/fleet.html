@@ -6,3 +6,6 @@
 {% block scitex_app_content %}
 {% include "scitex_agent_container/_fleet_content.html" %}
 {% endblock %}
+{% block extra_js %}
+<script src="{% static 'scitex_agent_container/fleet.js' %}"></script>
+{% endblock %}

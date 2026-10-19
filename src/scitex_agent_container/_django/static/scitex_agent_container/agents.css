@@ -21,9 +21,16 @@
   color: var(--agents-text);
   font-size: 14px;
   line-height: 1.5;
-  padding: 18px 22px 40px;
-  max-width: 1240px;
-  margin: 0 auto;
+  /* Full-bleed: the shell owns the width (SDK SSoT: flex column, min-width 0),
+     and writer/scholar/stats/figrecipe fill the parent. The old 1240px
+     centered column squeezed the 11-column fleet table into ~70% of the
+     viewport and wrapped every cell. No max-width here, ever. */
+  max-width: none;
+  /* Bottom clearance for the floating site-dock (hub SSoT): the dock is a true
+     overlay outside page layout, so content needs its own margin. The hub
+     publishes its measured height via --site-dock-scroll-clearance; the
+     literal fallback keeps standalone serving (`sac gui serve`) clear too. */
+  padding: 18px 28px var(--site-dock-scroll-clearance, 132px);
 }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
@@ -167,7 +174,7 @@
 .session-note { margin: 8px 0 0; }
 
 @media (max-width: 768px) {
-  .agents-app { padding: 14px 12px 32px; }
+  .agents-app { padding: 14px 12px var(--site-dock-scroll-clearance, 132px); }
   .agents-head { align-items: flex-start; }
   .agents-title h1 { font-size: 18px; }
   .agents-summary { width: 100%; flex-wrap: wrap; gap: 8px; }
