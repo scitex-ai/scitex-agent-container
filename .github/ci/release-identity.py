@@ -629,6 +629,12 @@ def source_payload_identity(wheel_raw, sdist_raw, commit, source_root=Path("."))
             "systemd/sac.accounts-refresh.service.template",
             "systemd/sac.accounts-refresh.timer.template",
             "systemd/README.md",
+            # In-process worktree policy assets (reviewed; must resolve via
+            # Path(__file__) from an installed sac on hosts with no checkout).
+            "_baseline_assets/worktree_policy/worktree-policy.json",
+            "_baseline_assets/worktree_policy/generated/AGENTS.worktree-policy.md",
+            "_baseline_assets/worktree_policy/generated/CLAUDE.worktree-policy.md",
+            "_baseline_assets/worktree_policy/generated/HERMES.worktree-policy.md",
         )
     }
     force.update(
