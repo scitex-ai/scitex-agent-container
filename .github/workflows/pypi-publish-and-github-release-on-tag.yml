@@ -123,6 +123,15 @@ jobs:
   build:
     needs: test
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # release-identity.py talks to the GitHub API (run/job/artifact witnesses).
+    # Unauthenticated calls share 60 req/h per egress IP across the whole
+    # fleet and 403 mid-release (measured). Hand the job token through; the
+    # SIF inherits host env (no --cleanenv), so the in-SIF proof sees it too.
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.ver.outputs.version }}
       commit: ${{ steps.identity.outputs.commit }}
@@ -203,8 +212,14 @@ jobs:
       url: https://pypi.org/p/scitex-agent-container
     # id-token: write is what populates ACTIONS_ID_TOKEN_REQUEST_{TOKEN,URL},
     # which publish-in-sif.sh uses to mint the OIDC JWT. Keep it.
+    # actions:read lets the in-SIF proof witness the run/artifacts with an
+    # authenticated quota instead of the shared 60/hr anonymous one.
     permissions:
       id-token: write
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # Need the repo checked out so .github/ci/exec-in-sif.sh +
       # publish-in-sif.sh are on disk (the build job uploaded only dist/).
