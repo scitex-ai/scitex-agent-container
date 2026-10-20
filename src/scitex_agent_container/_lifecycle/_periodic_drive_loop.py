@@ -41,7 +41,9 @@ from ._periodic_drive import PeriodicDriveEnvelope, _AgentState, sweep
 logger = slogging.getLogger(__name__)
 
 
-def _log_emit_outcome(log: logging.Logger, agent: str, task: asyncio.Task) -> None:
+def _log_emit_outcome(
+    log: logging.Logger, agent: str, task: asyncio.Task, exchange_id: str = ""
+) -> None:
     """Report what a scheduled ``publish`` actually did.
 
     ``Broker.publish`` returns the number of live subscribers that took the
@@ -55,22 +57,25 @@ def _log_emit_outcome(log: logging.Logger, agent: str, task: asyncio.Task) -> No
     acceptable is that it looked like a success.
     """
     if task.cancelled():
-        log.info("periodic_drive_loop: emit to %s was cancelled", agent)
+        log.info(
+            "periodic_drive_loop: emit %s to %s was cancelled",
+            exchange_id, agent,
+        )
         return
     exc = task.exception()
     if exc is not None:
         log.error(
-            "periodic_drive_loop: emit to %s FAILED: %s: %s",
-            agent,
+            "periodic_drive_loop: emit %s to %s FAILED: %s: %s",
+            exchange_id, agent,
             type(exc).__name__,
             exc,
         )
         return
     if task.result() == 0:
         log.info(
-            "periodic_drive_loop: emit to %s reached NO live subscriber "
+            "periodic_drive_loop: emit %s to %s reached NO live subscriber "
             "(agent stopped or not subscribed) — nudge not delivered",
-            agent,
+            exchange_id, agent,
         )
 
 
@@ -222,6 +227,17 @@ async def periodic_drive_loop(
                             envelope.agent_name,
                         )
                         return
+                    # One stable id per agent per tick, minted from the
+                    # canonical exchange-id scheme so drive attempts join the
+                    # same identity space the turn ledger uses. Logged here and
+                    # on the outcome: emit -> outcome correlation without any
+                    # behavior change.
+                    from scitex_dev.status import new_exchange_id
+                    exchange_id = new_exchange_id()
+                    logger.info(
+                        "periodic_drive_loop: emit %s to %s",
+                        exchange_id, envelope.agent_name,
+                    )
                     payload = {
                         "kind": envelope.kind,
                         "body": envelope.body,
@@ -242,8 +258,8 @@ async def periodic_drive_loop(
                     # emit synchronous while still confirming arrival rather
                     # than dispatch.
                     task.add_done_callback(
-                        lambda t, agent=envelope.agent_name: _log_emit_outcome(
-                            logger, agent, t
+                        lambda t, agent=envelope.agent_name, exchange_id=exchange_id: (
+                            _log_emit_outcome(logger, agent, t, exchange_id)
                         )
                     )
                     last_emit_at[envelope.agent_name] = envelope.generated_at
