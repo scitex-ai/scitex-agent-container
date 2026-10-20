@@ -139,6 +139,16 @@ jobs:
         with:
           ref: ${{ steps.ver.outputs.version }}
           fetch-depth: 0
+      # build/publish-in-sif.sh REQUIRE RELEASE_TAG + RELEASE_COMMIT (the
+      # release-identity proof, #1576). Resolve-version only feeds checkout, so
+      # export both here - valid on the tag-push AND dispatch paths, since the
+      # tag commit is resolved from the tag itself, not from HEAD.
+      - name: Export release identity for the SIF steps
+        run: |
+          TAG="${{ steps.ver.outputs.version }}"
+          git fetch origin "refs/tags/${TAG}" --depth 1
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Build INSIDE the SIF (no setup-python on the bare Spartan node).
       # build-in-sif.sh installs the `build` frontend into a writable --target
       # inside the SIF, then `python -m build` → dist/. fail-loud on empty dist.
@@ -192,6 +202,12 @@ jobs:
         with:
           name: dist
           path: dist
+      - name: Export release identity for the SIF step
+        run: |
+          TAG="${{ needs.build.outputs.version }}"
+          git fetch origin "refs/tags/${TAG}" --depth 1
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Manual OIDC trusted publishing INSIDE the SIF — pypa/gh-action-pypi-
       # publish is a Docker action and the Spartan compute nodes have no Docker.
       # publish-in-sif.sh: GitHub OIDC JWT (audience=pypi) → PyPI mint-token →
