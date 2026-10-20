@@ -694,6 +694,51 @@ def test_a_late_heartbeat_cannot_rewind_the_recorded_one(pg_schema: str) -> None
     assert read_instance(instance_id)["last_heartbeat_at"] == "2026-01-02T00:00:00Z"
 
 
+def test_a_heartbeat_without_nonce_enrollment_still_advances_last_heartbeat(
+    pg_schema: str,
+) -> None:
+    # Arrange — a Hermes beat from a writer NOT enrolled in the nonce
+    # challenge protocol carries NO nonce keys at all (2026-10-20: every
+    # live TUI agent fleet-wide). The writer must not KeyError.
+    import time
+
+    from scitex_agent_container._state.state_store_instances import (
+        record_instance_heartbeat,
+    )
+
+    instance_id = record_instance_start("alpha")
+    now = time.time()
+    row = read_instance(instance_id)
+    assert row is not None
+    # Act
+    beat = {
+        "agent_id": "alpha",
+        "spec_id": "sha256:spec",
+        "host": row["host"],
+        "runtime": "tui",
+        "harness": "hermes",
+        "engine": "opencode-go-muse-spark-1.3-contributor",
+        "model": "muse-spark-1.3-contributor",
+        "session_id": "sess-1",
+        "boot_id": "boot-1",
+        "seq": 1,
+        "monotonic_ns": 10,
+        "observed_at": now,
+        "progress_at": now - 1.0,
+        "session_jsonl_delta_bytes": 0.0,
+        "subagent_jsonl_delta_bytes": 0.0,
+        "state": "idle",
+        "lease_expires_at": now + 90.0,
+        "card_id": "",
+        "card_role": "",
+    }
+    # Assert
+    assert record_instance_heartbeat(instance_id, beat) is True
+    updated = read_instance(instance_id)
+    assert updated is not None
+    assert updated["last_heartbeat_at"] is not None
+
+
 def _stamp_heartbeat(instance_id: str, host: str, ts: str) -> None:
     """Partial ``Store.put`` of ``last_heartbeat_at``, as the migration does."""
     from scitex_dev.store import ANY_REVISION

@@ -102,12 +102,18 @@ _HEARTBEAT_COLUMNS = {
     "monotonic_ns": "heartbeat_monotonic_ns",
     "observed_at": "heartbeat_observed_at",
     "progress_at": "heartbeat_progress_at",
-    "session_jsonl_delta_bytes": "heartbeat_session_jsonl_delta_bytes",
-    "subagent_jsonl_delta_bytes": "heartbeat_subagent_jsonl_delta_bytes",
-    "nonce_challenge": "heartbeat_nonce_challenge",
-    "nonce_echo": "heartbeat_nonce_echo",
     "state": "heartbeat_state",
     "lease_expires_at": "lease_expires_at",
+    # NOTE (2026-10-20, infra-stats-repeat-death-20261020): the writer-side
+    # ``resident_heartbeat`` also carries ``session_jsonl_delta_bytes``,
+    # ``subagent_jsonl_delta_bytes``, ``nonce_challenge`` and ``nonce_echo``,
+    # but those four columns were NEVER declared on the central
+    # ``instances`` schema — writing them raised ``KeyError`` from the row
+    # codec and broke ``last_heartbeat_at`` fleet-wide. They are
+    # deliberately NOT persisted here: nothing reads them off instances
+    # rows (deltas/nonces stay authoritative in the local heartbeat.json),
+    # and declaring them would need a privileged central DDL migration.
+    # If they are ever declared, re-add them here alongside.
     "card_id": "heartbeat_card_id",
     "card_role": "heartbeat_card_role",
 }
@@ -338,9 +344,17 @@ def record_instance_heartbeat(
                 "heartbeat_seq": new_seq,
                 "heartbeat_state": validated["state"],
                 "lease_expires_at": validated["lease_expires_at"],
+                # Optional heartbeat fields (nonce pair when the writer is not
+                # enrolled in the challenge protocol) are ABSENT from
+                # validated rather than None — Store.put leaves absent
+                # fields alone, so only write what the beat carries.
+                # (Unconditional validated[field] raised KeyError:
+                # 'nonce_challenge' on every non-enrolled beat, breaking
+                # last_heartbeat_at fleet-wide — 2026-10-20.)
                 **{
                     column: validated[field]
                     for field, column in _HEARTBEAT_COLUMNS.items()
+                    if field in validated and validated[field] is not None
                 },
             },
             expected_revision=revision,
