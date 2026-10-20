@@ -147,6 +147,11 @@ jobs:
         run: |
           TAG="${{ steps.ver.outputs.version }}"
           git fetch origin "refs/tags/${TAG}" --depth 1
+          # Admission for release-identity.py: a tag push or manual dispatch on
+          # the canonical repo already requires collaborator access (GitHub
+          # enforces it); forks cannot consume this repo's PyPI OIDC trust.
+          # The workflow run itself is the admission decision this var carries.
+          echo "RELEASE_AUTHORIZED=true" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
           echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Build INSIDE the SIF (no setup-python on the bare Spartan node).
@@ -206,6 +211,7 @@ jobs:
         run: |
           TAG="${{ needs.build.outputs.version }}"
           git fetch origin "refs/tags/${TAG}" --depth 1
+          echo "RELEASE_AUTHORIZED=true" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
           echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Manual OIDC trusted publishing INSIDE the SIF — pypa/gh-action-pypi-
