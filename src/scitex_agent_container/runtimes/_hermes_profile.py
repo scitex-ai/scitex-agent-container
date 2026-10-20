@@ -416,6 +416,79 @@ def _cct_profile_env(home: Path) -> dict[str, str]:
     return out
 
 
+#: Operator secret names passed through into the agent profile secret scope.
+#: PROPOSED set for operator ack (see sac-agent-full-permissions-20261020):
+#: generic provider keys + the Cloudflare pair, resolved by NAME from the
+#: trusted pool at launch. App-scoped keys (NEWB_*, *_TWITTER_*, ZOTERO_*,
+#: SAC_*, SCITEX_SCHOLAR_*, SCITEX_AUDIO_*, SCITEX_HUB_CAMPAIGN_*,
+#: SCITEX_GENAI_GATEWAY_*) and bearer tokens (GITHUB/HUGGINGFACE/CODECOV)
+#: are deliberately NOT here. Only NAMES live in code and logs -- values
+#: come from the pool at runtime and are never logged.
+OPERATOR_SECRET_ENV_NAMES: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
+    "BRAVE_API_KEY",
+    "COMMANDCODE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "ELEVENLABS_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "LLAMA_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENCODE_GO_API_KEY",
+    "OPENCODE_ZEN_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "SEMANTIC_SCHOLAR_API_KEY",
+    "XIAOMI_API_KEY",
+    "SCITEX_CLOUDFLARE_API_KEY",
+    "SCITEX_CLOUDFLARE_EMAIL",
+)
+
+
+def operator_secret_env() -> dict[str, str]:
+    """Pass the operator secret set into the agent profile secret scope.
+
+    Reads ``OPERATOR_SECRET_ENV_NAMES`` from the trusted pool
+    (:func:`._secret_pool.read_pool`). Present slots are returned (values
+    only ever travel in the returned mapping, never through logs);
+    missing slots are warned about BY NAME so a gap is visible instead of
+    silent. An UNTRUSTED pool read yields {} — a miss against it is
+    inconclusive, so warn once and change nothing rather than half-fill.
+    """
+    import logging
+
+    from ._secret_pool import read_pool
+
+    log = logging.getLogger(__name__)
+    pool = read_pool()
+    if not pool.trusted:
+        log.warning(
+            "operator secrets: pool read untrusted (%s); passing nothing",
+            pool.detail,
+        )
+        return {}
+    out: dict[str, str] = {}
+    missing: list[str] = []
+    for name in OPERATOR_SECRET_ENV_NAMES:
+        value = pool.env.get(name, "")
+        if value:
+            out[name] = value
+        else:
+            missing.append(name)
+    if missing:
+        log.warning(
+            "operator secrets: %d of %d slots missing from the pool: %s",
+            len(missing),
+            len(OPERATOR_SECRET_ENV_NAMES),
+            ", ".join(missing),
+        )
+    log.info(
+        "operator secrets: passing %d of %d slots into the profile",
+        len(out),
+        len(OPERATOR_SECRET_ENV_NAMES),
+    )
+    return out
+
+
 def _write_profile_env(path: Path, values: dict[str, str]) -> None:
     for key, value in values.items():
         if "\n" in value or "\r" in value:
@@ -592,6 +665,7 @@ def materialize_hermes_profile(
         env_name: provider_key,
         **_sac_profile_env(config, servers),
         **cct_env,
+        **operator_secret_env(),
         **failover_env,
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
@@ -672,6 +746,7 @@ def materialize_hermes_tui_profile(
         # reported TOKEN-LEN=0 with the value present in home/.env and the
         # Hermes process env but absent from the scope file).
         **_cct_profile_env(home),
+        **operator_secret_env(),
         **failover_env,
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
