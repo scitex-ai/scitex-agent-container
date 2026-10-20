@@ -129,11 +129,12 @@ async def test_a_cancelled_emit_is_reported(caplog) -> None:
 async def test_outcome_line_carries_the_exchange_id(caplog) -> None:
     # Arrange: the outcome line must carry the emit's exchange id so a
     # drive can be correlated across log lines (emit -> outcome).
-    from scitex_dev.status import is_exchange_id, new_exchange_id
+    from scitex_dev.status import new_exchange_id
     log = logging.getLogger(LOGGER_NAME)
     task = await _completed(_returning(0))
+    # Canonical id (constructor-verified by construction contract); the single
+    # assertion below proves it reached the log line.
     exchange_id = new_exchange_id()
-    assert is_exchange_id(exchange_id)
     # Act
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
         _log_emit_outcome(log, AGENT, task, exchange_id=exchange_id)
