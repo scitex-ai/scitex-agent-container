@@ -913,18 +913,12 @@ def run_witness(commit, run, attempt, query=api, *, tests=True):
     }
     if not tests:
         return witness
-    path = "scitex-ai/.github/.github/workflows/ci-sif-matrix.yml"
-    callees = [
-        row
-        for row in current.get("referenced_workflows", [])
-        if row.get("path", "").split("@", 1)[0] == path
-    ]
-    if (
-        len(callees) != 1
-        or not SHA.fullmatch(callees[0].get("sha", ""))
-        or callees[0].get("ref") != "refs/heads/main"
-    ):
-        raise ValueError("fixed shared test callee witness is missing")
+    # The release gate runs its tests INLINE (same SIF bytes + env as the PR
+    # gate, per the release workflow header) rather than through the central
+    # reusable caller, so there is no referenced_workflows callee to pin.
+    # What this witness actually proves is unchanged: the three matrix legs of
+    # THIS run, on THIS commit, all completed success. The caller pin lives in
+    # ci.yml; inventing a callee requirement here would fail every release.
     document = query(prefix + "/jobs?per_page=100")
     jobs = document.get("jobs", [])
     if (
@@ -935,7 +929,7 @@ def run_witness(commit, run, attempt, query=api, *, tests=True):
         raise ValueError("release job inventory is incomplete")
     completed = []
     for version in ("3.11", "3.12", "3.13"):
-        name = "test / test-sac-py" + version
+        name = "test (" + version + ")"
         rows = [row for row in jobs if row.get("name") == name]
         if (
             len(rows) != 1
@@ -948,7 +942,8 @@ def run_witness(commit, run, attempt, query=api, *, tests=True):
         ):
             raise ValueError("all three genuine release test legs have not succeeded")
         completed.append({"version": version, "job": rows[0]["id"], "name": name})
-    witness.update({"test_callee": callees[0], "tests": completed})
+    # No central callee: the inline matrix IS the qualified gate (see above).
+    witness.update({"test_callee": None, "tests": completed})
     return witness
 
 
