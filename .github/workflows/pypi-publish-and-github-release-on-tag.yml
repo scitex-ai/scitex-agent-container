@@ -126,7 +126,6 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       commit: ${{ steps.identity.outputs.commit }}
-      artifact_digest: ${{ steps.upload.outputs.digest }}
     steps:
       - name: Resolve version
         id: ver
@@ -221,7 +220,6 @@ jobs:
           echo "RELEASE_AUTHORIZED=true" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
           echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
-          echo "RELEASE_ARTIFACT_DIGEST=${{ needs.build.outputs.artifact_digest }}" >> "$GITHUB_ENV"
       # Manual OIDC trusted publishing INSIDE the SIF — pypa/gh-action-pypi-
       # publish is a Docker action and the Spartan compute nodes have no Docker.
       # publish-in-sif.sh: GitHub OIDC JWT (audience=pypi) → PyPI mint-token →
