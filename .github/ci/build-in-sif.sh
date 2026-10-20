@@ -7,13 +7,12 @@ PY="${BUILD_PYTHON:-/opt/venv-$V/bin/python}"
 test -x "$PY"
 : "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
-SCRATCH_ROOT="${RUNNER_TEMP:-/tmp}"
-# Recreate the root: on persistent runners _temp can be gone when this step
-# starts (measured twice: mktemp ENOENT on build jobs while the same assert
-# below passed at script start). The ownership guards after mktemp still run,
-# so recreating an already-present dir is a no-op, not a weakening.
-mkdir -p "$SCRATCH_ROOT"
-[ -d "$SCRATCH_ROOT" ] && [ ! -L "$SCRATCH_ROOT" ]
+# Scratch MUST live under the managed root (bound into the SIF by
+# exec-in-sif.sh). RUNNER_TEMP (_work/_temp) is NOT bound: in-container it is
+# invisible, and mkdir/mktemp there fail (measured EROFS/ENOENT, 2026-10-20).
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+SCRATCH_ROOT="$(_ci_tmpdir_root)"
+[ -d "$SCRATCH_ROOT" ] && [ ! -L "$SCRATCH_ROOT" ] && [ -w "$SCRATCH_ROOT" ]
 SCRATCH_PREFIX="$SCRATCH_ROOT/build-scitex_agent_container-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$V-"
 # BEGIN owned temporary-root lifecycle
 OWNED_TMPDIR=""
