@@ -1086,10 +1086,33 @@ def main(query=api):
     elif json.loads(regular_bytes(path)) != proof:
         raise ValueError("artifact proof or byte identity differs")
     if args.mode in {"verify-proof", "verify-index"}:
+        digest = os.environ.get("RELEASE_ARTIFACT_DIGEST", "")
+        if not digest:
+            # The upload action exposes no digest output, so resolve the
+            # uploaded artifact's own digest from this run instead of
+            # trusting a workflow-passed value: same run, same commit,
+            # name dist-<commit>, exactly one match.
+            document = query(
+                "repos/"
+                + REPOSITORY
+                + "/actions/runs/"
+                + os.environ["GITHUB_RUN_ID"]
+                + "/artifacts?per_page=100"
+            )
+            rows = [
+                row
+                for row in document.get("artifacts", [])
+                if row.get("name") == "dist-" + (args.commit or "")
+            ]
+            if len(rows) != 1 or not str(rows[0].get("digest", "")).startswith(
+                "sha256:"
+            ):
+                raise ValueError("uploaded release artifact is missing or ambiguous")
+            digest = str(rows[0]["digest"])[len("sha256:") :]
         transport_witness(
             args.commit,
             os.environ["GITHUB_RUN_ID"],
-            os.environ.get("RELEASE_ARTIFACT_DIGEST", ""),
+            digest,
             query,
         )
     if args.revalidate:
