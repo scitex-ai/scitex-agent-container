@@ -8,6 +8,11 @@ test -x "$PY"
 : "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 SCRATCH_ROOT="${RUNNER_TEMP:-/tmp}"
+# Recreate the root: on persistent runners _temp can be gone when this step
+# starts (measured twice: mktemp ENOENT on build jobs while the same assert
+# below passed at script start). The ownership guards after mktemp still run,
+# so recreating an already-present dir is a no-op, not a weakening.
+mkdir -p "$SCRATCH_ROOT"
 [ -d "$SCRATCH_ROOT" ] && [ ! -L "$SCRATCH_ROOT" ]
 SCRATCH_PREFIX="$SCRATCH_ROOT/build-scitex_agent_container-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$V-"
 # BEGIN owned temporary-root lifecycle
