@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -19,6 +20,30 @@ from scitex_agent_container.runtimes import (
 )
 from scitex_agent_container.runtimes import _hermes_profile as profile
 from scitex_agent_container.runtimes._hermes_cct import HermesCctRailError
+
+
+@pytest.fixture(autouse=True)
+def _isolated_operator_secret_pool(tmp_path):
+    """Pin the operator-secret pool to an empty file for hermetic profiles.
+
+    The materializer passes allowlisted pool names into the profile secret
+    scope, so a runner whose ambient pool carries real keys would change
+    every exact-bytes profile assertion. An empty (trusted) pool keeps the
+    render identical to the pre-pass-through shape. No mocks, no
+    monkeypatch: save/restore the env var around the test.
+    """
+    key = "SAC_SECRETS_ENVRC"
+    saved = os.environ.get(key)
+    pool = tmp_path / "empty-pool.src"
+    pool.write_text("", encoding="utf-8")
+    os.environ[key] = str(pool)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
 
 
 @contextmanager
