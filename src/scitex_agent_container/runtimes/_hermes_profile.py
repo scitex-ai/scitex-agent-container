@@ -444,20 +444,23 @@ OPERATOR_SECRET_ENV_NAMES: tuple[str, ...] = (
 )
 
 
-def operator_secret_env() -> dict[str, str]:
+def operator_secret_env(
+    names: Sequence[str] | None = None,
+) -> dict[str, str]:
     """Pass the operator secret set into the agent profile secret scope.
 
-    Reads ``OPERATOR_SECRET_ENV_NAMES`` from the trusted pool
-    (:func:`._secret_pool.read_pool`). Present slots are returned (values
-    only ever travel in the returned mapping, never through logs);
-    missing slots are warned about BY NAME so a gap is visible instead of
-    silent. An UNTRUSTED pool read yields {} — a miss against it is
-    inconclusive, so warn once and change nothing rather than half-fill.
+    ``names`` defaults to :data:`OPERATOR_SECRET_ENV_NAMES`; tests pass
+    fake names explicitly so no test doubles as a secrets inventory.
+    Values are resolved from the trusted pool at launch (:func:`read_pool`).
+    Present slots are returned; missing slots are warned about BY NAME and
+    an untrusted pool read yields {} (a miss would be inconclusive).
+    Values are never logged.
     """
     import logging
 
     from ._secret_pool import read_pool
 
+    wanted = OPERATOR_SECRET_ENV_NAMES if names is None else names
     log = logging.getLogger(__name__)
     pool = read_pool()
     if not pool.trusted:
@@ -468,7 +471,7 @@ def operator_secret_env() -> dict[str, str]:
         return {}
     out: dict[str, str] = {}
     missing: list[str] = []
-    for name in OPERATOR_SECRET_ENV_NAMES:
+    for name in wanted:
         value = pool.env.get(name, "")
         if value:
             out[name] = value
@@ -478,13 +481,13 @@ def operator_secret_env() -> dict[str, str]:
         log.warning(
             "operator secrets: %d of %d slots missing from the pool: %s",
             len(missing),
-            len(OPERATOR_SECRET_ENV_NAMES),
+            len(wanted),
             ", ".join(missing),
         )
     log.info(
         "operator secrets: passing %d of %d slots into the profile",
         len(out),
-        len(OPERATOR_SECRET_ENV_NAMES),
+        len(wanted),
     )
     return out
 
