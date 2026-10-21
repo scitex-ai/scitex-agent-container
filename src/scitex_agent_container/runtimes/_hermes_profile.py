@@ -24,6 +24,7 @@ from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
 from ._hermes_key_probe import preflight_pools
 from ._hermes_profile_logs import ensure_hermes_log_files
+from ._operator_secret_env import operator_secret_env
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
@@ -413,82 +414,6 @@ def _cct_profile_env(home: Path) -> dict[str, str]:
     agent_id = (materialised.get("CCT_AGENT_ID") or "").strip()
     if agent_id:
         out["CCT_AGENT_ID"] = agent_id
-    return out
-
-
-#: Operator secret names passed through into the agent profile secret scope.
-#: PROPOSED set for operator ack (see sac-agent-full-permissions-20261020):
-#: generic provider keys + the Cloudflare pair, resolved by NAME from the
-#: trusted pool at launch. App-scoped keys (NEWB_*, *_TWITTER_*, ZOTERO_*,
-#: SAC_*, SCITEX_SCHOLAR_*, SCITEX_AUDIO_*, SCITEX_HUB_CAMPAIGN_*,
-#: SCITEX_GENAI_GATEWAY_*) and bearer tokens (GITHUB/HUGGINGFACE/CODECOV)
-#: are deliberately NOT here. Only NAMES live in code and logs -- values
-#: come from the pool at runtime and are never logged.
-OPERATOR_SECRET_ENV_NAMES: tuple[str, ...] = (
-    "ANTHROPIC_API_KEY",
-    "BRAVE_API_KEY",
-    "COMMANDCODE_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "ELEVENLABS_API_KEY",
-    "GOOGLE_API_KEY",
-    "GROQ_API_KEY",
-    "LLAMA_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENCODE_GO_API_KEY",
-    "OPENCODE_ZEN_API_KEY",
-    "PERPLEXITY_API_KEY",
-    "SEMANTIC_SCHOLAR_API_KEY",
-    "XIAOMI_API_KEY",
-    "SCITEX_CLOUDFLARE_API_KEY",
-    "SCITEX_CLOUDFLARE_EMAIL",
-)
-
-
-def operator_secret_env(
-    names: Sequence[str] | None = None,
-) -> dict[str, str]:
-    """Pass the operator secret set into the agent profile secret scope.
-
-    ``names`` defaults to :data:`OPERATOR_SECRET_ENV_NAMES`; tests pass
-    fake names explicitly so no test doubles as a secrets inventory.
-    Values are resolved from the trusted pool at launch (:func:`read_pool`).
-    Present slots are returned; missing slots are warned about BY NAME and
-    an untrusted pool read yields {} (a miss would be inconclusive).
-    Values are never logged.
-    """
-    import logging
-
-    from ._secret_pool import read_pool
-
-    wanted = OPERATOR_SECRET_ENV_NAMES if names is None else names
-    log = logging.getLogger(__name__)
-    pool = read_pool()
-    if not pool.trusted:
-        log.warning(
-            "operator secrets: pool read untrusted (%s); passing nothing",
-            pool.detail,
-        )
-        return {}
-    out: dict[str, str] = {}
-    missing: list[str] = []
-    for name in wanted:
-        value = pool.env.get(name, "")
-        if value:
-            out[name] = value
-        else:
-            missing.append(name)
-    if missing:
-        log.warning(
-            "operator secrets: %d of %d slots missing from the pool: %s",
-            len(missing),
-            len(wanted),
-            ", ".join(missing),
-        )
-    log.info(
-        "operator secrets: passing %d of %d slots into the profile",
-        len(out),
-        len(wanted),
-    )
     return out
 
 

@@ -17,7 +17,7 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container.runtimes._hermes_profile import operator_secret_env
+from scitex_agent_container.runtimes._operator_secret_env import operator_secret_env
 
 
 @pytest.fixture
