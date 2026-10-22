@@ -294,7 +294,7 @@
         if (errorBox && !errorBox.querySelector("[data-role=timeline-retry]")) {
           var btn = document.createElement("button");
           btn.type = "button";
-          btn.className = "btn btn-retry";
+          btn.className = "stx-button stx-button-retry";
           btn.setAttribute("data-action", "retry");
           btn.setAttribute("data-role", "timeline-retry");
           btn.textContent = "Retry";

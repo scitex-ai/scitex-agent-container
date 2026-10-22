@@ -26,12 +26,19 @@
      centered column squeezed the 11-column fleet table into ~70% of the
      viewport and wrapped every cell. No max-width here, ever. */
   max-width: none;
-  /* Bottom clearance for the floating site-dock (hub SSoT): the dock is a true
-     overlay outside page layout, so content needs its own margin. The hub
-     publishes its measured height via --site-dock-scroll-clearance; the
-     literal fallback keeps standalone serving (`sac gui serve`) clear too. */
-  padding: 18px 28px var(--site-dock-scroll-clearance, 132px);
+  /* Gutters match the SDK leaf standard (storage 12px): symmetric air so
+     the main content reads as one frame. Bottom keeps the floating
+     site-dock clearance. */
+  padding: 12px 12px var(--site-dock-scroll-clearance, 132px);
 }
+
+/* Page head (per-page title + back link): plain document chrome below the
+   shared app row. Kept small and quiet — the app row above carries the
+   product identity. */
+.agents-pagehead { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 8px; }
+.agents-pagehead__title { font-size: 17px; font-weight: 600; margin: 0; color: var(--agents-text); }
+.agents-pagehead__back { color: var(--agents-dim); text-decoration: none; font-size: 13px; }
+.agents-pagehead__back:hover { color: var(--agents-text); }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
 .agents-sr-only {
@@ -115,14 +122,16 @@
 .dot.bad { background: var(--agents-bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--agents-bad) 22%, transparent); }
 
 .row-actions { text-align: right; }
-.btn {
-  cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
-  padding: 5px 11px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--agents-border); background: var(--agents-panel); color: var(--agents-text);
+/* Buttons: the shared `.stx-button` primitive owns the base (see
+   form-controls.css, linked wherever the header is). Dense fleet tables
+   opt into the compact height via the primitive's own token — no parallel
+   base. Status colors stay leaf-local: they are status semantics. */
+.agents-app .stx-button {
+  --button-height: 28px;
+  font-size: 12.5px;
 }
-.btn:hover { border-color: var(--agents-cross); }
-.btn.good { color: var(--agents-good); border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
-.btn.bad { color: var(--agents-bad); border-color: color-mix(in srgb, var(--agents-bad) 45%, var(--agents-border)); }
+.stx-button.good { color: var(--agents-good); border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
+.stx-button.bad { color: var(--agents-bad); border-color: color-mix(in srgb, var(--agents-bad) 45%, var(--agents-border)); }
 
 .agents-empty { text-align: center; color: var(--agents-dim); padding: 48px 0; font-size: 15px; }
 .agents-bannor {
@@ -308,7 +317,7 @@
    page in compact form; the a2a panel reuses the table + banner language. */
 .quick-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 8px; vertical-align: middle; }
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
-.btn.qa { font-size: 11px; padding: 2px 8px; }
+.stx-button.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
   width: 130px; font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
@@ -317,7 +326,7 @@
 .qa-msg input[type="text"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
 /* Registry verbs (Forget/Delete): warn tone for the tombstone, inline force
    toggle riding in the same compact form as the lifecycle quick actions. */
-.btn.warn { color: var(--agents-warn); border-color: color-mix(in srgb, var(--agents-warn) 45%, var(--agents-border)); }
+.stx-button.warn { color: var(--agents-warn); border-color: color-mix(in srgb, var(--agents-warn) 45%, var(--agents-border)); }
 .qa-force { font-size: 11px; color: var(--agents-text); display: inline-flex; gap: 3px; align-items: center; }
 .qa-force input[type="checkbox"] { accent-color: var(--agents-warn); }
 /* The create form reuses the launch form layout; the template select matches

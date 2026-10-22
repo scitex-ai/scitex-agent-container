@@ -73,7 +73,7 @@
     if (!host || host.querySelector('[data-role="fleet-retry"]')) return;
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "btn btn-retry";
+    btn.className = "stx-button stx-button-retry";
     btn.setAttribute("data-action", "retry");
     btn.setAttribute("data-role", "fleet-retry");
     btn.textContent = "Retry";

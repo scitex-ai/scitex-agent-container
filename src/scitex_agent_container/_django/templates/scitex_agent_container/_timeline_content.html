@@ -42,7 +42,7 @@ the first poll. The poll then refreshes it in place, bounded and deduped.
       <option value="{{ kind }}"{% if kind == selected_kind %} selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
-    <button type="submit" class="btn">Apply</button>
+    <button type="submit" class="stx-button">Apply</button>
     <span class="tl-live" data-role="poller-state" aria-live="polite">
       <i class="fas fa-circle"></i> auto-refresh every {{ refresh_seconds }}s
     </span>

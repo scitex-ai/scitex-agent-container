@@ -1,11 +1,14 @@
 {% load static %}{% comment %}
- Agents' leaf header — THE one app header, owned by the leaf, SHAPED by the
-   shared contract (Writer pattern): the row is `.stx-app-header`
-   (scitex_sdk/ui/css/app/app-header.css — linked below). Identity (page
-   title + the LEAF package version, never the host's) on the left, the
-   canonical project-selector slot, then the actions slot. This leaf renders
-   no second definition of that row: the leaf owns the VALUES, the SDK owns
-   the chrome, so the header cannot drift from sibling apps.
+Agents' leaf header — THE one app header: the shared AppHeader primitive
+(data-stx-app-header mount), like every other leaf. The leaf owns only
+identity values (full product title "SciTeX Agent Container", live leaf
+version) and the picker include; the SDK owns the chrome, so the row
+cannot drift from sibling apps. Fleet scope maps to the picker's user
+scope (all projects), so the slot is populated, not empty.
+
+Below the row, the PAGE chrome (not the app row): back link, page title
+as <h1>, and the lede paragraph (subtitle + acting identity), where the
+fleet age ticker keeps its `data-role="fleet-age"` hook for fleet.js.
 
    The page lede (subtitle + acting identity) is NOT header chrome: it
    renders below as `.agents-lede`, where the fleet age ticker keeps its
@@ -22,23 +25,24 @@
                         manifest pip_package -> installed version, "unknown"
                         when undistributable, never raises).
 
-   Project slot is EMPTY on purpose: this app is fleet-scoped. Project
-   scope (canonical picker) is a later slice, not a second header.
-
    Set `app_header_rendered=True` in the template context when a host renders
    its own header and includes this one: pages then skip it and keep exactly
    one header.
 {% endcomment %}
 <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/app-header.css' %}">
-<header class="stx-app-header agents-app-header" id="agents-app-header">
-  <div class="stx-app-header__identity">
-    {% if header_back_href %}<a class="stx-app-header__back" href="{{ header_back_href }}"><i class="fas fa-arrow-left"></i> Fleet</a>{% endif %}
-    <span class="stx-app-header__title"><i class="{{ header_icon }}"></i> {{ header_title }}</span>
-    <span class="stx-app-header__version" title="scitex-agent-container package serving this page">v{{ app_version }}</span>
-  </div>
-  <div class="stx-app-header__slot--project-selector"></div>
-  <div class="stx-app-header__actions"></div>
-</header>
+<link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/form-controls.css' %}">
+<div class="agents-app-header">
+  <div data-stx-app-header
+       data-app-title="SciTeX Agent Container"
+       {% if app_version %}data-app-version="{{ app_version }}"{% endif %}></div>
+  <script type="module" src="{% static 'scitex_sdk/ui/js/app/app-header.js' %}"></script>
+  {% if project_picker_available %}{% include "scitex_agent_container/_project_picker.html" %}{% endif %}
+  <script type="module" src="{% static 'scitex_agent_container/js/header-picker.js' %}"></script>
+</div>
+<div class="agents-pagehead">
+  {% if header_back_href %}<a class="agents-pagehead__back" href="{{ header_back_href }}"><i class="fas fa-arrow-left"></i> Fleet</a>{% endif %}
+  <h1 class="agents-pagehead__title">{% if header_icon %}<i class="{{ header_icon }}" aria-hidden="true"></i> {% endif %}{{ header_title }}</h1>
+</div>
 {% if header_meta or header_identity %}
 <p class="agents-lede">{% if header_meta %}<span{% if header_meta_role %} data-role="{{ header_meta_role }}"{% endif %}>{{ header_meta }}</span>{% endif %}{% if header_meta and header_identity %} · {% endif %}{% if header_identity %}acting as <strong>{{ header_identity }}</strong>{% endif %}</p>
 {% endif %}

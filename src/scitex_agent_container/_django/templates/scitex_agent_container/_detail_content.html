@@ -95,9 +95,9 @@ back link and the lifecycle form action are correct at any mount.
       <form method="post" action="{{ url_base }}/{{ agent.name }}/action" class="lifecycle-form">
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <div class="lifecycle-btns">
-          <button type="submit" name="action" value="start" class="btn good"><i class="fas fa-play"></i> Start</button>
-          <button type="submit" name="action" value="restart" class="btn"><i class="fas fa-rotate"></i> Restart</button>
-          <button type="submit" name="action" value="stop" class="btn bad"><i class="fas fa-stop"></i> Stop</button>
+          <button type="submit" name="action" value="start" class="stx-button good"><i class="fas fa-play"></i> Start</button>
+          <button type="submit" name="action" value="restart" class="stx-button"><i class="fas fa-rotate"></i> Restart</button>
+          <button type="submit" name="action" value="stop" class="stx-button bad"><i class="fas fa-stop"></i> Stop</button>
         </div>
       </form>
 
@@ -115,7 +115,7 @@ back link and the lifecycle form action are correct at any mount.
         <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
                   placeholder="Message or steering instruction…"></textarea>
         <div class="lifecycle-btns">
-          <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>
+          <button type="submit" class="stx-button"><i class="fas fa-paper-plane"></i> Send</button>
         </div>
       </form>
 
@@ -127,7 +127,7 @@ back link and the lifecycle form action are correct at any mount.
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
         <div class="lifecycle-btns">
           {% for key in control_keys %}
-          <button type="submit" name="control_key" value="{{ key }}" class="btn">{{ key }}</button>
+          <button type="submit" name="control_key" value="{{ key }}" class="stx-button">{{ key }}</button>
           {% endfor %}
         </div>
       </form>
