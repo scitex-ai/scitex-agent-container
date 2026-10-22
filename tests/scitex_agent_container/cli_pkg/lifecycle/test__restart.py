@@ -320,6 +320,16 @@ def test_failure_reports_exception_message():
     assert "boom" in result.output
 
 
+def test_failure_reports_exception_message_on_stderr_when_piped():
+    # Arrange — a name on no registry row and no discovery chain, invoked
+    # through the real command as a piped/ssh console would see it.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["definitely-not-an-agent-xyz", "-y"])
+    # Assert
+    assert "Error:" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # Cross-host dispatch: an active state.db row on a PEER node makes restart
 # ssh into that peer and run `sac agents restart --yes --json` there — the

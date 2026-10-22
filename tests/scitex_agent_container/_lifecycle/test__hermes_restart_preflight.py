@@ -213,6 +213,45 @@ def test_preflight_aborts_only_when_no_slot_is_live(tmp_path):
         _prepare(config, tokens, live=set(), tmp_path=tmp_path)
 
 
+def test_preflight_abort_marks_cooldown_gated_routes_retryable(tmp_path):
+    # Arrange
+    config = _config(["GO_DEAD", "GO_SPENT"])
+    tokens = {"GO_DEAD": _DEAD, "GO_SPENT": _OTHER}
+    spent_row = {
+        "id": _declared_id("opencode-go", _OTHER),
+        "access_token": _OTHER,
+        "last_status": "exhausted",
+        "last_status_at": _NOW,
+        "last_error_reset_at": _NOW + 3600,
+    }
+
+    # Act
+    try:
+        _prepare(config, tokens, live=set(), tmp_path=tmp_path, previous_rows=[spent_row])
+        abort = None
+    except RestartPreflightAbort as exc:
+        abort = exc
+
+    # Assert
+    assert abort is not None and abort.retryable is True
+
+
+def test_preflight_abort_marks_all_dead_routes_not_retryable(tmp_path):
+    # Arrange
+    config = _config(["GO_DEAD"])
+    tokens = {"GO_DEAD": _DEAD}
+
+    # Act
+    try:
+        _prepare(config, tokens, live=set(), tmp_path=tmp_path)
+        abort = None
+    except RestartPreflightAbort as exc:
+        abort = exc
+
+    # Assert
+    assert abort is not None and abort.retryable is False
+
+
 def test_preflight_skips_a_slot_without_an_installed_secret(tmp_path):
     # Arrange
     config = _config(["GO_MISSING", "GO_LIVE"])

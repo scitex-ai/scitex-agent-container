@@ -37,6 +37,13 @@ logger = slogging.getLogger(__name__)
 # lock file → new bun child's ``acquireLock`` sees the live old PID and
 # exits 1 → claude silently drops the MCP.
 _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S = 15.0
+# Start-leg proof retries after a TRANSIENT Hermes preflight abort
+# (rate limits, timeouts — never revoked keys). The pre-stop proof stays
+# single-shot: its abort leaves the agent UP, so failing loud is safe and
+# the operator retries. The start-leg abort strands the agent DOWN, so a
+# bounded retry is the safer default. Pre-stop passing then start flapping
+# is exactly the storm window (compute-03 scholar, 2026-10-22).
+_START_PROOF_RETRY_DELAYS_S = (5.0, 15.0)
 
 
 def _load_config_for_teardown(path: str | Path, expected_name: str) -> AgentConfig:
@@ -631,30 +638,45 @@ def agent_restart(
     #     (a runtime whose ``is_running`` reads False while a stale tmux session
     #     lingers) is torn down by the start leg rather than silently no-op'd
     #     into a fictional success.
-    return agent_start(
-        config_path,
-        registry,
-        assume_yes=True,
-        force=True,
-        # A plain restart replaces the process while preserving the harness
-        # conversation. Only the CLI's explicit --fresh route may request a
-        # new conversation; internal force is teardown mechanics, not consent
-        # to erase session_id/session_id_history.
-        session_override=session_override or "continue",
-        engine_override=engine_override,
-        probe_engine=probe_engine,
-        runtime_factory=runtime_factory,
-        sleep_fn=sleep_fn,
-        handover_mod=handover_mod,
-        # Forwarded so a test can keep the health monitor from spawning a
-        # REAL daemon thread that outlives it. Every other seam already
-        # passed through; this one did not, so the 11 restart tests in
-        # test_lifecycle.py each leaked a monitor that fired ~90 s later
-        # into an unrelated test's caplog (develop red, 2026-08-24).
-        thread_factory=thread_factory,
-        **(
-            {"prepared_hermes_route": prepared_hermes_route}
-            if prepared_hermes_route is not None
-            else {}
-        ),
-    )
+    #
+    # Bounded start-leg retry on a TRANSIENT Hermes proof abort: the pre-stop
+    # proof already passed, so the keys exist and the failure is a blip
+    # (rate limit, timeout) in the storm window between the two proofs.
+    # Retrying leaves a revoked-key abort (retryable=False) to fail loud
+    # immediately, and every other start-leg error propagates untouched.
+    from ._restart_preflight import RestartPreflightAbort
+
+    for _attempt, _delay in enumerate((0.0, *_START_PROOF_RETRY_DELAYS_S)):
+        if _attempt:
+            sleep_fn(_delay)
+        try:
+            return agent_start(
+                config_path,
+                registry,
+                assume_yes=True,
+                force=True,
+                # A plain restart replaces the process while preserving the harness
+                # conversation. Only the CLI's explicit --fresh route may request a
+                # new conversation; internal force is teardown mechanics, not consent
+                # to erase session_id/session_id_history.
+                session_override=session_override or "continue",
+                engine_override=engine_override,
+                probe_engine=probe_engine,
+                runtime_factory=runtime_factory,
+                sleep_fn=sleep_fn,
+                handover_mod=handover_mod,
+                # Forwarded so a test can keep the health monitor from spawning a
+                # REAL daemon thread that outlives it. Every other seam already
+                # passed through; this one did not, so the 11 restart tests in
+                # test_lifecycle.py each leaked a monitor that fired ~90 s later
+                # into an unrelated test's caplog (develop red, 2026-08-24).
+                thread_factory=thread_factory,
+                **(
+                    {"prepared_hermes_route": prepared_hermes_route}
+                    if prepared_hermes_route is not None
+                    else {}
+                ),
+            )
+        except RestartPreflightAbort as exc:
+            if not exc.retryable or _attempt >= len(_START_PROOF_RETRY_DELAYS_S):
+                raise
