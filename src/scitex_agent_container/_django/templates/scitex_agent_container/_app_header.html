@@ -11,9 +11,6 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
 2026-10-22 — the fleet age still shows in the fleet body content.)
 
    Contract vars (all autoescaped; pass context values, not markup):
-     * header_icon    — e.g. "fas fa-robot" (plain class string).
-     * header_title   — page title, e.g. "Agents" or the agent name.
-     * header_back_href — optional back URL (renders the Fleet link).
      * app_version    — set once in views._app_context (Writer pattern:
                         manifest pip_package -> installed version, "unknown"
                         when undistributable, never raises).
@@ -31,7 +28,5 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
   {% if project_picker_available %}{% include "scitex_agent_container/_project_picker.html" %}{% endif %}
   <script type="module" src="{% static 'scitex_agent_container/js/header-picker.js' %}"></script>
 </div>
-<div class="agents-pagehead">
-  {% if header_back_href %}<a class="agents-pagehead__back" href="{{ header_back_href }}"><i class="fas fa-arrow-left"></i> Fleet</a>{% endif %}
-  <h1 class="agents-pagehead__title">{% if header_icon %}<i class="{{ header_icon }}" aria-hidden="true"></i> {% endif %}{{ header_title }}</h1>
-</div>
+{# Operator 2026-10-22: the pagehead h1 duplicated the SDK AppHeader row — #}
+{# the row already carries the app title, so the extra h1 is dropped. #}
