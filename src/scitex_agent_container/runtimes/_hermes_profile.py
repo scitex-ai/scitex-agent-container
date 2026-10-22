@@ -24,7 +24,7 @@ from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
 from ._hermes_key_probe import preflight_pools
 from ._hermes_profile_logs import ensure_hermes_log_files
-from ._operator_secret_env import operator_secret_env
+from ._operator_secret_env import operator_secret_env, scope_allows_full
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
@@ -593,7 +593,7 @@ def materialize_hermes_profile(
         env_name: provider_key,
         **_sac_profile_env(config, servers),
         **cct_env,
-        **operator_secret_env(),
+        **operator_secret_env(full=scope_allows_full(config.secret_scope)),
         **failover_env,
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
@@ -674,7 +674,7 @@ def materialize_hermes_tui_profile(
         # reported TOKEN-LEN=0 with the value present in home/.env and the
         # Hermes process env but absent from the scope file).
         **_cct_profile_env(home),
-        **operator_secret_env(),
+        **operator_secret_env(full=scope_allows_full(config.secret_scope)),
         **failover_env,
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:

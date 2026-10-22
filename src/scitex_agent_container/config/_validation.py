@@ -46,6 +46,7 @@ from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
 from ._reserved_names import reserved_spec_path_errors
 from ._residency_types import residency_coupling_error, residency_value_error
+from ._secret_scope_types import secret_scope_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
 
@@ -272,6 +273,13 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # _residency_types.
         errors.extend(residency_value_error(spec))
         errors.extend(residency_coupling_error(spec, kind))
+
+        # spec.secret_scope — HOW MUCH of the operator pool lands in the
+        # agent env: full (default) | capsule. Absence is the full
+        # default — the live corpus predates the axis — but an ILLEGAL
+        # value fails loud. Check lives with the axis in
+        # _secret_scope_types.
+        errors.extend(secret_scope_value_error(spec))
 
         # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
         # The knob silently injected a whole-home bind, a ``/work`` alias and
