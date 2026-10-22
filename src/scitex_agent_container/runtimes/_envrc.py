@@ -139,8 +139,10 @@ def pool_defined_names(
     phantom auth failures. Last-writer-wins still applies at read time;
     this warning does not change resolution.
     """
-    targets = list(files) if files is not None else resolve_secret_files(
-        environ=environ, home=home
+    targets = (
+        list(files)
+        if files is not None
+        else resolve_secret_files(environ=environ, home=home)
     )
     seen: dict[str, str] = {}
     first_file: dict[str, str] = {}
@@ -155,12 +157,21 @@ def pool_defined_names(
             if not match:
                 continue
             name = match.group(1)
+            path_str = str(path)
             raw = line.split("=", 1)[1].strip() if "=" in line else ""
             if name in seen and seen[name] != raw:
-                shadowed.setdefault(name, [first_file[name]]).append(str(path))
+                shadowed.setdefault(name, [first_file[name]]).append(path_str)
             else:
                 seen.setdefault(name, raw)
-                first_file.setdefault(name, str(path))
+                first_file.setdefault(name, path_str)
+    # Same-file repeats are deduped first: the warning fires only when TWO
+    # OR MORE DISTINCT FILES define the name differently (the same file
+    # counted twice is a counting bug, not a shadowing hazard).
+    shadowed = {
+        name: sorted(set(paths))
+        for name, paths in shadowed.items()
+        if len(set(paths)) > 1
+    }
     if shadowed:
         logger.warning(
             "pool secrets: %d name(s) defined differently across files: %s",

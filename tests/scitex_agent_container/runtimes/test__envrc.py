@@ -377,3 +377,18 @@ def test_pool_defined_names_warns_on_shadowed_definitions(
     assert names == ["SAC_TEST_DUP"] and any(
         "SAC_TEST_DUP" in r.getMessage() for r in caplog.records
     )
+
+
+def test_pool_defined_names_ignores_same_file_repeated(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — the same file passed twice (resolve + explicit overlap).
+    only = tmp_path / "only.src"
+    only.write_text("export SAC_TEST_SOLO=aaa\n", encoding="utf-8")
+    # Act
+    with caplog.at_level(logging.WARNING):
+        names = pool_defined_names([only, only])
+    # Assert — a repeat is dedup, not a shadow: no warning fires.
+    assert names == ["SAC_TEST_SOLO"] and not [
+        r for r in caplog.records if "SAC_TEST_SOLO" in r.getMessage()
+    ]
