@@ -20,6 +20,9 @@ from scitex_agent_container.runtimes import (
 )
 from scitex_agent_container.runtimes import _hermes_profile as profile
 from scitex_agent_container.runtimes._hermes_cct import HermesCctRailError
+from scitex_agent_container.runtimes._operator_secret_env import (
+    OPERATOR_SECRET_ENV_NAMES,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -27,23 +30,30 @@ def _isolated_operator_secret_pool(tmp_path):
     """Pin the operator-secret pool to an empty file for hermetic profiles.
 
     The materializer passes allowlisted pool names into the profile secret
-    scope, so a runner whose ambient pool carries real keys would change
-    every exact-bytes profile assertion. An empty (trusted) pool keeps the
-    render identical to the pre-pass-through shape. No mocks, no
-    monkeypatch: save/restore the env var around the test.
+    scope, and read_pool() inherits the ambient environment through bash, so
+    a runner whose ambient env carries real keys would change every
+    exact-bytes profile assertion even with the pool file empty. Scrub the
+    allowlisted names from the ambient env too. No mocks, no monkeypatch:
+    save/restore everything around the test.
     """
     key = "SAC_SECRETS_ENVRC"
-    saved = os.environ.get(key)
+    saved_var = os.environ.get(key)
+    saved_ambient = {
+        name: os.environ.pop(name)
+        for name in OPERATOR_SECRET_ENV_NAMES
+        if name in os.environ
+    }
     pool = tmp_path / "empty-pool.src"
     pool.write_text("", encoding="utf-8")
     os.environ[key] = str(pool)
     try:
         yield
     finally:
-        if saved is None:
+        if saved_var is None:
             os.environ.pop(key, None)
         else:
-            os.environ[key] = saved
+            os.environ[key] = saved_var
+        os.environ.update(saved_ambient)
 
 
 @contextmanager
