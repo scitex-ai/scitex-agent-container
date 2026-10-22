@@ -764,6 +764,17 @@ def test_profile_env_file_is_owner_only(tmp_path):
     assert safe_result == ("SAFE=value\n", 0o600)
 
 
+def test_profile_env_file_quotes_values_carrying_whitespace(tmp_path):
+    # Arrange — apptainer --env-file word-splits at launch, so an
+    # unquoted multi-word value executes its tail as a command
+    # (scitex-dev FATALed on "Scholar" from "SciTeX Scholar").
+    env_path = tmp_path / ".env"
+    # Act
+    profile._write_profile_env(env_path, {"SENDER_NAME": "SciTeX Scholar"})
+    # Assert
+    assert env_path.read_text() == "SENDER_NAME='SciTeX Scholar'\n"
+
+
 def test_profile_env_file_rejects_newlines(tmp_path):
     # Arrange
     env_path = tmp_path / ".env"

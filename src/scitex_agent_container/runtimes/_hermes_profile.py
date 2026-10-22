@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shlex
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import urlsplit
@@ -423,7 +424,13 @@ def _write_profile_env(path: Path, values: dict[str, str]) -> None:
             raise ValueError(f"Hermes profile env value for {key} contains a newline")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        body = "".join(f"{key}={value}\n" for key, value in values.items())
+        # Quote values carrying whitespace: apptainer --env-file is
+        # word-split at launch, so an unquoted "SciTeX Scholar" executes
+        # "Scholar" as a command and the agent FATALs before it boots
+        # (scitex-dev, 2026-10-22). shlex.quote is the inverse of the
+        # evaluation the launcher performs — plain values pass through
+        # unchanged, only the dangerous ones gain quotes.
+        body = "".join(f"{key}={shlex.quote(value)}\n" for key, value in values.items())
         os.write(fd, body.encode())
     finally:
         os.close(fd)
