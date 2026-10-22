@@ -62,6 +62,15 @@ versioning follows [SemVer](https://semver.org/).
   the selected manifest and projections without code changes (without
   overrides, the per-host `~/.scitex/agent-container/worktree-policy/` copy
   wins over the bundle when present).
+- **Operator secrets pass into the Hermes profile secret scope.** The
+  materializer adds an allowlisted operator set (inference keys) from the
+  trusted pool at launch, on top of failover-resolved credentials; missing
+  slots warn by name and values are never logged.
+- **Secret scope is a declared per-agent axis: `full` (default) | `capsule`.**
+  Full passes every pool-file-defined name into the profile env for
+  development agents; capsule keeps declared inference keys + delivery
+  tokens only for insulated environments. Ambient-only names never pass
+  in either mode, and same-name-different-value pool files warn by name.
 
 ### Fixed
 - **Lifecycle spec authority now fails closed instead of warning through
@@ -111,6 +120,12 @@ versioning follows [SemVer](https://semver.org/).
   process replacement during guarded `agents restart` no longer clears
   `session_id` or `session_id_history` when the resolved session policy is
   `continue`. An explicit `--fresh` restart resets those artifacts.
+- **Restarts survive transient credential-proof blips and report loudly.**
+  The start leg retries twice (5s, 15s) on a cooldown-gated Hermes proof
+  abort instead of stranding the agent DOWN; revoked-key aborts and the
+  pre-stop proof still fail loud immediately. Restart errors now also
+  reach stderr when stdout is piped (previously only `--json` showed
+  them).
 
 ### Removed
 - **The retired per-agent SQLite contract and its misleading Python namespace.**
