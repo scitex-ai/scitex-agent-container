@@ -41,7 +41,7 @@ from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.state_store import now_iso, record_instance_stop
 from ...config import load_config
-from ...config._resolve import resolve_with_prefix
+from ...config._resolve import AmbiguousAgent, resolve_with_prefix
 from .._helpers import agent_name_complete
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
@@ -454,17 +454,47 @@ def stop(
                         level="error",
                     )
             elif as_json:
+                message = str(exc)
+                if isinstance(exc, (FileNotFoundError, AmbiguousAgent)):
+                    # Operator order (card
+                    # sac-attach-agent-name-hints-20260919): a miss
+                    # suggests, never auto-stops. Same helper as
+                    # attach/start/restart.
+                    try:
+                        from ...config._name_hints import suggest_agent_names
+                        from ...config._resolve import enumerate_agent_names
+
+                        message += suggest_agent_names(
+                            name, enumerate_agent_names(), verb="stop"
+                        )
+                    except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                        pass
                 click.echo(
                     _json.dumps(
-                        {"name": name, "stopped": False, "error": str(exc)}
+                        {"name": name, "stopped": False, "error": message}
                     )
                 )
             else:
+                message = str(exc)
+                if isinstance(exc, (FileNotFoundError, AmbiguousAgent)):
+                    # Operator order (card
+                    # sac-attach-agent-name-hints-20260919): a miss
+                    # suggests, never auto-stops. Same helper as
+                    # attach/start/restart.
+                    try:
+                        from ...config._name_hints import suggest_agent_names
+                        from ...config._resolve import enumerate_agent_names
+
+                        message += suggest_agent_names(
+                            raw_target, enumerate_agent_names(), verb="stop"
+                        )
+                    except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                        pass
                 # level="error": a red line at the default info level
                 # is filtered when SCITEX_LOGGING_LEVEL > INFO — the
                 # silent-exit-1 the operator reported.
                 render_rich(
-                    f"[red]Error ({raw_target}): {exc}[/red]",
+                    f"[red]Error ({raw_target}): {message}[/red]",
                     __name__,
                     level="error",
                 )
