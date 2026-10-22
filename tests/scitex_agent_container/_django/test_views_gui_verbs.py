@@ -188,7 +188,7 @@ def test_mounted_create_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/create/").content.decode()
+    html = hub_client.get("/apps/agent-container/create/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html and "agents-app" in html and "agents.css" in html
 

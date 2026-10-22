@@ -67,7 +67,7 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
-    "/apps/agents")."""
+    "/apps/agent-container")."""
     try:
         from scitex_sdk.ui.mount import mount_prefix
     except ImportError as exc:

@@ -242,7 +242,7 @@ def audit_log(env_save_restore, tmp_path):
 
 @pytest.fixture
 def hub_client(tmp_path, env_save_restore):
-    """A client whose urlconf mounts the app under /apps/agents/ and whose
+    """A client whose urlconf mounts the app under /apps/agent-container/ and whose
     host shadows the documented SDK adapter (``scitex_sdk/app/app_shell.html``)
     with a project-DIRS template mapping ``scitex_app_content`` into host
     chrome — proving content lands in the host shell (not the standalone
@@ -260,7 +260,7 @@ def hub_client(tmp_path, env_save_restore):
     test_urls = tmp_path / "hub_test_urls.py"
     test_urls.write_text(
         "from django.urls import include, path\n"
-        "urlpatterns = [path('apps/agents/', include('scitex_agent_container._django.urls'))]\n",
+        "urlpatterns = [path('apps/agent-container/', include('scitex_agent_container._django.urls'))]\n",
         encoding="utf-8",
     )
     sys.path.insert(0, str(tmp_path))

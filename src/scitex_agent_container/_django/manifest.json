@@ -1,7 +1,7 @@
 {
   "name": "agent_container_app",
-  "slug": "agents",
-  "label": "SciTeX Agent Container",
+  "slug": "agent-container",
+  "label": "SciTeX Agent Container App",
   "pip_package": "scitex-agent-container",
   "icon": "fas fa-robot",
   "subtitle": "Scoped fleet status for SciTeX agents",
