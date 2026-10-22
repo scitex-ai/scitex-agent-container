@@ -7,7 +7,7 @@ mounted) so the per-row links are correct at any mount.
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title="Agents" header_meta=header_meta header_meta_role=header_meta_role %}
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title="Agents" %}
   <div class="agents-summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>

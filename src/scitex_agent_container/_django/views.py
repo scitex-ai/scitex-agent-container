@@ -144,8 +144,25 @@ def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> di
     ctx = dict(data)
     ctx["url_base"] = base
     ctx["app_version"] = _leaf_version()
+    ctx["project_picker_available"] = _project_picker_available()
     ctx.update(_shell_context(request, title, view_path))
     return ctx
+
+
+def _project_picker_available() -> bool:
+    """True when the host registered the `scitex_project_picker` tag library.
+
+    Writer/Storage precedent: `{% load %}` of a missing library is a hard
+    TemplateSyntaxError, so the guard lives here, not in the template.
+    """
+    try:
+        from django.template import engines
+    except Exception:
+        return False
+    try:
+        return "scitex_project_picker" in engines["django"].engine.template_libraries
+    except Exception:
+        return False
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
@@ -228,13 +245,6 @@ def _fleet_context(request: HttpRequest) -> dict:
         agents=agents,
         summary=_summary(agents),
         identity=identity,
-        # Shared-header lede (Writer pattern): plain text composed HERE, where
-        # the number is a float the server minted — the partial autoescapes it
-        # and keeps the fleet.js `fleet-age` tick hook.
-        header_meta=(
-            f"Last known {observed_age:.0f}s ago" if observed_age is not None else "Fleet"
-        ),
-        header_meta_role="fleet-age" if observed_age is not None else "",
         crosshost_authorized=identity in _crosshost_allowlist(),
         can_launch=can_control(identity, cross_host=False, request=request),
         # One decided cross-host grant for the whole fleet render (audited, like
@@ -298,8 +308,6 @@ def timeline(request: HttpRequest):
         stale_after_seconds=STALE_AFTER_SECONDS,
         identity=identity,
         listener=fleet.base_url,
-        header_meta=f"Published signals from the SAC control plane — {fleet.base_url}",
-        header_identity=identity,
         comm_error=comm_error,
         page="timeline",
     )

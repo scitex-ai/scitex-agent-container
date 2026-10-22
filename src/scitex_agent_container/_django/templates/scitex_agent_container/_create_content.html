@@ -12,7 +12,7 @@ go stale. The GUI never overwrites: an existing spec fails loud (409) and
 the operator edits that spec directly or chooses another agent name.
 {% endcomment %}
 <div class="agents-app" data-page="create">
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-plus" header_title="Create agent" header_back_href=url_base|add:"/" header_identity=identity|default:"(unidentified)" %}
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-plus" header_title="Create agent" header_back_href=url_base|add:"/" %}
 
   {% if can_create %}
   <div class="detail-card">
