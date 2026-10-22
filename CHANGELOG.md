@@ -26,6 +26,19 @@ versioning follows [SemVer](https://semver.org/).
   Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
   actions work from inside the Hub django container.
 
+## [0.30.1] - 2026-10-22
+
+### Fixed
+- **Profile `.env` values with whitespace are quoted.** An unquoted
+  multi-word pool value (e.g. `SciTeX Scholar`) word-split at apptainer
+  `--env-file` evaluation and executed its tail as a command, so the agent
+  FATALed before boot on every start. `shlex.quote` now protects values
+  that need it; plain values pass through byte-identical.
+- **Pool shadowing warning fires only across distinct files.** The same
+  pool file listed twice (resolve + explicit overlap) named itself a
+  shadowing hazard; the warning now requires two or more distinct files
+  with different values.
+
 ## [Unreleased]
 
 ### Changed
