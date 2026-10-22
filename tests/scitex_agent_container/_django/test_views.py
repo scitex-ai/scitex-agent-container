@@ -291,8 +291,8 @@ def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_rest
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
     html = client.get("/gamma/").content.decode()
-    # Assert
-    assert "not in scope" in html
+    # Assert (pagehead h1 dropped 2026-10-22: banner copy is the signal)
+    assert "is not visible to" in html
 
 
 def test_detail_cross_agent_visible_to_crosshost_operator(client, loopback, env_save_restore, audit_log):
@@ -709,8 +709,8 @@ def test_launch_form_shown_to_operator(client, loopback, env_save_restore):
     env_save_restore.set(OPS_ENV, "op1")
     # Act
     html = client.get("/launch/").content.decode()
-    # Assert
-    assert 'name="name"' in html and "Launch agent" in html
+    # Assert (pagehead h1 dropped 2026-10-22: form + card title are the signal)
+    assert 'name="name"' in html and "Start a registered agent" in html
 
 
 def test_launch_form_readonly_for_non_operator(client, loopback, env_save_restore):

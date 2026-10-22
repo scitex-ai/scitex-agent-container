@@ -6,9 +6,9 @@ back link and the lifecycle form action are correct at any mount.
 {% endcomment %}
 <div class="agents-app" data-page="detail">
   {% if agent %}
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title=agent.name header_back_href=url_base|add:"/" %}
+  {% include "scitex_agent_container/_app_header.html" %}
   {% else %}
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-ghost" header_title="Agent not in scope" header_back_href=url_base|add:"/" %}
+  {% include "scitex_agent_container/_app_header.html" %}
   {% endif %}
 
   {% if not agent %}

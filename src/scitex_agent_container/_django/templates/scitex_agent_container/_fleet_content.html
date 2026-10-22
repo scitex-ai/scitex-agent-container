@@ -7,7 +7,7 @@ mounted) so the per-row links are correct at any mount.
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-robot" header_title="Agents" %}
+  {% include "scitex_agent_container/_app_header.html" %}
   <div class="agents-summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
@@ -53,13 +53,9 @@ mounted) so the per-row links are correct at any mount.
   </div>
   {% endif %}
 
+  {# Operator 2026-10-22: scope-note row (acting-as + scope pill) dropped — #}
+  {# redundant with the workspace identity; action buttons kept. #}
   <div class="agents-scope-note">
-    <span><i class="fas fa-user"></i> acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    {% if crosshost_authorized %}
-    <span class="pill cross"><i class="fas fa-globe"></i> cross-host fleet authorized</span>
-    {% else %}
-    <span class="pill own"><i class="fas fa-lock"></i> own-scope only</span>
-    {% endif %}
     {% if can_launch %}
     <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
     <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
