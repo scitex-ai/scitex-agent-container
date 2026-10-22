@@ -12,6 +12,7 @@ Named ``test__envrc.py`` for the PS-204 §2 orphan-test mirror against
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,6 +25,7 @@ from scitex_agent_container.runtimes._envrc import (
     eval_envrc_cascade,
     fold_envrc_cascade_into_env,
     fold_envrc_into_env,
+    pool_defined_names,
     resolve_secret_files,
 )
 
@@ -339,3 +341,39 @@ def test_fold_cascade_rewrites_env_without_legacy_alias(
     fold_envrc_cascade_into_env(tmp_path, [envrc])
     # Assert — the rewritten .env no longer carries the fatal legacy alias.
     assert "SCITEX_TODO_AGENT=" not in env_file.read_text()
+
+
+# ---------------------------------------------------------------------------
+# pool_defined_names — the file namespace is the secret SSoT
+# ---------------------------------------------------------------------------
+
+
+def test_pool_defined_names_lists_exported_names_sorted_and_deduped(
+    tmp_path: Path,
+) -> None:
+    # Arrange — two real pool files sharing one name with the SAME value.
+    first = tmp_path / "a.src"
+    first.write_text("export SAC_TEST_ONE=1\nexport SAC_TEST_TWO=2\n", encoding="utf-8")
+    second = tmp_path / "b.src"
+    second.write_text("export SAC_TEST_TWO=2\nexport SAC_TEST_THREE=3\n", encoding="utf-8")
+    # Act
+    names = pool_defined_names([first, second])
+    # Assert — sorted, deduplicated, no warning-worthy shadow.
+    assert names == ["SAC_TEST_ONE", "SAC_TEST_THREE", "SAC_TEST_TWO"]
+
+
+def test_pool_defined_names_warns_on_shadowed_definitions(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — the SAME name with DIFFERENT values in two files.
+    first = tmp_path / "a.src"
+    first.write_text("export SAC_TEST_DUP=aaa\n", encoding="utf-8")
+    second = tmp_path / "b.src"
+    second.write_text("export SAC_TEST_DUP=bbb\n", encoding="utf-8")
+    # Act
+    with caplog.at_level(logging.WARNING):
+        names = pool_defined_names([first, second])
+    # Assert — the name still resolves, but the shadow is named loudly.
+    assert names == ["SAC_TEST_DUP"] and any(
+        "SAC_TEST_DUP" in r.getMessage() for r in caplog.records
+    )

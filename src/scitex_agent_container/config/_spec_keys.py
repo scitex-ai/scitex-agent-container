@@ -36,6 +36,13 @@ _KNOWN_SPEC_KEYS = frozenset(
         # axis the live corpus predates; requiring it would red-start the
         # fleet for declaring nothing new. See _residency_types.
         "access",  # host-access posture: full (default) | capsule
+        # REMOVED 2026-06-23 — host access + cwd are explicit binds +
+        # workdir now; a spec still carrying it is rejected loud. Do NOT
+        # reuse this name: secret scoping is the separate secret_scope axis.
+        "secret_scope",  # pool-secret scope: full (default) | capsule —
+        # how much of the operator pool lands in the agent env. DEFAULTED,
+        # not required: a NEW axis the live corpus predates. See
+        # _secret_scope_types.
         "workdir",
         "python-venv",
         "container",

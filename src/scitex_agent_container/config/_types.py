@@ -32,6 +32,7 @@ from ._opencode_serve import DEFAULT_OPENCODE_SERVE_PORT
 # ``from ...config._types import ProviderSpec`` is an existing import path.
 from ._provider_types import ProviderSpec  # noqa: E402,F401
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
+from ._secret_scope_types import DEFAULT_AGENT_SECRET_SCOPE, AgentSecretScope
 
 
 @dataclass
@@ -312,6 +313,15 @@ class AgentConfig:
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when
     # the conversation completes. v4 step 6 — see config._residency_types.
     residency: AgentResidency = DEFAULT_AGENT_RESIDENCY
+    # SECRET-SCOPE: how much of the operator pool lands in the agent env.
+    # "full" (default) = every pool-file-defined secret — development
+    # agents need all authentications and permissions for daily work.
+    # "capsule" = declared inference keys + delivery tokens only —
+    # insulated environments (capsule solvers). Container defaults stay
+    # limited for both; this axis governs only the secret payload, never
+    # values in specs (values resolve from the trusted pool at launch).
+    # See config._secret_scope_types.
+    secret_scope: AgentSecretScope = DEFAULT_AGENT_SECRET_SCOPE
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

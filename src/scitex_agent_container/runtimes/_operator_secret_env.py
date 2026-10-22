@@ -44,19 +44,52 @@ OPERATOR_SECRET_ENV_NAMES: tuple[str, ...] = (
 log = slogging.getLogger(__name__)
 
 
+def scope_allows_full(scope: str) -> bool:
+    """True when ``scope`` (a spec ``secret_scope`` value) means full pool.
+
+    Fail-loud on unknown values: silently treating a typo as limited
+    would starve a dev agent, and silently treating it as full would
+    over-share into a capsule. The loader rejects unknown spellings;
+    this is the belt for programmatically built configs.
+    """
+    normalized = (scope or "").strip().lower()
+    if normalized == "full":
+        return True
+    if normalized == "capsule":
+        return False
+    raise ValueError(f"unknown secret scope {scope!r}; expected 'full' or 'capsule'")
+
+
 def operator_secret_env(
     names: Sequence[str] | None = None,
+    *,
+    full: bool = False,
 ) -> dict[str, str]:
     """Pass the operator secret set into the agent profile secret scope.
 
     ``names`` defaults to :data:`OPERATOR_SECRET_ENV_NAMES`; tests pass
     fake names explicitly so no test doubles as a secrets inventory.
+    With ``full=True`` every pool-FILE-defined name is passed (the
+    development-agent tier); otherwise only the allowlist (the capsule
+    tier). Ambient-only names are never passed in either mode: the
+    hermetic profile tests pin ``SAC_SECRETS_ENVRC`` to an empty file and
+    would break on ambient leakage — full means file-defined, not
+    environment-inherited.
     Values are resolved from the trusted pool at launch (:func:`read_pool`).
     Present slots are returned; missing slots are warned about BY NAME and
     an untrusted pool read yields {} (a miss would be inconclusive).
     Values are never logged.
     """
-    wanted = OPERATOR_SECRET_ENV_NAMES if names is None else names
+    from ._envrc import pool_defined_names
+
+    if names is None:
+        wanted: Sequence[str] = (
+            sorted(set(OPERATOR_SECRET_ENV_NAMES) | set(pool_defined_names()))
+            if full
+            else OPERATOR_SECRET_ENV_NAMES
+        )
+    else:
+        wanted = names
     pool = read_pool()
     if not pool.trusted:
         log.warning(

@@ -17,7 +17,10 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container.runtimes._operator_secret_env import operator_secret_env
+from scitex_agent_container.runtimes._operator_secret_env import (
+    operator_secret_env,
+    scope_allows_full,
+)
 
 
 @pytest.fixture
@@ -75,3 +78,50 @@ def test_values_never_reach_the_log(
         operator_secret_env(names=("SAC_TEST_ALPHA_KEY",))
     # Assert
     assert not any("super-secret-aaa" in r.getMessage() for r in caplog.records)
+
+
+def test_full_scope_passes_every_file_defined_name(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — the pool file defines a non-allowlisted key; ambient has junk.
+    _real_pool_file(tmp_path, "export SAC_TEST_EXTRA_KEY=eee\n")
+    os.environ["SAC_TEST_AMBIENT_JUNK"] = "junk"
+    try:
+        # Act
+        out = operator_secret_env(full=True)
+        # Assert — file-defined names pass (values resolve), ambient junk does not.
+        assert out.get("SAC_TEST_EXTRA_KEY") == "eee" and "SAC_TEST_AMBIENT_JUNK" not in out
+    finally:
+        os.environ.pop("SAC_TEST_AMBIENT_JUNK", None)
+
+
+def test_full_scope_still_excludes_ambient_only_names(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — an empty (trusted) pool plus ambient-only junk.
+    _real_pool_file(tmp_path, "")
+    os.environ["SAC_TEST_AMBIENT_ONLY"] = "junk"
+    try:
+        # Act
+        out = operator_secret_env(full=True)
+        # Assert — full means file-defined, never environment-inherited.
+        assert "SAC_TEST_AMBIENT_ONLY" not in out
+    finally:
+        os.environ.pop("SAC_TEST_AMBIENT_ONLY", None)
+
+
+def test_scope_mapping_accepts_full_and_capsule():
+    # Arrange
+    full = scope_allows_full("full")
+    # Act
+    capsule = scope_allows_full("capsule")
+    # Assert — one fact: the closed set maps correctly.
+    assert full is True and capsule is False
+
+
+def test_scope_mapping_rejects_unknown_values():
+    # Arrange — a typo that must never silently starve or over-share.
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        scope_allows_full("everything")

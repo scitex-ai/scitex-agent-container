@@ -61,6 +61,7 @@ from ._parsers import (
 )
 from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
+from ._secret_scope_types import resolve_spec_secret_scope
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
 
@@ -381,6 +382,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         # config._residency_types explains why this NEW axis is
         # defaulted while the red-start map exists).
         residency=resolve_spec_residency(spec),
+        # SECRET-SCOPE — how much of the operator pool lands in the
+        # agent env: full (default) | capsule. See
+        # config._secret_scope_types for the layering rationale.
+        secret_scope=resolve_spec_secret_scope(spec),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.

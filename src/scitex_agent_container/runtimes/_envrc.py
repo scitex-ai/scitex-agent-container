@@ -52,6 +52,7 @@ no-op, exactly as before).
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -112,6 +113,61 @@ def resolve_secret_files(
         return [Path(e) for e in raw.split(":") if e and Path(e).is_file()]
     base = Path(home) if home is not None else Path(env.get("HOME") or Path.home())
     return sorted(p for p in base.glob(_DEFAULT_SECRETS_GLOB) if p.is_file())
+
+
+_EXPORT_NAME_RE = re.compile(r"^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def pool_defined_names(
+    files: "list[Path] | None" = None,
+    *,
+    environ: "dict[str, str] | None" = None,
+    home: "Path | None" = None,
+) -> list[str]:
+    """Names the pool files DEFINE (``export NAME=``), sorted and deduped.
+
+    The file namespace is the secret SSoT: this is the set a ``full``
+    secret scope passes through. Values are NOT read here (names only,
+    never logged) — values resolve from :func:`_secret_pool.read_pool`
+    at launch, where the shell-export overlay still applies.
+
+    A name defined in MULTIPLE files with DIFFERENT raw values is a
+    shadowing hazard (the 010-vs-000 incident: login shells resolved
+    different keys than plain ssh and the Hermes proof failed). It is
+    warned about BY NAME with the file list — values never appear —
+    so the operator can converge the definitions instead of debugging
+    phantom auth failures. Last-writer-wins still applies at read time;
+    this warning does not change resolution.
+    """
+    targets = list(files) if files is not None else resolve_secret_files(
+        environ=environ, home=home
+    )
+    seen: dict[str, str] = {}
+    first_file: dict[str, str] = {}
+    shadowed: dict[str, list[str]] = {}
+    for path in targets:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            match = _EXPORT_NAME_RE.match(line)
+            if not match:
+                continue
+            name = match.group(1)
+            raw = line.split("=", 1)[1].strip() if "=" in line else ""
+            if name in seen and seen[name] != raw:
+                shadowed.setdefault(name, [first_file[name]]).append(str(path))
+            else:
+                seen.setdefault(name, raw)
+                first_file.setdefault(name, str(path))
+    if shadowed:
+        logger.warning(
+            "pool secrets: %d name(s) defined differently across files: %s",
+            len(shadowed),
+            sorted(f"{name} ({', '.join(paths)})" for name, paths in shadowed.items()),
+        )
+    return sorted(seen)
 
 
 def _secrets_preamble_lines() -> list[str]:
@@ -328,5 +384,6 @@ __all__ = [
     "eval_envrc_cascade",
     "fold_envrc_into_env",
     "fold_envrc_cascade_into_env",
+    "pool_defined_names",
     "resolve_secret_files",
 ]
