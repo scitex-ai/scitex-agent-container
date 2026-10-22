@@ -122,5 +122,6 @@ def test_scope_mapping_accepts_full_and_capsule():
 def test_scope_mapping_rejects_unknown_values():
     # Arrange — a typo that must never silently starve or over-share.
     # Act
+    # Assert
     with pytest.raises(ValueError):
         scope_allows_full("everything")
