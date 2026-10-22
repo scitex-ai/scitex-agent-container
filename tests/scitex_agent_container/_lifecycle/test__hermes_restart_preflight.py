@@ -226,11 +226,14 @@ def test_preflight_abort_marks_cooldown_gated_routes_retryable(tmp_path):
     }
 
     # Act
-    with pytest.raises(RestartPreflightAbort) as excinfo:
+    try:
         _prepare(config, tokens, live=set(), tmp_path=tmp_path, previous_rows=[spent_row])
+        abort = None
+    except RestartPreflightAbort as exc:
+        abort = exc
 
     # Assert
-    assert excinfo.value.retryable is True
+    assert abort is not None and abort.retryable is True
 
 
 def test_preflight_abort_marks_all_dead_routes_not_retryable(tmp_path):
@@ -239,11 +242,14 @@ def test_preflight_abort_marks_all_dead_routes_not_retryable(tmp_path):
     tokens = {"GO_DEAD": _DEAD}
 
     # Act
-    with pytest.raises(RestartPreflightAbort) as excinfo:
+    try:
         _prepare(config, tokens, live=set(), tmp_path=tmp_path)
+        abort = None
+    except RestartPreflightAbort as exc:
+        abort = exc
 
     # Assert
-    assert excinfo.value.retryable is False
+    assert abort is not None and abort.retryable is False
 
 
 def test_preflight_skips_a_slot_without_an_installed_secret(tmp_path):
