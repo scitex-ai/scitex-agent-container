@@ -1,9 +1,10 @@
 """Tests for the shared Agents app header (SDK contract, Writer pattern).
 
-Every Agents page renders exactly ONE header: the shared
-``stx-app-header`` partial (SDK chrome), never the legacy hand-rolled
-``agents-head`` block. The header states the LEAF package version serving
-the page. Driven through Django's test client against the REAL loopback
+Every Agents page mounts exactly ONE shared AppHeader primitive
+(``data-stx-app-header``, client-rendered by the SDK): the full product
+title, the leaf version, the project picker. No leaf-local <header>
+app row. The header states the LEAF package version serving the page.
+Driven through Django's test client against the REAL loopback
 listener; each test has AAA markers and a single assertion (STX-TQ002/TQ007).
 """
 
@@ -33,35 +34,42 @@ def _fleet_html(client, env_save_restore) -> str:
     return client.get("/").content.decode()
 
 
+_MOUNT_DIV = '<div data-stx-app-header'
+
+
 def _header_block(body: str) -> str:
-    start = body.index("<header")
-    end = body.index("</header>", start)
+    start = body.index(_MOUNT_DIV)
+    end = body.index("header-picker.js", start)
     return body[start:end]
 
 
-def test_fleet_page_has_exactly_one_header(client, loopback, env_save_restore):
-    # Arrange
+def test_fleet_page_mounts_exactly_one_shared_header(client, loopback, env_save_restore):
+    # Arrange — one AppHeader mount; toolbars are functional bars, not rows.
     body = _fleet_html(client, env_save_restore)
     # Act
-    count = body.count("<header")
+    count = body.count(_MOUNT_DIV)
     # Assert
     assert count == 1
 
 
-def test_fleet_header_uses_shared_contract_class(client, loopback, env_save_restore):
-    # Arrange
+def test_fleet_header_mounts_the_shared_primitive(client, loopback, env_save_restore):
+    # Arrange — the leaf emits the mount point, not a hand-rolled row:
+    # no stx-app-header__* element classes of its own. (The mount
+    # attribute itself trivially contains "stx-app-header".)
     header = _header_block(_fleet_html(client, env_save_restore))
     # Act
-    shared = _SHARED_HEADER_CLASS in header
+    leaf_elements = [m for m in ("stx-app-header__title", "stx-app-header__version", "stx-app-header__actions", "stx-app-header__slot")]
     # Assert
-    assert shared
+    assert _MOUNT_DIV in header
+    assert [m for m in leaf_elements if m in header] == []
 
 
 def test_fleet_header_shows_leaf_version(client, loopback, env_save_restore):
-    # Arrange
+    # Arrange — the badge renders client-side; the server contract is the
+    # data attribute carrying the installed leaf version.
     header = _header_block(_fleet_html(client, env_save_restore))
     # Act
-    marked = f"v{_installed_version()}" in header
+    marked = f'data-app-version="{_installed_version()}"' in header
     # Assert
     assert marked
 
@@ -75,11 +83,11 @@ def test_fleet_page_has_no_legacy_header(client, loopback, env_save_restore):
     assert not legacy
 
 
-def test_detail_page_has_exactly_one_header(client, loopback, env_save_restore):
+def test_detail_page_mounts_exactly_one_shared_header(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    count = client.get("/alpha/").content.decode().count("<header")
+    count = client.get("/alpha/").content.decode().count(_MOUNT_DIV)
     # Assert
     assert count == 1
 

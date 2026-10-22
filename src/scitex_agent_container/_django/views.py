@@ -144,8 +144,25 @@ def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> di
     ctx = dict(data)
     ctx["url_base"] = base
     ctx["app_version"] = _leaf_version()
+    ctx["project_picker_available"] = _project_picker_available()
     ctx.update(_shell_context(request, title, view_path))
     return ctx
+
+
+def _project_picker_available() -> bool:
+    """True when the host registered the `scitex_project_picker` tag library.
+
+    Writer/Storage precedent: `{% load %}` of a missing library is a hard
+    TemplateSyntaxError, so the guard lives here, not in the template.
+    """
+    try:
+        from django.template import engines
+    except Exception:
+        return False
+    try:
+        return "scitex_project_picker" in engines["django"].engine.template_libraries
+    except Exception:
+        return False
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:

@@ -1,0 +1,9 @@
+{% load scitex_project_picker %}{% comment %}
+Agents project picker — the element the SDK AppHeader slot receives.
+
+Fleet scope maps to the picker's user scope: this app watches every
+project, so the user scope (All Projects) is the correct one, not a
+project default. The tag renders NOTHING unless the request is signed
+in AND the host registered a project provider, so standalone serves
+unchanged markup.
+{% endcomment %}{% scitex_project_picker scope="user" allow_user_scope=True %}
