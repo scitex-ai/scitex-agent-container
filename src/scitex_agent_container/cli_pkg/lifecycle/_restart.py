@@ -40,7 +40,7 @@ import sys
 
 import click
 
-from ..._logging import render_rich
+from ..._logging import render_rich, write_stream
 from .._helpers import agent_name_complete
 
 # The LOCAL leg (perform + verify + render) lives in ``_restart_local``;
@@ -183,6 +183,10 @@ def _restart_one(
                 )
         elif not as_json:
             render_rich(f"[red]Error: {exc}[/red]", __name__, level="error")
+            # The levelled record above is lost when stdout is not a TTY
+            # (piped/ssh runs exited 1 with EMPTY output while --json showed
+            # the abort). The stream write below is the delivery guarantee.
+            write_stream(f"Error: {exc}", sys.stderr, flush=True)
     log_restart_decision(
         event="completed",
         agent=name,

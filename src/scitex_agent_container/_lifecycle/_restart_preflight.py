@@ -117,7 +117,15 @@ class RestartPreflightAbort(RuntimeError):
     resolved credential path, and the remedy; it confirms the running
     container was LEFT UP. Because the raise happens before ``agent_stop``,
     the live agent keeps running on its current, known-good credential.
+
+    ``retryable`` is set by raisers whose failure may clear on its own
+    (rate limits, timeouts): the Hermes proof sets it True when at least
+    one route is cooldown-gated rather than permanently dead, so the
+    restart start leg may retry a bounded number of times instead of
+    stranding the agent DOWN. Absent/False means retrying is pointless.
     """
+
+    retryable: bool = False
 
 
 def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]:

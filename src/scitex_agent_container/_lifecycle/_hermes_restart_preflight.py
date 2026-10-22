@@ -336,11 +336,21 @@ def prepare_hermes_successor(
         if healthy and verified is None:
             verified = provider
     if verified is None:
-        raise RestartPreflightAbort(
+        retryable = any(
+            row.get("last_status") == "exhausted"
+            for pool in pools.values()
+            for row in pool.credentials
+        )
+        abort = RestartPreflightAbort(
             "No declared Hermes credential currently proves inference access; "
             "invalid credential controls and unavailable routes cannot prove access. "
             "the current process and its profile have been left running unchanged"
         )
+        # Retry signal for the restart start leg: exhausted rows cool down
+        # (rate limits, timeouts) so a later attempt may verify; all-dead
+        # rows (revoked keys) never recover, so retrying is pointless.
+        abort.retryable = retryable
+        raise abort
     if verified != selection["model"]["provider"]:
         next_model = pools[verified].probe["model"]
         if getattr(
