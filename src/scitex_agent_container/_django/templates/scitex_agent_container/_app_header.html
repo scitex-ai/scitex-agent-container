@@ -6,13 +6,9 @@ version) and the picker include; the SDK owns the chrome, so the row
 cannot drift from sibling apps. Fleet scope maps to the picker's user
 scope (all projects), so the slot is populated, not empty.
 
-Below the row, the PAGE chrome (not the app row): back link, page title
-as <h1>, and the lede paragraph (subtitle + acting identity), where the
-fleet age ticker keeps its `data-role="fleet-age"` hook for fleet.js.
-
-   The page lede (subtitle + acting identity) is NOT header chrome: it
-   renders below as `.agents-lede`, where the fleet age ticker keeps its
-   `data-role="fleet-age"` hook for fleet.js.
+Below the row, the PAGE chrome (not the app row): back link and page title
+as <h1>. (A lede paragraph used to render below; dropped per operator
+2026-10-22 — the fleet age still shows in the fleet body content.)
 
    Contract vars (all autoescaped; pass context values, not markup):
      * header_icon    — e.g. "fas fa-robot" (plain class string).
