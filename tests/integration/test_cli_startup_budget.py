@@ -313,6 +313,7 @@ _HELP_IMPORT_CLOSURE = frozenset((
     "scitex_agent_container.config._reserved_names",
     "scitex_agent_container.config._residency_types",
     "scitex_agent_container.config._resolve",
+    "scitex_agent_container.config._secret_scope_types",
     "scitex_agent_container.config._shape_validation",
     "scitex_agent_container.config._spec_keys",
     "scitex_agent_container.config._startup_command_validation",
