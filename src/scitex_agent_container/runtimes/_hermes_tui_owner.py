@@ -42,7 +42,7 @@ RECOVERY_WINDOW_SECONDS = 300.0
 
 
 def _wait_for_port(
-    path: Path, process: subprocess.Popen, timeout_s: float = 30.0
+    path: Path, process: subprocess.Popen, timeout_s: float = 300.0
 ) -> int:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
