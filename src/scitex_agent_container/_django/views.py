@@ -245,13 +245,6 @@ def _fleet_context(request: HttpRequest) -> dict:
         agents=agents,
         summary=_summary(agents),
         identity=identity,
-        # Shared-header lede (Writer pattern): plain text composed HERE, where
-        # the number is a float the server minted — the partial autoescapes it
-        # and keeps the fleet.js `fleet-age` tick hook.
-        header_meta=(
-            f"Last known {observed_age:.0f}s ago" if observed_age is not None else "Fleet"
-        ),
-        header_meta_role="fleet-age" if observed_age is not None else "",
         crosshost_authorized=identity in _crosshost_allowlist(),
         can_launch=can_control(identity, cross_host=False, request=request),
         # One decided cross-host grant for the whole fleet render (audited, like
@@ -315,8 +308,6 @@ def timeline(request: HttpRequest):
         stale_after_seconds=STALE_AFTER_SECONDS,
         identity=identity,
         listener=fleet.base_url,
-        header_meta=f"Published signals from the SAC control plane — {fleet.base_url}",
-        header_identity=identity,
         comm_error=comm_error,
         page="timeline",
     )

@@ -14,9 +14,6 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
      * header_icon    — e.g. "fas fa-robot" (plain class string).
      * header_title   — page title, e.g. "Agents" or the agent name.
      * header_back_href — optional back URL (renders the Fleet link).
-     * header_meta    — optional plain lede text (e.g. the agent host).
-     * header_meta_role — optional data-role for the lede span (fleet age).
-     * header_identity — optional acting identity (rendered as "acting as X").
      * app_version    — set once in views._app_context (Writer pattern:
                         manifest pip_package -> installed version, "unknown"
                         when undistributable, never raises).
@@ -38,6 +35,3 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
   {% if header_back_href %}<a class="agents-pagehead__back" href="{{ header_back_href }}"><i class="fas fa-arrow-left"></i> Fleet</a>{% endif %}
   <h1 class="agents-pagehead__title">{% if header_icon %}<i class="{{ header_icon }}" aria-hidden="true"></i> {% endif %}{{ header_title }}</h1>
 </div>
-{% if header_meta or header_identity %}
-<p class="agents-lede">{% if header_meta %}<span{% if header_meta_role %} data-role="{{ header_meta_role }}"{% endif %}>{{ header_meta }}</span>{% endif %}{% if header_meta and header_identity %} · {% endif %}{% if header_identity %}acting as <strong>{{ header_identity }}</strong>{% endif %}</p>
-{% endif %}

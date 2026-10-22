@@ -9,7 +9,7 @@ node. The form carries a name only — never an inline spec (a spec written
 from a web form would be arbitrary code execution behind one POST).
 {% endcomment %}
 <div class="agents-app" data-page="launch">
-  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-rocket" header_title="Launch agent" header_back_href=url_base|add:"/" header_identity=identity|default:"(unidentified)" %}
+  {% include "scitex_agent_container/_app_header.html" with header_icon="fas fa-rocket" header_title="Launch agent" header_back_href=url_base|add:"/" %}
 
   {% if can_launch %}
   <div class="detail-card">
