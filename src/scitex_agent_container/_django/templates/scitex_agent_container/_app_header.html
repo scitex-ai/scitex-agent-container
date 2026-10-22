@@ -1,7 +1,7 @@
 {% load static %}{% comment %}
 Agents' leaf header — THE one app header: the shared AppHeader primitive
 (data-stx-app-header mount), like every other leaf. The leaf owns only
-identity values (full product title "SciTeX Agent Container", live leaf
+identity values (short tile label "Agent Container", live leaf
 version) and the picker include; the SDK owns the chrome, so the row
 cannot drift from sibling apps. Fleet scope maps to the picker's user
 scope (all projects), so the slot is populated, not empty.
@@ -22,7 +22,7 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
 <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/app-header.css' %}">
 <div class="agents-app-header">
   <div data-stx-app-header
-       data-app-title="SciTeX Agent Container"
+       data-app-title="Agent Container"
        {% if app_version %}data-app-version="{{ app_version }}"{% endif %}></div>
   <script type="module" src="{% static 'scitex_sdk/ui/js/app/app-header.js' %}"></script>
   {% if project_picker_available %}{% include "scitex_agent_container/_project_picker.html" %}{% endif %}
