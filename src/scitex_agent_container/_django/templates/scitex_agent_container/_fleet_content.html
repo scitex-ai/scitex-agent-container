@@ -39,7 +39,7 @@ mounted) so the per-row links are correct at any mount.
     <small>Your agents are unaffected — this is the console failing to reach its
     data source, not your fleet going away.</small>
     <small class="diag">
-      <button type="button" class="btn btn-retry" data-action="retry"
+      <button type="button" class="stx-button stx-button-retry" data-action="retry"
               onclick="window.location.reload()"><i class="fas fa-rotate"></i> Retry</button>
     </small>
   </div>
@@ -61,11 +61,11 @@ mounted) so the per-row links are correct at any mount.
     <span class="pill own"><i class="fas fa-lock"></i> own-scope only</span>
     {% endif %}
     {% if can_launch %}
-    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
-    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
+    <a class="stx-button good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
+    <a class="stx-button good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
     {% endif %}
-    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
-    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
+    <a class="stx-button" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
+    <a class="stx-button" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
   </div>
 
   {% if agents %}
@@ -97,7 +97,7 @@ mounted) so the per-row links are correct at any mount.
         <td class="c-host">{{ a.host }}</td>
         <td class="c-port">{% if a.a2a_port %}{{ a.a2a_port }}{% else %}<span class="dim">—</span>{% endif %}</td>
         <td class="row-actions">
-          <a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>
+          <a class="stx-button stx-button-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>
           {% comment %}
           Per-row quick actions: the same Start/Restart/Stop POSTs the detail
           page offers (same <name>/action route, same operator gate), plus a
@@ -110,9 +110,9 @@ mounted) so the per-row links are correct at any mount.
           <span class="quick-actions">
             <form method="post" action="{{ url_base }}/{{ a.name }}/action" class="qa-form">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
-              <button type="submit" name="action" value="start" class="btn qa good" title="Start {{ a.name }}">Start</button>
-              <button type="submit" name="action" value="restart" class="btn qa" title="Restart {{ a.name }}">Restart</button>
-              <button type="submit" name="action" value="stop" class="btn qa bad" title="Stop {{ a.name }}">Stop</button>
+              <button type="submit" name="action" value="start" class="stx-button qa good" title="Start {{ a.name }}">Start</button>
+              <button type="submit" name="action" value="restart" class="stx-button qa" title="Restart {{ a.name }}">Restart</button>
+              <button type="submit" name="action" value="stop" class="stx-button qa bad" title="Stop {{ a.name }}">Stop</button>
             </form>
             {% comment %}
             Registry verbs: Forget tombstones stale/unreachable rows (the
@@ -125,19 +125,19 @@ mounted) so the per-row links are correct at any mount.
             <form method="post" action="{{ url_base }}/{{ a.name }}/forget" class="qa-form"
                   onsubmit="return confirm('Forget {{ a.name }}? This drops inactive registry state (no ssh, no signal). Stop any live agent first.')">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
-              <button type="submit" class="btn qa warn" title="Forget {{ a.name }}: drop stale registry rows">Forget</button>
+              <button type="submit" class="stx-button qa warn" title="Forget {{ a.name }}: drop stale registry rows">Forget</button>
             </form>
             <form method="post" action="{{ url_base }}/{{ a.name }}/delete" class="qa-form"
                   onsubmit="return confirm('Delete {{ a.name }}? This stops it, deregisters it and removes its spec and runtime dirs. This cannot be undone.')">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
-              <button type="submit" class="btn qa bad" title="Delete {{ a.name }}: stop + deregister + remove dirs">Delete</button>
+              <button type="submit" class="stx-button qa bad" title="Delete {{ a.name }}: stop + deregister + remove dirs">Delete</button>
             </form>
             <form method="post" action="{{ url_base }}/{{ a.name }}/message" class="qa-form qa-msg">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
               <label class="visually-hidden" for="qa-msg-{{ a.name }}">Message {{ a.name }}</label>
               <input id="qa-msg-{{ a.name }}" type="text" name="message" maxlength="4000" required
                      placeholder="Message…" autocomplete="off">
-              <button type="submit" class="btn qa" title="Send a message to {{ a.name }}">Send</button>
+              <button type="submit" class="stx-button qa" title="Send a message to {{ a.name }}">Send</button>
             </form>
           </span>
           {% endif %}
