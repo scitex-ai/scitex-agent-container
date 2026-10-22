@@ -385,7 +385,7 @@ def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/").content.decode()
+    html = hub_client.get("/apps/agent-container/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html and "agents-app" in html and "agents.css" in html
 
@@ -394,7 +394,7 @@ def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, en
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/timeline/").content.decode()
+    html = hub_client.get("/apps/agent-container/timeline/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "timeline.js" in html and html.index("timeline.js") > html.index('data-page="timeline"')
 
@@ -405,18 +405,18 @@ def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):
     # Warm the last-known snapshot via a live read: the shell renders the table
     # from cache on the next paint; a cold first paint is legitimately `loading`
     # (B6: this test must not rely on another test's leaked cache state).
-    hub_client.get("/apps/agents/api/fleet")
+    hub_client.get("/apps/agent-container/api/fleet")
     # Act
-    html = hub_client.get("/apps/agents/").content.decode()
+    html = hub_client.get("/apps/agent-container/").content.decode()
     # Assert
-    assert 'href="/apps/agents/alpha/"' in html
+    assert 'href="/apps/agent-container/alpha/"' in html
 
 
 def test_mounted_detail_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/alpha/").content.decode()
+    html = hub_client.get("/apps/agent-container/alpha/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
 
@@ -759,7 +759,7 @@ def test_mounted_launch_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/launch/").content.decode()
+    html = hub_client.get("/apps/agent-container/launch/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
 
@@ -928,9 +928,9 @@ def test_fleet_page_loads_the_fleet_poller(client, loopback, env_save_restore):
 def test_mounted_fleet_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
-    hub_client.get("/apps/agents/api/fleet")
+    hub_client.get("/apps/agent-container/api/fleet")
     # Act
-    html = hub_client.get("/apps/agents/").content.decode()
+    html = hub_client.get("/apps/agent-container/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "fleet.js" in html and html.index("fleet.js") > html.index('data-page="fleet"')
 

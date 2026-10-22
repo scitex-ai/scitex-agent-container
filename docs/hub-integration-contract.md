@@ -1,4 +1,4 @@
-# Hub integration contract — `/apps/agents/`
+# Hub integration contract — `/apps/agent-container/`
 
 How the `scitex-agent-container` **Agents** app embeds inside the SciTeX Hub
 shell. This is a **contract** the Hub implements; the package ships the app and
@@ -16,11 +16,11 @@ adds a sibling, not a new mechanism.
 | URL module | `scitex_agent_container._django.urls` |
 | URL namespace / `app_name` | `scitex_agent_container` |
 | Manifest (Hub app registry) | `scitex_agent_container/_django/manifest.json` |
-| Manifest slug / label | `agents` / `Agents` |
+| Manifest slug / label | `agent-container` / `SciTeX Agent Container` |
 | Frontend type | `server-rendered` |
 | Deps (Hub must have installed) | `django`, `scitex-app>=0.11.0`, `scitex-ui>=0.13.0` |
 
-## 2. Mount it under `/apps/agents/`
+## 2. Mount it under `/apps/agent-container/`
 
 ```python
 # hub urls.py (or the Hub's app-mounting helper)
@@ -28,13 +28,13 @@ from django.urls import include, path
 
 urlpatterns = [
     # ... other /apps/<slug>/ mounts ...
-    path("apps/agents/", include("scitex_agent_container._django.urls")),
+    path("apps/agent-container/", include("scitex_agent_container._django.urls")),
 ]
 ```
 
 Add the app to `INSTALLED_APPS`. That is the entire Hub-side change. The app's
 templates and static resolve relative to the **request path**, so it renders
-correctly under `/apps/agents/` with no further wiring.
+correctly under `/apps/agent-container/` with no further wiring.
 
 ## 3. The no-duplicate-header rule
 
@@ -53,13 +53,13 @@ templates; to embed cleanly the Hub renders the *content only*:
 # Hub-side: reuse the package views, render into global_base's content block
 from scitex_agent_container._django import views as agents_views
 
-# map /apps/agents/ -> agents_views.index, /apps/agents/<name>/ -> detail, etc.
+# map /apps/agent-container/ -> agents_views.index, /apps/agent-container/<name>/ -> detail, etc.
 ```
 
 The templates call `shell_context()` + `mount_context(request, view_path=...)`
 in the view, which is the scitex-ui contract for a **mounted** (not standalone)
 app: `mount_context` emits the `_mount_marker.html` partial that tells
-client-side code the app is mounted at `/apps/agents/`, so `mountPrefix()`
+client-side code the app is mounted at `/apps/agent-container/`, so `mountPrefix()`
 resolves instead of assuming root. That is what keeps the app from re-
 rendering a header.
 
@@ -84,10 +84,10 @@ sees the fleet, audited. No app-local login, no added project switcher.
 
 ## 5. Acceptance (what "integrated" means)
 
-- `GET /apps/agents/` renders the fleet **inside the Hub's `global_base`** —
+- `GET /apps/agent-container/` renders the fleet **inside the Hub's `global_base`** —
   one header, no second header, no project switcher.
-- `GET /apps/agents/api/fleet` returns the scoped JSON projection.
-- `GET /apps/agents/<name>/` renders the detail card; lifecycle controls show
+- `GET /apps/agent-container/api/fleet` returns the scoped JSON projection.
+- `GET /apps/agent-container/<name>/` renders the detail card; lifecycle controls show
   only for an authorized identity and delegate to the listener.
 - Fleet rows show the latest published runner operation and phase. The detail
   card also reports turn elapsed, last transcript progress, queue, inference,

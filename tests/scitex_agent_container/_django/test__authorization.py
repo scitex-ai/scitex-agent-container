@@ -228,7 +228,7 @@ def _authed_request(active=True):
 
     return SimpleNamespace(
         user=SimpleNamespace(is_authenticated=True, is_active=active),
-        path="/apps/agents/create/",
+        path="/apps/agent-container/create/",
         method="GET",
     )
 

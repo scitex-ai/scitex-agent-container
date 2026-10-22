@@ -1,6 +1,6 @@
 """URL contract for the SAC Agents dashboard.
 
-Mounted hosts prefix these under the app's route (e.g. ``/apps/agents/``); the
+Mounted hosts prefix these under the app's route (e.g. ``/apps/agent-container/``); the
 standalone server serves them at the root. Relative navigation in the templates
 uses ``../`` so both layouts work.
 """

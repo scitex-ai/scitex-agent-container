@@ -49,10 +49,10 @@ def test_cold_workspace_poll_uses_registered_mount(loopback, env_save_restore):
     env_save_restore.set(IDENTITY_ENV, "alice")
     request = RequestFactory().get("/workspace/")
     # Act
-    html = render_content(request, None, stx_mount="/apps/agents/").content.decode()
+    html = render_content(request, None, stx_mount="/apps/agent-container/").content.decode()
     # Assert
     # The loading request uses the actual leaf API, not /workspace/api.
-    assert 'var base = "/apps/agents";' in html and "/workspace/api" not in html
+    assert 'var base = "/apps/agent-container";' in html and "/workspace/api" not in html
 
 
 @pytest.mark.parametrize(
@@ -107,6 +107,6 @@ def test_workspace_renderer_rejects_post_before_read(listener_requests):
     # Arrange
     request = RequestFactory().post("/workspace/")
     # Act
-    response = render_content(request, None, stx_mount="/apps/agents/")
+    response = render_content(request, None, stx_mount="/apps/agent-container/")
     # Assert
     assert response.status_code == 405 and listener_requests == []
