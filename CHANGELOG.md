@@ -26,6 +26,14 @@ versioning follows [SemVer](https://semver.org/).
   Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
   actions work from inside the Hub django container.
 
+## [0.31.0] - 2026-10-22
+
+### Added
+- **Name-miss hints on attach/start/stop/restart.** An unresolvable
+  agent name prints Did-you-mean candidates with the exact command per
+  candidate, via one shared helper (regexp, bounded, invalid falls back
+  to literal, never auto-acts). Attach's inline matcher now uses it.
+
 ## [0.30.1] - 2026-10-22
 
 ### Fixed
