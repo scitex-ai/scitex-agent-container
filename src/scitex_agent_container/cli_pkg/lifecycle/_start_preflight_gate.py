@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Callable, Iterator
 
 from ..._logging import get_logger
+from ...config._resolve import AmbiguousAgent
 
 
 def _target_needs_anthropic_oauth(cfg: object) -> bool:
@@ -111,9 +112,24 @@ def make_preflight_runner(
         try:
             for raw, cfg, err in _iter_target_configs(single_targets, bulk_yamls):
                 if cfg is None:
+                    hint = ""
+                    if isinstance(err, (FileNotFoundError, AmbiguousAgent)):
+                        # Operator order (card
+                        # sac-attach-agent-name-hints-20260919): a miss
+                        # suggests, never auto-starts. Same helper as
+                        # attach/stop/restart.
+                        try:
+                            from ...config._name_hints import suggest_agent_names
+                            from ...config._resolve import enumerate_agent_names
+
+                            hint = suggest_agent_names(
+                                raw, enumerate_agent_names(), verb="start"
+                            )
+                        except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                            pass
                     raise RuntimeError(
                         f"cannot start {raw!r}: its spec could not be loaded "
-                        f"({type(err).__name__}: {err}). Check that the agent "
+                        f"({type(err).__name__}: {err}).{hint} Check that the agent "
                         "name is registered on this host and that its spec "
                         "parses. This is NOT a credential fault — sac does not "
                         "read ~/.claude/.credentials.json for agent starts."

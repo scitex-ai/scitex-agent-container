@@ -255,18 +255,15 @@ def attach(name: str) -> None:
         # Operator order 2026-10-16: a miss should suggest, not just
         # refuse. Offer substring matches over known agent names so a
         # short or misremembered name ("lead") finds its candidates
-        # instead of dying at a dead end.
+        # instead of dying at a dead end. Card
+        # sac-attach-agent-name-hints-20260919 extends the same helper
+        # to start/stop/restart, so the verbs cannot disagree.
         hint = f"Start it first: `sac agents start {agent}`."
         try:
+            from ...config._name_hints import suggest_agent_names
             from ...config._resolve import enumerate_agent_names
 
-            matches = sorted(
-                n for n in enumerate_agent_names() if agent.lower() in n.lower()
-            )[:8]
-            if matches and agent not in matches:
-                hint += " Did you mean: " + ", ".join(
-                    f"`sac agents start {m}`" for m in matches
-                ) + "?"
+            hint += suggest_agent_names(agent, enumerate_agent_names(), verb="start")
         except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
             pass
         system_msg(

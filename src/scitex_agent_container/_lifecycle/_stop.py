@@ -132,9 +132,15 @@ def agent_stop(
         except FileNotFoundError as exc:
             if force:
                 return True
+            from ..config._name_hints import suggest_agent_names
+            from ..config._resolve import enumerate_agent_names
+
+            hint = suggest_agent_names(
+                name, enumerate_agent_names(), verb="stop"
+            )
             raise RuntimeError(
                 f"Agent '{name}' not found in registry and no spec could be "
-                f"resolved by name ({exc})"
+                f"resolved by name ({exc}).{hint}"
             ) from exc
         entry = {"name": name, "config": config_path}
 
@@ -507,9 +513,15 @@ def agent_restart(
         try:
             config_path = resolver(name)
         except FileNotFoundError as exc:
+            from ..config._name_hints import suggest_agent_names
+            from ..config._resolve import enumerate_agent_names
+
+            hint = suggest_agent_names(
+                name, enumerate_agent_names(), verb="restart"
+            )
             raise RuntimeError(
                 f"Agent '{name}' not found in registry and no spec could be "
-                f"resolved by name ({exc}). Pass a spec path, or start the "
+                f"resolved by name ({exc}).{hint} Pass a spec path, or start the "
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
