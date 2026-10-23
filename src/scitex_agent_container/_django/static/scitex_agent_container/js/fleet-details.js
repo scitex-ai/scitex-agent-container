@@ -130,6 +130,12 @@ function initFleet() {
   if (table) {
     table.addEventListener("click", onClick);
     table.addEventListener("contextmenu", onRowMenu);
+    /* Operator 2026-10-23: never show a dead DM pane — auto-open the
+       first online agent so the thread + Details populate on load. */
+    if (!table.querySelector("tr.agent-row[data-stx-selected]")) {
+      const first = table.querySelector("tr.agent-row.good") || table.querySelector("tr.agent-row");
+      if (first) first.click();
+    }
   }
   document.addEventListener("click", closeRowMenu);
   document.addEventListener("keydown", (e) => {
