@@ -96,14 +96,14 @@
 .agents-table td { display: table-cell; }
 .agents-table thead th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--agents-dim); padding: 11px 14px;
+  color: var(--agents-dim); padding: 7px 12px;
   /* Operator 2026-10-23: the label row must read as a header band, not a
      body row — tinted background + a 2px bottom edge in the strong border. */
   background: color-mix(in srgb, var(--agents-border) 28%, var(--agents-panel));
   border-bottom: 2px solid var(--agents-border);
   position: sticky; top: 0;
 }
-.agents-table tbody td { padding: 11px 14px; border-bottom: 1px solid color-mix(in srgb, var(--agents-border) 55%, transparent); vertical-align: middle; }
+.agents-table tbody td { padding: 7px 12px; border-bottom: 1px solid color-mix(in srgb, var(--agents-border) 55%, transparent); vertical-align: middle; }
 .agents-table tbody tr:last-child td { border-bottom: none; }
 .agents-table tbody tr:hover { background: color-mix(in srgb, var(--agents-text) 4%, transparent); }
 .agents-table tr.cross { box-shadow: inset 3px 0 0 var(--agents-cross); }
@@ -124,7 +124,7 @@
 .row-actions { text-align: right; }
 .btn {
   cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
-  padding: 5px 11px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--agents-border); background: var(--agents-panel); color: var(--agents-text);
 }
 .btn:hover { border-color: var(--agents-cross); }
@@ -341,8 +341,8 @@
 /* Page head: content title + inline stats (operator 2026-10-23 — the sparse
    bar above the table carries the full product name and the fleet counts
    in one row instead of two stacked bands). */
-.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; }
-.agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 6px; }
+.agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 
 /* Right-click row menu (operator 2026-10-23): absolute overlay, closes on
    click-away / Escape. Reuses the row's own links + forms. */
@@ -362,7 +362,7 @@
 .fleet-row-menu button:hover { background: color-mix(in srgb, var(--agents-text) 10%, transparent); }
 /* Buzz filter above the fleet table: substring match across name +
    row facts (operator 2026-10-23). */
-.agents-filterbar { margin: 0 0 8px; }
+.agents-filterbar { margin: 0 0 6px; }
 .agents-filterbar input[type="search"] {
   width: min(560px, 100%); box-sizing: border-box;
   font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
