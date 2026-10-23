@@ -406,7 +406,9 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
    desktop), so the slim bar carries the "Details" label. No icon, no
    blank card. */
 .agents-detail-pane .agents-detail-label.stx-shell-sidebar__header { height: auto; min-height: 0; padding-top: 6px; padding-bottom: 6px; }
-.agents-detail-label .stx-shell-sidebar__title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--agents-dim); }
+/* SDK hides .stx-shell-sidebar__title when expanded (collapsed-rail design);
+   this pane is never collapsed, so force the label visible. */
+.agents-detail-pane .agents-detail-label .stx-shell-sidebar__title { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--agents-dim); }
 /* Details pane (operator 2026-10-23): shared SDK sidebar shape, like the
    cards board Details column (stx-shell-sidebar header + content) and the
    figrecipe right rail. Leaf owns only the content styling. */
