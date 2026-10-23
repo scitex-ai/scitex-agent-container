@@ -21,20 +21,62 @@ function showDetails() {
   }
 }
 
-async function loadIntoPanel(url) {
-  const host = panel();
-  if (!host) return;
-  host.setAttribute("aria-busy", "true");
+function chatHost() {
+  return document.querySelector("[data-role='fleet-chat']");
+}
+
+async function loadIntoPanels(url) {
+  const detailHost = panel();
+  const chatHostEl = chatHost();
+  if (chatHostEl) chatHostEl.setAttribute("aria-busy", "true");
+  if (detailHost) detailHost.setAttribute("aria-busy", "true");
   try {
     const response = await fetch(url, { headers: { Accept: "text/html" } });
     if (!response.ok) return;
-    host.innerHTML = await response.text();
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    /* Chat thread -> center DM pane (operator 2026-10-23 three-column). */
+    const thread = doc.querySelector("[data-role='chat-thread']");
+    const composer = doc.querySelector("form.chat-composer");
+    if (chatHostEl) {
+      chatHostEl.innerHTML = "";
+      const title = doc.querySelector(".detail-name");
+      if (title) {
+        const head = document.createElement("div");
+        head.className = "agents-chat-head";
+        head.textContent = title.textContent;
+        chatHostEl.appendChild(head);
+      }
+      if (thread) chatHostEl.appendChild(document.adoptNode(thread));
+      if (composer) chatHostEl.appendChild(document.adoptNode(composer));
+      if (!thread && !composer) chatHostEl.innerHTML = html;
+    }
+    /* Everything else -> shared Details column. */
+    if (detailHost) {
+      const frag = document.createDocumentFragment();
+      for (const child of Array.from(doc.body ? doc.body.childNodes : [])) {
+        if (child.nodeType !== 1) continue;
+        if (child.matches && (child.matches("[data-role='chat-thread']") || child.matches("form.chat-composer") || child.matches(".detail-name"))) continue;
+        frag.appendChild(document.adoptNode(child));
+      }
+      if (frag.childNodes.length) {
+        detailHost.innerHTML = "";
+        detailHost.appendChild(frag);
+      } else {
+        detailHost.innerHTML = html;
+      }
+    }
     showDetails();
   } catch {
-    /* fail-soft: keep the placeholder; the inspect link still works */
+    /* fail-soft: keep placeholders; the detail page stays reachable */
   } finally {
-    host.removeAttribute("aria-busy");
+    if (chatHostEl) chatHostEl.removeAttribute("aria-busy");
+    if (detailHost) detailHost.removeAttribute("aria-busy");
   }
+}
+
+async function loadIntoPanel(url) {
+  return loadIntoPanels(url);
 }
 
 function onClick(event) {

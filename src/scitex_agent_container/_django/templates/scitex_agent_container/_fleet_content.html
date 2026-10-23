@@ -82,13 +82,16 @@ mounted) so the per-row links are correct at any mount.
     </div>
   </div>
   <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
-  <div data-stx-panes="agents" style="--stx-panes-columns: minmax(0,1fr) 360px">
-  <section data-stx-pane="fleet" data-stx-label="Fleet">
+  {# Operator 2026-10-23: three-column DM layout (Cards DM idiom, leaf-side). #}
+  {# Left: agent + state LED (narrow). Center: DM chat with selected agent. #}
+  {# Right: shared Details column. #}
+  <div data-stx-panes="agents" class="agents-3col" style="--stx-panes-columns: 300px minmax(0,1fr) 360px">
+  <section data-stx-pane="fleet" data-stx-label="Agents">
   <div class="agents-table-wrap">
-  <table class="agents-table" data-fleet-table>
+  <table class="agents-table agents-roster" data-fleet-table>
     <thead>
       <tr>
-        <th>Agent</th><th>State</th>
+        <th>Agent</th><th><span class="visually-hidden">State</span></th>
       </tr>
     </thead>
     <tbody>
@@ -105,7 +108,7 @@ mounted) so the per-row links are correct at any mount.
           data-agent-port="{{ a.a2a_port|default:'' }}">
         <td class="c-name"><span title="{{ a.name }}">{{ a.name }}</span>
           {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
-        <td title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
+        <td class="c-state" title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
         {# Operator 2026-10-23: no Actions column — inspect/start/stop etc live in the right-click row menu. The gated forms below stay in the DOM (visually hidden) so the menu submits the same POSTs with the same gates. #}
         <td class="row-actions row-actions--menu-only" hidden>
           <a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>
@@ -145,10 +148,15 @@ mounted) so the per-row links are correct at any mount.
   </table>
   </div>
   </section>
+  <section data-stx-pane="chat" data-stx-label="Chat">
+    <div class="agents-chat-pane" data-role="fleet-chat" aria-live="polite">
+      <div class="agents-chat-empty dim">Select an agent to open the DM thread.</div>
+    </div>
+  </section>
   <section data-stx-pane="detail" data-stx-label="Details">
     <div class="agents-detail-pane stx-shell-sidebar" data-role="fleet-detail" aria-live="polite">
-      <div class="stx-shell-sidebar__header">
-        <span class="stx-shell-sidebar__title"><i class="fas fa-sliders-h"></i> Details</span>
+      <div class="stx-shell-sidebar__header agents-detail-label">
+        <span class="stx-shell-sidebar__title">Details</span>
       </div>
       <div class="stx-shell-sidebar__content" data-role="fleet-detail-body">
       </div>
