@@ -172,7 +172,15 @@ def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
     # HTTP N+1 and repeated those same store scans N times.
     rows = scope_rows(fleet.list_all(), identity)
     agents = [project_row(row, row) for row in rows]
+    # Operator 2026-10-23: roster ordered by state — online (good) first,
+    # then needs-attention (warn/bad), then idle (muted), alphabetical
+    # within each band.
+    agents.sort(key=lambda a: (_TONE_RANK.get(str(a.get("state_tone") or ""), 99), str(a.get("name") or "")))
     return agents, ""
+
+
+# Roster band order: online first, attention second, idle last.
+_TONE_RANK = {"good": 0, "warn": 1, "bad": 1, "muted": 2}
 
 
 def _is_configured() -> bool:
