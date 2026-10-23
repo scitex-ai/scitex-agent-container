@@ -33,10 +33,12 @@
 }
 
 /* Operator 2026-10-23: no side air on the largest div — the app fills the
-   shell edge to edge; the table wrap keeps its own border. */
+   shell edge to edge; the table wrap keeps its own border. Stats/writer
+   precedent: zero outer padding, gutters inside components only. */
 .agents-app {
   padding-left: 0;
   padding-right: 0;
+  padding-top: 0;
 }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
