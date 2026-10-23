@@ -62,9 +62,9 @@ def test_fleet_page_mounts_panes_with_fleet_and_details(client, loopback, env_sa
 
 
 def test_fleet_page_names_the_full_product_in_contents(client, loopback, env_save_restore):
-    # Arrange — the tile stays short ("Agent Container"); the page contents
-    # carry the full product name (operator 2026-10-23). Seed the snapshot
-    # so the content band renders (see above).
+    # Arrange — the tile stays short ("Agent Container"); the page header
+    # carries the full product name (operator 2026-10-23, Scholar/Stats
+    # precedent). Seed the snapshot so the content band renders (see above).
     from scitex_agent_container._django._inventory_cache import CACHE
 
     CACHE.put("alice", [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
@@ -76,7 +76,8 @@ def test_fleet_page_names_the_full_product_in_contents(client, loopback, env_sav
     try:
         # Act
         html = client.get("/").content.decode()
-        # Assert
-        assert "<h1" in html and "SciTeX Agent Container" in html
+        # Assert — operator 2026-10-23: no duplicate pagehead h1; the SDK
+        # header row renders the full product name "SciTeX Agent Container".
+        assert "<h1" not in html and "SciTeX Agent Container" in html
     finally:
         CACHE.clear()

@@ -26,10 +26,11 @@
      centered column squeezed the 11-column fleet table into ~70% of the
      viewport and wrapped every cell. No max-width here, ever. */
   max-width: none;
-  /* Gutters match the SDK leaf standard (storage 12px): symmetric air so
-     the main content reads as one frame. Bottom keeps the floating
-     site-dock clearance. */
-  padding: 12px 12px var(--site-dock-scroll-clearance, 132px);
+  /* Operator 2026-10-23: marginless full-bleed (stats/figrecipe/writer
+     precedent) — zero outer margin + padding; gutters live inside
+     components only. Bottom keeps the floating site-dock clearance. */
+  margin: 0;
+  padding: 0 0 var(--site-dock-scroll-clearance, 132px);
 }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
@@ -45,15 +46,15 @@
   border: 0;
 }
 
-.agents-summary { display: flex; gap: 10px; flex-wrap: wrap; }
+.agents-summary { display: flex; gap: 8px; flex-wrap: wrap; }
 .sum-card {
   background: var(--agents-panel);
   border: 1px solid var(--agents-border);
-  border-radius: 10px;
-  padding: 8px 14px;
-  display: flex; flex-direction: column; align-items: center; min-width: 78px;
+  border-radius: 6px;
+  padding: 2px 10px;
+  display: flex; flex-direction: row; align-items: baseline; gap: 6px; min-width: 0;
 }
-.sum-num { font-size: 20px; font-weight: 700; }
+.sum-num { font-size: 15px; font-weight: 700; }
 .sum-label { font-size: 11px; color: var(--agents-dim); text-transform: uppercase; letter-spacing: .04em; }
 .sum-card.good .sum-num { color: var(--agents-good); }
 .sum-card.warn .sum-num { color: var(--agents-warn); }
@@ -87,10 +88,14 @@
 .agents-table td { display: table-cell; }
 .agents-table thead th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--agents-dim); padding: 11px 14px; border-bottom: 1px solid var(--agents-border);
-  position: sticky; top: 0; background: var(--agents-panel);
+  color: var(--agents-dim); padding: 7px 12px;
+  /* Operator 2026-10-23: the label row must read as a header band, not a
+     body row — tinted background + a 2px bottom edge in the strong border. */
+  background: color-mix(in srgb, var(--agents-border) 28%, var(--agents-panel));
+  border-bottom: 2px solid var(--agents-border);
+  position: sticky; top: 0;
 }
-.agents-table tbody td { padding: 11px 14px; border-bottom: 1px solid color-mix(in srgb, var(--agents-border) 55%, transparent); vertical-align: middle; }
+.agents-table tbody td { padding: 7px 12px; border-bottom: 1px solid color-mix(in srgb, var(--agents-border) 55%, transparent); vertical-align: middle; }
 .agents-table tbody tr:last-child td { border-bottom: none; }
 .agents-table tbody tr:hover { background: color-mix(in srgb, var(--agents-text) 4%, transparent); }
 .agents-table tr.cross { box-shadow: inset 3px 0 0 var(--agents-cross); }
@@ -109,9 +114,12 @@
 .dot.bad { background: var(--agents-bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--agents-bad) 22%, transparent); }
 
 .row-actions { text-align: right; }
+/* Operator 2026-10-23: no Actions column — the gated forms stay in the
+   DOM (hidden) so the right-click row menu submits the same POSTs. */
+.row-actions--menu-only { display: none; }
 .btn {
   cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
-  padding: 5px 11px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--agents-border); background: var(--agents-panel); color: var(--agents-text);
 }
 .btn:hover { border-color: var(--agents-cross); }
@@ -172,13 +180,9 @@
       var(--agents-panel);
     scrollbar-width: thin;
   }
-  /* Keep identity + selected runtime facts and allow horizontal scrolling.
-     Columns: 1 agent, 2 state, 3 runtime, 4 billing, 5 auth identity,
-     6 harness, 7 engine, 8 activity, 9 host, 10 a2a, 11 actions. */
-  .agents-table thead th:nth-child(3), .agents-table tbody td:nth-child(3) { display: none; }
-  .agents-table thead th:nth-child(8), .agents-table tbody td:nth-child(8) { display: none; }
-  .agents-table thead th:nth-child(9), .agents-table tbody td:nth-child(9) { display: none; }
-  .agents-table thead th:nth-child(10), .agents-table tbody td:nth-child(10) { display: none; }
+  /* Slim table (operator 2026-10-23): identity + state + actions only.
+     Columns: 1 agent, 2 state, 3 actions. Nothing to hide — the facts
+     live in the Details pane. */
   .agents-table thead th, .agents-table tbody td { padding: 9px 10px; }
   .detail-grid { grid-template-columns: 1fr; }
   .detail-card-wide { grid-column: auto; }
@@ -275,8 +279,8 @@
 }
 .message-form textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
-  font: inherit; font-size: 13px; line-height: 1.5;
-  padding: 8px 10px; border-radius: 8px;
+  font: inherit; font-size: 15px; line-height: 1.6;
+  min-height: 220px; padding: 14px 16px; border-radius: 8px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -304,7 +308,7 @@
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
 .btn.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
-  width: 130px; font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px;
+  width: 400px; max-width: 50vw; font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -332,7 +336,36 @@
 /* Page head: content title + inline stats (operator 2026-10-23 — the sparse
    bar above the table carries the full product name and the fleet counts
    in one row instead of two stacked bands). */
-.agents-pagehead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 2px 0 12px; }
+.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 6px; }
+.agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+
+/* Right-click row menu (operator 2026-10-23): absolute overlay, closes on
+   click-away / Escape. Reuses the row's own links + forms. */
+.fleet-row-menu {
+  position: fixed; z-index: 1200; min-width: 220px; max-width: 320px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--agents-panel); color: var(--agents-text);
+  border: 1px solid var(--agents-border); border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.fleet-row-menu button {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; padding: 8px 12px;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--agents-text); cursor: pointer;
+}
+.fleet-row-menu button:hover { background: color-mix(in srgb, var(--agents-text) 10%, transparent); }
+/* Buzz filter above the fleet table: substring match across name +
+   row facts (operator 2026-10-23). */
+.agents-filterbar { margin: 0 0 6px; }
+.agents-filterbar input[type="search"] {
+  width: min(560px, 100%); box-sizing: border-box;
+  font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
+.agents-filterbar input[type="search"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-title { font-size: 17px; font-weight: 650; margin: 0; }
 .agents-pagehead .agents-summary { gap: 8px; }
 .agents-pagehead .sum-card { flex-direction: row; align-items: baseline; gap: 6px; padding: 4px 10px; min-width: 0; }
@@ -344,8 +377,31 @@
 .c-em { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-em .identity-source { display: block; }
 
-/* Details pane + selected row (dynamic details, operator 2026-10-23). */
+/* Chat-style message thread (operator 2026-10-23): Cards DM idiom,
+   ported leaf-side. Operator sends right, session lines left. */
+.chat-thread { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; max-height: 320px; overflow-y: auto; }
+.chat-row { display: flex; flex-direction: column; max-width: 90%; }
+.chat-row--out { align-self: flex-end; align-items: flex-end; }
+.chat-row--in { align-self: flex-start; align-items: flex-start; }
+.chat-bubble { padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.chat-bubble--out { background: var(--agents-cross); color: #fff; border-bottom-right-radius: 4px; }
+.chat-bubble--in { background: var(--agents-panel); border: 1px solid var(--agents-border); border-bottom-left-radius: 4px; }
+.chat-meta { font-size: 10px; color: var(--agents-faint); margin-top: 2px; }
+.chat-composer { display: flex; gap: 8px; align-items: flex-end; }
+.chat-composer textarea { flex: 1; min-height: 64px; }
+.chat-composer .btn { flex-shrink: 0; padding: 10px 14px; }
+/* Details pane (operator 2026-10-23): shared SDK sidebar shape, like the
+   cards board Details column (stx-shell-sidebar header + content) and the
+   figrecipe right rail. Leaf owns only the content styling. */
 .agents-detail-pane { min-height: 120px; }
+.agents-detail-pane.stx-shell-sidebar { display: flex; flex-direction: column; min-height: 200px; }
+.agents-detail-pane .stx-shell-sidebar__header { flex-shrink: 0; }
+.agents-detail-pane .stx-shell-sidebar__content { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+/* Fragment sections read as collapsible Details sections (cards board
+   details-section idiom: toggle row + body). */
+.agents-detail-pane .detail-card { margin-bottom: 0; }
+.agents-detail-pane .detail-grid { grid-template-columns: 1fr; gap: 12px; }
+.agents-detail-pane .detail-card-wide { grid-column: auto; }
 tr.agent-row { cursor: pointer; }
 tr.agent-row[data-stx-selected="true"] { background: var(--agents-panel); }
 
