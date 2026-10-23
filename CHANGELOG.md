@@ -4,6 +4,25 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.33.0] - 2026-10-24
+
+### Added
+- **State-ordered roster + pin-to-top.** Online agents first, then
+  needs-attention, then idle (alphabetical in-band). Right-click pin
+  floats favorites above the bands (localStorage, square PIN chip);
+  pinned agents win auto-select.
+- **Auto-open first online agent.** The DM thread + Details populate on
+  load instead of a dead placeholder (bounded retry for late rows).
+
+### Changed
+- **Telegram-style DM.** Thread fills the pane and scrolls; composer
+  pinned at the bottom with breathing room on all four sides.
+- **Name shown once.** Roster carries the context; DM pane and Details
+  fragment no longer repeat the agent name (full detail page keeps it).
+- **Equal-height 3-col panes** sharing one viewport-based row height with
+  internal scroll; bottom dead band reclaimed (133px to 3px).
+- **Unmistakable selection.** Accent bar + tinted fill + bold name + hover.
+
 ## [0.29.3]
 
 ### Fixed
