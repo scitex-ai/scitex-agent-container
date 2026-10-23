@@ -111,7 +111,6 @@ function onRowMenu(event) {
   if (!row) return;
   event.preventDefault();
   closeRowMenu();
-  const name = row.getAttribute("data-agent-name") || "";
   const inspectHref = (row.querySelector("a[href]") || {}).getAttribute
     ? row.querySelector("a[href]").getAttribute("href")
     : "#";
@@ -162,7 +161,7 @@ function onRowMenu(event) {
     const b = document.createElement("button");
     b.type = "button";
     b.setAttribute("role", "menuitem");
-    b.textContent = (item.label + " — " + name).slice(0, 80);
+    b.textContent = item.label;
     b.addEventListener("click", () => {
       closeRowMenu();
       item.act();
