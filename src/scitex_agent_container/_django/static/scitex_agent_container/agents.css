@@ -398,6 +398,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
    the row taller (detail cards) or capping short (chat max-height). */
 .agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 210px); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
+/* Floating site dock overlays the pane bottoms: keep scroll clearance
+   INSIDE each pane so bottom-anchored content (DM composer, last roster
+   row) scrolls clear of the dock instead of hiding under it. No dead
+   band — the clearance is scrollable space, not empty margin. */
+.agents-3col > section[data-stx-pane] > div { padding-bottom: var(--site-dock-scroll-clearance, 132px); }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
 .agents-roster tbody td { padding: 7px 8px; }
