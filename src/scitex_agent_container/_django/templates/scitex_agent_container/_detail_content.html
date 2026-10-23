@@ -109,16 +109,38 @@ back link and the lifecycle form action are correct at any mount.
       constructs a host/port and never drives tmux. Each submit carries a
       dispatch id so a double-click cannot inject the text twice.
       {% endcomment %}
-      <h3 class="control-sub" id="message">Send a message</h3>
-      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form">
+      {# Message thread (operator 2026-10-23): chat-style, Cards DM idiom #}
+      {# ported leaf-side (no cross-app dependency, different ports). Same #}
+      {# POST endpoint + gate; operator sends render right, session lines #}
+      {# render left. The console still keeps no operator transcript — the #}
+      {# last-send banner below is the delivery receipt. #}
+      <h3 class="control-sub" id="message">Messages</h3>
+      <div class="chat-thread" data-role="chat-thread">
+      {% if notice and notice.operation == "message" or notice and notice.operation == "control" %}
+      <div class="chat-row chat-row--out">
+        <div class="chat-bubble chat-bubble--out">
+          <span class="mono">{{ notice.message|default:notice.operation }}</span>
+        </div>
+        <div class="chat-meta">{{ notice.operation }} · {{ notice.state }}</div>
+      </div>
+      {% endif %}
+      {% if agent.session_lines %}
+      {% for line in agent.session_lines|slice:"-8:" %}
+      <div class="chat-row chat-row--in">
+        <div class="chat-bubble chat-bubble--in mono">{{ line }}</div>
+      </div>
+      {% endfor %}
+      {% elif not notice %}
+      <p class="dim session-note">No messages yet. Send the first one below.</p>
+      {% endif %}
+      </div>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form chat-composer">
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
         <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
-        <textarea id="msg-{{ agent.name }}" name="message" rows="12" maxlength="4000"
-                  placeholder="Message or steering instruction…"></textarea>
-        <div class="lifecycle-btns">
-          <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>
-        </div>
+        <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
+                  placeholder="Message {{ agent.name }}…"></textarea>
+        <button type="submit" class="btn" title="Send"><i class="fas fa-paper-plane"></i></button>
       </form>
 
       <h3 class="control-sub">UI control</h3>

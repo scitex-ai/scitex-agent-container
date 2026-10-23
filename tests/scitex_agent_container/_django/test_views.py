@@ -201,11 +201,11 @@ def test_fleet_table_is_slim_details_carry_the_facts(client, loopback, env_save_
     # Act
     html = _render_fleet_inventory(client)
 
-    # Assert — slim headers present, moved columns gone from the table.
+    # Assert — Agent + State headers only; actions + facts live in the row menu / Details.
     assert (
         "Agent" in html
         and "State" in html
-        and "Actions" in html
+        and "Actions" not in html
         and "Engine / Model" not in html
         and "Auth identity" not in html
     )
@@ -385,8 +385,9 @@ def test_fleet_labels_action_column(client, loopback, env_save_restore):
                          "a2a_port": 19000, "pid": 1, "activity": {}}])
     # Act
     html = client.get("/").content.decode()
-    # Assert: the action column keeps its accessible label.
-    assert '<th class="row-actions">Actions</th>' in html
+    # Assert: no Actions column header; the gated forms stay in the DOM for the row menu.
+    assert '<th class="row-actions">Actions</th>' not in html
+    assert 'row-actions--menu-only' in html
     CACHE.clear()
 
 
@@ -454,9 +455,9 @@ def test_css_action_header_right_aligned():
     # Arrange
     css = (Path(__file__).resolve().parents[3] / "src" / "scitex_agent_container" / "_django" / "static" / "scitex_agent_container" / "agents.css").read_text(encoding="utf-8")
     # Act
-    aligned = ".row-actions { text-align: right" in css.replace("  ", " ")
+    hidden = ".row-actions--menu-only" in css
     # Assert
-    assert aligned
+    assert hidden
 
 
 # ── B1: cold-shell transition + B3 scope + B2 redaction (six-blocker regressions) ──

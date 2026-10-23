@@ -9,7 +9,7 @@
  * the detail page stays reachable with no JS at all. Vanilla, no bundler.
  */
 function panel() {
-  return document.querySelector("[data-role='fleet-detail']");
+  return document.querySelector("[data-role='fleet-detail-body']") || document.querySelector("[data-role='fleet-detail']");
 }
 
 function showDetails() {
@@ -42,8 +42,13 @@ function onClick(event) {
   if (!row) return;
   if (event.target.closest("a, button, form, input, select, textarea")) return;
   const link = row.querySelector("a[href]");
-  if (!link) return;
-  const href = link.getAttribute("href");
+  let href = link ? link.getAttribute("href") : null;
+  if (!href || href === "#") {
+    const name = row.getAttribute("data-agent-name");
+    if (!name) return;
+    const api = document.querySelector(".agents-app")?.getAttribute("data-fleet-api") || "/apps/agent-container/api/fleet";
+    href = api.replace(/\/api\/fleet\/?$/, "") + "/" + encodeURIComponent(name) + "/";
+  }
   if (!href || href === "#") return;
   event.preventDefault();
   for (const other of document.querySelectorAll("tr.agent-row[data-stx-selected]")) {
@@ -73,7 +78,24 @@ function initFleet() {
      row's name + carried facts (state text + data-agent-* attributes).
      Vanilla, no bundler; fails open (no match hiding when JS is off). */
   const box = document.querySelector("[data-role='agents-filter']");
-  if (box) box.addEventListener("input", () => applyFilter(box.value, table));
+  if (box) {
+    box.addEventListener("input", () => applyFilter(box.value, table));
+    /* Ctrl/⌘+K focuses the filter (global-header palette idiom). */
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        box.focus();
+        box.select();
+      }
+    });
+    box.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        box.value = "";
+        applyFilter("", table);
+        box.blur();
+      }
+    });
+  }
 }
 
 /* Right-click menu on each fleet row (operator 2026-10-23): inspect in
@@ -107,6 +129,22 @@ function onRowMenu(event) {
       items.push({
         label: action[0].toUpperCase() + action.slice(1),
         act: () => form.submit(),
+      });
+    }
+  }
+  /* Registry verbs reuse the row's own forget/delete forms, so the POST
+     routes, gates, and confirm() dialogs match the former buttons.
+     requestSubmit (not submit) so the inline confirm() still fires. */
+  for (const verb of ["forget", "delete"]) {
+    const form = row.querySelector('form[action$="/' + verb + '"]');
+    if (form) {
+      items.push({
+        label: verb[0].toUpperCase() + verb.slice(1),
+        act: () => {
+          const btn = form.querySelector("button[type='submit']");
+          if (btn && typeof form.requestSubmit === "function") form.requestSubmit(btn);
+          else form.submit();
+        },
       });
     }
   }

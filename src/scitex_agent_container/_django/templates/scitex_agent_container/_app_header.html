@@ -22,7 +22,7 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
 <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/app-header.css' %}">
 <div class="agents-app-header">
   <div data-stx-app-header
-       data-app-title="Agent Container"
+       data-app-title="SciTeX Agent Container"
        {% if app_version %}data-app-version="{{ app_version }}"{% endif %}></div>
   <script type="module" src="{% static 'scitex_sdk/ui/js/app/app-header.js' %}"></script>
   {% if project_picker_available %}{% include "scitex_agent_container/_project_picker.html" %}{% endif %}
