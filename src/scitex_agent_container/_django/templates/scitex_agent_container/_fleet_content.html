@@ -150,8 +150,13 @@ mounted) so the per-row links are correct at any mount.
   </div>
   </section>
   <section data-stx-pane="chat" data-stx-label="Chat">
-    <div class="agents-chat-pane" data-role="fleet-chat" aria-live="polite">
+    <div class="agents-chat-pane stx-shell-sidebar" data-role="fleet-chat" aria-live="polite">
+      <div class="stx-shell-sidebar__header agents-chat-label">
+        <span class="stx-shell-sidebar__title">DM</span>
+      </div>
+      <div class="stx-shell-sidebar__content agents-chat-body" data-role="fleet-chat-body">
       <div class="agents-chat-empty dim">Select an agent to open the DM thread.</div>
+      </div>
     </div>
   </section>
   <section data-stx-pane="detail" data-stx-label="Details">

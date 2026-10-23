@@ -228,7 +228,29 @@ def test_fleet_renders_three_column_dm_layout(client, loopback, env_save_restore
         and 'data-stx-label="Details"' in html
         and "agents-3col" in html
         and 'data-role="fleet-chat"' in html
+        and ">DM<" in html
     )
+
+
+def test_detail_fragment_renders_expandable_cards(client, loopback, env_save_restore):
+    # Arrange — operator 2026-10-26: Details cards are hierarchical
+    # <details> (short first, expand on demand); Identity + Messages open.
+    from scitex_agent_container._django._inventory_cache import CACHE
+
+    CACHE.put("alice", [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
+                         "runtime": "apptainer", "harness": "x", "role": "worker",
+                         "engine": "e", "model": "m", "project": "p",
+                         "host": "h", "scope": "own", "cross_host": False,
+                         "a2a_port": 19000, "pid": 1, "activity": {}}])
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    try:
+        # Act
+        html = client.get("/alpha/?partial=1").content.decode()
+        # Assert
+        assert html.count("<details") >= 4
+        assert html.count("<summary") == html.count("<details")
+    finally:
+        CACHE.clear()
 
 
 def test_compact_fleet_visibly_qualifies_runtime_identity_source(
