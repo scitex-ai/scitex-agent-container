@@ -74,10 +74,12 @@ mounted) so the per-row links are correct at any mount.
   {% if agents %}
   <div class="agents-filterbar">
     <label class="visually-hidden" for="agents-filter">Filter agents</label>
+    <div class="agents-filterbox">
     <input id="agents-filter" type="search" name="q" maxlength="200"
            placeholder="Filter agents…" autocomplete="off"
            data-role="agents-filter">
     <span class="shortcuts-hint agents-filter-hint"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>
+    </div>
   </div>
   <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
   <div data-stx-panes="agents" style="--stx-panes-columns: minmax(0,1fr) 360px">
