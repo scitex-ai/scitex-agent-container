@@ -358,6 +358,7 @@
 /* Buzz filter above the fleet table: substring match across name +
    row facts (operator 2026-10-23). */
 .agents-filterbar { margin: 0 0 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agents-filter-hint { margin-left: auto; }
 .agents-filterbar input[type="search"] {
   width: min(560px, 100%); box-sizing: border-box;
   font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
