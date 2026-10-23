@@ -286,8 +286,8 @@
 }
 .message-form textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
-  font: inherit; font-size: 13px; line-height: 1.5;
-  padding: 8px 10px; border-radius: 8px;
+  font: inherit; font-size: 14px; line-height: 1.5;
+  min-height: 96px; padding: 10px 12px; border-radius: 8px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -315,7 +315,7 @@
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
 .btn.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
-  width: 130px; font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px;
+  width: 220px; font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
