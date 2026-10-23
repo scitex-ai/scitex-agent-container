@@ -21,7 +21,7 @@
   "standalone_port": 31296,
   "frontend_type": "server-rendered",
   "embedded_package": true,
-  "builtin": false,
+  "builtin": true,
   "dependencies": {
     "python": [
       "scitex-agent-container",
