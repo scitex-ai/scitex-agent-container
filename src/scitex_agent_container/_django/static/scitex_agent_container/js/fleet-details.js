@@ -40,13 +40,8 @@ async function loadIntoPanels(url) {
     const composer = doc.querySelector("form.chat-composer");
     if (chatHostEl) {
       chatHostEl.innerHTML = "";
-      const title = doc.querySelector(".detail-name");
-      if (title) {
-        const head = document.createElement("div");
-        head.className = "agents-chat-head";
-        head.textContent = title.textContent;
-        chatHostEl.appendChild(head);
-      }
+      /* Operator 2026-10-26: no name header in the DM pane — the roster
+         selection already names the agent (showing it 3x was noise). */
       if (thread) chatHostEl.appendChild(document.adoptNode(thread));
       if (composer) chatHostEl.appendChild(document.adoptNode(composer));
       if (!thread && !composer) chatHostEl.innerHTML = html;
@@ -131,9 +126,11 @@ function initFleet() {
     table.addEventListener("click", onClick);
     table.addEventListener("contextmenu", onRowMenu);
     /* Operator 2026-10-23: never show a dead DM pane — auto-open the
-       first online agent so the thread + Details populate on load. */
+       first online agent so the thread + Details populate on load.
+       Pinned favorites win over state bands. */
+    applyPins(table);
     if (!table.querySelector("tr.agent-row[data-stx-selected]")) {
-      const first = table.querySelector("tr.agent-row.good") || table.querySelector("tr.agent-row");
+      const first = table.querySelector("tr.agent-row[data-pinned]") || table.querySelector("tr.agent-row.good") || table.querySelector("tr.agent-row");
       if (first) first.click();
     }
   }
@@ -165,6 +162,41 @@ function initFleet() {
   }
 }
 
+/* Pinned agents (operator 2026-10-26): favorites float above the state
+   bands. Client-side (localStorage per browser) — no server state. */
+const PIN_KEY = "sac-fleet-pinned-v1";
+function getPinned() {
+  try {
+    const raw = window.localStorage.getItem(PIN_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+function setPinned(set) {
+  try {
+    window.localStorage.setItem(PIN_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    /* storage unavailable: pins last for the page view */
+  }
+}
+function applyPins(table) {
+  const pinned = getPinned();
+  const rows = table ? Array.from(table.querySelectorAll("tr.agent-row")) : [];
+  for (const row of rows) {
+    const name = row.getAttribute("data-agent-name") || "";
+    if (pinned.has(name)) row.setAttribute("data-pinned", "true");
+    else row.removeAttribute("data-pinned");
+  }
+  /* Pinned rows float above the state bands; bands keep server order. */
+  const pinnedRows = rows.filter((r) => r.hasAttribute("data-pinned"));
+  const tbody = table ? table.querySelector("tbody") : null;
+  if (tbody && pinnedRows.length) {
+    for (const r of pinnedRows) tbody.insertBefore(r, tbody.firstChild);
+  }
+}
+
 /* Right-click menu on each fleet row (operator 2026-10-23): inspect in
    Details + lifecycle/message shortcuts. Reuses the row's own links and
    POST forms, so gating matches the visible buttons exactly. Vanilla. */
@@ -189,6 +221,23 @@ function onRowMenu(event) {
     { label: "Inspect in Details", act: () => loadIntoPanel(inspectHref + (inspectHref.includes("?") ? "&" : "?") + "partial=1") },
     { label: "Open detail page", act: () => { window.location.href = inspectHref; } },
   ];
+  /* Pin / unpin favorite (operator 2026-10-26): pinned agents float above
+     the state bands on every load. */
+  {
+    const name = row.getAttribute("data-agent-name") || "";
+    const pinned = name && getPinned().has(name);
+    items.push({
+      label: pinned ? "Unpin agent" : "Pin agent to top",
+      act: () => {
+        const set = getPinned();
+        if (pinned) set.delete(name);
+        else if (name) set.add(name);
+        setPinned(set);
+        const table = document.querySelector("[data-fleet-table]");
+        if (table) applyPins(table);
+      },
+    });
+  }
   for (const action of ["start", "restart", "stop"]) {
     const form = row.querySelector('form[action$="/' + action + '"]');
     if (form) {

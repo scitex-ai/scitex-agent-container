@@ -28,16 +28,20 @@ def test_detail_partial_renders_fragment_without_shell(client, loopback, env_sav
     # Arrange
     # Act
     body = _detail(client, env_save_restore, "alpha", partial=True)
-    # Assert
-    assert "<html" not in body and "alpha" in body
+    # Assert — no <html> shell; the agent name is NOT repeated in the
+    # fragment (operator 2026-10-26: the roster selection already names
+    # it, and the DM/Details panes must not triple it).
+    assert "<html" not in body and "detail-card" in body
+    assert "detail-name" not in body
 
 
 def test_detail_full_page_keeps_the_shell(client, loopback, env_save_restore):
     # Arrange
     # Act
     body = _detail(client, env_save_restore, "alpha", partial=False)
-    # Assert
-    assert "<html" in body
+    # Assert — full page keeps the shell AND the name heading (the name is
+    # only dropped from the fleet-pane fragment).
+    assert "<html" in body and "detail-name" in body and "alpha" in body
 
 
 def test_fleet_page_mounts_panes_with_fleet_and_details(client, loopback, env_save_restore):
