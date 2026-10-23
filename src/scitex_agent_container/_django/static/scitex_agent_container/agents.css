@@ -284,8 +284,8 @@
 }
 .message-form textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
-  font: inherit; font-size: 14px; line-height: 1.6;
-  min-height: 160px; padding: 12px 14px; border-radius: 8px;
+  font: inherit; font-size: 15px; line-height: 1.6;
+  min-height: 220px; padding: 14px 16px; border-radius: 8px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -313,7 +313,7 @@
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
 .btn.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
-  width: 320px; max-width: 40vw; font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 6px;
+  width: 400px; max-width: 50vw; font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -344,12 +344,28 @@
 .agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; }
 .agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
+/* Right-click row menu (operator 2026-10-23): absolute overlay, closes on
+   click-away / Escape. Reuses the row's own links + forms. */
+.fleet-row-menu {
+  position: fixed; z-index: 1200; min-width: 220px; max-width: 320px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--agents-panel); color: var(--agents-text);
+  border: 1px solid var(--agents-border); border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.fleet-row-menu button {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; padding: 8px 12px;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--agents-text); cursor: pointer;
+}
+.fleet-row-menu button:hover { background: color-mix(in srgb, var(--agents-text) 10%, transparent); }
 /* Buzz filter above the fleet table: substring match across name +
    row facts (operator 2026-10-23). */
 .agents-filterbar { margin: 0 0 8px; }
 .agents-filterbar input[type="search"] {
-  width: min(420px, 100%); box-sizing: border-box;
-  font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 6px;
+  width: min(560px, 100%); box-sizing: border-box;
+  font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }

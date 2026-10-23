@@ -61,12 +61,79 @@ if (document.readyState === "loading") {
 
 function initFleet() {
   const table = document.querySelector("[data-fleet-table]");
-  if (table) table.addEventListener("click", onClick);
+  if (table) {
+    table.addEventListener("click", onClick);
+    table.addEventListener("contextmenu", onRowMenu);
+  }
+  document.addEventListener("click", closeRowMenu);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeRowMenu();
+  });
   /* Buzz filter (operator 2026-10-23): free-substring match across the
      row's name + carried facts (state text + data-agent-* attributes).
      Vanilla, no bundler; fails open (no match hiding when JS is off). */
   const box = document.querySelector("[data-role='agents-filter']");
   if (box) box.addEventListener("input", () => applyFilter(box.value, table));
+}
+
+/* Right-click menu on each fleet row (operator 2026-10-23): inspect in
+   Details + lifecycle/message shortcuts. Reuses the row's own links and
+   POST forms, so gating matches the visible buttons exactly. Vanilla. */
+function closeRowMenu() {
+  const open = document.querySelector("[data-role='fleet-row-menu']");
+  if (open) open.remove();
+}
+
+function onRowMenu(event) {
+  const row = event.target instanceof Element ? event.target.closest("tr.agent-row") : null;
+  if (!row) return;
+  event.preventDefault();
+  closeRowMenu();
+  const name = row.getAttribute("data-agent-name") || "";
+  const inspectHref = (row.querySelector("a[href]") || {}).getAttribute
+    ? row.querySelector("a[href]").getAttribute("href")
+    : "#";
+  const menu = document.createElement("div");
+  menu.setAttribute("data-role", "fleet-row-menu");
+  menu.setAttribute("role", "menu");
+  menu.className = "fleet-row-menu";
+  const items = [
+    { label: "Inspect in Details", act: () => loadIntoPanel(inspectHref + (inspectHref.includes("?") ? "&" : "?") + "partial=1") },
+    { label: "Open detail page", act: () => { window.location.href = inspectHref; } },
+  ];
+  for (const action of ["start", "restart", "stop"]) {
+    const form = row.querySelector('form[action$="/' + action + '"]');
+    if (form) {
+      items.push({
+        label: action[0].toUpperCase() + action.slice(1),
+        act: () => form.submit(),
+      });
+    }
+  }
+  const msgForm = row.querySelector(".qa-msg");
+  if (msgForm) {
+    items.push({
+      label: "Focus message input",
+      act: () => {
+        const input = msgForm.querySelector("input[type='text']");
+        if (input) input.focus();
+      },
+    });
+  }
+  for (const item of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.textContent = (item.label + " — " + name).slice(0, 80);
+    b.addEventListener("click", () => {
+      closeRowMenu();
+      item.act();
+    });
+    menu.appendChild(b);
+  }
+  menu.style.left = Math.min(event.clientX, window.innerWidth - 240) + "px";
+  menu.style.top = Math.min(event.clientY, window.innerHeight - items.length * 36 - 16) + "px";
+  document.body.appendChild(menu);
 }
 
 function applyFilter(query, table) {

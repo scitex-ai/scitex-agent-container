@@ -6,7 +6,7 @@ back link and the lifecycle form action are correct at any mount.
 {% endcomment %}
 <div class="agents-app agents-app--fragment" data-page="detail">
   {# Fragment render (?partial=1 into the fleet Details pane): no app #}
-  {# header — the fleet page already owns the one header row. The full #}
+  {# header - the fleet page already owns the one header row. The full #}
   {# detail.html page includes the header through its own block. #}
   {% if not fragment %}
   {% include "scitex_agent_container/_app_header.html" %}
@@ -114,7 +114,7 @@ back link and the lifecycle form action are correct at any mount.
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
         <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
-        <textarea id="msg-{{ agent.name }}" name="message" rows="8" maxlength="4000"
+        <textarea id="msg-{{ agent.name }}" name="message" rows="12" maxlength="4000"
                   placeholder="Message or steering instruction…"></textarea>
         <div class="lifecycle-btns">
           <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>

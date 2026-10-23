@@ -9,11 +9,10 @@ mounted) so the per-row links are correct at any mount.
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
   {% include "scitex_agent_container/_app_header.html" %}
-  {# Single action row (operator 2026-10-23): Launch/Create/A2A/Activity
-     buttons + fleet stats share one row — no stacked bands. #}
+  {# Single action row (operator 2026-10-23): Launch/Create/A2A/Activity buttons + fleet stats share one row - no stacked bands. #}
   <div class="agents-pagehead">
     {# Operator 2026-10-23: the pagehead h1 duplicated the SDK AppHeader row #}
-    {# (data-stx-app-header above, "Agent Container" + version) — dropped. #}
+    {# (data-stx-app-header above, "Agent Container" + version) - dropped. #}
     <div class="agents-actions" role="toolbar" aria-label="Fleet actions">
     {% if can_launch %}
     <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
@@ -68,7 +67,7 @@ mounted) so the per-row links are correct at any mount.
   </div>
   {% endif %}
 
-  {# Operator 2026-10-22: scope-note row (acting-as + scope pill) dropped — #}
+  {# Operator 2026-10-22: scope-note row (acting-as + scope pill) dropped - #}
   {# redundant with the workspace identity; action buttons moved up into #}
   {# the pagehead single action row. #}
 
