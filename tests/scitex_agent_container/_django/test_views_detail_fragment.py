@@ -76,7 +76,9 @@ def test_fleet_page_names_the_full_product_in_contents(client, loopback, env_sav
     try:
         # Act
         html = client.get("/").content.decode()
-        # Assert
-        assert "<h1" in html and "SciTeX Agent Container" in html
+        # Assert — operator 2026-10-23: the SDK AppHeader row carries the
+        # title (no duplicate pagehead h1); the header row renders the
+        # short tile label "Agent Container".
+        assert "<h1" not in html and "Agent Container" in html
     finally:
         CACHE.clear()

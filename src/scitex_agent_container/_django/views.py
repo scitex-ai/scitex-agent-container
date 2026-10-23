@@ -433,6 +433,7 @@ def detail(request: HttpRequest, name: str):
         )
         if request.GET.get("partial") == "1":
             template = "scitex_agent_container/_detail_content.html"
+            context = dict(context, fragment=True)
         else:
             template = "scitex_agent_container/detail.html"
         return render(request, template, context)

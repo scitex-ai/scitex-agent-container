@@ -4,10 +4,11 @@ adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 `url_base` is the app mount prefix so the
 back link and the lifecycle form action are correct at any mount.
 {% endcomment %}
-<div class="agents-app" data-page="detail">
-  {% if agent %}
-  {% include "scitex_agent_container/_app_header.html" %}
-  {% else %}
+<div class="agents-app agents-app--fragment" data-page="detail">
+  {# Fragment render (?partial=1 into the fleet Details pane): no app #}
+  {# header — the fleet page already owns the one header row. The full #}
+  {# detail.html page includes the header through its own block. #}
+  {% if not fragment %}
   {% include "scitex_agent_container/_app_header.html" %}
   {% endif %}
 

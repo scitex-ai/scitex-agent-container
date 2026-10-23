@@ -87,8 +87,12 @@
 .agents-table td { display: table-cell; }
 .agents-table thead th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--agents-dim); padding: 11px 14px; border-bottom: 1px solid var(--agents-border);
-  position: sticky; top: 0; background: var(--agents-panel);
+  color: var(--agents-dim); padding: 11px 14px;
+  /* Operator 2026-10-23: the label row must read as a header band, not a
+     body row — tinted background + a 2px bottom edge in the strong border. */
+  background: color-mix(in srgb, var(--agents-border) 28%, var(--agents-panel));
+  border-bottom: 2px solid var(--agents-border);
+  position: sticky; top: 0;
 }
 .agents-table tbody td { padding: 11px 14px; border-bottom: 1px solid color-mix(in srgb, var(--agents-border) 55%, transparent); vertical-align: middle; }
 .agents-table tbody tr:last-child td { border-bottom: none; }
