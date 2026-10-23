@@ -127,12 +127,21 @@ function initFleet() {
     table.addEventListener("contextmenu", onRowMenu);
     /* Operator 2026-10-23: never show a dead DM pane — auto-open the
        first online agent so the thread + Details populate on load.
-       Pinned favorites win over state bands. */
+       Pinned favorites win over state bands. Retry bounded (rows can
+       paint after module eval on cache-warm reloads): 3 attempts, 500ms
+       apart, then give up silently. */
     applyPins(table);
-    if (!table.querySelector("tr.agent-row[data-stx-selected]")) {
+    let autoTries = 0;
+    const autoSelect = () => {
+      if (table.querySelector("tr.agent-row[data-stx-selected]")) return;
       const first = table.querySelector("tr.agent-row[data-pinned]") || table.querySelector("tr.agent-row.good") || table.querySelector("tr.agent-row");
       if (first) first.click();
-    }
+      else if (autoTries < 2) {
+        autoTries += 1;
+        setTimeout(autoSelect, 500);
+      }
+    };
+    autoSelect();
   }
   document.addEventListener("click", closeRowMenu);
   document.addEventListener("keydown", (e) => {
