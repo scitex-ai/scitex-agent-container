@@ -32,6 +32,13 @@
   padding: 12px 12px var(--site-dock-scroll-clearance, 132px);
 }
 
+/* Operator 2026-10-23: no side air on the largest div — the app fills the
+   shell edge to edge; the table wrap keeps its own border. */
+.agents-app {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* Screen-reader-only label for the (deliberately headerless) action column. */
 .agents-sr-only {
   position: absolute;
@@ -45,15 +52,15 @@
   border: 0;
 }
 
-.agents-summary { display: flex; gap: 10px; flex-wrap: wrap; }
+.agents-summary { display: flex; gap: 8px; flex-wrap: wrap; }
 .sum-card {
   background: var(--agents-panel);
   border: 1px solid var(--agents-border);
-  border-radius: 10px;
-  padding: 8px 14px;
-  display: flex; flex-direction: column; align-items: center; min-width: 78px;
+  border-radius: 6px;
+  padding: 2px 10px;
+  display: flex; flex-direction: row; align-items: baseline; gap: 6px; min-width: 0;
 }
-.sum-num { font-size: 20px; font-weight: 700; }
+.sum-num { font-size: 15px; font-weight: 700; }
 .sum-label { font-size: 11px; color: var(--agents-dim); text-transform: uppercase; letter-spacing: .04em; }
 .sum-card.good .sum-num { color: var(--agents-good); }
 .sum-card.warn .sum-num { color: var(--agents-warn); }
@@ -336,7 +343,7 @@
 /* Page head: content title + inline stats (operator 2026-10-23 — the sparse
    bar above the table carries the full product name and the fleet counts
    in one row instead of two stacked bands). */
-.agents-pagehead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 2px 0 12px; }
+.agents-pagehead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 8px; }
 .agents-title { font-size: 17px; font-weight: 650; margin: 0; }
 .agents-pagehead .agents-summary { gap: 8px; }
 .agents-pagehead .sum-card { flex-direction: row; align-items: baseline; gap: 6px; padding: 4px 10px; min-width: 0; }
