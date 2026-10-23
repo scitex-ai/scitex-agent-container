@@ -404,8 +404,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-3col { align-items: stretch; }
 /* Operator 2026-10-23: one shared row height for all three panes — tops
    AND bottoms align. Each pane scrolls internally instead of driving
-   the row taller (detail cards) or capping short (chat max-height). */
-.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 210px); min-height: 420px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
+   the row taller (detail cards) or capping short (chat max-height).
+   Operator 2026-10-26: row ends above the floating dock (153px + 10px gap)
+   so the bottom-anchored DM composer is clickable at rest, not just on
+   focus-avoid. No in-pane reserve (that was the 62px dead band). */
+.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 370px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
 /* Operator 2026-10-24: NO in-pane dock reserve — the 132px clearance left a
    dead band at the bottom of every pane (element report: 62px computed on
