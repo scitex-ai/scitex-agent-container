@@ -4,17 +4,21 @@ adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 `url_base` is the app's mount prefix ("" at root, "/apps/agent-container" when
 mounted) so the per-row links are correct at any mount.
 {% endcomment %}
+{% load static %}
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
   {% include "scitex_agent_container/_app_header.html" %}
-  <div class="agents-summary">
+  <div class="agents-pagehead">
+    <h1 class="agents-title">SciTeX Agent Container</h1>
+    <div class="agents-summary" role="status" aria-label="Fleet summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
       <div class="sum-card warn"><span class="sum-num">{{ summary.attention }}</span><span class="sum-label">need attention</span></div>
       {% if summary.cross_host %}
       <div class="sum-card cross"><span class="sum-num">{{ summary.cross_host }}</span><span class="sum-label">cross-host</span></div>
       {% endif %}
+    </div>
   </div>
 
   {% comment %}
@@ -65,8 +69,11 @@ mounted) so the per-row links are correct at any mount.
   </div>
 
   {% if agents %}
+  <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
+  <div data-stx-panes="agents" style="--stx-panes-columns: minmax(0,1fr) 360px">
+  <section data-stx-pane="fleet" data-stx-label="Fleet">
   <div class="agents-table-wrap">
-  <table class="agents-table">
+  <table class="agents-table" data-fleet-table>
     <thead>
       <tr>
         <th>Agent</th><th>State</th><th>Runtime</th><th>Billing</th>
@@ -85,7 +92,7 @@ mounted) so the per-row links are correct at any mount.
         <td>{{ a.billing_mode }}</td>
         <td title="identity source: {{ a.runtime_identity_source }}">{{ a.auth_identity }}</td>
         <td>{{ a.harness }}</td>
-        <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span><span class="identity-source">{{ a.runtime_identity_source }}</span></td>
+        <td class="c-em" title="{{ a.engine }} / {{ a.model }}">{{ a.engine }}<span class="dim"> / {{ a.model }}</span><span class="identity-source">{{ a.runtime_identity_source }}</span></td>
         <td class="c-activity">
           {% if a.activity.operation.state == "observed" %}{{ a.activity.operation.value }}{% else %}<span class="dim" title="{{ a.activity.operation.reason }}">unknown</span>{% endif %}
           {% if a.activity.phase.state == "observed" %}<span class="dim"> · {{ a.activity.phase.value }}</span>{% endif %}
@@ -143,6 +150,15 @@ mounted) so the per-row links are correct at any mount.
     </tbody>
   </table>
   </div>
+  </section>
+  <section data-stx-pane="detail" data-stx-label="Details">
+    <div class="agents-detail-pane" data-role="fleet-detail" aria-live="polite">
+      <p class="dim">Select an agent to inspect it here.</p>
+    </div>
+  </section>
+  </div>
+  <script type="module" src="{% static 'scitex_sdk/ui/js/app/panes.js' %}"></script>
+  <script type="module" src="{% static 'scitex_agent_container/js/fleet-details.js' %}"></script>
   {% else %}
   {% if fleet_state == "empty" %}
   <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to

@@ -431,7 +431,10 @@ def detail(request: HttpRequest, name: str):
             request, f"Agent · {name}", view_path=f"{name}/",
             agent=None, identity=identity, list_error=list_error, not_found=True, page="detail",
         )
-        template = "scitex_agent_container/detail.html"
+        if request.GET.get("partial") == "1":
+            template = "scitex_agent_container/_detail_content.html"
+        else:
+            template = "scitex_agent_container/detail.html"
         return render(request, template, context)
     try:
         status = fleet.read_status(name)
@@ -454,7 +457,15 @@ def detail(request: HttpRequest, name: str):
         list_error=list_error,
         page="detail",
     )
-    template = "scitex_agent_container/detail.html"
+    if request.GET.get("partial") == "1":
+        # Fragment for the fleet page's dynamic Details pane (operator
+        # 2026-10-23): the same context, the _detail_content partial only —
+        # no shell, no <html> wrapper. Same auth/visibility gating as the
+        # full page (row resolved above); a hidden agent renders the same
+        # not-visible fragment as its page.
+        template = "scitex_agent_container/_detail_content.html"
+    else:
+        template = "scitex_agent_container/detail.html"
     return render(request, template, context)
 
 
