@@ -50,7 +50,7 @@
 .sum-card {
   background: var(--agents-panel);
   border: 1px solid var(--agents-border);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 2px 10px;
   display: flex; flex-direction: row; align-items: baseline; gap: 6px; min-width: 0;
 }
@@ -67,7 +67,7 @@
 
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  padding: 2px 9px; border-radius: 2px; font-size: 11.5px; font-weight: 600;
   border: 1px solid var(--agents-border); background: var(--agents-panel);
 }
 .pill.cross { color: var(--agents-cross); border-color: color-mix(in srgb, var(--agents-cross) 50%, var(--agents-border)); }
@@ -119,7 +119,7 @@
 .row-actions--menu-only { display: none; }
 .btn {
   cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
-  padding: 3px 9px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 2px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--agents-border); background: var(--agents-panel); color: var(--agents-text);
 }
 .btn:hover { border-color: var(--agents-cross); }
@@ -198,7 +198,7 @@
   margin-bottom: 14px;
 }
 .timeline-filters select {
-  font: inherit; font-size: 13px; padding: 5px 9px; border-radius: 8px;
+  font: inherit; font-size: 13px; padding: 5px 9px; border-radius: 2px;
   background: var(--agents-panel); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -234,7 +234,7 @@
 .tl-source { font-size: 11.5px; }
 .tl-state {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-  padding: 1px 7px; border-radius: 999px; border: 1px solid var(--agents-border);
+  padding: 1px 7px; border-radius: 2px; border: 1px solid var(--agents-border);
   justify-self: start;
 }
 .tl-state-observed { color: var(--agents-good); border-color: color-mix(in srgb, var(--agents-good) 45%, var(--agents-border)); }
@@ -280,7 +280,7 @@
 .message-form textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   font: inherit; font-size: 15px; line-height: 1.6;
-  min-height: 220px; padding: 14px 16px; border-radius: 8px;
+  min-height: 220px; padding: 14px 16px; border-radius: 2px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -295,7 +295,7 @@
 .message-form input[type="text"] {
   width: 100%; box-sizing: border-box;
   font: inherit; font-size: 13px; line-height: 1.5;
-  padding: 8px 10px; border-radius: 8px;
+  padding: 8px 10px; border-radius: 2px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -308,7 +308,7 @@
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
 .btn.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
-  width: 400px; max-width: 50vw; font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
+  width: 400px; max-width: 50vw; font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 2px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -321,7 +321,7 @@
 /* The create form reuses the launch form layout; the template select matches
    the launch text inputs. */
 .launch-form select {
-  width: 100%; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px;
+  width: 100%; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 2px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -345,13 +345,13 @@
   position: fixed; z-index: 1200; min-width: 220px; max-width: 320px;
   display: flex; flex-direction: column; padding: 4px;
   background: var(--agents-panel); color: var(--agents-text);
-  border: 1px solid var(--agents-border); border-radius: 8px;
+  border: 1px solid var(--agents-border); border-radius: 2px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 .fleet-row-menu button {
   display: block; width: 100%; text-align: left;
   font: inherit; font-size: 13px; padding: 8px 12px;
-  background: none; border: 0; border-radius: 6px;
+  background: none; border: 0; border-radius: 2px;
   color: var(--agents-text); cursor: pointer;
 }
 .fleet-row-menu button:hover { background: color-mix(in srgb, var(--agents-text) 10%, transparent); }
@@ -361,7 +361,7 @@
 .agents-filter-hint { margin-left: auto; }
 .agents-filterbar input[type="search"] {
   width: min(560px, 100%); box-sizing: border-box;
-  font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 6px;
+  font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 2px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
