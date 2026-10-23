@@ -91,7 +91,7 @@ mounted) so the per-row links are correct at any mount.
   <table class="agents-table agents-roster" data-fleet-table>
     <thead>
       <tr>
-        <th>Agent</th><th><span class="visually-hidden">State</span></th>
+        <th>Agent</th>
       </tr>
     </thead>
     <tbody>
@@ -106,9 +106,10 @@ mounted) so the per-row links are correct at any mount.
           data-agent-model="{{ a.model }}"
           data-agent-host="{{ a.host }}"
           data-agent-port="{{ a.a2a_port|default:'' }}">
-        <td class="c-name"><span title="{{ a.name }}">{{ a.name }}</span>
+        {# Operator 2026-10-26: LED leftmost, name second, status text lives #}
+        {# in the tooltip only (Alive etc. as hover tip, not a label). #}
+        <td class="c-name" title="{{ a.name }} — {{ a.state_label }}{% if a.state_detail %}: {{ a.state_detail }}{% endif %}"><span class="dot {{ a.state_tone }}" aria-hidden="true"></span><span>{{ a.name }}</span>
           {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
-        <td class="c-state" title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
         {# Operator 2026-10-23: no Actions column — inspect/start/stop etc live in the right-click row menu. The gated forms below stay in the DOM (visually hidden) so the menu submits the same POSTs with the same gates. #}
         <td class="row-actions row-actions--menu-only" hidden>
           <a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>

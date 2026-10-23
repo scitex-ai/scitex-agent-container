@@ -193,18 +193,19 @@ def _render_fleet_inventory(client) -> str:
 
 
 def test_fleet_table_is_slim_details_carry_the_facts(client, loopback, env_save_restore):
-    # Arrange — operator 2026-10-23: the fleet table shows Agent + State +
-    # Actions only; runtime/billing/identity/harness/engine facts live in
-    # the Details pane (?partial=1 fragment). Same seed as before.
+    # Arrange — operator 2026-10-26: the fleet table shows ONE column
+    # (LED + name); status text lives in the tooltip, runtime/billing/
+    # identity/harness/engine facts live in the Details pane (?partial=1
+    # fragment). Same seed as before.
     env_save_restore.set(IDENTITY_ENV, "alice")
 
     # Act
     html = _render_fleet_inventory(client)
 
-    # Assert — Agent + State headers only; actions + facts live in the row menu / Details.
+    # Assert — Agent header only; actions + facts live in the row menu / Details.
     assert (
         "Agent" in html
-        and "State" in html
+        and ">State<" not in html
         and "Actions" not in html
         and "Engine / Model" not in html
         and "Auth identity" not in html

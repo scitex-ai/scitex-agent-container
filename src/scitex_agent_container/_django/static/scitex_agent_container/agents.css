@@ -392,12 +392,12 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-3col { align-items: start; }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
-.agents-roster thead th:last-child,
-.agents-roster tbody td:last-child { width: 86px; }
 .agents-roster tbody td { padding: 7px 8px; }
-.agents-roster .c-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agents-roster .c-state { white-space: nowrap; }
-.agents-roster .c-state .dot { margin-right: 6px; }
+/* Operator 2026-10-23: LED leftmost, name second, status text in the
+   tooltip only. */
+.agents-roster .c-name { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.agents-roster .c-name .dot { flex-shrink: 0; margin-right: 0; }
+.agents-roster .c-name > span:last-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Center DM chat pane. */
 .agents-chat-pane { display: flex; flex-direction: column; min-height: 240px; max-height: calc(100vh - 320px); overflow-y: auto; padding: 12px; gap: 8px; }
 .agents-chat-head { font-weight: 700; font-size: 14px; padding: 4px 2px 8px; border-bottom: 1px solid var(--agents-border); }
