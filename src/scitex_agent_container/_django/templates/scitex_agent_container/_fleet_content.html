@@ -9,10 +9,19 @@ mounted) so the per-row links are correct at any mount.
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
   {% include "scitex_agent_container/_app_header.html" %}
+  {# Single action row (operator 2026-10-23): Launch/Create/A2A/Activity
+     buttons + fleet stats share one row — no stacked bands. #}
   <div class="agents-pagehead">
     {# Operator 2026-10-23: the pagehead h1 duplicated the SDK AppHeader row #}
-    {# (data-stx-app-header above, "Agent Container" + version) — dropped, #}
-    {# summary pills kept. #}
+    {# (data-stx-app-header above, "Agent Container" + version) — dropped. #}
+    <div class="agents-actions" role="toolbar" aria-label="Fleet actions">
+    {% if can_launch %}
+    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
+    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
+    {% endif %}
+    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
+    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
+    </div>
     <div class="agents-summary" role="status" aria-label="Fleet summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
@@ -60,17 +69,16 @@ mounted) so the per-row links are correct at any mount.
   {% endif %}
 
   {# Operator 2026-10-22: scope-note row (acting-as + scope pill) dropped — #}
-  {# redundant with the workspace identity; action buttons kept. #}
-  <div class="agents-scope-note">
-    {% if can_launch %}
-    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
-    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
-    {% endif %}
-    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
-    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
-  </div>
+  {# redundant with the workspace identity; action buttons moved up into #}
+  {# the pagehead single action row. #}
 
   {% if agents %}
+  <div class="agents-filterbar">
+    <label class="visually-hidden" for="agents-filter">Filter agents</label>
+    <input id="agents-filter" type="search" name="q" maxlength="200"
+           placeholder="Filter agents…" autocomplete="off"
+           data-role="agents-filter">
+  </div>
   <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
   <div data-stx-panes="agents" style="--stx-panes-columns: minmax(0,1fr) 360px">
   <section data-stx-pane="fleet" data-stx-label="Fleet">

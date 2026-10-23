@@ -54,11 +54,47 @@ function onClick(event) {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => {
-    const table = document.querySelector("[data-fleet-table]");
-    if (table) table.addEventListener("click", onClick);
-  });
+  document.addEventListener("DOMContentLoaded", initFleet);
 } else {
+  initFleet();
+}
+
+function initFleet() {
   const table = document.querySelector("[data-fleet-table]");
   if (table) table.addEventListener("click", onClick);
+  /* Buzz filter (operator 2026-10-23): free-substring match across the
+     row's name + carried facts (state text + data-agent-* attributes).
+     Vanilla, no bundler; fails open (no match hiding when JS is off). */
+  const box = document.querySelector("[data-role='agents-filter']");
+  if (box) box.addEventListener("input", () => applyFilter(box.value, table));
+}
+
+function applyFilter(query, table) {
+  const q = (query || "").trim().toLowerCase();
+  const rows = table
+    ? table.querySelectorAll("tr.agent-row")
+    : document.querySelectorAll("tr.agent-row");
+  for (const row of rows) {
+    if (!q) {
+      row.removeAttribute("data-fleet-hidden");
+      continue;
+    }
+    const hay = [
+      row.getAttribute("data-agent-name"),
+      row.getAttribute("data-agent-runtime"),
+      row.getAttribute("data-agent-billing"),
+      row.getAttribute("data-agent-auth"),
+      row.getAttribute("data-agent-harness"),
+      row.getAttribute("data-agent-engine"),
+      row.getAttribute("data-agent-model"),
+      row.getAttribute("data-agent-host"),
+      row.getAttribute("data-agent-port"),
+      row.textContent,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (hay.includes(q)) row.removeAttribute("data-fleet-hidden");
+    else row.setAttribute("data-fleet-hidden", "true");
+  }
 }

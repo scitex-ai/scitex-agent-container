@@ -339,7 +339,20 @@
 /* Page head: content title + inline stats (operator 2026-10-23 — the sparse
    bar above the table carries the full product name and the fleet counts
    in one row instead of two stacked bands). */
-.agents-pagehead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 8px; }
+.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; }
+.agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+/* Buzz filter above the fleet table: substring match across name +
+   row facts (operator 2026-10-23). */
+.agents-filterbar { margin: 0 0 8px; }
+.agents-filterbar input[type="search"] {
+  width: min(420px, 100%); box-sizing: border-box;
+  font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 6px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
+.agents-filterbar input[type="search"]:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-title { font-size: 17px; font-weight: 650; margin: 0; }
 .agents-pagehead .agents-summary { gap: 8px; }
 .agents-pagehead .sum-card { flex-direction: row; align-items: baseline; gap: 6px; padding: 4px 10px; min-width: 0; }
