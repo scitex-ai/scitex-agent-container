@@ -28,9 +28,10 @@
   max-width: none;
   /* Operator 2026-10-23: marginless full-bleed (stats/figrecipe/writer
      precedent) — zero outer margin + padding; gutters live inside
-     components only. Bottom keeps the floating site-dock clearance. */
+     components only. No bottom dock reserve: the site dock floats and
+     overlays content, so reserving clearance here only leaves dead space. */
   margin: 0;
-  padding: 0 0 var(--site-dock-scroll-clearance, 132px);
+  padding: 0;
 }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
@@ -395,7 +396,7 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 /* Operator 2026-10-23: one shared row height for all three panes — tops
    AND bottoms align. Each pane scrolls internally instead of driving
    the row taller (detail cards) or capping short (chat max-height). */
-.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 340px); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
+.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 210px); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
