@@ -473,6 +473,7 @@ def detail(request: HttpRequest, name: str):
         # full page (row resolved above); a hidden agent renders the same
         # not-visible fragment as its page.
         template = "scitex_agent_container/_detail_content.html"
+        context = dict(context, fragment=True)
     else:
         template = "scitex_agent_container/detail.html"
     return render(request, template, context)

@@ -36,7 +36,9 @@ back link and the lifecycle form action are correct at any mount.
     {% if notice.dispatch_id %}<small class="dim mono">dispatch {{ notice.dispatch_id }}</small>{% endif %}
   </div>
   {% endif %}
+  {% if not fragment %}
   <h2 class="detail-name">{{ agent.name }}</h2>
+  {% endif %}
   <div class="detail-grid">
     <details class="detail-card" open>
       <summary class="detail-card__head">Identity</summary>

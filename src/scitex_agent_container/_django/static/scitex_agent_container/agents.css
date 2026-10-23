@@ -425,7 +425,6 @@ details.detail-card > summary.detail-card__head::-webkit-details-marker { displa
 details.detail-card > summary.detail-card__head::before { content: "▸"; font-size: 11px; color: var(--agents-faint); }
 details.detail-card[open] > summary.detail-card__head::before { content: "▾"; }
 details.detail-card > summary.detail-card__head:focus-visible { outline: 2px solid var(--agents-cross); outline-offset: 2px; }
-.agents-chat-head { font-weight: 700; font-size: 14px; padding: 4px 2px 8px; border-bottom: 1px solid var(--agents-border); }
 .agents-chat-empty { margin: auto; text-align: center; }
 /* Details pane label: the SDK tab strip is phone-only (display:none on
    desktop), so the slim bar carries the "Details" label. No icon, no
@@ -447,7 +446,15 @@ details.detail-card > summary.detail-card__head:focus-visible { outline: 2px sol
 .agents-detail-pane .detail-grid { grid-template-columns: 1fr; gap: 12px; }
 .agents-detail-pane .detail-card-wide { grid-column: auto; }
 tr.agent-row { cursor: pointer; }
-tr.agent-row[data-stx-selected="true"] { background: var(--agents-panel); }
+/* Operator 2026-10-26: selection carries the context (DM/Details panes no
+   longer repeat the name), so the selected row must be unmistakable:
+   accent left bar + tinted fill + bold name. Square: no radius, ever. */
+tr.agent-row[data-stx-selected="true"] { background: color-mix(in srgb, var(--agents-cross) 14%, transparent); box-shadow: inset 3px 0 0 var(--agents-cross); }
+tr.agent-row[data-stx-selected="true"] .c-name > span:last-of-type { font-weight: 700; }
+tr.agent-row:hover { background: color-mix(in srgb, var(--agents-text) 7%, transparent); }
+/* Pinned favorite marker (operator 2026-10-26): square pin chip ahead of
+   the LED. Square, 2px max — never round. */
+tr.agent-row[data-pinned="true"] .c-name::before { content: "PIN"; font-size: 9px; font-weight: 700; letter-spacing: .04em; padding: 1px 4px; border: 1px solid var(--agents-cross); color: var(--agents-cross); flex-shrink: 0; }
 
 /* Detail fragment heading: names the agent in the pane and on the page. */
 .detail-name { font-size: 16px; font-weight: 650; margin: 2px 0 12px; }
