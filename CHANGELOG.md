@@ -26,6 +26,24 @@ versioning follows [SemVer](https://semver.org/).
   Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
   actions work from inside the Hub django container.
 
+## [0.32.0] - 2026-10-23
+
+### Added
+- **Fleet page is a three-column DM workspace.** Narrow agent+LED roster,
+  center DM chat thread, right shared Details column (Cards DM idiom,
+  leaf-side). Row click loads the chat center + facts right.
+- **Buzz filter with Ctrl+K.** Free-substring match across the roster;
+  Ctrl/⌘+K focuses, Esc clears; the kbd hint sits inside the box.
+- **Right-click row menu.** Inspect / Open / Start / Restart / Stop /
+  Forget / Delete / Focus message — no agent-name suffixes.
+
+### Fixed
+- **No duplicate title.** The SDK AppHeader row carries the title; the
+  pagehead h1 is dropped. Tab titles unified on Agent Container.
+- **No inline scripts in leaf templates.** The cold-shell warm poll lives
+  in fleet-details.js (`warmColdShell`).
+- **Squared UI (2px max).** No rounded objects except textarea/button/badge.
+
 ## [0.31.0] - 2026-10-22
 
 ### Added
