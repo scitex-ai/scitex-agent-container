@@ -26,6 +26,14 @@ versioning follows [SemVer](https://semver.org/).
   Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
   actions work from inside the Hub django container.
 
+## [0.32.1] - 2026-10-23
+
+### Fixed
+- **Center column labeled DM; Details cards expand hierarchically.**
+  Short first, expand on demand (Identity + Message thread open).
+- **No inline scripts in leaf templates.** The cold-shell warm poll lives
+  in fleet-details.js.
+
 ## [0.32.0] - 2026-10-23
 
 ### Added
