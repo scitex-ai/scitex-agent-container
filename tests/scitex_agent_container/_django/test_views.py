@@ -192,22 +192,22 @@ def _render_fleet_inventory(client) -> str:
     )
 
 
-def test_fleet_shows_billing_auth_harness_engine_and_model(client, loopback, env_save_restore):
-    # Arrange
+def test_fleet_table_is_slim_details_carry_the_facts(client, loopback, env_save_restore):
+    # Arrange — operator 2026-10-23: the fleet table shows Agent + State +
+    # Actions only; runtime/billing/identity/harness/engine facts live in
+    # the Details pane (?partial=1 fragment). Same seed as before.
     env_save_restore.set(IDENTITY_ENV, "alice")
 
     # Act
     html = _render_fleet_inventory(client)
 
-    # Assert
+    # Assert — slim headers present, moved columns gone from the table.
     assert (
-        "Billing" in html
-        and "Auth identity" in html
-        and "Harness" in html
-        and "Engine / Model" in html
-        and "subscription" in html
-        and "anthropic/team-max" in html
-        and "sonnet" in html
+        "Agent" in html
+        and "State" in html
+        and "Actions" in html
+        and "Engine / Model" not in html
+        and "Auth identity" not in html
     )
 
 
@@ -217,11 +217,21 @@ def test_compact_fleet_visibly_qualifies_runtime_identity_source(
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
 
-    # Act
+    # Act — operator 2026-10-23: the inline span moved with the engine
+    # column into the Details fragment; the fleet row keeps the fact as a
+    # data attribute for the dynamic pane.
     html = _render_fleet_inventory(client)
 
-    # Assert
-    assert '<span class="identity-source">birth_certificate</span>' in html
+    # Assert — the fleet row keeps the fact as a data attribute; the
+    # full identity-source line lives in the Details fragment template.
+    assert 'data-agent-auth=' in html
+    from pathlib import Path
+
+    fragment = (
+        Path(__file__).parents[3]
+        / "src/scitex_agent_container/_django/templates/scitex_agent_container/_detail_content.html"
+    ).read_text()
+    assert "Identity source" in fragment
 
 
 def test_fleet_template_escapes_all_runtime_identity_cells() -> None:

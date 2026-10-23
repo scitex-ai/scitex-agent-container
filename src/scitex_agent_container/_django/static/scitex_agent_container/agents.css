@@ -183,13 +183,9 @@
       var(--agents-panel);
     scrollbar-width: thin;
   }
-  /* Keep identity + selected runtime facts and allow horizontal scrolling.
-     Columns: 1 agent, 2 state, 3 runtime, 4 billing, 5 auth identity,
-     6 harness, 7 engine, 8 activity, 9 host, 10 a2a, 11 actions. */
-  .agents-table thead th:nth-child(3), .agents-table tbody td:nth-child(3) { display: none; }
-  .agents-table thead th:nth-child(8), .agents-table tbody td:nth-child(8) { display: none; }
-  .agents-table thead th:nth-child(9), .agents-table tbody td:nth-child(9) { display: none; }
-  .agents-table thead th:nth-child(10), .agents-table tbody td:nth-child(10) { display: none; }
+  /* Slim table (operator 2026-10-23): identity + state + actions only.
+     Columns: 1 agent, 2 state, 3 actions. Nothing to hide — the facts
+     live in the Details pane. */
   .agents-table thead th, .agents-table tbody td { padding: 9px 10px; }
   .detail-grid { grid-template-columns: 1fr; }
   .detail-card-wide { grid-column: auto; }
@@ -286,8 +282,8 @@
 }
 .message-form textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
-  font: inherit; font-size: 14px; line-height: 1.5;
-  min-height: 96px; padding: 10px 12px; border-radius: 8px;
+  font: inherit; font-size: 14px; line-height: 1.6;
+  min-height: 160px; padding: 12px 14px; border-radius: 8px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
@@ -315,7 +311,7 @@
 .qa-form { display: inline-flex; gap: 4px; align-items: center; }
 .btn.qa { font-size: 11px; padding: 2px 8px; }
 .qa-msg input[type="text"] {
-  width: 220px; font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px;
+  width: 320px; max-width: 40vw; font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 6px;
   background: var(--agents-bg, transparent); color: var(--agents-text);
   border: 1px solid var(--agents-border);
 }
