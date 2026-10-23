@@ -380,7 +380,7 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 /* Telegram idiom (operator 2026-10-26): thread fills the pane and scrolls,
    composer pinned at the bottom. The thread is adopted before the composer
    in loadIntoPanels, so order is already correct — flex does the rest. */
-.chat-thread { display: flex; flex-direction: column; gap: 8px; margin: 0; flex: 1; min-height: 0; overflow-y: auto; }
+.chat-thread { display: flex; flex-direction: column; gap: 8px; margin: 0; flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 4px; }
 .chat-row { display: flex; flex-direction: column; max-width: 90%; }
 .chat-row--out { align-self: flex-end; align-items: flex-end; }
 .chat-row--in { align-self: flex-start; align-items: flex-start; }
@@ -388,7 +388,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .chat-bubble--out { background: var(--agents-cross); color: #fff; border-bottom-right-radius: 4px; }
 .chat-bubble--in { background: var(--agents-panel); border: 1px solid var(--agents-border); border-bottom-left-radius: 4px; }
 .chat-meta { font-size: 10px; color: var(--agents-faint); margin-top: 2px; }
-.chat-composer { display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0; margin-top: auto; }
+/* Operator 2026-10-26: breathing room around the composer. The pane
+   content already pads 12px on all sides; add separation above the
+   input (thread never butts into it) and a touch more below. Total
+   inset lands ~12-14px per side. */
+.chat-composer { display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; margin-top: auto; padding-top: 12px; padding-bottom: 2px; }
 .chat-composer textarea { flex: 1; min-height: 64px; }
 .chat-composer .btn { flex-shrink: 0; padding: 10px 14px; align-self: flex-end; margin-bottom: 1px; }
 /* Three-column DM layout (operator 2026-10-23, Cards DM idiom leaf-side).
