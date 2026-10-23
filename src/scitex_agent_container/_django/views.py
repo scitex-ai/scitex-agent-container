@@ -265,7 +265,7 @@ def _fleet_context(request: HttpRequest) -> dict:
 @require_GET
 def index(request: HttpRequest):
     """Render the standalone or mounted leaf shell from the same fleet context."""
-    context = _app_context(request, "Agents", view_path="", **_fleet_context(request))
+    context = _app_context(request, "Agent Container", view_path="", **_fleet_context(request))
     return render(request, "scitex_agent_container/fleet.html", context)
 
 
@@ -296,7 +296,7 @@ def timeline(request: HttpRequest):
     )
     context = _app_context(
         request,
-        "Agents · Activity",
+        "Agent Container · Activity",
         view_path="timeline/",
         entries=timeline_rows(entries),
         summary=_timeline_summary(entries),
@@ -669,7 +669,7 @@ def launch(request: HttpRequest):
     if request.method == "GET":
         context = _app_context(
             request,
-            "Agents · Launch",
+            "Agent Container · Launch",
             view_path="launch/",
             identity=identity,
             can_launch=allowed,
@@ -958,7 +958,7 @@ def create_agent(request: HttpRequest):
         inline, dir_templates, templates_error = _create_template_choices()
         context = _app_context(
             request,
-            "Agents · Create",
+            "Agent Container · Create",
             view_path="create/",
             identity=fleet_identity,
             can_create=allowed,
@@ -1130,7 +1130,7 @@ def a2a_panel(request: HttpRequest):
     grants, grants_error = _read_grants()
     context = _app_context(
         request,
-        "Agents · A2A",
+        "Agent Container · A2A",
         view_path="a2a/",
         peers=_a2a_peers(rows, statuses if isinstance(statuses, dict) else {}),
         grants=grants,

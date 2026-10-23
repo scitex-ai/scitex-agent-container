@@ -10,7 +10,9 @@ mounted) so the per-row links are correct at any mount.
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
   {% include "scitex_agent_container/_app_header.html" %}
   <div class="agents-pagehead">
-    <h1 class="agents-title">SciTeX Agent Container</h1>
+    {# Operator 2026-10-23: the pagehead h1 duplicated the SDK AppHeader row #}
+    {# (data-stx-app-header above, "Agent Container" + version) — dropped, #}
+    {# summary pills kept. #}
     <div class="agents-summary" role="status" aria-label="Fleet summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
