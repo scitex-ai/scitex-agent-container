@@ -392,8 +392,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
    come from the SDK grid default (stretch); do NOT set align-items here —
    start collapsed the panes to content height (operator 2026-10-23). */
 .agents-3col { align-items: stretch; }
-.agents-3col > section[data-stx-pane] { min-height: 0; display: flex; flex-direction: column; }
-.agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; }
+/* Operator 2026-10-23: one shared row height for all three panes — tops
+   AND bottoms align. Each pane scrolls internally instead of driving
+   the row taller (detail cards) or capping short (chat max-height). */
+.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 340px); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
+.agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
 .agents-roster tbody td { padding: 7px 8px; }
@@ -402,8 +405,9 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-roster .c-name { display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .agents-roster .c-name .dot { flex-shrink: 0; margin-right: 0; }
 .agents-roster .c-name > span:last-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Center DM chat pane. */
-.agents-chat-pane { display: flex; flex-direction: column; min-height: 240px; max-height: calc(100vh - 320px); }
+/* Center DM chat pane: height comes from the shared 3-col row; the pane
+   fills it and only the message list scrolls. */
+.agents-chat-pane { display: flex; flex-direction: column; min-height: 0; max-height: none; height: 100%; }
 .agents-chat-pane .stx-shell-sidebar__content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 12px; gap: 8px; }
 /* DM label: same slim bar as Details (SDK tab strip is phone-only). */
 .agents-chat-pane .agents-chat-label.stx-shell-sidebar__header { height: auto; min-height: 0; padding-top: 6px; padding-bottom: 6px; flex-shrink: 0; }
@@ -427,8 +431,8 @@ details.detail-card > summary.detail-card__head:focus-visible { outline: 2px sol
 /* Details pane (operator 2026-10-23): shared SDK sidebar shape, like the
    cards board Details column (stx-shell-sidebar header + content) and the
    figrecipe right rail. Leaf owns only the content styling. */
-.agents-detail-pane { min-height: 120px; }
-.agents-detail-pane.stx-shell-sidebar { display: flex; flex-direction: column; min-height: 200px; }
+.agents-detail-pane { min-height: 0; height: 100%; }
+.agents-detail-pane.stx-shell-sidebar { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .agents-detail-pane .stx-shell-sidebar__header { flex-shrink: 0; }
 .agents-detail-pane .stx-shell-sidebar__content { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
 /* Fragment sections read as collapsible Details sections (cards board
