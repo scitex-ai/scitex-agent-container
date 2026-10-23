@@ -100,6 +100,20 @@ function onClick(event) {
   loadIntoPanel(href + (href.includes("?") ? "&" : "?") + "partial=1");
 }
 
+/* Cold-shell warm poll (operator 2026-10-26: extracted from the fleet
+ * template — no inline scripts in HTML, per the scripts-separate rule).
+ * READ-ONLY single shot while fleet_state == loading: warms the server's
+ * last-known snapshot via /api/fleet, then one reload shows the true state
+ * (inventory, or unavailable + Retry). Never loops. */
+function warmColdShell() {
+  const app = document.querySelector(".agents-app");
+  if (!app || app.getAttribute("data-fleet-state") !== "loading") return;
+  const base = app.getAttribute("data-fleet-api") || "/apps/agent-container/api/fleet";
+  fetch(base, { method: "GET", credentials: "same-origin" })
+    .then(function () { window.location.reload(); })
+    .catch(function () { /* console unreachable: stay in loading, do not loop */ });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initFleet);
 } else {
@@ -107,6 +121,7 @@ if (document.readyState === "loading") {
 }
 
 function initFleet() {
+  warmColdShell();
   const table = document.querySelector("[data-fleet-table]");
   if (table) {
     table.addEventListener("click", onClick);

@@ -501,8 +501,28 @@ def test_cold_shell_renders_a_readonly_inventory_poll(client, unreachable_listen
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act: the shell first paint carries the client-side transition.
     html = client.get("/").content.decode()
-    # Assert: it polls the inventory endpoint (a GET) to leave the loading state.
-    assert "fetch" in html and "/api/fleet" in html and "window.location.reload" in html
+    # Assert: the external warm poll lives in fleet-details.js
+    # (no inline scripts in LEAF templates — the shell chrome carries
+    # its own hook-bypass critical inlines); it GETs the inventory
+    # endpoint to leave the loading state via a single reload.
+    from pathlib import Path
+
+    leaf = Path(__file__).resolve().parents[3] / "src/scitex_agent_container/_django/templates/scitex_agent_container"
+    import re
+
+    inlines = [
+        f.name
+        for f in (leaf.glob("*.html"))
+        if re.search(r"<script(?![^>]*[\s]src=)[^>]*>", f.read_text())
+    ]
+    assert not inlines, inlines
+    js = (
+        Path(__file__).resolve().parents[3]
+        / "src/scitex_agent_container/_django/static/scitex_agent_container/js/fleet-details.js"
+    ).read_text()
+    assert "warmColdShell" in js and "/api/fleet" in js and "window.location.reload" in js
+    assert "/api/fleet" in html
+
 
 
 def test_completed_failure_transitions_to_unavailable_with_retry(client, unreachable_listener, env_save_restore):
