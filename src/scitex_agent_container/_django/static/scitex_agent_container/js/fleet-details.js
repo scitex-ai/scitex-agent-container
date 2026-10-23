@@ -22,7 +22,7 @@ function showDetails() {
 }
 
 function chatHost() {
-  return document.querySelector("[data-role='fleet-chat']");
+  return document.querySelector("[data-role='fleet-chat-body']") || document.querySelector("[data-role='fleet-chat']");
 }
 
 async function loadIntoPanels(url) {
@@ -51,8 +51,12 @@ async function loadIntoPanels(url) {
       if (composer) chatHostEl.appendChild(document.adoptNode(composer));
       if (!thread && !composer) chatHostEl.innerHTML = html;
     }
-    /* Everything else -> shared Details column. */
+    /* Everything else -> shared Details column. The message thread lives
+       in the center DM pane; its emptied <details> shell stays out
+       (it nests inside the fragment root, so check descendants too). */
     if (detailHost) {
+      const skip = doc.querySelector("details#message-thread");
+      if (skip) skip.remove();
       const frag = document.createDocumentFragment();
       for (const child of Array.from(doc.body ? doc.body.childNodes : [])) {
         if (child.nodeType !== 1) continue;
