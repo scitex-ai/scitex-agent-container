@@ -211,6 +211,25 @@ def test_fleet_table_is_slim_details_carry_the_facts(client, loopback, env_save_
     )
 
 
+def test_fleet_renders_three_column_dm_layout(client, loopback, env_save_restore):
+    # Arrange — operator 2026-10-23: left roster + center DM chat + right
+    # shared Details column (Cards DM idiom, leaf-side).
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    html = _render_fleet_inventory(client)
+
+    # Assert — three panes with the right labels, narrow roster columns.
+    assert (
+        'data-stx-pane="fleet"' in html
+        and 'data-stx-pane="chat"' in html
+        and 'data-stx-pane="detail"' in html
+        and 'data-stx-label="Details"' in html
+        and "agents-3col" in html
+        and 'data-role="fleet-chat"' in html
+    )
+
+
 def test_compact_fleet_visibly_qualifies_runtime_identity_source(
     client, loopback, env_save_restore
 ):

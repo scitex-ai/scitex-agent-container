@@ -82,13 +82,16 @@ mounted) so the per-row links are correct at any mount.
     </div>
   </div>
   <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
-  <div data-stx-panes="agents" style="--stx-panes-columns: minmax(0,1fr) 360px">
-  <section data-stx-pane="fleet" data-stx-label="Fleet">
+  {# Operator 2026-10-23: three-column DM layout (Cards DM idiom, leaf-side). #}
+  {# Left: agent + state LED (narrow). Center: DM chat with selected agent. #}
+  {# Right: shared Details column. #}
+  <div data-stx-panes="agents" class="agents-3col" style="--stx-panes-columns: 220px minmax(0,1fr) 360px">
+  <section data-stx-pane="fleet" data-stx-label="Agents">
   <div class="agents-table-wrap">
-  <table class="agents-table" data-fleet-table>
+  <table class="agents-table agents-roster" data-fleet-table>
     <thead>
       <tr>
-        <th>Agent</th><th>State</th>
+        <th>Agent</th><th><span class="visually-hidden">State</span></th>
       </tr>
     </thead>
     <tbody>
@@ -144,6 +147,11 @@ mounted) so the per-row links are correct at any mount.
     </tbody>
   </table>
   </div>
+  </section>
+  <section data-stx-pane="chat" data-stx-label="Chat">
+    <div class="agents-chat-pane" data-role="fleet-chat" aria-live="polite">
+      <div class="agents-chat-empty dim">Select an agent to open the DM thread.</div>
+    </div>
   </section>
   <section data-stx-pane="detail" data-stx-label="Details">
     <div class="agents-detail-pane stx-shell-sidebar" data-role="fleet-detail" aria-live="polite">
