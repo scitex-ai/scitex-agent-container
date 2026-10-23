@@ -388,8 +388,12 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .chat-composer textarea { flex: 1; min-height: 64px; }
 .chat-composer .btn { flex-shrink: 0; padding: 10px 14px; align-self: flex-end; margin-bottom: 1px; }
 /* Three-column DM layout (operator 2026-10-23, Cards DM idiom leaf-side).
-   Left roster is narrow: agent name + state LED only. */
-.agents-3col { align-items: start; }
+   Left roster is narrow: agent name + state LED only. Equal-height panes
+   come from the SDK grid default (stretch); do NOT set align-items here —
+   start collapsed the panes to content height (operator 2026-10-23). */
+.agents-3col { align-items: stretch; }
+.agents-3col > section[data-stx-pane] { min-height: 0; display: flex; flex-direction: column; }
+.agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
 .agents-roster tbody td { padding: 7px 8px; }
