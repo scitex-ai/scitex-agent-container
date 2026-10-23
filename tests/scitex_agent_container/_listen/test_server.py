@@ -420,6 +420,38 @@ class TestAgentStatus:
         # Assert
         assert body["turn_url"].endswith(":23000/v1/turn")
 
+    def test_agent_without_session_evidence_still_returns_200(
+        self, client, auth_headers, isolated_env
+    ):
+        # Arrange — spec exists but the state dir holds only a gateway
+        # candidate (no owned session): read_session_id raises
+        # SessionEvidenceError here, which must not become a 500.
+        from scitex_agent_container._listen.server import state_dir_for
+
+        _write_spec(isolated_env, "gamma")
+        sd = state_dir_for("gamma")
+        sd.mkdir(parents=True, exist_ok=True)
+        (sd / "hermes-tui-gateway.json").write_text("{}", encoding="utf-8")
+        # Act
+        resp = client.get("/agents/gamma/status", headers=auth_headers)
+        # Assert
+        assert resp.status_code == 200
+
+    def test_agent_without_session_evidence_reports_null_session_id(
+        self, client, auth_headers, isolated_env
+    ):
+        # Arrange — same shape as above: sid unknown, status known.
+        from scitex_agent_container._listen.server import state_dir_for
+
+        _write_spec(isolated_env, "gamma")
+        sd = state_dir_for("gamma")
+        sd.mkdir(parents=True, exist_ok=True)
+        (sd / "hermes-tui-gateway.json").write_text("{}", encoding="utf-8")
+        # Act
+        body = client.get("/agents/gamma/status", headers=auth_headers).json()
+        # Assert
+        assert body["session_id"] is None
+
 
 # --- POST /agents/<name>/send --------------------------------------------
 
