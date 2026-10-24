@@ -209,6 +209,48 @@ def is_topic(branch: str, policy: dict[str, Any]) -> bool:
     return any(branch.startswith(prefix) for prefix in policy["topic_branch_prefixes"])
 
 
+def _with_authority(
+    policy: dict[str, Any],
+    authority_branch: str | None,
+    *,
+    repo: Path | str | None = None,
+) -> dict[str, Any]:
+    """Return the policy with a per-project authority-branch override applied.
+
+    ``None`` keeps the manifest default — the fleet workflow is unchanged.
+    A named branch is verified to exist locally when ``repo`` is given; an
+    unknown required branch fails loud here instead of silently adopting
+    (or silently denying against) the wrong branch. Blank or non-string
+    overrides are rejected loud. The manifest ``source_hash`` stays
+    untouched: the override changes which branch counts as authority, not
+    the manifest's identity, so projection-freshness proofs keep matching.
+    """
+    if authority_branch is None:
+        return policy
+    if not isinstance(authority_branch, str) or not authority_branch.strip():
+        raise WorktreePolicyError(
+            "authority branch override must be a non-empty string, "
+            f"got {authority_branch!r}"
+        )
+    name = authority_branch.strip()
+    if repo is not None:
+        _ensure_branch_exists(Path(repo).expanduser(), name)
+    overridden = dict(policy)
+    overridden["authority_branch"] = name
+    return overridden
+
+
+def _ensure_branch_exists(repo: Path, branch: str) -> None:
+    """Fail loud when the required authority branch is unknown locally."""
+    try:
+        _run_git(repo, "show-ref", "--verify", f"refs/heads/{branch}")
+    except WorktreePolicyError:
+        raise WorktreePolicyError(
+            f"authority branch {branch!r} does not exist in {repo}; "
+            "refusing to adopt an unknown required branch"
+        ) from None
+
+
 def decide_context(
     info: dict[str, Any], intent: str, policy: dict[str, Any]
 ) -> tuple[bool, str]:
@@ -246,11 +288,19 @@ def assert_context(
     intent: str,
     policy: dict[str, Any] | None = None,
     source_hash: str | None = None,
+    *,
+    authority_branch: str | None = None,
 ) -> dict[str, Any]:
-    """Authorize an intent against a checkout; deny by raising."""
+    """Authorize an intent against a checkout; deny by raising.
+
+    ``authority_branch`` names a per-project override for the required
+    authority branch (``None`` = manifest default). An override naming a
+    branch that does not exist locally fails loud.
+    """
     if policy is None or source_hash is None:
         policy, source_hash = load_policy()
     info = inspect_repo(repo, policy, source_hash)
+    policy = _with_authority(policy, authority_branch, repo=info["repo_root"])
     allowed, reason = decide_context(info, intent, policy)
     if not allowed:
         raise WorktreePolicyError(reason)
@@ -338,10 +388,19 @@ def check_shell(
     cwd: Path | str,
     policy: dict[str, Any] | None = None,
     source_hash: str | None = None,
+    *,
+    authority_branch: str | None = None,
 ) -> dict[str, Any]:
-    """Authorize a shell string's git mutations; deny by raising."""
+    """Authorize a shell string's git mutations; deny by raising.
+
+    ``authority_branch`` names a per-project override for the required
+    authority branch (``None`` = manifest default). An override naming a
+    branch that does not exist locally fails loud.
+    """
     if policy is None or source_hash is None:
         policy, source_hash = load_policy()
+    overridden = authority_branch is not None
+    policy = _with_authority(policy, authority_branch)
     resolved_cwd = Path(cwd).expanduser().resolve()
     mutations = {"commit", "push", "checkout", "switch", "branch", "worktree"}
     checks: list[dict[str, Any]] = []
@@ -365,6 +424,10 @@ def check_shell(
         ):
             continue
         info = inspect_repo(target, policy, source_hash)
+        if overridden and info["surface"] == "authority":
+            _ensure_branch_exists(
+                Path(info["repo_root"]), policy["authority_branch"]
+            )
         if subcommand == "worktree":
             branch: str | None = None
             path: str | None = None
@@ -417,8 +480,11 @@ def check_shell(
                     "worktree add uses the authority checkout, required "
                     "directory, and a topic branch"
                     if allowed
-                    else "worktree add requires authority/develop, "
-                    "<authority>/.worktrees/, and an allowed topic branch"
+                    else (
+                        f"worktree add requires authority/"
+                        f"{policy['authority_branch']}, "
+                        "<authority>/.worktrees/, and an allowed topic branch"
+                    )
                 )
         else:
             allowed, reason = decide_context(
@@ -703,6 +769,29 @@ def _flag(argv: list[str], name: str) -> str:
         raise WorktreePolicyError(f"invalid policy invocation: missing {name}") from exc
 
 
+def _pop_override(argv: list[str]) -> tuple[list[str], str | None]:
+    """Split an optional ``--authority-branch <name>`` out of verb flags."""
+    cleaned: list[str] = []
+    override: str | None = None
+    index = 0
+    while index < len(argv):
+        if argv[index] == "--authority-branch":
+            if index + 1 >= len(argv) or not argv[index + 1].strip():
+                raise WorktreePolicyError(
+                    "invalid policy invocation: --authority-branch requires a value"
+                )
+            if override is not None:
+                raise WorktreePolicyError(
+                    "invalid policy invocation: duplicate --authority-branch"
+                )
+            override = argv[index + 1]
+            index += 2
+        else:
+            cleaned.append(argv[index])
+            index += 1
+    return cleaned, override
+
+
 def invoke(argv: list[str]) -> dict[str, Any]:
     """Run one policy verb in-process (same grammar as the retired CLI).
 
@@ -725,9 +814,19 @@ def invoke(argv: list[str]) -> dict[str, Any]:
             **inspect_repo(_flag(argv, "--repo")),
         }
     if verb == "assert-context":
-        return assert_context(_flag(argv, "--repo"), _flag(argv, "--intent"))
+        rest, authority_branch = _pop_override(rest)
+        return assert_context(
+            _flag(rest, "--repo"),
+            _flag(rest, "--intent"),
+            authority_branch=authority_branch,
+        )
     if verb == "check-shell":
-        return check_shell(_flag(argv, "--command"), _flag(argv, "--cwd"))
+        rest, authority_branch = _pop_override(rest)
+        return check_shell(
+            _flag(rest, "--command"),
+            _flag(rest, "--cwd"),
+            authority_branch=authority_branch,
+        )
     if verb == "check-owned-restore":
         return approve_owned_restore(
             repo=_flag(argv, "--repo"),

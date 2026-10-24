@@ -24,6 +24,7 @@ from ._hermes_compression import HermesCompressionSpec
 from ._hermes_failover import HermesFailoverSpec
 from ._hermes_goals import HermesGoalSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
+from ._worktree import WorktreeSpec  # noqa: E402,F401 (AgentConfig field default)
 from ._opencode_approval import DEFAULT_OPENCODE_APPROVAL_POLICY
 from ._opencode_run_budget import DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
 from ._opencode_serve import DEFAULT_OPENCODE_SERVE_PORT
@@ -359,6 +360,13 @@ class AgentConfig:
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )
+    # WORKTREE — per-project authority-branch override
+    # (``spec.worktree.authority_branch``). Empty (default) = the bundled
+    # manifest decides (``develop``); a non-empty value names the branch
+    # this project's authority checkout sits on. OPTIONAL, deliberately
+    # absent from the explicit-required map: existing specs keep today's
+    # behaviour without declaring anything new. See config._worktree.
+    worktree: WorktreeSpec = field(default_factory=WorktreeSpec)
     opencode_approval_policy: str = DEFAULT_OPENCODE_APPROVAL_POLICY
     opencode_run_budget_seconds: int | None = DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
     opencode_serve_port: int | None = DEFAULT_OPENCODE_SERVE_PORT

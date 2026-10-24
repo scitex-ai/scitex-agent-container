@@ -156,6 +156,22 @@ mounted) so the per-row links are correct at any mount.
       </div>
       <div class="stx-shell-sidebar__content agents-chat-body" data-role="fleet-chat-body">
       <div class="agents-chat-empty dim">Select an agent to open the DM thread.</div>
+      {# Operator 2026-10-22: ALWAYS-VISIBLE fleet DM composer (same POST #}
+      {# shape as the detail message-form: message + dispatch_id + emoji + #}
+      {# send). Disabled with hint text until a row is selected; fleet-details.js #}
+      {# retargets its action + textarea on selection (incl. auto-select). #}
+      <form method="post" action="" class="message-form chat-composer" data-composer="fleet-dm" data-role="fleet-composer">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <label class="visually-hidden" for="msg-fleet" data-role="fleet-composer-label">Message</label>
+        <textarea id="msg-fleet" name="message" rows="3" maxlength="4000" disabled
+                  placeholder="Select an agent to open the DM thread…"></textarea>
+        <span class="composer-actions">
+          <button type="button" class="btn emoji-btn" data-emoji-button title="Insert emoji" aria-label="Insert emoji" disabled>😀</button>
+          <button type="submit" class="btn" title="Send" data-role="fleet-composer-send" disabled><i class="fas fa-paper-plane"></i></button>
+        </span>
+        <p class="dim" data-role="fleet-composer-hint">Select an agent to send a message.</p>
+      </form>
       </div>
     </div>
   </section>
@@ -181,6 +197,6 @@ mounted) so the per-row links are correct at any mount.
   {# B1: cold shell renders as `loading`. The warm poll lives in #}
   {# fleet-details.js `warmColdShell()` (no inline scripts in HTML). #}
   {% if fleet_state == "loading" %}
-  <noscript><p class="dim">Loading the agent fleet…</p></noscript>
+  <noscript><p class="dim">Loading the agent fleet… <a href="{{ url_base }}/">Retry</a></p></noscript>
   {% endif %}
 </div>

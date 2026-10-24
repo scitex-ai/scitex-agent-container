@@ -138,24 +138,30 @@ def test_detail_notice_rejects_arbitrary_operation(client, loopback, env_save_re
     assert "agents-bannor" not in html and "evil" not in html
 
 
-def test_detail_thread_card_shows_session_history(client, loopback, env_save_restore):
+def test_detail_session_panel_shows_session_history(client, loopback, env_save_restore):
     # Arrange — the daemon's stored history is the session log tail.
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
     html = client.get("/alpha/").content.decode()
-    # Assert
-    assert "Message thread" in html and "start the job" in html
+    # Assert — operator 2026-10-22: the history lives in the Recent Session
+    # Log tab (the standalone Message thread card is gone).
+    assert "Recent Session Log" in html and "start the job" in html
 
 
-def test_detail_thread_card_without_log_invites_first_message(
+def test_detail_thread_panel_without_log_invites_first_message(
     client, loopback, env_save_restore
 ):
-    # Arrange — beta has no session log on the loopback listener.
-    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Arrange — beta has no session log on the loopback listener; an
+    # operator sees the Control tab thread (read-only callers get no send
+    # affordance, so only an operator can be invited to send).
+    from scitex_agent_container._django._constants import OPERATORS_ENV
+
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPERATORS_ENV, "op1")
     # Act
     html = client.get("/beta/").content.decode()
-    # Assert
-    assert "Message thread" in html and "Send the first one" in html
+    # Assert — the Control tab's thread invites the first message.
+    assert "No messages yet" in html and "chat-thread" in html
 
 
 # ── a2a panel ───────────────────────────────────────────────────────────────

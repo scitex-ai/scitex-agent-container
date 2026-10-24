@@ -62,6 +62,7 @@ from ._parsers import (
 from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
 from ._secret_scope_types import resolve_spec_secret_scope
+from ._worktree import parse_spec_worktree
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
 
@@ -413,6 +414,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         hermes_yolo=parse_selected_hermes_yolo(spec),
         hermes_run_budget_seconds=parse_selected_hermes_run_budget(spec),
         hermes_compression=parse_selected_hermes_compression(spec),
+        worktree=parse_spec_worktree(spec),
         opencode_approval_policy=parse_selected_opencode_approval_policy(spec),
         opencode_run_budget_seconds=parse_selected_opencode_run_budget(spec),
         opencode_serve_port=parse_selected_opencode_serve_port(spec),

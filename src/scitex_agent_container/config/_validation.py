@@ -49,6 +49,7 @@ from ._residency_types import residency_coupling_error, residency_value_error
 from ._secret_scope_types import secret_scope_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
+from ._worktree import validate_worktree
 
 # ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
 # ``_claude_validation`` alongside the rest of the claude-block checks;
@@ -423,6 +424,10 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # coupling rules — sibling ``_shape_validation`` module.
         errors.extend(validate_autonomous(spec))
         errors.extend(validate_proxy_coupling(spec, kind))
+        # spec.worktree — per-project authority-branch override. Optional;
+        # absent/empty keeps the manifest default (develop). Sibling
+        # ``_worktree`` module (same shape as ``validate_autonomous``).
+        errors.extend(validate_worktree(spec))
         # spec.engines — the MULTI-backend surface. Everything decidable
         # from the spec TEXT (two defaults, no default, unknown harness,
         # malformed provider, a legacy single-backend block that
