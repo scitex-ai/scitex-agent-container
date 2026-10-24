@@ -555,8 +555,8 @@ def test_cold_shell_leaf_templates_carry_no_inline_scripts() -> None:
     # Arrange: the external warm poll lives in fleet-details.js
     # (no inline scripts in LEAF templates — the shell chrome carries
     # its own hook-bypass critical inlines).
-    from pathlib import Path
     import re
+    from pathlib import Path
 
     leaf = Path(__file__).resolve().parents[3] / "src/scitex_agent_container/_django/templates/scitex_agent_container"
     # Act
