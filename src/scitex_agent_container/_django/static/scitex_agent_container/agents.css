@@ -473,3 +473,13 @@ tr.agent-row[data-pinned="true"] .c-name::before { content: "PIN"; font-size: 9p
 
 /* Detail fragment heading: names the agent in the pane and on the page. */
 .detail-name { font-size: 16px; font-weight: 650; margin: 2px 0 12px; }
+/* DM composer actions + emoji popover (operator 2026-10-24, slice A).
+   Square buttons per the no-rounded-toys rule; the popover anchors to
+   the composer form (position relative via the flex container). */
+.chat-composer { position: relative; }
+.composer-actions { display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0; margin-bottom: 1px; }
+.composer-actions .btn { margin-bottom: 0; }
+.emoji-btn { padding: 10px 12px; }
+.dm-emoji-popover { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 6px; background: var(--agents-panel); border: 1px solid var(--agents-border); z-index: 30; }
+.dm-emoji-pick { padding: 4px 6px; font-size: 18px; line-height: 1; background: transparent; border: 1px solid transparent; cursor: pointer; }
+.dm-emoji-pick:hover { border-color: var(--agents-border); }

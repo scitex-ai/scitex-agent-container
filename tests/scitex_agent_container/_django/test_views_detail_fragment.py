@@ -16,9 +16,9 @@ from __future__ import annotations
 from scitex_agent_container._django._constants import IDENTITY_ENV
 
 
-def _detail(client, env_save_restore, name, partial):
+def _detail(client, env_save_restore, name, partial, identity="alice"):
     # Arrange — an ordinary identity sees its own node's agents.
-    env_save_restore.set(IDENTITY_ENV, "alice")
+    env_save_restore.set(IDENTITY_ENV, identity)
     # Act
     url = f"/{name}/" + ("?partial=1" if partial else "")
     return client.get(url).content.decode()
@@ -85,3 +85,19 @@ def test_fleet_page_names_the_full_product_in_contents(client, loopback, env_sav
         assert "<h1" not in html and "SciTeX Agent Container" in html
     finally:
         CACHE.clear()
+
+
+def test_dm_composer_marks_enter_to_send_and_emoji_hooks(client, loopback, env_save_restore):
+    # Arrange
+    from scitex_agent_container._django._constants import (
+        IDENTITY_ENV,
+        OPERATORS_ENV,
+    )
+
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPERATORS_ENV, "op1")
+    # Act
+    body = _detail(client, env_save_restore, "alpha", partial=True, identity="op1")
+    # Assert — one behavior contract: the composer exposes the hooks the
+    # delegated fleet JS binds (Enter-to-send + emoji stamp).
+    assert 'data-composer="dm"' in body and 'data-emoji-button' in body
