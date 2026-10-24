@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-24
+
+### Added
+- **DM composer Enter-to-send + emoji stamp.** Enter submits the DM
+  (Shift+Enter newline); emoji button inserts at the cursor. Text-only,
+  POST contract unchanged.
+
 ## [0.34.0] - 2026-10-24
 
 ### Fixed
