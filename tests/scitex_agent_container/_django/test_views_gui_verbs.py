@@ -172,7 +172,9 @@ def test_create_form_shown_to_operator(client, loopback, env_save_restore):
     # Act
     html = client.get("/create/").content.decode()
     # Assert
-    assert 'name="name"' in html and 'name="template"' in html and "Create agent" in html
+    # Since be41e40b8 the pagehead h1 ("Create agent") is dropped — the
+    # operator affordance is the scaffold form + "Create spec" submit.
+    assert 'name="name"' in html and 'name="template"' in html and "Create spec" in html
 
 
 def test_create_form_readonly_for_non_operator(client, loopback, env_save_restore):

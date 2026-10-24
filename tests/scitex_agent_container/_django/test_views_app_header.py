@@ -53,15 +53,23 @@ def test_fleet_page_mounts_exactly_one_shared_header(client, loopback, env_save_
 
 
 def test_fleet_header_mounts_the_shared_primitive(client, loopback, env_save_restore):
-    # Arrange — the leaf emits the mount point, not a hand-rolled row:
-    # no stx-app-header__* element classes of its own. (The mount
-    # attribute itself trivially contains "stx-app-header".)
+    # Arrange — the leaf emits the mount point, not a hand-rolled row.
+    # (The mount attribute itself trivially contains "stx-app-header".)
     header = _header_block(_fleet_html(client, env_save_restore))
     # Act
-    leaf_elements = [m for m in ("stx-app-header__title", "stx-app-header__version", "stx-app-header__actions", "stx-app-header__slot")]
+    mounted = _MOUNT_DIV in header
     # Assert
-    assert _MOUNT_DIV in header
-    assert [m for m in leaf_elements if m in header] == []
+    assert mounted
+
+
+def test_fleet_header_mounts_no_leaf_elements(client, loopback, env_save_restore):
+    # Arrange — same shared mount (helper); the leaf must not hand-roll
+    # header element classes of its own.
+    header = _header_block(_fleet_html(client, env_save_restore))
+    # Act
+    leaf_elements = [m for m in ("stx-app-header__title", "stx-app-header__version", "stx-app-header__actions", "stx-app-header__slot") if m in header]
+    # Assert
+    assert leaf_elements == []
 
 
 def test_fleet_header_shows_leaf_version(client, loopback, env_save_restore):

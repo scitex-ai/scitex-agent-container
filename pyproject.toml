@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.35.0"
+version = "0.36.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -237,7 +237,11 @@ gui = [
     # Floor 0.3.7 (2026-10-19): the shared app-header contract
     # (css/app/app-header.css + data-stx-app-header) the dashboard adopts.
     "django>=4.2",
-    "scitex-sdk[gui]>=0.3.7",
+    # SSoT pin: scitex-sdk behavior is part of our render contract
+    # (0.3.14 fail-fasts the project picker with no provider; older
+    # minors render an empty slot). An open floor let CI resolve a
+    # newer SDK than dev venvs and red the gate on identical code.
+    "scitex-sdk[gui]==0.3.14",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -489,7 +493,8 @@ dev = [
     # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
-    "scitex-sdk[gui]>=0.3.7",
+    # Same SSoT pin as [gui] above — the two must not drift.
+    "scitex-sdk[gui]==0.3.14",
 ]
 docs = [
     "sphinx>=7.0",
