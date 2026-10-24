@@ -483,6 +483,11 @@ tr.agent-row[data-pinned="true"] .c-name::before { content: "PIN"; font-size: 9p
 .composer-actions { display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0; margin-bottom: 1px; }
 .composer-actions .btn { margin-bottom: 0; }
 .emoji-btn { padding: 10px 12px; }
+/* Operator 2026-10-24 (slice A follow-up): emoji + send share one fixed
+   height. The emoji glyph and the FA paper-plane render different line
+   boxes, so equal padding still reads uneven. 44px is the repo touch
+   target (detail-card__head precedent); border-box keeps it exact. */
+.composer-actions .btn { height: 44px; box-sizing: border-box; justify-content: center; }
 .dm-emoji-popover { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 6px; background: var(--agents-panel); border: 1px solid var(--agents-border); z-index: 30; }
 .dm-emoji-pick { padding: 4px 6px; font-size: 18px; line-height: 1; background: transparent; border: 1px solid transparent; cursor: pointer; }
 .dm-emoji-pick:hover { border-color: var(--agents-border); }
