@@ -137,13 +137,16 @@ back link and the lifecycle form action are correct at any mount.
       <p class="dim session-note">No messages yet. Send the first one below.</p>
       {% endif %}
       </div>
-      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form chat-composer">
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form chat-composer" data-composer="dm">
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
         <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
         <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
-                  placeholder="Message {{ agent.name }}…"></textarea>
-        <button type="submit" class="btn" title="Send"><i class="fas fa-paper-plane"></i></button>
+                  placeholder="Message {{ agent.name }}… (Enter to send, Shift+Enter for a new line)"></textarea>
+        <span class="composer-actions">
+          <button type="button" class="btn emoji-btn" data-emoji-button title="Insert emoji" aria-label="Insert emoji">😀</button>
+          <button type="submit" class="btn" title="Send"><i class="fas fa-paper-plane"></i></button>
+        </span>
       </form>
 
       <h3 class="control-sub">UI control</h3>

@@ -327,3 +327,85 @@ function applyFilter(query, table) {
     else row.setAttribute("data-fleet-hidden", "true");
   }
 }
+
+/* DM composer: Enter-to-send + emoji stamp (operator 2026-10-24,
+ * Telegram-learned slice A). Delegated on document because the composer
+ * arrives via fetch-injection into the DM pane. Enter (no modifiers)
+ * submits through requestSubmit so dispatch_id + validation still run;
+ * Shift+Enter keeps the newline. The emoji button toggles a small
+ * curated popover that inserts at the cursor. Vanilla, no bundler. */
+const DM_EMOJIS = ["👍", "👎", "🙏", "✅", "❌", "🚀", "👀", "💡", "⚠️", "🎉", "❤️", "🤔"];
+
+function dmComposerOf(node) {
+  return node instanceof Element ? node.closest('form[data-composer="dm"]') : null;
+}
+
+function dmTextarea(form) {
+  return form ? form.querySelector("textarea[name='message']") : null;
+}
+
+function closeEmojiPopover() {
+  const open = document.querySelector("[data-role='dm-emoji-popover']");
+  if (open) open.remove();
+}
+
+function toggleEmojiPopover(button) {
+  const form = dmComposerOf(button);
+  const area = dmTextarea(form);
+  if (!form || !area) return;
+  const existing = document.querySelector("[data-role='dm-emoji-popover']");
+  if (existing && existing.getAttribute("data-for") === area.id) {
+    existing.remove();
+    return;
+  }
+  closeEmojiPopover();
+  const pop = document.createElement("div");
+  pop.setAttribute("data-role", "dm-emoji-popover");
+  pop.setAttribute("data-for", area.id || "");
+  pop.setAttribute("role", "menu");
+  pop.className = "dm-emoji-popover";
+  for (const emoji of DM_EMOJIS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.className = "dm-emoji-pick";
+    b.textContent = emoji;
+    b.addEventListener("click", () => {
+      const start = area.selectionStart == null ? area.value.length : area.selectionStart;
+      const end = area.selectionEnd == null ? start : area.selectionEnd;
+      area.value = area.value.slice(0, start) + emoji + area.value.slice(end);
+      const pos = start + emoji.length;
+      try {
+        area.setSelectionRange(pos, pos);
+      } catch {
+        /* non-text inputs never reach here; ignore */
+      }
+      area.focus();
+      closeEmojiPopover();
+    });
+    pop.appendChild(b);
+  }
+  form.appendChild(pop);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  const form = e.target instanceof Element ? e.target.closest('form[data-composer="dm"] textarea[name="message"]') : null;
+  if (!form) return;
+  const composer = dmComposerOf(form);
+  if (!composer) return;
+  e.preventDefault();
+  if (typeof composer.requestSubmit === "function") composer.requestSubmit();
+  else composer.submit();
+});
+
+document.addEventListener("click", (e) => {
+  const button = e.target instanceof Element ? e.target.closest("[data-emoji-button]") : null;
+  if (button) {
+    toggleEmojiPopover(button);
+    return;
+  }
+  if (e.target instanceof Element && !e.target.closest("[data-role='dm-emoji-popover']")) {
+    closeEmojiPopover();
+  }
+});
