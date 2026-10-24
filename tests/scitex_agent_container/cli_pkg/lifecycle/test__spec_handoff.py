@@ -539,3 +539,100 @@ def test_the_peers_own_stderr_survives_the_rewrite():
     message = manifest_failure_message(127, b"sh: 1: find: not found")
     # Assert
     assert "sh: 1: find: not found" in message
+
+
+def test_identical_hashes_pass_the_parity_gate():
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        refuse_if_peer_behind,
+    )
+
+    plan = plan_handoff({"spec.yaml": "aa"}, {"spec.yaml": "aa"})
+    # Act
+    refuse_if_peer_behind(plan, dir_present=True, name="a", peer="p")
+    # Assert — returns quietly: identical contents launch.
+    assert plan.new == () and plan.changed == ()
+
+
+def test_absent_peer_dir_passes_the_parity_gate():
+    # Arrange — first launch: the peer has nothing yet.
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        refuse_if_peer_behind,
+    )
+
+    plan = plan_handoff({"spec.yaml": "aa"}, {})
+    # Act
+    refuse_if_peer_behind(plan, dir_present=False, name="a", peer="p")
+    # Assert — returns quietly: only a wholly absent dir may receive.
+    assert plan.new == ("spec.yaml",)
+
+
+def test_present_but_behind_peer_dir_refuses():
+    # Arrange
+    import pytest
+
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        refuse_if_peer_behind,
+    )
+
+    plan = plan_handoff({"spec.yaml": "aa"}, {})
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="not identical"):
+        refuse_if_peer_behind(plan, dir_present=True, name="a", peer="p")
+
+
+def test_behind_refusal_names_the_missing_file():
+    # Arrange
+    import pytest
+
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        refuse_if_peer_behind,
+    )
+
+    plan = plan_handoff({"spec.yaml": "aa"}, {})
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="spec.yaml"):
+        refuse_if_peer_behind(plan, dir_present=True, name="a", peer="p")
+
+
+def test_behind_refusal_points_at_checkout_sync_not_push():
+    # Arrange
+    import pytest
+
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        refuse_if_peer_behind,
+    )
+
+    plan = plan_handoff({"spec.yaml": "aa"}, {})
+    # Act
+    # Assert — fail LOUD with the fix direction, never a silent push.
+    with pytest.raises(RuntimeError, match="git pull"):
+        refuse_if_peer_behind(plan, dir_present=True, name="a", peer="p")
+
+
+def test_present_dir_probe_reports_existence(spec_src):
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        remote_dir_present,
+    )
+
+    peer = HonestPeer(spec_src)
+    # Act
+    found = remote_dir_present("$SPEC_DIR", peer.__call__)
+    # Assert
+    assert found is True
+
+
+def test_absent_dir_probe_reports_absence(tmp_path):
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._spec_handoff import (
+        remote_dir_present,
+    )
+
+    peer = HonestPeer(tmp_path / "no-such-dir")
+    # Act
+    found = remote_dir_present("$SPEC_DIR", peer.__call__)
+    # Assert
+    assert found is False
