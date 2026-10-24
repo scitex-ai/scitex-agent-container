@@ -407,8 +407,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
    the row taller (detail cards) or capping short (chat max-height).
    Operator 2026-10-26: row ends above the floating dock (153px + 10px gap)
    so the bottom-anchored DM composer is clickable at rest, not just on
-   focus-avoid. No in-pane reserve (that was the 62px dead band). */
-.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 370px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
+   focus-avoid. No in-pane reserve (that was the 62px dead band).
+   Operator 2026-10-24: 370px over-cleared on desktop — screenshot shows a
+   ~240px dead band below the panes with only a ~40px floating pill dock.
+   280px keeps the composer above the dock while reclaiming ~90px. */
+.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 280px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
 /* Operator 2026-10-24: NO in-pane dock reserve — the 132px clearance left a
    dead band at the bottom of every pane (element report: 62px computed on
@@ -480,6 +483,11 @@ tr.agent-row[data-pinned="true"] .c-name::before { content: "PIN"; font-size: 9p
 .composer-actions { display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0; margin-bottom: 1px; }
 .composer-actions .btn { margin-bottom: 0; }
 .emoji-btn { padding: 10px 12px; }
+/* Operator 2026-10-24 (slice A follow-up): emoji + send share one fixed
+   height. The emoji glyph and the FA paper-plane render different line
+   boxes, so equal padding still reads uneven. 44px is the repo touch
+   target (detail-card__head precedent); border-box keeps it exact. */
+.composer-actions .btn { height: 44px; box-sizing: border-box; justify-content: center; }
 .dm-emoji-popover { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 6px; background: var(--agents-panel); border: 1px solid var(--agents-border); z-index: 30; }
 .dm-emoji-pick { padding: 4px 6px; font-size: 18px; line-height: 1; background: transparent; border: 1px solid transparent; cursor: pointer; }
 .dm-emoji-pick:hover { border-color: var(--agents-border); }
