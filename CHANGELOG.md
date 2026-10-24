@@ -4,6 +4,27 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.34.0] - 2026-10-24
+
+### Fixed
+- **Goal judge stays on the agent lane, never DeepSeek.** A declared
+  `goals.judge_engine` no longer rebuilds `goal_judge` as
+  `{provider: main}` (the live pool, currently DeepSeek-serving). It is
+  validation-only now; the emitted judge is always the agent-lane
+  `meta-muse-spark-1.3-contributor` block (xhigh reasoning).
+- **Fail-fast owned-worktree check.** The ownership read now runs before
+  the prelaunch gauntlet instead of after minutes of credential
+  rotation and store work — a branch/record mismatch refuses in under
+  a second (measured 0.36s live on a real mismatch).
+
+### Added
+- **Heartbeat nonce enrollment + rotation.** The listen server now
+  enrolls and rotates the goal-judge challenge (`SAC_NONCE_CHALLENGE_ROTATION=1`
+  to arm; dark by default). Verdict side already wired; ledger untouched.
+- **Image prune + disk pressure verbs.** `sac image prune [--keep 3]
+  [--dry-run] [--yes]` reclaims dated SIFs; `sac image disk [--path]
+  [--alert-threshold 85]` reports pressure with an alert pointer.
+
 ## [0.33.0] - 2026-10-24
 
 ### Added
