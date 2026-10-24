@@ -28,8 +28,10 @@ from .. import _build_priority
 from .._logging import render_rich
 from . import (
     _image_activation_cmds,
+    _image_disk_cmd,
     _image_distribute_cmd,
     _image_inventory_cmds,
+    _image_prune_cmd,
     _image_remote_bake,
     _image_repro_build,
     _image_source_build,
@@ -166,6 +168,8 @@ def image_group() -> None:
 image_group.add_command(_image_inventory_cmds.image_list)
 image_group.add_command(_image_inventory_cmds.image_status)
 image_group.add_command(_image_inventory_cmds.image_snapshot)
+image_group.add_command(_image_prune_cmd.image_prune)
+image_group.add_command(_image_disk_cmd.image_disk)
 image_group.add_command(_image_activation_cmds.image_switch)
 image_group.add_command(_image_activation_cmds.image_rollback)
 
