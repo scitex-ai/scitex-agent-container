@@ -40,9 +40,11 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
       * ``ControlPersist=60s`` — master lingers 60s after the last client
         exits so a sub-second burst of sac calls shares one TCP handshake.
       * ``ControlPath=<dir>/%C`` — ``%C`` is OpenSSH's 40-character hash of
-        ``(user,host,port)``; collision-free across targets and short
-        enough to stay inside the Unix-domain-socket 108-byte name limit
-        when the selected directory fits within that limit. An oversized
+        ``(user,host,port)``; collision-free across targets. The listener
+        ssh actually binds is 17 bytes longer than the expanded stem
+        (``.`` + 16 random chars, measured on OpenSSH 9.6p1), so the stem
+        alone fitting the Unix-domain-socket limit is NOT sufficient —
+        the guard below budgets those 17 bytes. An oversized
         generated default disables multiplexing; explicit directory pins
         remain the caller's responsibility.
 
@@ -82,12 +84,17 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
             from .._runtime_paths import runtime_base_dir
 
             control_dir = runtime_base_dir() / "ssh-cm"
-            # OpenSSH expands %C to 40 hexadecimal characters. Linux's
-            # sockaddr_un permits 107 path bytes plus its terminating NUL.
-            # Runtime roots on HPC scratch can be longer than the normal
-            # canonical home anchor; do not create an unusable socket dir.
+            # OpenSSH expands %C to 40 hexadecimal characters, then binds
+            # its master listener at <stem> + "." + 16 random chars (17
+            # extra bytes — measured 2026-10-23 on OpenSSH 9.6p1: a 91-byte
+            # stem fails with "unix_listener: ... too long" while a 90-byte
+            # stem binds the bare %C socket fine). Linux's sockaddr_un
+            # permits 107 path bytes plus its terminating NUL, so the stem
+            # must fit in 107 - 17 = 90 bytes. Runtime roots on HPC scratch
+            # can be longer than the normal canonical home anchor; do not
+            # emit an unusable socket dir — degrade to one-conn-per-call.
             expanded_path = os.fspath(control_dir) + "/" + "0" * 40
-            if len(os.fsencode(expanded_path)) >= 108:
+            if len(os.fsencode(expanded_path)) + 17 > 107:
                 return []
     try:
         Path(control_dir).mkdir(parents=True, exist_ok=True)

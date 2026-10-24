@@ -129,7 +129,11 @@ ControlPath resolution order: explicit caller arg → `$SAC_SSH_CONTROL_DIR`
 env → `~/.scitex/agent-container/runtime/ssh-cm`. The dir is `mkdir -p`'d on first
 use; if the parent is read-only the function falls through to `[]` and
 sac's argv is byte-identical to the pre-patch shape (degrade, don't
-crash).
+crash). The generated default additionally falls through to `[]` when
+the expanded `%C` stem would exceed 90 bytes: OpenSSH binds its master
+listener at stem + 17 bytes (`.` + 16 random chars) against a 107-byte
+ceiling, so longer stems can never bind — sac then runs one connection
+per invocation instead of failing the ssh call (measured 2026-10-23).
 
 ### Opt out
 
