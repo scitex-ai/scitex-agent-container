@@ -509,23 +509,33 @@ def _apply_verified_route(rendered: dict, selection: dict) -> None:
     judge = rendered.get("auxiliary", {}).get("goal_judge")
     verified = selection.get("model")
     verified_default = verified.get("default") if isinstance(verified, dict) else None
+    verified_provider = verified.get("provider") if isinstance(verified, dict) else None
+    actual_provider = rendered.get("model", {}).get("provider")
+    actual = rendered.get("model", {}).get("default")
     if (
         judge
-        and authored_default is not None
         and verified_default is not None
-        and verified_default != authored_default
+        and verified_provider is not None
+        and actual is not None
+        and actual_provider is not None
+        and (
+            judge.get("model") != verified_default
+            or judge.get("provider") != verified_provider
+        )
     ):
-        # The verified fallback moved the model: the authored judge must
-        # follow within its lane. An unchanged route keeps the authored
-        # judge (notably the operator-pinned Muse judge on non-Muse lanes).
+        # Operator rule (prompt-2026-1022): the goal judge rides the agent's
+        # verified lane — same provider AND same model the agent itself runs
+        # on, never a Hermes default, never deepseek, never a stale lane the
+        # failover just abandoned. A plausible judge on a dead lane still
+        # pauses every goal after 5 transport failures.
         from .._lifecycle._hermes_restart_preflight import same_goal_model
 
-        actual = rendered["model"]["default"]
-        if not same_goal_model(judge.get("model"), actual):
+        if not same_goal_model(judge.get("model"), verified_default):
             raise ValueError(
                 "Hermes verified fallback changes the authored goal judge model"
             )
-        judge["model"] = actual
+        judge["provider"] = verified_provider
+        judge["model"] = verified_default
 
 
 def _profile_primary_key(config):

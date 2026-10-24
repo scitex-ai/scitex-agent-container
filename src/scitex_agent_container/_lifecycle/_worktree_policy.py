@@ -261,6 +261,89 @@ def _planned_from_authority(config: Any, info: Mapping[str, Any]) -> WorktreePla
     )
 
 
+def _adoptable_agent_worktree(
+    config: Any, repo_root: Path, *, timeout_s: float = 10.0
+) -> WorktreePlan | None:
+    """Find a live ``sac-<slug>*`` worktree the plan can adopt.
+
+    Older naming suffixed the directory/branch (``sac-<slug>-<suffix>``);
+    the canonical plan only names ``sac-<slug>``. An existing checkout from
+    the older naming is the agent's live directory — refusing the start
+    strands it. Adoption requires: directory under ``repo/.worktrees/``
+    starting with ``sac-<slug>``, a real linked worktree of this repo, and
+    a branch starting with ``feature/sac-<slug>``.
+    """
+    name = _slug(str(config.name))
+    prefix = f"sac-{name}"
+    branch_prefix = f"feature/sac-{name}"
+    worktrees_dir = repo_root / ".worktrees"
+    if not worktrees_dir.is_dir():
+        return None
+    try:
+        entries = sorted(worktrees_dir.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.name == prefix or not entry.name.startswith(prefix + "-"):
+            continue
+        try:
+            branch = _run_engine_git(entry, "branch")
+        except WorktreePolicyError:
+            continue
+        if not branch.startswith(branch_prefix):
+            continue
+        try:
+            common = _run_engine_git(entry, "common_dir")
+            toplevel = _run_engine_git(entry, "toplevel")
+        except WorktreePolicyError:
+            continue
+        if Path(toplevel).resolve() != entry.resolve():
+            continue
+        try:
+            primary_common_raw = _run_engine_git(repo_root, "common_dir")
+            primary_toplevel = _run_engine_git(repo_root, "toplevel")
+        except WorktreePolicyError:
+            continue
+        primary_common = (Path(primary_toplevel) / primary_common_raw).resolve()
+        if Path(common).resolve() != primary_common:
+            continue
+        try:
+            surface = _run_engine_git(entry, "surface")
+        except WorktreePolicyError:
+            continue
+        if surface != "linked-worktree":
+            continue
+        return WorktreePlan(
+            authored_workdir=str(
+                Path(str(config.expanded_workdir)).expanduser().resolve()
+            ),
+            resolved_workdir=str(entry.resolve()),
+            repo_root=str(repo_root),
+            branch=branch,
+            action="reuse-adopted",
+            owner_file=str(_owner_path(config)),
+            primary_repo_root=str(repo_root),
+        )
+    return None
+
+
+def _run_engine_git(directory: Path, what: str) -> str:
+    """Minimal git inspection for adoption without a policy CLI."""
+    mapping = {
+        "branch": ("rev-parse", "--abbrev-ref", "HEAD"),
+        "common_dir": ("rev-parse", "--git-common-dir"),
+        "toplevel": ("rev-parse", "--show-toplevel"),
+    }
+    if what == "surface":
+        git_dir = _git(directory, "rev-parse", "--git-dir").stdout.strip()
+        common_dir = _git(directory, "rev-parse", "--git-common-dir").stdout.strip()
+        resolved_git = (directory / git_dir).resolve()
+        resolved_common = (directory / common_dir).resolve()
+        return "linked-worktree" if resolved_git != resolved_common else "authority"
+    args = mapping[what]
+    return _git(directory, *args).stdout.strip()
+
+
 def _primary_root_from_linked_context(info: Mapping[str, Any], authored: Path) -> str:
     """Map neutral common-dir metadata only after verifying both Git contexts."""
     common = Path(_text(info, "git_common_dir"))
@@ -398,6 +481,13 @@ def plan_task_worktree(
         )
     plan = _planned_from_authority(config, info)
     target = Path(plan.resolved_workdir)
+    if not target.exists():
+        adopted = _adoptable_agent_worktree(
+            config, Path(plan.repo_root), timeout_s=timeout_s
+        )
+        if adopted is not None:
+            plan = adopted
+            target = Path(plan.resolved_workdir)
     owner_path = Path(plan.owner_file)
     owner = _read_owner(owner_path)
     branch_exists = _branch_exists(plan)
@@ -411,7 +501,10 @@ def plan_task_worktree(
             f"worktree ownership conflict for {target}: {detail}; refusing recovery"
         )
     if target.exists():
-        _assert_owner(config, plan, allow_missing=False)
+        if plan.action == "reuse-adopted":
+            _assert_owner(config, plan, allow_missing=True)
+        else:
+            _assert_owner(config, plan, allow_missing=False)
         target_info = _dispatch(
             cli, ["inspect", "--repo", str(target)], timeout_s=timeout_s
         )

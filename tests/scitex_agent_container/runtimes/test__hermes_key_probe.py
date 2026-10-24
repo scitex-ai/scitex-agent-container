@@ -1,8 +1,87 @@
 """Native probe diagnostics expose status metadata, never echoed credentials."""
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from scitex_agent_container.runtimes import _hermes_key_probe as probe
+from scitex_agent_container.runtimes._hermes_failover import DeclaredPool
+
+
+def test_preflight_failover_moves_judge_to_verified_lane():
+    # Operator rule (prompt-2026-1022): when the primary lane fails its
+    # availability probe and the launch rewrites onto a verified provider,
+    # the goal judge must move with the agent. A judge left on the dead
+    # lane pauses every goal after 5 transport failures.
+    # Arrange
+    rendered = {
+        "model": {
+            "default": "muse-spark-1.3-contributor",
+            "provider": "custom:sac-primary",
+        },
+        "fallback_providers": [
+            {
+                "provider": "custom:sac-verified",
+                "model": "muse-spark-1.3-contributor",
+            }
+        ],
+        "auxiliary": {
+            "goal_judge": {
+                "provider": "custom:sac-primary",
+                "model": "muse-spark-1.3-contributor",
+                "reasoning_effort": "xhigh",
+                "timeout": 60,
+                "max_tokens": 4096,
+            }
+        },
+        "providers": {},
+    }
+    pools = {
+        "custom:sac-primary": DeclaredPool(
+            credentials=[{"id": "a", "label": "A", "access_token": "dead"}],
+            suppressed_sources=[],
+            probe={
+                "model": "muse-spark-1.3-contributor",
+                "model_config": {
+                    "provider": "custom:sac-primary",
+                    "default": "muse-spark-1.3-contributor",
+                },
+            },
+        ),
+        "custom:sac-verified": DeclaredPool(
+            credentials=[{"id": "b", "label": "B", "access_token": "live"}],
+            suppressed_sources=[],
+            probe={
+                "model": "muse-spark-1.3-contributor",
+                "model_config": {
+                    "provider": "custom:sac-verified",
+                    "default": "muse-spark-1.3-contributor",
+                },
+            },
+        ),
+    }
+
+    def fake_probe_key(pool_probe, token, **kwargs):
+        return {
+            "last_status": "ok" if token == "live" else "dead",
+            "last_status_at": 1000.0,
+        }
+
+    # Act
+    with tempfile.TemporaryDirectory() as raw:
+        profile = Path(raw)
+        with patch.object(probe, "probe_key", fake_probe_key):
+            probe.preflight_pools(rendered, pools, [profile])
+    # Assert
+    assert rendered["model"]["provider"] == "custom:sac-verified"
+    assert rendered["auxiliary"]["goal_judge"] == {
+        "provider": "custom:sac-verified",
+        "model": "muse-spark-1.3-contributor",
+        "reasoning_effort": "xhigh",
+        "timeout": 60,
+        "max_tokens": 4096,
+    }
 
 
 def test_upstream_error_detail_is_not_logged_or_persisted():

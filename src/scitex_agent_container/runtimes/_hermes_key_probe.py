@@ -199,4 +199,20 @@ def preflight_pools(rendered: dict, pools: dict, profiles: list[Path]) -> None:
             for route in routes
             if route["provider"] != verified
         ]
+        # The judge rides the verified lane with the agent: a judge left on
+        # the dead primary keeps pausing every goal after 5 transport
+        # failures (prompt-2026-1022). compile_hermes_config emitted it on
+        # the authored lane; it must move here, at the moment the route is
+        # rewritten. _apply_verified_route enforces the same invariant for
+        # the restart-preflight path (which rewrites the route separately).
+        if "goal_judge" in rendered.get("auxiliary", {}):
+            rendered["auxiliary"]["goal_judge"] = {
+                "provider": pools[verified].probe["model_config"]["provider"],
+                "model": pools[verified].probe["model"],
+                "reasoning_effort": rendered["auxiliary"]["goal_judge"][
+                    "reasoning_effort"
+                ],
+                "timeout": rendered["auxiliary"]["goal_judge"]["timeout"],
+                "max_tokens": rendered["auxiliary"]["goal_judge"]["max_tokens"],
+            }
     pools.update(updated)

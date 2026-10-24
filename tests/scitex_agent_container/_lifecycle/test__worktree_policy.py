@@ -570,3 +570,35 @@ def test_health_restart_rechecks_policy_before_constructing_runtime(
     with _replace_attribute(_worktree_policy, "enforce_task_worktree_policy", refuse):
         with pytest.raises(WorktreePolicyError, match="restart refusal"):
             restart_and_record(_config(tmp_path), _runtime_select._get_runtime)
+
+
+def test_stale_suffix_worktree_adopts_instead_of_refusing(
+    real_policy_cli: Path, tmp_path: Path, runtime_dir: Path
+) -> None:
+    # RED: an agent whose earlier launch created sac-<slug>-<suffix> (older
+    # naming) fails every later start with "owned worktree ... no longer
+    # matches its repository/branch", because the plan recomputes the
+    # canonical sac-<slug> name + feature/sac-<slug> branch and refuses the
+    # existing checkout. The live directory must be adopted, not refused.
+    # Arrange
+    import subprocess
+
+    from scitex_agent_container._lifecycle._worktree_policy import _slug
+
+    repo = _authority(tmp_path / "repo")
+    slug = _slug("policy-test")
+    stale = repo / ".worktrees" / f"sac-{slug}-deadbeef"
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "worktree", "add", "-q",
+            "-b", f"feature/sac-{slug}-deadbeef", str(stale),
+        ],
+        check=True,
+    )
+    cfg = _config(repo)
+
+    # Act
+    proof = enforce_task_worktree_policy(cfg, provision=False, cli_path=real_policy_cli)
+
+    # Assert
+    assert proof is not None and proof.resolved_workdir == str(stale)

@@ -528,3 +528,27 @@ def test_goal_budget_exceeds_hermes_default():
     result = compile_hermes_config(plan, workdir="/work")
     # Assert
     assert result["goals"]["max_turns"] == 99999
+
+
+def test_verified_route_rewrite_keeps_judge_on_agent_lane():
+    # RED: failover to a verified provider rewrote model/default but left
+    # goal_judge pinned to the dead primary lane -> 5 straight
+    # unreachable-judge pauses. The judge must follow the verified route.
+    # Arrange
+    from scitex_agent_container.runtimes._hermes_profile import (
+        _apply_verified_route,
+    )
+
+    plan = _plan()
+    rendered = compile_hermes_config(plan, workdir="/work")
+    verified_selection = {
+        "model": dict(rendered["model"]),
+    }
+    verified_selection["model"]["provider"] = "custom:sac-verified"
+    # Act
+    _apply_verified_route(rendered, verified_selection)
+    # Assert
+    assert rendered["auxiliary"]["goal_judge"]["provider"] == "custom:sac-verified"
+    assert (
+        rendered["auxiliary"]["goal_judge"]["model"] == plan.engine.model_id
+    )

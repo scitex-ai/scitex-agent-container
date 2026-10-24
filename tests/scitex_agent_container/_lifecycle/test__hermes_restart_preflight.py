@@ -925,9 +925,10 @@ def test_same_muse_fallback_updates_goal_judge_wire_name():
         proof.plan, workdir=value.workdir, goals=value.hermes_goals
     )
     profile._apply_verified_route(rendered, proof.selection)
-    # Assert
+    # Assert — the judge follows the verified backup lane (same Muse model
+    # via the meta/ wire name, same-family alias), never the dead primary.
     assert rendered["auxiliary"]["goal_judge"] == {
-        "provider": "custom:sac-muse",
+        "provider": "custom:sac-backup",
         "model": "meta/" + MODEL,
         "reasoning_effort": "xhigh",
         "timeout": 60,
