@@ -320,6 +320,7 @@ _HELP_IMPORT_CLOSURE = frozenset((
     "scitex_agent_container.config._types",
     "scitex_agent_container.config._validation",
     "scitex_agent_container.config._workdir_hook",
+    "scitex_agent_container.config._worktree",
     "scitex_agent_container.runtimes",
     "scitex_agent_container.runtimes._board_identity_env",
     "scitex_agent_container.runtimes._fleet_env",
