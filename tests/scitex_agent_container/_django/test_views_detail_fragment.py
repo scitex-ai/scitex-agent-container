@@ -32,6 +32,13 @@ def test_detail_partial_renders_fragment_without_shell(client, loopback, env_sav
     # fragment (operator 2026-10-26: the roster selection already names
     # it, and the DM/Details panes must not triple it).
     assert "<html" not in body and "detail-card" in body
+
+
+def test_detail_partial_does_not_repeat_roster_name(client, loopback, env_save_restore):
+    # Arrange
+    # Act
+    body = _detail(client, env_save_restore, "alpha", partial=True)
+    # Assert — the roster selection already names the agent.
     assert "detail-name" not in body
 
 

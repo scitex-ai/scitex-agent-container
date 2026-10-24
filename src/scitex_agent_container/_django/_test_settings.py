@@ -41,3 +41,9 @@ DATABASES: dict[str, dict[str, str]] = {}
 STATIC_URL = "/static/"
 STATICFILES_DIRS = []
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+# Stand-in for the host wiring a mounted deployment provides: the SDK
+# project-picker tag fail-fasts (ImproperlyConfigured, since scitex-sdk
+# 0.3.14) when no provider URL is configured, so the suite registers the
+# conventional host path the same way a host would. House rule: fail loud
+# on missing wiring, never render a silent empty slot.
+SCITEX_PROJECT_PROVIDER_URL = "/api/project_scope/"
