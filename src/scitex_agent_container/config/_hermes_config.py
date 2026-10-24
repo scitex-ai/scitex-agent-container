@@ -187,10 +187,10 @@ def compile_hermes_config(
             "max_tokens": 4096,
         },
     }
-    if goals.judge_engine:
-        # Genuine pinned-Hermes API: `main` resolves the live primary provider
-        # and its pool; explicit model avoids a provider's cheap aux default.
-        auxiliary["goal_judge"] = {"provider": "main", "model": model}
+    # A declared judge_engine is a VALIDATION hint only (same engine, same
+    # model — enforced in validate_hermes_goal_engine). It never changes the
+    # emitted judge: always the agent-lane muse-spark block above, never the
+    # "main" Hermes default pool (which follows whichever vendor is live).
     return {
         "model": model_block,
         "providers": providers_block,
