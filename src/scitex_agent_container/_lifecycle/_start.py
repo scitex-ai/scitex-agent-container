@@ -202,6 +202,18 @@ def agent_start(
     ):
         return True
 
+    # FAIL-FAST ownership read: a deterministic branch/repo mismatch must
+    # refuse BEFORE the prelaunch gauntlet (rotation, spawn gate, ports,
+    # wake) and the store sweep — none can fix a mismatched worktree.
+    # Read-only; session/resume overrides apply first so this reads the
+    # same identity the late provision below records (re-application in
+    # run_prelaunch is idempotent). Injected runtimes skip it.
+    if runtime_factory is None:
+        if session_override:
+            config.claude.session = session_override
+        if resume_id_override is not None:
+            config.claude.resume_id = resume_id_override
+        enforce_task_worktree_policy(config, provision=False)
     # The PRE-LAUNCH GAUNTLET — every gate that must hold before the
     # runtime is built and before any forced stop, so a refusal never
     # tears down a running agent it cannot bring back: the two
