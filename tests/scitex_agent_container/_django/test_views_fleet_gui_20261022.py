@@ -53,7 +53,8 @@ def _seeded_fleet_html(client, env_save_restore, identity="alice"):
 
 # ── item 1: always-visible fleet DM composer ────────────────────────────────
 def test_fleet_center_has_always_visible_dm_composer(client, env_save_restore):
-    # Arrange + Act
+    # Arrange — seeded fleet snapshot (helper renders the shell).
+    # Act
     html = _seeded_fleet_html(client, env_save_restore)
     # Assert — the skeleton the JS retargets: same POST shape as the detail
     # message-form (message + dispatch_id + emoji + send), fleet-scoped hooks.

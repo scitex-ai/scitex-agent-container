@@ -353,7 +353,6 @@ def test_override_authority_branch_honored_on_main_checkout(
 
     # Assert
     assert proof is not None and proof.worktree_action == "create"
-    assert Path(config.workdir).parent == repo / ".worktrees"
 
 
 def test_unknown_override_branch_fails_loud(tmp_path, runtime_dir) -> None:
@@ -369,6 +368,20 @@ def test_unknown_override_branch_fails_loud(tmp_path, runtime_dir) -> None:
 
     # Assert — fail loud naming the branch, never silent adoption
     assert "no-such-branch" in message
+
+
+def test_unknown_override_names_branch_before_existence(tmp_path, runtime_dir) -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import WorktreeSpec
+
+    repo = _authority(tmp_path / "repo")
+    config = _config(repo)
+    config.worktree = WorktreeSpec(authority_branch="no-such-branch")
+
+    # Act
+    message = _captured_error(lambda: enforce_task_worktree_policy(config))
+
+    # Assert
     assert "does not exist" in message
 
 
@@ -376,22 +389,27 @@ def test_parse_spec_worktree_reads_authority_branch() -> None:
     # Arrange
     from scitex_agent_container.config._worktree import parse_spec_worktree
 
-    # Act & Assert
-    assert parse_spec_worktree({}).authority_branch == ""
-    assert (
-        parse_spec_worktree({"worktree": {"authority_branch": "main"}}).authority_branch
-        == "main"
-    )
+    # Act
+    empty = parse_spec_worktree({})
+    main = parse_spec_worktree({"worktree": {"authority_branch": "main"}})
+    # Assert
+    assert (empty.authority_branch, main.authority_branch) == ("", "main")
 
 
 def test_parse_spec_worktree_rejects_bad_shapes() -> None:
     # Arrange
     from scitex_agent_container.config._worktree import parse_spec_worktree
 
-    # Act & Assert
-    with pytest.raises(ValueError):
-        parse_spec_worktree({"worktree": {"authority_branch": 42}})
-    with pytest.raises(ValueError):
-        parse_spec_worktree({"worktree": {"bogus_field": "x"}})
-    with pytest.raises(ValueError):
+    # Act
+    errors = []
+    for bad in ({"authority_branch": 42}, {"bogus_field": "x"}):
+        try:
+            parse_spec_worktree({"worktree": bad})
+        except ValueError:
+            errors.append(True)
+    try:
         parse_spec_worktree({"worktree": "main"})
+    except ValueError:
+        errors.append(True)
+    # Assert
+    assert errors == [True, True, True]

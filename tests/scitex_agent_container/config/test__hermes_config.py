@@ -547,8 +547,6 @@ def test_verified_route_rewrite_keeps_judge_on_agent_lane():
     verified_selection["model"]["provider"] = "custom:sac-verified"
     # Act
     _apply_verified_route(rendered, verified_selection)
-    # Assert
-    assert rendered["auxiliary"]["goal_judge"]["provider"] == "custom:sac-verified"
-    assert (
-        rendered["auxiliary"]["goal_judge"]["model"] == plan.engine.model_id
-    )
+    # Assert — the judge follows the verified route: same provider AND
+    # the agent's own model id.
+    assert (rendered["auxiliary"]["goal_judge"]["provider"], rendered["auxiliary"]["goal_judge"]["model"]) == ("custom:sac-verified", plan.engine.model_id)
