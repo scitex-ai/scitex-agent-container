@@ -1,11 +1,11 @@
 {% extends "scitex_sdk/app/app_shell.html" %}
 {% load static %}
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'scitex_agent_container/agents.css' %}">
+<link rel="stylesheet" href="{% static 'scitex_agent_container/agents.css' %}?v={{ app_version }}">
 {% endblock %}
 {% block scitex_app_content %}
 {% include "scitex_agent_container/_fleet_content.html" %}
 {% endblock %}
 {% block extra_js %}
-<script src="{% static 'scitex_agent_container/fleet.js' %}"></script>
+<script src="{% static 'scitex_agent_container/fleet.js' %}?v={{ app_version }}"></script>
 {% endblock %}

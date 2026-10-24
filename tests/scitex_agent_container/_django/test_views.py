@@ -593,6 +593,23 @@ def test_cold_shell_points_poll_at_leaf_api(client, unreachable_listener, env_sa
     assert "/api/fleet" in html
 
 
+def test_leaf_assets_carry_version_buster(client, unreachable_listener, env_save_restore):
+    # Arrange — operator 2026-10-26 (laptop prompt): the fleet stuck on
+    # "Reading the fleet…" until Ctrl+Shift+R. Two causes, both fixed
+    # here: (a) unversioned {% static %} URLs let browsers run stale
+    # JS/CSS across rebakes — every leaf asset URL carries
+    # ?v=<leaf version> so each release re-fetches; (b) the warm-poll
+    # module lived inside {% if agents %}, so cold shells loaded no
+    # poller at all — it now loads unconditionally (null-guarded).
+    from importlib.metadata import version
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act: cold cache, unreachable control plane — the loading shell.
+    html = client.get("/").content.decode()
+    # Assert
+    assert ("fleet-details.js?v=" + version("scitex-agent-container")) in html and ("agents.css?v=" + version("scitex-agent-container")) in html and 'data-fleet-state="loading"' in html
+
+
 
 def test_completed_failure_transitions_to_unavailable_with_retry(client, unreachable_listener, env_save_restore):
     # Arrange: a COMPLETED read failure is the last thing observed for this
