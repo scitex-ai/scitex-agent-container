@@ -112,7 +112,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "background_review": {"enabled": False},
             "goal_judge": {
                 "provider": "custom:sac-qwen",
-                "model": "meta-muse-spark-1.3-contributor",
+                "model": "qwen38-27b",
                 "reasoning_effort": "xhigh",
                 "timeout": 60,
                 "max_tokens": 4096,
@@ -156,7 +156,7 @@ def test_explicit_turn_caps_and_same_engine_judge_use_supported_hermes_fields():
         {"max_turns": 99999},
         {
             "provider": "custom:sac-qwen",
-            "model": "meta-muse-spark-1.3-contributor",
+            "model": "qwen38-27b",
             "reasoning_effort": "xhigh",
             "timeout": 60,
             "max_tokens": 4096,
@@ -480,7 +480,7 @@ def test_goal_judge_rides_the_agent_lane():
     # Assert
     assert result["auxiliary"]["goal_judge"] == {
         "provider": "custom:sac-qwen",
-        "model": "meta-muse-spark-1.3-contributor",
+        "model": "qwen38-27b",
         "reasoning_effort": "xhigh",
         "timeout": 60,
         "max_tokens": 4096,
@@ -506,7 +506,7 @@ def test_goal_judge_native_lane_uses_agent_model():
     # Assert
     assert (
         result["auxiliary"]["goal_judge"]["model"]
-        == "meta-muse-spark-1.3-contributor"
+        == "muse-spark-1.3-contributor"
     )
 
 
