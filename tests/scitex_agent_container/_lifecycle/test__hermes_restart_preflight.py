@@ -906,7 +906,7 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         "",
         {
             "provider": "custom:sac-muse",
-            "model": "meta-muse-spark-1.3-contributor",
+            "model": "muse-spark-1.3-contributor",
             "reasoning_effort": "xhigh",
             "timeout": 60,
             "max_tokens": 4096,
