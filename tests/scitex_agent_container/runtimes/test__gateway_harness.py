@@ -65,7 +65,13 @@ def test_authored_turn_and_judge_controls_reach_gateway_profile_compiler():
     ) == (
         99999,
         99999,
-        {"provider": "main", "model": "muse-spark-1.3-contributor"},
+        {
+            "provider": "custom:sac-muse",
+            "model": "meta-muse-spark-1.3-contributor",
+            "reasoning_effort": "xhigh",
+            "timeout": 60,
+            "max_tokens": 4096,
+        },
     )
 
 

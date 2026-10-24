@@ -306,7 +306,13 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
         2,
         "continue",
         "/existing/base.sif",
-        {"provider": "main", "model": MODEL},
+        {
+            "provider": "custom:sac-muse",
+            "model": "meta-muse-spark-1.3-contributor",
+            "reasoning_effort": "xhigh",
+            "timeout": 60,
+            "max_tokens": 4096,
+        },
         99999,
     )
 

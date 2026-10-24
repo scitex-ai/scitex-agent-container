@@ -904,7 +904,13 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         3,
         None,
         "",
-        {"provider": "main", "model": MODEL},
+        {
+            "provider": "custom:sac-muse",
+            "model": "meta-muse-spark-1.3-contributor",
+            "reasoning_effort": "xhigh",
+            "timeout": 60,
+            "max_tokens": 4096,
+        },
         True,
         (),
     )
@@ -921,6 +927,9 @@ def test_same_muse_fallback_updates_goal_judge_wire_name():
     profile._apply_verified_route(rendered, proof.selection)
     # Assert
     assert rendered["auxiliary"]["goal_judge"] == {
-        "provider": "main",
+        "provider": "custom:sac-muse",
         "model": "meta/" + MODEL,
+        "reasoning_effort": "xhigh",
+        "timeout": 60,
+        "max_tokens": 4096,
     }

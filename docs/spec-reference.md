@@ -246,9 +246,10 @@ loop; it does not set either Hermes limit.
 persisted goals retain their own budgets; a profile refresh does not rewrite them.
 
 An explicit `goals.judge_engine` must name the declared selected agent engine.
-SAC renders the pinned Hermes API `auxiliary.goal_judge.provider: main` with
-the selected model, so the goal judge shares the live primary provider and
-credential pool. It cannot silently select a cheaper auxiliary model.
+It is a validation hint only: the emitted goal judge always stays on the
+agent lane (`meta-muse-spark-1.3-contributor` via the agent's own provider,
+xhigh reasoning) and never follows the live `main` pool, which tracks
+whichever vendor is currently serving.
 This configures the judge used by an active `/goal`; it does not create a goal
 or enable background memory/skill review. The generated runtime Hermes
 profile owns these settings and overwrites an authored `to_home/.hermes/config.yaml`.

@@ -154,7 +154,13 @@ def test_explicit_turn_caps_and_same_engine_judge_use_supported_hermes_fields():
     ) == (
         99999,
         {"max_turns": 99999},
-        {"provider": "main", "model": plan.engine.model_id},
+        {
+            "provider": "custom:sac-qwen",
+            "model": "meta-muse-spark-1.3-contributor",
+            "reasoning_effort": "xhigh",
+            "timeout": 60,
+            "max_tokens": 4096,
+        },
     )
 
 

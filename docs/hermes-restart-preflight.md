@@ -29,7 +29,7 @@ credential or workspace preflight leaves the process and profile intact.
 
 Restart continues the existing conversation unless the operator selects a fresh
 session, and reuses the configured image and environment. Active Hermes turns
-retain the existing native drain guard. A goal judge using `provider: main`
-follows the verified main pool; a Muse wire alias can change from
-`muse-spark-...` to `meta/muse-spark-...`, while an unrelated model is refused
-when a same-model judge was explicitly authored.
+retain the existing native drain guard. The goal judge stays on the agent
+lane even when the verified route moves within the same Muse family (a Muse
+wire alias can change from `muse-spark-...` to `meta/muse-spark-...`), while
+an unrelated model is refused when a same-model judge was explicitly authored.
