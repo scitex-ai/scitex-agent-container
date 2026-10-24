@@ -39,6 +39,8 @@ from ._spec_handoff import (
     plan_handoff,
     push_spec_dir,
     read_remote_manifest,
+    refuse_if_peer_behind,
+    remote_dir_present,
     ssh_runner,
 )
 
@@ -121,6 +123,20 @@ def _dispatch_remote_start(
             + "\n\nResolve manually then re-run, "
             + "then retry the start. "
             + "See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
+        )
+
+    # 3b. Parity gate (operator 2026-10-24): identical file contents or no
+    # launch. A peer dir that EXISTS but lacks lead files is behind, not
+    # new — pushing would silently reconcile a shared checkout that should
+    # be git-pulled. Fail fast/loud; only a wholly ABSENT peer dir (first
+    # launch) may receive the spec. Changed files already refuse at the
+    # drift gate above; --force stays the explicit (never silent) escape.
+    if plan.new and not plan.changed and not force:
+        refuse_if_peer_behind(
+            plan,
+            dir_present=remote_dir_present(remote_dir, peer_shell),
+            name=name,
+            peer=peer,
         )
 
     # 4. Dry-run mode: report the plan and return without shipping anything.
