@@ -1,20 +1,20 @@
 """Native probe diagnostics expose status metadata, never echoed credentials."""
 
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from scitex_agent_container.runtimes import _hermes_key_probe as probe
 from scitex_agent_container.runtimes._hermes_failover import DeclaredPool
 
 
-def test_preflight_failover_moves_judge_to_verified_lane():
+def test_preflight_failover_moves_judge_to_verified_lane(tmp_path):
     # Operator rule (prompt-2026-1022): when the primary lane fails its
     # availability probe and the launch rewrites onto a verified provider,
     # the goal judge must move with the agent. A judge left on the dead
     # lane pauses every goal after 5 transport failures.
-    # Arrange
+    # Arrange — the primary carries one stale credential (dead in the
+    # persisted store), the verified lane one live-keyed credential; the
+    # probe body is a local keyed stub (no network, direct assignment —
+    # same save/restore idiom as the suite floors, never unittest.mock).
     rendered = {
         "model": {
             "default": "muse-spark-1.3-contributor",
@@ -68,20 +68,20 @@ def test_preflight_failover_moves_judge_to_verified_lane():
             "last_status_at": 1000.0,
         }
 
-    # Act
-    with tempfile.TemporaryDirectory() as raw:
-        profile = Path(raw)
-        with patch.object(probe, "probe_key", fake_probe_key):
-            probe.preflight_pools(rendered, pools, [profile])
-    # Assert
-    assert rendered["model"]["provider"] == "custom:sac-verified"
-    assert rendered["auxiliary"]["goal_judge"] == {
-        "provider": "custom:sac-verified",
-        "model": "muse-spark-1.3-contributor",
-        "reasoning_effort": "xhigh",
-        "timeout": 60,
-        "max_tokens": 4096,
-    }
+    # Act — the same direct-assignment save/restore the suite floors
+    # use; probe_key is module-local so assignment is re-entrant-safe
+    # within this test (restored in finally).
+    import scitex_agent_container.runtimes._hermes_key_probe as key_probe_mod
+
+    real_probe = key_probe_mod.probe_key
+    key_probe_mod.probe_key = fake_probe_key
+    try:
+        probe.preflight_pools(rendered, pools, [tmp_path / "profile"])
+    finally:
+        key_probe_mod.probe_key = real_probe
+    # Assert — the failover rewrote the route AND carried the judge with
+    # it (same verified provider, same agent model, same budget shape).
+    assert (rendered["model"]["provider"], rendered["auxiliary"]["goal_judge"]) == ("custom:sac-verified", {"provider": "custom:sac-verified", "model": "muse-spark-1.3-contributor", "reasoning_effort": "xhigh", "timeout": 60, "max_tokens": 4096})
 
 
 def test_upstream_error_detail_is_not_logged_or_persisted():
@@ -113,7 +113,8 @@ def test_upstream_error_detail_is_not_logged_or_persisted():
     finally:
         availability.probe_provider_key = real_probe
         probe.logger.info = real_info
-    # Assert
+    # Assert — redaction holds on the persisted state, the token never
+    # reaches the log stream, and the probe outcome is still classified.
     assert (
         state["last_status"],
         state["last_error_code"],

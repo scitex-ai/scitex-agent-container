@@ -159,7 +159,7 @@ def test_detail_names_unpublished_activity_as_unknown(client, loopback, env_save
     # Act
     html = client.get("/beta/").content.decode()
     # Assert
-    assert "Runtime activity" in html and html.count(">Unknown</span>") >= 1
+    assert "Runtime Activity" in html and html.count(">Unknown</span>") >= 1
 
 
 def test_fleet_inventory_shows_published_operation_and_phase(client, loopback, env_save_restore):
@@ -233,8 +233,8 @@ def test_fleet_renders_three_column_dm_layout(client, loopback, env_save_restore
 
 
 def _seeded_details_partial(client, env_save_restore) -> str:
-    # Shared arrange — operator 2026-10-26: Details cards are hierarchical
-    # <details> (short first, expand on demand); Identity + Messages open.
+    # Shared arrange — operator 2026-10-26: Details are tabbed (Identity
+    # first, active); operator 2026-10-22: 5 tabs, no <details> shells.
     from scitex_agent_container._django._inventory_cache import CACHE
 
     CACHE.put("alice", [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
@@ -249,20 +249,20 @@ def _seeded_details_partial(client, env_save_restore) -> str:
         CACHE.clear()
 
 
-def test_detail_fragment_renders_expandable_cards(client, loopback, env_save_restore):
-    # Arrange — seeded hierarchical Details cards (helper).
+def test_detail_fragment_renders_five_tabs(client, loopback, env_save_restore):
+    # Arrange — seeded tabbed Details fragment (helper).
     # Act
     html = _seeded_details_partial(client, env_save_restore)
-    # Assert
-    assert html.count("<details") >= 4
+    # Assert — operator 2026-10-22: 5 tabs, no <details> shells.
+    assert html.count('role="tab"') == 5 and "<details" not in html
 
 
-def test_detail_fragment_pairs_every_summary_with_details(client, loopback, env_save_restore):
-    # Arrange — seeded hierarchical Details cards (helper).
+def test_detail_fragment_pairs_every_tab_with_panel(client, loopback, env_save_restore):
+    # Arrange — seeded tabbed Details fragment (helper).
     # Act
     html = _seeded_details_partial(client, env_save_restore)
-    # Assert — every collapsible card has exactly one summary label.
-    assert html.count("<summary") == html.count("<details") and html.count("<details") > 0
+    # Assert — every tab owns exactly one panel.
+    assert html.count('role="tab"') == html.count('role="tabpanel"') and html.count('role="tab"') == 5
 
 
 def test_compact_fleet_visibly_qualifies_runtime_identity_source(

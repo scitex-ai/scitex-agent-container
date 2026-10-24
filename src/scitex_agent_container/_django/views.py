@@ -208,6 +208,7 @@ def _fleet_context(request: HttpRequest) -> dict:
     `unavailable` + Retry instead of a perpetual "loading". The browser-side
     poll (see _fleet_content.html) drives loading -> inventory / unavailable.
     """
+    from ._control import new_dispatch_id
     from ._inventory_cache import CACHE
 
     identity = resolve_identity(request)
@@ -267,6 +268,7 @@ def _fleet_context(request: HttpRequest) -> dict:
         comm_error=comm_error,
         observed_age=observed_age,
         cache_ttl=CACHE.ttl,
+        dispatch_id=new_dispatch_id(),
         page="fleet",
         fleet_state=fleet_state,
         diagnostic_reason="the control plane did not answer"
