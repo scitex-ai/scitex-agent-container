@@ -154,6 +154,11 @@ def _project_picker_available() -> bool:
 
     Writer/Storage precedent: `{% load %}` of a missing library is a hard
     TemplateSyntaxError, so the guard lives here, not in the template.
+    Provider presence is deliberately NOT part of this guard: since
+    scitex-sdk 0.3.14 a signed-in render with no provider URL fail-fasts
+    (ImproperlyConfigured) by design — house rule is fail loud, never a
+    silent empty slot. Tests wire the provider URL in _test_settings,
+    mirroring what a mounted host provides.
     """
     try:
         from django.template import engines

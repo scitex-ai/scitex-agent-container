@@ -52,7 +52,9 @@ def test_cold_workspace_poll_uses_registered_mount(loopback, env_save_restore):
     html = render_content(request, None, stx_mount="/apps/agent-container/").content.decode()
     # Assert
     # The loading request uses the actual leaf API, not /workspace/api.
-    assert 'var base = "/apps/agent-container";' in html and "/workspace/api" not in html
+    # Since 0f6599a75 (no inline scripts) the poll reads data-fleet-api,
+    # not an inline `var base` — same mount-wired contract, new shape.
+    assert 'data-fleet-api="/apps/agent-container/api/fleet"' in html and "/workspace/api" not in html
 
 
 @pytest.mark.parametrize(

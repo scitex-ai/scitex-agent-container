@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-24
+
+### Fixed
+- **Release gate green: project-picker provider wiring.** Since
+  scitex-sdk 0.3.14 the picker tag fail-fasts with no provider URL;
+  the test suite now registers the conventional host path in
+  `_test_settings.py` (fail loud on missing wiring, never a silent
+  empty slot). `scitex-sdk[gui]` is pinned to `==0.3.14` as the
+  reproducibility SSoT so CI and dev venvs resolve the same SDK.
+- **Release gate green: audit findings cleared.** Absorbed the owned
+  PA-306/PS-204 slices (env_save_restore, mirror test names), split
+  six multi-assert tests to one-assert (STX-TQ007), untracked
+  `.scitex/agent-container/runtime/` from the index + ignore
+  (PS-234), and updated two stale asserts to the no-inline-scripts
+  contract (`data-fleet-api`, "Create spec" submit).
+
 ## [0.35.0] - 2026-10-24
 
 ### Added
