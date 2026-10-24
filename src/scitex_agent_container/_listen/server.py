@@ -179,7 +179,10 @@ async def agent_status(request: Request) -> JSONResponse:
             status_code=500,
         )
     sd = state_dir_for(name)
-    sid = read_session_id(sd)
+    try:
+        sid = read_session_id(sd)
+    except Exception:  # stx-allow: fallback (reason: the session id is an optional observation — an agent with a spec but no live session evidence still HAS a status, and a 500 here claims the route is broken when only the sid is unknown)
+        sid = None
     running, runtime_status, liveness = _runtime_liveness(cfg)
     body: dict[str, Any] = {
         "name": name,
