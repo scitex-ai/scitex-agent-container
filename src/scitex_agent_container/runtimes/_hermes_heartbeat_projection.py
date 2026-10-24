@@ -347,12 +347,24 @@ def promote_hermes_heartbeat_projection(
             # rendering) and reflect the enrolled challenge/observed echo.
             from .._runners._heartbeat_fields import heartbeat_jsonl_fields
             from .._state.authoritative_heartbeat import (
+                maybe_rotate_challenge_nonce,
                 read_challenge_nonce,
                 scan_session_echo,
             )
 
             _jsonl_fields = heartbeat_jsonl_fields(state_dir, observed.observed_at)
             _nonce_challenge = read_challenge_nonce(state_dir)
+            _nonce_echo = scan_session_echo(state_dir, _nonce_challenge)
+            _rotated_from = _nonce_challenge
+            _nonce_challenge = maybe_rotate_challenge_nonce(
+                state_dir,
+                _nonce_challenge,
+                _nonce_echo,
+                now=observed.observed_at,
+            )
+            if _nonce_challenge != _rotated_from:
+                # Freshly (re)issued: no echo of the new token can exist yet.
+                _nonce_echo = None
             resident_fields = {
                 **observed.heartbeat_fields(),
                 **identity,
@@ -366,7 +378,7 @@ def promote_hermes_heartbeat_projection(
                     "subagent_jsonl_delta_bytes", 0
                 ),
                 "nonce_challenge": _nonce_challenge,
-                "nonce_echo": scan_session_echo(state_dir, _nonce_challenge),
+                "nonce_echo": _nonce_echo,
             }
             write_fn(
                 state_dir,
