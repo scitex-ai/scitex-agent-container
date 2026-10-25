@@ -39,9 +39,20 @@ back link and the lifecycle form action are correct at any mount.
   {% if not fragment %}
   <h2 class="detail-name">{{ agent.name }}</h2>
   {% endif %}
-  <div class="detail-grid">
-    <details class="detail-card" open>
-      <summary class="detail-card__head">Identity</summary>
+  {# Operator 2026-10-22: 5 tabs (Identity, Runtime Activity, Control, #}
+  {# Resources, Recent Session Log) — the standalone Message thread card is #}
+  {# gone (its thread renders in the center DM pane). No-JS fallback: every #}
+  {# panel is visible until fleet-details.js activates the first tab. POST #}
+  {# forms/endpoints inside are byte-identical to the old <details> cards. #}
+  <div class="detail-tabs" data-detail-tabs>
+    <div class="detail-tablist" role="tablist" aria-label="Agent details">
+      <button type="button" class="detail-tab detail-tab--active" role="tab" id="dt-{{ agent.name }}-identity" aria-controls="dp-{{ agent.name }}-identity" aria-selected="true" data-detail-tab="identity">Identity</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-activity" aria-controls="dp-{{ agent.name }}-activity" aria-selected="false" data-detail-tab="activity" tabindex="-1">Runtime Activity</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-control" aria-controls="dp-{{ agent.name }}-control" aria-selected="false" data-detail-tab="control" tabindex="-1">Control</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-resources" aria-controls="dp-{{ agent.name }}-resources" aria-selected="false" data-detail-tab="resources" tabindex="-1">Resources</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-session" aria-controls="dp-{{ agent.name }}-session" aria-selected="false" data-detail-tab="session" tabindex="-1">Recent Session Log</button>
+    </div>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-identity" aria-labelledby="dt-{{ agent.name }}-identity" data-detail-panel="identity" tabindex="0">
       <div class="detail-state">
         <span class="dot {{ agent.state_tone }}"></span>
         <span class="detail-state-label {{ agent.state_tone }}">{{ agent.state_label }}</span>
@@ -64,10 +75,9 @@ back link and the lifecycle form action are correct at any mount.
         <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
         {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
       </dl>
-    </details>
+    </section>
 
-    <details class="detail-card detail-card-wide">
-      <summary class="detail-card__head">Runtime activity</summary>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-activity" aria-labelledby="dt-{{ agent.name }}-activity" data-detail-panel="activity" tabindex="0">
       <dl class="kv activity-kv">
         <dt>Phase</dt><dd>{% if agent.activity.phase.state == "observed" %}{{ agent.activity.phase.value }}{% else %}<span class="unknown" title="{{ agent.activity.phase.reason }}">Unknown</span>{% endif %}</dd>
         <dt>Operation</dt><dd>{% if agent.activity.operation.state == "observed" %}{{ agent.activity.operation.value }}{% else %}<span class="unknown" title="{{ agent.activity.operation.reason }}">Unknown</span>{% endif %}</dd>
@@ -79,10 +89,9 @@ back link and the lifecycle form action are correct at any mount.
         <dt>Wait</dt><dd>{% if agent.activity.wait.state == "observed" %}{{ agent.activity.wait.value }}{% else %}<span class="unknown" title="{{ agent.activity.wait.reason }}">Unknown</span>{% endif %}</dd>
       </dl>
       <p class="dim activity-note">Only runner-published state is shown. Unknown means SAC has no authoritative signal; session logs are not guessed into activity.</p>
-    </details>
+    </section>
 
-    <details class="detail-card">
-      <summary class="detail-card__head">Control</summary>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-control" aria-labelledby="dt-{{ agent.name }}-control" data-detail-panel="control" tabindex="0">
       {% if agent.state_detail %}
       <p class="dim">Status: <span class="mono">{{ agent.state_detail }}</span></p>
       {% endif %}
@@ -166,39 +175,12 @@ back link and the lifecycle form action are correct at any mount.
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
       cross-host agents, the cross-host operator allowlist{% endif %}.</p>
       {% endif %}
-    </details>
+    </section>
 
-    <details class="detail-card" id="message-thread" open>
-      <summary class="detail-card__head">Message thread</summary>
-      {% comment %}
-      The thread the daemon actually stores: the agent's session log tail
-      (GET /agents/<name>/tail, summarized + redacted server-side). The
-      console deliberately keeps no operator-message transcript — a delivery
-      is either reported delivered or reported failed (see the banner above
-      and the send form), never parked in the dashboard. So "history" here
-      is the session records, newest last, capped to the recent few; the
-      full tail stays in the session-log card below.
-      {% endcomment %}
-      {% if notice and notice.operation == "message" or notice and notice.operation == "control" %}
-      <p class="dim">Last send: <span class="mono">{{ notice.operation }} · {{ notice.state }}</span>{% if notice.message %} — <span class="mono">{{ notice.message }}</span>{% endif %}</p>
-      {% endif %}
-      {% if agent.session_error %}
-      <p class="dim">History unavailable: <span class="mono">{{ agent.session_error }}</span></p>
-      {% elif agent.session_lines %}
-      <ul class="session-log mono">
-        {% for line in agent.session_lines|slice:"-5:" %}
-        <li>{{ line }}</li>
-        {% endfor %}
-      </ul>
-      <p class="dim session-note">Most recent session records. <a href="#message">Send a message</a> to steer this agent.</p>
-      {% else %}
-      <p class="dim">No session records yet — and the console holds no earlier
-      operator messages to show. <a href="#message">Send the first one</a>.</p>
-      {% endif %}
-    </details>
+    {# Message thread card removed (operator 2026-10-22): its thread already #}
+    {# renders in the fleet center DM pane (moved out of Control above). #}
 
-    <details class="detail-card">
-      <summary class="detail-card__head">Resources</summary>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-resources" aria-labelledby="dt-{{ agent.name }}-resources" data-detail-panel="resources" tabindex="0">
       {% with r=agent.resources %}
       {% if r.state == "ok" %}
       <dl class="kv">
@@ -216,10 +198,9 @@ back link and the lifecycle form action are correct at any mount.
       <p class="dim"><i class="fas fa-power-off"></i> No process to read (agent not started or stopped).</p>
       {% endif %}
       {% endwith %}
-    </details>
+    </section>
 
-    <details class="detail-card">
-      <summary class="detail-card__head">Recent session log</summary>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-session" aria-labelledby="dt-{{ agent.name }}-session" data-detail-panel="session" tabindex="0">
       {% if agent.session_error %}
       <p class="dim">Log unavailable: <span class="mono">{{ agent.session_error }}</span></p>
       {% elif agent.session_lines %}
@@ -232,7 +213,7 @@ back link and the lifecycle form action are correct at any mount.
       {% else %}
       <p class="dim">No session log recorded yet.</p>
       {% endif %}
-    </details>
+    </section>
   </div>
   {% endif %}
 </div>

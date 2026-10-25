@@ -68,9 +68,9 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _authority(path: Path) -> Path:
+def _authority_on(path: Path, branch: str) -> Path:
     path.mkdir()
-    _git(path, "init", "-q", "-b", "develop")
+    _git(path, "init", "-q", "-b", branch)
     (path / "tracked.txt").write_text("base\n", encoding="utf-8")
     _git(path, "add", "tracked.txt")
     _git(
@@ -86,6 +86,10 @@ def _authority(path: Path) -> Path:
         "base",
     )
     return path
+
+
+def _authority(path: Path) -> Path:
+    return _authority_on(path, "develop")
 
 
 def _config(workdir: Path, *, name: str = "engine-test") -> AgentConfig:
@@ -310,3 +314,102 @@ def test_default_enforce_resolves_policy_id(tmp_path, runtime_dir) -> None:
 
     # Assert
     assert proof is not None and proof.policy_id == "scitex.worktree.v1"
+
+
+def test_default_config_leaves_authority_branch_unset() -> None:
+    # Arrange
+    config = _config(Path("/tmp/does-not-matter"))
+
+    # Act
+    branch = config.worktree.authority_branch
+
+    # Assert
+    assert branch == ""
+
+
+def test_main_checkout_refused_without_override(tmp_path, runtime_dir) -> None:
+    # Arrange — a project whose main checkout sits on main, not develop
+    repo = _authority_on(tmp_path / "repo", "main")
+
+    # Act
+    message = _captured_error(lambda: enforce_task_worktree_policy(_config(repo)))
+
+    # Assert — the fleet default is unchanged: develop stays required
+    assert "'develop'" in message
+
+
+def test_override_authority_branch_honored_on_main_checkout(
+    tmp_path, runtime_dir
+) -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import WorktreeSpec
+
+    repo = _authority_on(tmp_path / "repo", "main")
+    config = _config(repo)
+    config.worktree = WorktreeSpec(authority_branch="main")
+
+    # Act
+    proof = enforce_task_worktree_policy(config)
+
+    # Assert
+    assert proof is not None and proof.worktree_action == "create"
+
+
+def test_unknown_override_branch_fails_loud(tmp_path, runtime_dir) -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import WorktreeSpec
+
+    repo = _authority(tmp_path / "repo")
+    config = _config(repo)
+    config.worktree = WorktreeSpec(authority_branch="no-such-branch")
+
+    # Act
+    message = _captured_error(lambda: enforce_task_worktree_policy(config))
+
+    # Assert — fail loud naming the branch, never silent adoption
+    assert "no-such-branch" in message
+
+
+def test_unknown_override_names_branch_before_existence(tmp_path, runtime_dir) -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import WorktreeSpec
+
+    repo = _authority(tmp_path / "repo")
+    config = _config(repo)
+    config.worktree = WorktreeSpec(authority_branch="no-such-branch")
+
+    # Act
+    message = _captured_error(lambda: enforce_task_worktree_policy(config))
+
+    # Assert
+    assert "does not exist" in message
+
+
+def test_parse_spec_worktree_reads_authority_branch() -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import parse_spec_worktree
+
+    # Act
+    empty = parse_spec_worktree({})
+    main = parse_spec_worktree({"worktree": {"authority_branch": "main"}})
+    # Assert
+    assert (empty.authority_branch, main.authority_branch) == ("", "main")
+
+
+def test_parse_spec_worktree_rejects_bad_shapes() -> None:
+    # Arrange
+    from scitex_agent_container.config._worktree import parse_spec_worktree
+
+    # Act
+    errors = []
+    for bad in ({"authority_branch": 42}, {"bogus_field": "x"}):
+        try:
+            parse_spec_worktree({"worktree": bad})
+        except ValueError:
+            errors.append(True)
+    try:
+        parse_spec_worktree({"worktree": "main"})
+    except ValueError:
+        errors.append(True)
+    # Assert
+    assert errors == [True, True, True]

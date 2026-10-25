@@ -337,7 +337,14 @@
 /* Page head: content title + inline stats (operator 2026-10-23 — the sparse
    bar above the table carries the full product name and the fleet counts
    in one row instead of two stacked bands). */
+/* Operator 2026-10-22: the second-row controls (Launch/Create/A2A/Activity
+   buttons + stat sum-cards) share ONE height with equal top/bottom margins
+   so the row reads as a single band. The leftmost child adds no extra left
+   margin — the pagehead gap already owns the gutters. */
 .agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 6px; }
+.agents-pagehead > :first-child { margin-left: 0; }
+.agents-pagehead .agents-actions, .agents-pagehead .agents-summary { margin-top: 0; margin-bottom: 0; }
+.agents-pagehead .btn, .agents-pagehead .sum-card { min-height: 30px; box-sizing: border-box; display: inline-flex; align-items: center; margin-top: 0; margin-bottom: 0; }
 .agents-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 
 /* Right-click row menu (operator 2026-10-23): absolute overlay, closes on
@@ -405,10 +412,16 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 /* Operator 2026-10-23: one shared row height for all three panes — tops
    AND bottoms align. Each pane scrolls internally instead of driving
    the row taller (detail cards) or capping short (chat max-height).
-   Operator 2026-10-26: row ends above the floating dock (153px + 10px gap)
-   so the bottom-anchored DM composer is clickable at rest, not just on
-   focus-avoid. No in-pane reserve (that was the 62px dead band). */
-.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 370px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
+   Operator 2026-10-26: row ends above the floating dock so the
+   bottom-anchored DM composer is clickable at rest, not just on
+   focus-avoid. No in-pane reserve (that was the 62px dead band).
+   Operator 2026-10-24: 370px over-cleared on desktop — screenshot shows a
+   ~240px dead band below the panes with only a ~40px floating pill dock.
+   Operator 2026-10-22: the 280px reserve still overshot (element report:
+   chat pane 587px tall at 209px top on a viewport with ~240px dead space).
+   180px keeps the pane bottoms just above the floating dock while the
+   300px floor guards short viewports. No in-pane dock reserve anywhere. */
+.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 180px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
 /* Operator 2026-10-24: NO in-pane dock reserve — the 132px clearance left a
    dead band at the bottom of every pane (element report: 62px computed on
@@ -440,6 +453,20 @@ details.detail-card > summary.detail-card__head::-webkit-details-marker { displa
 details.detail-card > summary.detail-card__head::before { content: "▸"; font-size: 11px; color: var(--agents-faint); }
 details.detail-card[open] > summary.detail-card__head::before { content: "▾"; }
 details.detail-card > summary.detail-card__head:focus-visible { outline: 2px solid var(--agents-cross); outline-offset: 2px; }
+/* Detail tabs (operator 2026-10-22): 5 tabs replace the 6 <details> cards.
+   No-JS fallback: every panel renders visible; fleet-details.js activates
+   the first tab and hides the rest. Square, 2px max — never round. */
+.detail-tabs { display: flex; flex-direction: column; gap: 0; min-height: 0; }
+.detail-tablist { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--agents-border); padding-bottom: 8px; }
+.detail-tab { cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--agents-dim); background: none; border: 1px solid transparent; border-radius: 2px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; }
+.detail-tab:hover { color: var(--agents-text); border-color: var(--agents-border); }
+.detail-tab--active, .detail-tab[aria-selected="true"] { color: var(--agents-text); border-color: var(--agents-cross); }
+.detail-tab:focus-visible { outline: 2px solid var(--agents-cross); outline-offset: 2px; }
+.detail-tabpanel[hidden] { display: none; }
+/* Fleet composer hint (operator 2026-10-22): the hint reads as a second
+   row under the input, never as a squeezed third flex item. */
+form[data-composer="fleet-dm"] { flex-wrap: wrap; }
+form[data-composer="fleet-dm"] [data-role="fleet-composer-hint"] { flex-basis: 100%; margin: 2px 0 0; }
 .agents-chat-empty { margin: auto; text-align: center; }
 /* Details pane label: the SDK tab strip is phone-only (display:none on
    desktop), so the slim bar carries the "Details" label. No icon, no
@@ -480,6 +507,11 @@ tr.agent-row[data-pinned="true"] .c-name::before { content: "PIN"; font-size: 9p
 .composer-actions { display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0; margin-bottom: 1px; }
 .composer-actions .btn { margin-bottom: 0; }
 .emoji-btn { padding: 10px 12px; }
+/* Operator 2026-10-24 (slice A follow-up): emoji + send share one fixed
+   height. The emoji glyph and the FA paper-plane render different line
+   boxes, so equal padding still reads uneven. 44px is the repo touch
+   target (detail-card__head precedent); border-box keeps it exact. */
+.composer-actions .btn { height: 44px; box-sizing: border-box; justify-content: center; }
 .dm-emoji-popover { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 6px; background: var(--agents-panel); border: 1px solid var(--agents-border); z-index: 30; }
 .dm-emoji-pick { padding: 4px 6px; font-size: 18px; line-height: 1; background: transparent; border: 1px solid transparent; cursor: pointer; }
 .dm-emoji-pick:hover { border-color: var(--agents-border); }

@@ -38,20 +38,38 @@ async function loadIntoPanels(url) {
     /* Chat thread -> center DM pane (operator 2026-10-23 three-column). */
     const thread = doc.querySelector("[data-role='chat-thread']");
     const composer = doc.querySelector("form.chat-composer");
+    /* Operator 2026-10-22: the fleet center pane owns an ALWAYS-VISIBLE
+       composer (form[data-composer="fleet-dm"]). When it exists the
+       fragment's composer stays in the Control tab and the fleet composer
+       is retargeted to the selected agent instead of being wiped. */
+    const fleetComposer = chatHostEl
+      ? chatHostEl.querySelector('form[data-composer="fleet-dm"]')
+      : null;
     if (chatHostEl) {
-      chatHostEl.innerHTML = "";
-      /* Operator 2026-10-26: no name header in the DM pane — the roster
-         selection already names the agent (showing it 3x was noise). */
-      if (thread) chatHostEl.appendChild(document.adoptNode(thread));
-      if (composer) chatHostEl.appendChild(document.adoptNode(composer));
-      if (!thread && !composer) chatHostEl.innerHTML = html;
+      if (fleetComposer && thread) {
+        /* Fleet composer owns the pane: swap in the fresh thread ahead of
+           it, drop the cold placeholder, retarget the composer. The
+           fragment's own composer stays in the Control tab. */
+        const old = chatHostEl.querySelector("[data-role='chat-thread']");
+        if (old) old.remove();
+        const empty = chatHostEl.querySelector(".agents-chat-empty");
+        if (empty) empty.remove();
+        chatHostEl.insertBefore(document.adoptNode(thread), fleetComposer);
+        retargetFleetComposer(agentNameFromUrl(url), url);
+      } else if (!fleetComposer) {
+        chatHostEl.innerHTML = "";
+        /* Operator 2026-10-26: no name header in the DM pane — the roster
+           selection already names the agent (showing it 3x was noise). */
+        if (thread) chatHostEl.appendChild(document.adoptNode(thread));
+        if (composer) chatHostEl.appendChild(document.adoptNode(composer));
+        if (!thread && !composer) chatHostEl.innerHTML = html;
+      }
     }
     /* Everything else -> shared Details column. The message thread lives
-       in the center DM pane; its emptied <details> shell stays out
-       (it nests inside the fragment root, so check descendants too). */
+       in the center DM pane (moved out of the Control tab above), so the
+       adopted thread/composer nodes are skipped here — they nest inside
+       the fragment root, so check descendants too. */
     if (detailHost) {
-      const skip = doc.querySelector("details#message-thread");
-      if (skip) skip.remove();
       const frag = document.createDocumentFragment();
       for (const child of Array.from(doc.body ? doc.body.childNodes : [])) {
         if (child.nodeType !== 1) continue;
@@ -61,8 +79,10 @@ async function loadIntoPanels(url) {
       if (frag.childNodes.length) {
         detailHost.innerHTML = "";
         detailHost.appendChild(frag);
+        initDetailTabs(detailHost);
       } else {
         detailHost.innerHTML = html;
+        initDetailTabs(detailHost);
       }
     }
     showDetails();
@@ -96,21 +116,191 @@ function onClick(event) {
     other.removeAttribute("data-stx-selected");
   }
   row.setAttribute("data-stx-selected", "true");
+  retargetFleetComposer(row.getAttribute("data-agent-name"), href);
   loadIntoPanel(href + (href.includes("?") ? "&" : "?") + "partial=1");
+}
+
+/* Fleet DM composer (operator 2026-10-22): the center pane owns one
+ * ALWAYS-VISIBLE composer. It starts disabled with hint text; on row
+ * selection (click, auto-select, or row-menu inspect) it is retargeted to
+ * the selected agent's message endpoint — the same POST shape as the
+ * detail message-form. The GUI never constructs host/port: the action is
+ * the row's own inspect href + "message", i.e. the leaf route. */
+function agentNameFromUrl(url) {
+  try {
+    const path = String(url || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
+    const tail = path.split("/").pop() || "";
+    return decodeURIComponent(tail);
+  } catch {
+    return "";
+  }
+}
+
+function retargetFleetComposer(name, href) {
+  const host = chatHost();
+  if (!host || !name) return;
+  const form = host.querySelector('form[data-composer="fleet-dm"]');
+  if (!form) return;
+  const path = String(href || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
+  if (path) form.setAttribute("action", path + "/message");
+  const area = form.querySelector("textarea[name='message']");
+  const label = form.querySelector("label[for]");
+  const hint = form.querySelector("[data-role='fleet-composer-hint']");
+  if (area) {
+    area.id = "msg-" + name;
+    area.removeAttribute("disabled");
+    area.setAttribute("placeholder", "Message " + name + "… (Enter to send, Shift+Enter for a new line)");
+    if (label) label.setAttribute("for", area.id);
+  }
+  for (const btn of Array.from(form.querySelectorAll("button[disabled]"))) {
+    btn.removeAttribute("disabled");
+  }
+  if (hint) hint.textContent = "Messaging " + name + ".";
+}
+
+/* Detail tabs (operator 2026-10-22): one tab active at a time; the server
+ * renders every panel visible so no-JS readers get the full content and
+ * this only hides. Roving tabindex + arrow keys; idempotent per holder. */
+function initDetailTabs(root) {
+  const scope = root || document;
+  if (!scope.querySelectorAll) return;
+  const holders = Array.from(scope.querySelectorAll("[data-detail-tabs]"));
+  if (scope !== document && scope.matches && scope.matches("[data-detail-tabs]")) {
+    holders.push(scope);
+  }
+  for (const holder of holders) {
+    if (holder.getAttribute("data-tabs-ready") === "true") continue;
+    holder.setAttribute("data-tabs-ready", "true");
+    const tabs = Array.from(holder.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(holder.querySelectorAll('[role="tabpanel"]'));
+    if (!tabs.length || !panels.length) continue;
+    const byControl = {};
+    for (const p of panels) {
+      if (p.id) byControl[p.id] = p;
+    }
+    const activate = (tab, focus) => {
+      for (const t of tabs) {
+        const on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.classList.toggle("detail-tab--active", on);
+        t.tabIndex = on ? 0 : -1;
+      }
+      const show = byControl[tab.getAttribute("aria-controls") || ""];
+      for (const p of panels) {
+        if (p === show) p.removeAttribute("hidden");
+        else p.setAttribute("hidden", "");
+      }
+      if (focus) tab.focus();
+    };
+    tabs.forEach((t, i) => {
+      t.addEventListener("click", () => activate(t, false));
+      t.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault();
+        const next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+        activate(tabs[next], true);
+      });
+    });
+    const current = tabs.find((t) => t.getAttribute("aria-selected") === "true") || tabs[0];
+    activate(current, false);
+  }
 }
 
 /* Cold-shell warm poll (operator 2026-10-26: extracted from the fleet
  * template — no inline scripts in HTML, per the scripts-separate rule).
- * READ-ONLY single shot while fleet_state == loading: warms the server's
- * last-known snapshot via /api/fleet, then one reload shows the true state
- * (inventory, or unavailable + Retry). Never loops. */
+ * BOUNDED (operator 2026-10-22): while fleet_state == loading, poll
+ * /api/fleet's JSON state up to COLD_POLL_MAX times. A warm snapshot
+ * (ok:true) reloads ONCE to render inventory; a still-failing plane settles
+ * the loading shell IN PLACE to unavailable + Retry — no full-page reload
+ * loops (at most one reload per cold shell). A hard reload (Ctrl+Shift+R)
+ * re-enters here with no cached snapshot and no JS state, and still ends in
+ * inventory or unavailable + Retry within the same bound. */
+var COLD_POLL_MAX = 8;
+var COLD_POLL_MS = 1500;
+var COLD_MAX_RELOADS = 1;
+var COLD_RELOAD_KEY = "sac-cold-reloads-v1";
+
+function coldReloads() {
+  try {
+    return parseInt(window.sessionStorage.getItem(COLD_RELOAD_KEY) || "0", 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function noteColdReload() {
+  try {
+    window.sessionStorage.setItem(COLD_RELOAD_KEY, String(coldReloads() + 1));
+  } catch {
+    /* storage unavailable: the reload cap degrades to best-effort */
+  }
+}
+
+/* Settle the loading shell in place: the same state + Retry copy as the
+ * server-rendered unavailable banner, so the page never spins forever. */
+function settleUnavailable(app) {
+  if (!app || app.getAttribute("data-fleet-state") !== "loading") return;
+  if (app.querySelector("[data-role='fleet-settled-unavailable']")) return;
+  app.setAttribute("data-fleet-state", "unavailable");
+  const banner = document.createElement("div");
+  banner.className = "agents-bannor err";
+  banner.setAttribute("role", "alert");
+  banner.setAttribute("data-role", "fleet-settled-unavailable");
+  const icon = document.createElement("i");
+  icon.className = "fas fa-triangle-exclamation";
+  banner.appendChild(icon);
+  const span = document.createElement("span");
+  span.textContent = "The fleet is not available right now.";
+  banner.appendChild(span);
+  const note = document.createElement("small");
+  note.textContent = "Your agents are unaffected — this is the console failing to reach its data source, not your fleet going away.";
+  banner.appendChild(note);
+  const retryWrap = document.createElement("small");
+  retryWrap.className = "diag";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-retry";
+  btn.setAttribute("data-action", "retry");
+  const btnIcon = document.createElement("i");
+  btnIcon.className = "fas fa-rotate";
+  btn.appendChild(btnIcon);
+  btn.appendChild(document.createTextNode(" Retry"));
+  btn.addEventListener("click", function () { window.location.reload(); });
+  retryWrap.appendChild(btn);
+  banner.appendChild(retryWrap);
+  const shell = app.querySelector(".agents-loading");
+  if (shell) shell.replaceWith(banner);
+  else app.appendChild(banner);
+}
+
 function warmColdShell() {
   const app = document.querySelector(".agents-app");
   if (!app || app.getAttribute("data-fleet-state") !== "loading") return;
   const base = app.getAttribute("data-fleet-api") || "/apps/agent-container/api/fleet";
-  fetch(base, { method: "GET", credentials: "same-origin" })
-    .then(function () { window.location.reload(); })
-    .catch(function () { /* console unreachable: stay in loading, do not loop */ });
+  let polls = 0;
+  const poll = () => {
+    polls += 1;
+    fetch(base, { method: "GET", credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then((response) => response.json().catch(() => ({ ok: false })))
+      .then((data) => {
+        if (data && data.ok === true) {
+          /* Snapshot is warm: a single reload renders inventory. */
+          if (coldReloads() < COLD_MAX_RELOADS) {
+            noteColdReload();
+            window.location.reload();
+            return;
+          }
+        }
+        if (polls < COLD_POLL_MAX) setTimeout(poll, COLD_POLL_MS);
+        else settleUnavailable(app);
+      })
+      .catch(() => {
+        /* Console unreachable: retry within the bound, then settle. */
+        if (polls < COLD_POLL_MAX) setTimeout(poll, COLD_POLL_MS);
+        else settleUnavailable(app);
+      });
+  };
+  poll();
 }
 
 if (document.readyState === "loading") {
@@ -121,6 +311,7 @@ if (document.readyState === "loading") {
 
 function initFleet() {
   warmColdShell();
+  initDetailTabs(document);
   const table = document.querySelector("[data-fleet-table]");
   if (table) {
     table.addEventListener("click", onClick);
@@ -337,7 +528,7 @@ function applyFilter(query, table) {
 const DM_EMOJIS = ["👍", "👎", "🙏", "✅", "❌", "🚀", "👀", "💡", "⚠️", "🎉", "❤️", "🤔"];
 
 function dmComposerOf(node) {
-  return node instanceof Element ? node.closest('form[data-composer="dm"]') : null;
+  return node instanceof Element ? node.closest('form[data-composer]') : null;
 }
 
 function dmTextarea(form) {
@@ -390,7 +581,7 @@ function toggleEmojiPopover(button) {
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
-  const form = e.target instanceof Element ? e.target.closest('form[data-composer="dm"] textarea[name="message"]') : null;
+  const form = e.target instanceof Element ? e.target.closest('form[data-composer] textarea[name="message"]') : null;
   if (!form) return;
   const composer = dmComposerOf(form);
   if (!composer) return;

@@ -176,12 +176,15 @@ def compile_hermes_config(
         # unreachable-judge pauses — the definition (spec + generated
         # profile) must show everything, no implicit behavior.
         "goal_judge": {
-            # Same lane the agent itself runs on (native name or the
-            # named-custom identity — never a Hermes default).
-            # Operator order 2026-10-06: judge model is
-            # meta-muse-spark-1.3-contributor, always xhigh.
+            # Same lane AND same model the agent itself runs on (native
+            # name or the named-custom identity — never a Hermes default).
+            # Operator order 2026-10-22 (prompt-2026-1022): the judge model
+            # is muse-spark-1.3-contributor just like agents — never
+            # deepseek, and never the meta- alias spellings (those are
+            # same-family aliases for validation only; the opencode Go
+            # endpoint serves the bare agent model id).
             "provider": model_block["provider"],
-            "model": "meta-muse-spark-1.3-contributor",
+            "model": model_block["default"],
             "reasoning_effort": "xhigh",
             "timeout": 60,
             "max_tokens": 4096,

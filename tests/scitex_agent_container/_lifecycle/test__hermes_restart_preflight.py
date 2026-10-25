@@ -906,7 +906,7 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         "",
         {
             "provider": "custom:sac-muse",
-            "model": "meta-muse-spark-1.3-contributor",
+            "model": "muse-spark-1.3-contributor",
             "reasoning_effort": "xhigh",
             "timeout": 60,
             "max_tokens": 4096,
@@ -925,9 +925,10 @@ def test_same_muse_fallback_updates_goal_judge_wire_name():
         proof.plan, workdir=value.workdir, goals=value.hermes_goals
     )
     profile._apply_verified_route(rendered, proof.selection)
-    # Assert
+    # Assert — the judge follows the verified backup lane (same Muse model
+    # via the meta/ wire name, same-family alias), never the dead primary.
     assert rendered["auxiliary"]["goal_judge"] == {
-        "provider": "custom:sac-muse",
+        "provider": "custom:sac-backup",
         "model": "meta/" + MODEL,
         "reasoning_effort": "xhigh",
         "timeout": 60,

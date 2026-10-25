@@ -99,6 +99,12 @@ _KNOWN_SPEC_KEYS = frozenset(
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         "delegation",  # harness-neutral child concurrency/isolation policy
+        # Per-project worktree controls (``authority_branch`` override).
+        # OPTIONAL, deliberately: absent/empty keeps the manifest default
+        # (``develop``), so existing specs load unchanged. Absent from the
+        # explicit-required map for the same reason ``residency`` and
+        # ``to_home_layers`` are. See ``config._worktree``.
+        "worktree",
         # Declared secret NAMES (never values): env names the launcher
         # resolves from host credential stores into the 0600 env-file at
         # start. OPTIONAL, documentation-first: a spec that omits it still

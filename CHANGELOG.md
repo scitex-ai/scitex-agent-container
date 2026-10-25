@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-25
+
+### Added
+- **Fleet DM composer always visible.** The center pane now carries its
+  own message composer (same POST shape as the detail message-form),
+  disabled with a hint until a row is selected, retargeted on selection
+  via the new `dispatch_id` in the fleet context.
+- **Details column: 5 tabs instead of 6 cards.** Identity, Runtime
+  Activity, Control, Resources, Recent Session Log as a tab strip
+  (vanilla JS, no-JS fallback shows all panels); the standalone
+  Message-thread card is gone (the thread already renders in the DM
+  pane). All lifecycle/message/control POST endpoints unchanged.
+- **Bounded fleet loading retry.** The cold shell polls `/api/fleet`
+  JSON up to 8 times before settling on unavailable+Retry instead of
+  reload-looping; the hard-reload path has a Retry link.
+- **Spec-configurable worktree authority branch.**
+  `spec.worktree.authority_branch` (default `develop`, unchanged when
+  unset); unknown names fail loud. Lets main-checkout projects
+  (e.g. scitex-sdk) provision worktrees without authority refusals.
+
+### Fixed
+- **Goal judge follows the verified lane.** When preflight rewrites the
+  launch onto a verified provider, `goal_judge` moves with the agent
+  (same provider + model, never DeepSeek/Hermes defaults/meta-
+  aliases); a judge left on the dead primary paused every goal after 5
+  transport failures.
+- **Adopt stale suffix worktrees.** Live `sac-<slug>-<suffix>` worktrees
+  from the older naming are adopted instead of refusing the start.
+
 ## [0.36.0] - 2026-10-24
 
 ### Fixed

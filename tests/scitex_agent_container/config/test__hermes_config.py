@@ -112,7 +112,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "background_review": {"enabled": False},
             "goal_judge": {
                 "provider": "custom:sac-qwen",
-                "model": "meta-muse-spark-1.3-contributor",
+                "model": "qwen38-27b",
                 "reasoning_effort": "xhigh",
                 "timeout": 60,
                 "max_tokens": 4096,
@@ -156,7 +156,7 @@ def test_explicit_turn_caps_and_same_engine_judge_use_supported_hermes_fields():
         {"max_turns": 99999},
         {
             "provider": "custom:sac-qwen",
-            "model": "meta-muse-spark-1.3-contributor",
+            "model": "qwen38-27b",
             "reasoning_effort": "xhigh",
             "timeout": 60,
             "max_tokens": 4096,
@@ -480,7 +480,7 @@ def test_goal_judge_rides_the_agent_lane():
     # Assert
     assert result["auxiliary"]["goal_judge"] == {
         "provider": "custom:sac-qwen",
-        "model": "meta-muse-spark-1.3-contributor",
+        "model": "qwen38-27b",
         "reasoning_effort": "xhigh",
         "timeout": 60,
         "max_tokens": 4096,
@@ -506,7 +506,7 @@ def test_goal_judge_native_lane_uses_agent_model():
     # Assert
     assert (
         result["auxiliary"]["goal_judge"]["model"]
-        == "meta-muse-spark-1.3-contributor"
+        == "muse-spark-1.3-contributor"
     )
 
 
@@ -528,3 +528,25 @@ def test_goal_budget_exceeds_hermes_default():
     result = compile_hermes_config(plan, workdir="/work")
     # Assert
     assert result["goals"]["max_turns"] == 99999
+
+
+def test_verified_route_rewrite_keeps_judge_on_agent_lane():
+    # RED: failover to a verified provider rewrote model/default but left
+    # goal_judge pinned to the dead primary lane -> 5 straight
+    # unreachable-judge pauses. The judge must follow the verified route.
+    # Arrange
+    from scitex_agent_container.runtimes._hermes_profile import (
+        _apply_verified_route,
+    )
+
+    plan = _plan()
+    rendered = compile_hermes_config(plan, workdir="/work")
+    verified_selection = {
+        "model": dict(rendered["model"]),
+    }
+    verified_selection["model"]["provider"] = "custom:sac-verified"
+    # Act
+    _apply_verified_route(rendered, verified_selection)
+    # Assert — the judge follows the verified route: same provider AND
+    # the agent's own model id.
+    assert (rendered["auxiliary"]["goal_judge"]["provider"], rendered["auxiliary"]["goal_judge"]["model"]) == ("custom:sac-verified", plan.engine.model_id)
