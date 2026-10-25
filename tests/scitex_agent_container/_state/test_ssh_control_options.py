@@ -362,6 +362,38 @@ def test_long_default_socket_path_disables_multiplexing_without_other_writes(
     assert opts == [] and not runtime.exists()
 
 
+@pytest.mark.parametrize(
+    "stem_len,multiplexing_on",
+    [(90, True), (91, False)],
+)
+def test_socket_stem_boundary_budgets_listener_suffix(
+    env_save_restore, stem_len, multiplexing_on
+):
+    # Arrange — OpenSSH binds its master listener at <expanded stem> + "."
+    # + 16 random chars (measured 2026-10-23 on OpenSSH 9.6p1: a 91-byte
+    # stem fails with "unix_listener: ... too long", a 90-byte stem binds).
+    # Drive the DEFAULT dir via env (explicit pins bypass the guard by
+    # design); fixed /tmp base keeps the stem byte-length exact.
+    import os
+    import shutil
+
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    # Stem = runtime + "/ssh-cm" + "/" + 40 (%C).
+    runtime = "/tmp/" + "r" * (stem_len - 48 - len("/tmp/"))
+    assert len(os.fsencode(runtime)) + 48 == stem_len
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", runtime)
+    try:
+        # Act
+        opts = ssh_control_options()
+    finally:
+        shutil.rmtree(runtime, ignore_errors=True)
+    # Assert
+    assert (opts != []) == multiplexing_on
+
+
 # ---------------------------------------------------------------------------
 # ssh_control_options_str — shell-quoted convenience
 # ---------------------------------------------------------------------------
