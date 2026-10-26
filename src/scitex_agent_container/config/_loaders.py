@@ -62,7 +62,6 @@ from ._parsers import (
 from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
 from ._secret_scope_types import resolve_spec_secret_scope
-from ._spec_uuid import parse_spec_uuid
 from ._worktree import parse_spec_worktree
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
@@ -221,6 +220,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
     # minted at create, backfilled first-seen-stable. Validated loud —
     # a malformed uuid must never load as "no uuid" and re-stamp later.
+    # Lazy import: spec-uuid parsing stays OFF the `sac --help` import
+    # closure (see 21_cli-startup-budget.md).
+    from ._spec_uuid import parse_spec_uuid
+
     spec_uuid = parse_spec_uuid(spec.get("uuid"), path=str(path))
 
     # Auto-derive workdir (user can override).
