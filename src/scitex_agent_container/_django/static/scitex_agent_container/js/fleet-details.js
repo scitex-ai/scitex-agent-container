@@ -145,7 +145,6 @@ function retargetFleetComposer(name, href) {
   if (path) form.setAttribute("action", path + "/message");
   const area = form.querySelector("textarea[name='message']");
   const label = form.querySelector("label[for]");
-  const hint = form.querySelector("[data-role='fleet-composer-hint']");
   if (area) {
     area.id = "msg-" + name;
     area.removeAttribute("disabled");
@@ -155,7 +154,6 @@ function retargetFleetComposer(name, href) {
   for (const btn of Array.from(form.querySelectorAll("button[disabled]"))) {
     btn.removeAttribute("disabled");
   }
-  if (hint) hint.textContent = "Messaging " + name + ".";
 }
 
 /* Detail tabs (operator 2026-10-22): one tab active at a time; the server
@@ -588,6 +586,39 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   if (typeof composer.requestSubmit === "function") composer.requestSubmit();
   else composer.submit();
+});
+
+/* Fleet composer send-in-place (operator 2026-10-26): the fleet composer
+ * POSTs via fetch so Enter-to-send never navigates away from the fleet
+ * page (the native POST redirects to the agent detail page). Success
+ * clears the input and refreshes the DM thread through the existing
+ * fragment path; any failure falls back to the native submit so the
+ * server-rendered notice banner still reports the delivery outcome. */
+document.addEventListener("submit", (e) => {
+  const form = e.target instanceof Element ? e.target.closest('form[data-composer="fleet-dm"]') : null;
+  if (!form) return;
+  const action = String(form.getAttribute("action") || "");
+  if (!/\/message\/?$/.test(action)) return;
+  e.preventDefault();
+  fetch(action, {
+    method: "POST",
+    body: new FormData(form),
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  })
+    .then((r) => r.json().catch(() => ({ ok: false })))
+    .then((result) => {
+      if (result && result.ok === true) {
+        const area = form.querySelector("textarea[name='message']");
+        if (area) { area.value = ""; area.focus(); }
+        loadIntoPanel(action.replace(/\/message\/?$/, "") + "?partial=1");
+        return;
+      }
+      form.submit();
+    })
+    .catch(() => {
+      form.submit();
+    });
 });
 
 document.addEventListener("click", (e) => {
