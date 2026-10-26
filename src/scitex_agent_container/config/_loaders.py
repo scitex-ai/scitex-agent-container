@@ -62,6 +62,7 @@ from ._parsers import (
 from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
 from ._secret_scope_types import resolve_spec_secret_scope
+from ._spec_uuid import parse_spec_uuid
 from ._worktree import parse_spec_worktree
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
@@ -217,6 +218,11 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     name = compose_effective_name(raw_name, hosts_spec, hostname)
 
+    # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+    # minted at create, backfilled first-seen-stable. Validated loud —
+    # a malformed uuid must never load as "no uuid" and re-stamp later.
+    spec_uuid = parse_spec_uuid(spec.get("uuid"), path=str(path))
+
     # Auto-derive workdir (user can override).
     # Default lives under runtime/workspaces/ (2026-04-17 layout).
     workdir = spec.get("workdir")
@@ -369,6 +375,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     engines = resolve_engine_namespace(spec)
     config = AgentConfig(
         name=name,
+        uuid=spec_uuid,
         runtime=str(spec.get("runtime") or "tui"),
         engines=engines,
         # HARNESS — which agent SDK runs the session. NOT

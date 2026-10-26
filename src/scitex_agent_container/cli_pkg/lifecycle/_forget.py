@@ -21,10 +21,16 @@ _FORGET_EXIT_REASON = "operator-forget"
 
 def _refusal_message(name: str, active_rows: list[dict]) -> str:
     """Name live rows and the normal stop operation required first."""
-    hosts = sorted({r.get("host", "?") for r in active_rows})
+    hosts = sorted({str(r.get("host", "?")) for r in active_rows})
+    detail = " ".join(
+        f"(host={r.get('host', '?')} id={r.get('id', '?')} "
+        f"started_at={r.get('started_at', '?')} "
+        f"spec_uuid={r.get('spec_uuid') or 'unstamped'})"
+        for r in active_rows
+    )
     return (
         f"refusing to forget {name!r}: the shared store shows {len(active_rows)} "
-        f"live instance row(s) on host(s) {hosts!r}. "
+        f"live instance row(s) on host(s) {hosts!r}: {detail} "
         f"Stop the agent with `sac agents stop {name}` before forgetting it."
     )
 

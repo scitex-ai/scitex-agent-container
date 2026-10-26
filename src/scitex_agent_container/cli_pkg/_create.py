@@ -48,6 +48,8 @@ from pathlib import Path
 
 import click
 
+from ..config._spec_uuid import ensure_spec_uuid
+
 # Inline spec templates live in ``_create_templates`` (per-file line
 # cap). Fully-explicit bodies per the red-start ruling 2026-07-21.
 from ._create_templates import (  # noqa: F401
@@ -372,6 +374,9 @@ def scaffold_agent(
             )
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
+        # Stamp the immutable spec identity BEFORE adoption so the adopting
+        # commit carries it (card sac-identity-spec-uuid-20261026).
+        ensure_spec_uuid(agent_dir / "spec.yaml")
         _adopt_agent_dir(agent_dir, name)
         system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return agent_dir / "spec.yaml"
@@ -439,6 +444,10 @@ def scaffold_agent(
 
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(body)
+    # Mint the immutable spec identity at create (card
+    # sac-identity-spec-uuid-20261026). Loud on failure: a scaffold
+    # without uuid violates the invariant this change establishes.
+    ensure_spec_uuid(spec_path)
 
     # to_home/ sibling — the runtime auto-discovers it as the materialised
     # container $HOME source (ADR-0006). Empty dir is fine; operator

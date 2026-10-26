@@ -278,6 +278,15 @@ INSTANCES = Schema.build(
         "id": _identity(FieldKind.TEXT),
         "host": _identity(FieldKind.TEXT),
         "name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True, indexed=True),
+        # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+        # the ``spec.uuid`` stamped at create / backfilled first-seen. The
+        # directory-derived ``name`` stays the MUTABLE label (renames rewrite
+        # it); this uuid is what survives a rename and what the resolver
+        # keys on. IMMUTABLE because a spec's identity never changes — a
+        # second, different value is a contradiction, not an update. NULL on
+        # rows written before the backfill; resolvers treat that as
+        # "unknown", never as a match.
+        "spec_uuid": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
         "pid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "process_start_time": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "process_uid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
