@@ -15,6 +15,10 @@ Coverage map:
   * ``ssh_control_options`` — default shape, explicit dir arg,
     ``$SAC_SSH_CONTROL_DIR`` env override, ``SAC_SSH_CONTROL_MASTER``
     opt-out matrix, fall-through to ``[]`` on read-only parent.
+  * master-suffix socket budget (card sac-ssh-crosshost-...-20261026):
+    ``%C`` + OpenSSH's random master suffix against ``sockaddr_un``,
+    XDG_RUNTIME fallback order; env/arg pins stay verbatim (caller's
+    responsibility, gated for generated defaults only).
   * ``ssh_control_options_str`` — shell-quoted shape; empty when opted out.
   * ``build_ssh_argv`` — control options appear, opt-out preserves the
     pre-patch shape, caller ``extra_opts`` wins (last-flag-wins on ssh).
@@ -30,6 +34,7 @@ from __future__ import annotations
 
 import shlex
 import stat
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -354,12 +359,131 @@ def test_long_default_socket_path_disables_multiplexing_without_other_writes(
 
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
     env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.delete("XDG_RUNTIME_DIR")
     runtime = tmp_path / ("long-runtime-" * 12)
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     # Act
     opts = ssh_control_options()
     # Assert
     assert opts == [] and not runtime.exists()
+
+
+# ---------------------------------------------------------------------------
+# ssh_control_options — master-suffix socket budget (card
+# sac-ssh-crosshost-unix-socket-path-20261026)
+# ---------------------------------------------------------------------------
+# OpenSSH appends a random `.<16>` suffix to the master listener socket,
+# so `<dir>/%C` costs dir+1+40+1+16 on disk. The old budget counted only
+# %C and green-lit directories (e.g. compute-03's 58-byte runtime dir)
+# whose sockets ssh then refused with `unix_listener: path ... too long`.
+#
+# NOTE on fixtures: the budget caps directories at 42 bytes, but
+# ``tmp_path`` roots are ~70 bytes on their own — every path built under
+# one is over budget by construction. Budget tests therefore use a short
+# ``/tmp``-anchored root (unique per test, auto-cleaned) instead.
+
+
+@pytest.fixture
+def shorttmp():
+    """Unique ≤20-byte scratch root (``tmp_path`` is too long for the budget)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="sx-", dir="/tmp") as d:
+        yield Path(d)
+
+
+def test_socket_budget_counts_hash_plus_master_suffix():
+    # Arrange — pure byte math, no filesystem involved.
+    from scitex_agent_container._state.ssh_control_options import (
+        _fits_socket_budget,
+    )
+
+    # Act — 42B dir: 42+1+40+24 = 107 fits; 43B dir: 108 does not.
+    fits_42 = _fits_socket_budget("/" + "e" * 41)
+    fits_43 = _fits_socket_budget("/" + "e" * 42)
+    # Assert — one assertion: the boundary is exactly between them.
+    assert (fits_42, fits_43) == (True, False)
+
+
+def test_compute_03_runtime_dir_blows_socket_budget():
+    # Arrange — the measured 58-byte runtime dir from the incident.
+    from scitex_agent_container._state.ssh_control_options import (
+        _fits_socket_budget,
+    )
+
+    # Act
+    fits = _fits_socket_budget("/home/ywatanabe/.scitex/agent-container/runtime/ssh-cm")
+    # Assert — 58+1+40+24 = 123 > 107: refused, as ssh proved live.
+    assert fits is False
+
+
+def test_long_runtime_dir_falls_back_to_short_xdg_dir(shorttmp, env_save_restore):
+    # Arrange — long runtime (as on compute-03), short XDG tmpfs.
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.set(
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(shorttmp / ("long-runtime-" * 12))
+    )
+    xdg = shorttmp / "xdg"
+    xdg.mkdir()
+    env_save_restore.set("XDG_RUNTIME_DIR", str(xdg))
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    # Act
+    opts = ssh_control_options()
+    # Assert — multiplexing stays ON, relocated to the XDG dir.
+    assert f"ControlPath={xdg / 'sac-ssh-cm'}/%C" in opts
+
+
+def test_short_runtime_dir_wins_over_xdg_dir(shorttmp, env_save_restore):
+    # Arrange — both fit: the established runtime default must not move.
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    runtime = shorttmp / "runtime"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
+    xdg = shorttmp / "xdg"
+    xdg.mkdir()
+    env_save_restore.set("XDG_RUNTIME_DIR", str(xdg))
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    # Act
+    opts = ssh_control_options()
+    # Assert
+    assert f"ControlPath={runtime / 'ssh-cm'}/%C" in opts
+
+
+def test_long_xdg_dir_also_falls_through_to_disabled(shorttmp, env_save_restore):
+    # Arrange — nothing fits: runtime long, XDG long, no env pin.
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.set(
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(shorttmp / ("long-runtime-" * 12))
+    )
+    env_save_restore.set("XDG_RUNTIME_DIR", str(shorttmp / ("long-xdg-" * 20)))
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    # Act
+    opts = ssh_control_options()
+    # Assert — one-conn-per-call, never a socket ssh must refuse.
+    assert opts == []
+
+
+def test_overlong_env_dir_is_used_verbatim_as_explicit_pin(tmp_path, env_save_restore):
+    # Arrange — an env pin is an explicit operator choice (same category
+    # as the control_dir argument): used verbatim, never second-guessed.
+    # Only GENERATED candidates (runtime default, XDG fallback) are
+    # budget-gated. An over-long pin fails loudly inside ssh instead.
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / ("long-env-" * 20)))
+    runtime = tmp_path / "runtime"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
+    env_save_restore.delete("XDG_RUNTIME_DIR")
+    from scitex_agent_container._state.host_config import ssh_control_options
+
+    # Act
+    opts = ssh_control_options()
+    # Assert — the pin is honored exactly as stated.
+    assert f"ControlPath={tmp_path / ('long-env-' * 20)}/%C" in opts
 
 
 # ---------------------------------------------------------------------------
