@@ -323,6 +323,7 @@ def test_ssh_control_options_default_dir_stays_in_sac_runtime(
     # Arrange
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
     env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.delete("XDG_RUNTIME_DIR")
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "runtime")
     )
@@ -342,6 +343,7 @@ def test_ssh_control_options_default_dir_ends_with_sac_ssh_cm_percent_C(
     # Arrange
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
     env_save_restore.delete("SAC_SSH_CONTROL_DIR")
+    env_save_restore.delete("XDG_RUNTIME_DIR")
     from scitex_agent_container._state.host_config import ssh_control_options
 
     # Act
