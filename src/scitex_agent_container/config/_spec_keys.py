@@ -27,6 +27,12 @@ __all__ = [
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
+        # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+        # minted at create, backfilled first-seen-stable, never the
+        # content-hash spec_id. OPTIONAL (not in the explicit-required
+        # map) so the existing corpus keeps loading while the backfill
+        # lands — the same posture residency/to_home_layers took.
+        "uuid",
         "harness",  # which agent SDK runs the session: anthropic | openai
         "provider",  # DEPRECATED alias of "harness" — still honoured so the
         # existing spec corpus loads unchanged. Unrelated to the nested

@@ -273,6 +273,14 @@ class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
     name: str
+    # Immutable per-spec identity (card sac-identity-spec-uuid-20261026).
+    # Minted at ``sac agents create``, backfilled first-seen-stable for
+    # older specs. The directory-derived ``name`` stays the MUTABLE,
+    # operator-facing label; this uuid is what ``instances`` rows and the
+    # name resolver key on, so renames and stale same-name rows on peer
+    # hosts stop being unresolvable. "" = not yet stamped (loader
+    # tolerates it; the start path stamps it).
+    uuid: str = ""
     # Launch-mode selector. Default ``"tui"`` (interactive in-apptainer
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.

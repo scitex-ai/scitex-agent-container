@@ -322,6 +322,10 @@ def instances_schema() -> Any:
             "id": ident(FieldKind.TEXT),
             "host": ident(FieldKind.TEXT),
             "name": data(FieldKind.TEXT, lww, required=True, indexed=True),
+            # Immutable per-spec identity (card
+            # sac-identity-spec-uuid-20261026). See ``_store_plugin.INSTANCES``
+            # for why IMMUTABLE; NULL until the spec backfill stamps it.
+            "spec_uuid": data(FieldKind.TEXT, MergeRule.IMMUTABLE),
             "pid": data(FieldKind.INTEGER, lww),
             "process_start_time": data(FieldKind.INTEGER, lww),
             "process_uid": data(FieldKind.INTEGER, lww),
@@ -622,6 +626,10 @@ def instance_as_dict(row: "Row") -> dict[str, Any]:
         "id": str(values["id"]),
         "host": str(values["host"]),
         "name": str(values["name"]) if values.get("name") is not None else None,
+        # Immutable per-spec identity; None on pre-backfill rows. A reader
+        # matching on this must treat None as "unknown", never as equal
+        # to another None (two unstamped rows share nothing).
+        "spec_uuid": str(values["spec_uuid"]) if values.get("spec_uuid") is not None else None,
         "pid": None if values.get("pid") is None else int(values["pid"]),
         "process_start_time": values.get("process_start_time"),
         "process_uid": values.get("process_uid"),

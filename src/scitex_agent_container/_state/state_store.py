@@ -95,3 +95,7 @@ from .state_store_instances import (  # noqa: E402,F401
     record_instance_start,
     record_instance_stop,
 )
+from .state_store_instances_resolve import (  # noqa: E402,F401
+    DualLiveClaimants,
+    resolve_live_by_name,
+)
