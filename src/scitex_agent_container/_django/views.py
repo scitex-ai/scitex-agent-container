@@ -577,12 +577,21 @@ def message_action(request: HttpRequest, name: str):
     control_key = field("control_key")
     dispatch_id = field("dispatch_id") or new_dispatch_id()
 
+    # Send-in-place (operator 2026-10-26): the fleet composer POSTs with
+    # `Accept: application/json` so Enter-to-send stays on the fleet page
+    # instead of following the detail-page redirect below. JSON carries
+    # the same outcome the redirect query string would have.
+    wants_json = "application/json" in request.headers.get("Accept", "")
+
     if not exactly_one_of(message.strip(), control_key.strip()):
+        refusal = "Provide either a message or a single control key."
+        if wants_json:
+            return JsonResponse({"ok": False, "error": refusal}, status=400)
         query = urlencode(
             {
                 "operation": "message",
                 "state": "refused",
-                "message": "Provide either a message or a single control key.",
+                "message": refusal,
             }
         )
         return HttpResponseRedirect(f"{base}/{name}/?{query}")
@@ -633,6 +642,15 @@ def message_action(request: HttpRequest, name: str):
             "dispatch_id": result.dispatch_id,
         }
     )
+    if wants_json:
+        return JsonResponse(
+            {
+                "ok": result.state in ("delivered", "replay"),
+                "state": result.state,
+                "message": result.message[:240],
+                "dispatch_id": result.dispatch_id,
+            }
+        )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 

@@ -456,17 +456,21 @@ details.detail-card > summary.detail-card__head:focus-visible { outline: 2px sol
 /* Detail tabs (operator 2026-10-22): 5 tabs replace the 6 <details> cards.
    No-JS fallback: every panel renders visible; fleet-details.js activates
    the first tab and hides the rest. Square, 2px max — never round. */
+/* Detail tabs: the shared SDK content-tabs contract
+   (scitex_sdk stx-content-tabs — Writer/Scholar/FigRecipe 13px tabs):
+   underline ONLY in the theme accent for the selected tab, no box, no
+   surface tint, no weight change. Operator 2026-10-26. */
 .detail-tabs { display: flex; flex-direction: column; gap: 0; min-height: 0; }
-.detail-tablist { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--agents-border); padding-bottom: 8px; }
-.detail-tab { cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--agents-dim); background: none; border: 1px solid transparent; border-radius: 2px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; }
-.detail-tab:hover { color: var(--agents-text); border-color: var(--agents-border); }
-.detail-tab--active, .detail-tab[aria-selected="true"] { color: var(--agents-text); border-color: var(--agents-cross); }
+.detail-tablist { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--agents-border); padding-bottom: 0; overflow-x: auto; }
+.detail-tab { cursor: pointer; font: inherit; font-size: 13px; font-weight: 400; color: var(--agents-dim); background: transparent; border: 1px solid transparent; border-radius: 0; padding: 10px 12px; min-height: 44px; box-sizing: border-box; white-space: nowrap; }
+.detail-tab:hover { color: var(--agents-text); background: transparent; }
+.detail-tab--active, .detail-tab[aria-selected="true"] { color: var(--agents-cross); border-color: transparent; border-bottom: 2px solid var(--agents-cross); background: transparent; box-shadow: none; border-radius: 0; }
 .detail-tab:focus-visible { outline: 2px solid var(--agents-cross); outline-offset: 2px; }
 .detail-tabpanel[hidden] { display: none; }
-/* Fleet composer hint (operator 2026-10-22): the hint reads as a second
-   row under the input, never as a squeezed third flex item. */
+/* Fleet composer (operator 2026-10-22, hint div removed 2026-10-26):
+   the textarea placeholder carries the state ("Select an agent…" /
+   "Message <name>…"), so no second row is rendered under the input. */
 form[data-composer="fleet-dm"] { flex-wrap: wrap; }
-form[data-composer="fleet-dm"] [data-role="fleet-composer-hint"] { flex-basis: 100%; margin: 2px 0 0; }
 .agents-chat-empty { margin: auto; text-align: center; }
 /* Details pane label: the SDK tab strip is phone-only (display:none on
    desktop), so the slim bar carries the "Details" label. No icon, no
