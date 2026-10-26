@@ -131,6 +131,13 @@ def test_unstamped_rows_ask_for_the_backfill() -> None:
     assert "UNSTAMPED" in (hint or "")
 
 
+def _raised_by(action) -> DualLiveClaimants:
+    """Run ``action`` expected to refuse; return the refusal."""
+    with pytest.raises(DualLiveClaimants) as excinfo:
+        action()
+    return excinfo.value
+
+
 def test_two_fresh_claimants_refuse_fail_closed() -> None:
     # Arrange — two hosts both beating for one name: unroutable.
     rows = [
@@ -139,10 +146,9 @@ def test_two_fresh_claimants_refuse_fail_closed() -> None:
     ]
     act = lambda: resolve_live_by_name("lp", rows=rows, now=_NOW)  # noqa: E731
     # Act
-    with pytest.raises(DualLiveClaimants) as error:
-        act()
+    refusal = _raised_by(act)
     # Assert
-    assert len(error.value.claimants) == 2
+    assert len(refusal.claimants) == 2
 
 
 def test_refusal_names_every_claimant_host() -> None:
@@ -153,10 +159,9 @@ def test_refusal_names_every_claimant_host() -> None:
     ]
     act = lambda: resolve_live_by_name("lp", rows=rows, now=_NOW)  # noqa: E731
     # Act
-    with pytest.raises(DualLiveClaimants) as error:
-        act()
+    refusal = _raised_by(act)
     # Assert
-    assert "h-a" in str(error.value) and "h-b" in str(error.value)
+    assert "h-a" in str(refusal) and "h-b" in str(refusal)
 
 
 def test_spec_uuid_declared_on_both_schema_surfaces() -> None:

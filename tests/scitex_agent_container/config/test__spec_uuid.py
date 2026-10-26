@@ -59,13 +59,20 @@ def test_parse_valid_uuid_normalises_case() -> None:
     assert parsed == "a8098c1a-f86e-11da-bd1a-00112444be1e"
 
 
+def _raised_by(action) -> ValueError:
+    """Run ``action`` expected to raise; return the error."""
+    with pytest.raises(ValueError) as excinfo:
+        action()
+    return excinfo.value
+
+
 def test_parse_malformed_raises_naming_path() -> None:
     # Arrange — a half-written uuid must never load as "no uuid".
+    act = lambda: parse_spec_uuid("not-a-uuid", path="some/spec.yaml")  # noqa: E731
     # Act
-    with pytest.raises(ValueError) as error:
-        parse_spec_uuid("not-a-uuid", path="some/spec.yaml")
+    error = _raised_by(act)
     # Assert
-    assert "some/spec.yaml" in str(error.value)
+    assert "some/spec.yaml" in str(error)
 
 
 def test_ensure_stamps_missing_uuid_on_its_own_line(tmp_path: Path) -> None:
@@ -117,9 +124,9 @@ def test_ensure_refuses_malformed_without_touching_file(
     text = _SPEC_TEXT.replace("  harness: hermes", "  uuid: bogus\n  harness: hermes")
     path = _write_text(tmp_path, text)
     before = path.read_text()
+    act = lambda: ensure_spec_uuid(path)  # noqa: E731
     # Act
-    with pytest.raises(ValueError):
-        ensure_spec_uuid(path)
+    _raised_by(act)
     # Assert
     assert path.read_text() == before
 
@@ -162,10 +169,9 @@ def test_loader_rejects_malformed_uuid(tmp_path: Path) -> None:
     path = _write_doc(tmp_path, doc)
     act = lambda: load_config(path)  # noqa: E731
     # Act
-    with pytest.raises(ValueError) as error:
-        act()
+    error = _raised_by(act)
     # Assert
-    assert "spec.uuid" in str(error.value)
+    assert "spec.uuid" in str(error)
 
 
 def test_explicit_map_does_not_require_uuid() -> None:
