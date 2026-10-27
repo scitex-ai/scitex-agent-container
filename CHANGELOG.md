@@ -6,6 +6,34 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-26
+
+### Added
+- **Immutable per-spec identity (`spec.uuid`).** Minted at
+  `sac agents create`, backfilled first-seen-stable; `instances` rows
+  carry it as an immutable `spec_uuid` field. The directory-derived
+  name stays the mutable label. New `resolve_live_by_name`: one live
+  row resolves, one live + stale rows resolve live with a
+  misalignment hint naming the exact per-stale-host cleanup, two live
+  claimants stay fail-closed (`DualLiveClaimants`).
+- **Fleet DM composer sends in place.** Enter-to-send POSTs via fetch
+  (`Accept: application/json`, new JSON branch in `message_action`)
+  so the fleet page is never left for the agent detail redirect;
+  failures fall back to the native submit and its notice banner.
+- **Details tabs follow the shared SDK contract.**
+  `stx-content-tabs` values: 13px labels, underline-only accent
+  selected state, no box, no uppercase.
+
+### Fixed
+- **Cross-host ssh multiplexing on long runtime roots.** OpenSSH
+  appends a random `.<16>` master-listener suffix, so `ssh-cm/%C`
+  cost dir+1+40+1+16 — compute-03's 58-byte runtime dir totaled 116B
+  > 107B `sockaddr_un`, breaking every cross-host lane with
+  `unix_listener: path ... too long`. Resolution now prefers
+  `$XDG_RUNTIME_DIR/sac-ssh-cm` when the runtime dir does not fit the
+  suffix-aware budget, then multiplexing-off; explicit pins stay
+  verbatim.
+
 ## [0.37.0] - 2026-10-25
 
 ### Added
