@@ -320,6 +320,7 @@ render_content(owned.getvalue().rstrip('\\n'))
 def test_human_console_preserves_prefixes_and_adapts_color_to_current_destination():
     # Arrange
     code = """
+import errno
 import json
 import os
 import pty
@@ -334,7 +335,20 @@ read_fd, write_fd = pty.openpty()
 with os.fdopen(write_fd, 'w', buffering=1) as terminal:
     with redirect_stdout(terminal):
         render_rich(payload, 'redirect-contract', width=200)
-    terminal_output = os.read(read_fd, 65536).decode().replace('\\r\\n', '\\n')
+# A PTY read can return only the first write. Close the slave, then drain
+# all bytes until the master reaches EOF (EIO on Linux).
+chunks = []
+while True:
+    try:
+        chunk = os.read(read_fd, 65536)
+    except OSError as exc:
+        if exc.errno != errno.EIO:
+            raise
+        break
+    if not chunk:
+        break
+    chunks.append(chunk)
+terminal_output = b''.join(chunks).decode().replace('\\r\\n', '\\n')
 os.close(read_fd)
 redirected = StringIO()
 with redirect_stdout(redirected):
