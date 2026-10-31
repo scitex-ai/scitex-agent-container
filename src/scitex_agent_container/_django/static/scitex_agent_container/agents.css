@@ -341,7 +341,10 @@
    buttons + stat sum-cards) share ONE height with equal top/bottom margins
    so the row reads as a single band. The leftmost child adds no extra left
    margin — the pagehead gap already owns the gutters. */
-.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 6px; }
+/* Operator 2026-10-31: the band gets top + bottom margins (air above the
+   buttons, air below the stats), and the stats group stands apart from the
+   buttons via a wider column gap while staying left-aligned. */
+.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 24px; margin: 12px 0 10px; }
 .agents-pagehead > :first-child { margin-left: 0; }
 .agents-pagehead .agents-actions, .agents-pagehead .agents-summary { margin-top: 0; margin-bottom: 0; }
 .agents-pagehead .btn, .agents-pagehead .sum-card { min-height: 30px; box-sizing: border-box; display: inline-flex; align-items: center; margin-top: 0; margin-bottom: 0; }
