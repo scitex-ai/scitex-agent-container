@@ -185,13 +185,20 @@ mounted) so the per-row links are correct at any mount.
   </section>
   </div>
   <script type="module" src="{% static 'scitex_sdk/ui/js/app/panes.js' %}"></script>
-  <script type="module" src="{% static 'scitex_agent_container/js/fleet-details.js' %}"></script>
   {% else %}
   {% if fleet_state == "empty" %}
   <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
     <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
   {% endif %}
   {% endif %}
+  {# Cold shells (agents empty, fleet_state loading) loaded no poller:
+     fleet.js skips loading state by contract and this module used to
+     live inside the agents branch above — the page then sat on
+     "Reading the fleet…" until a hard refresh (operator 2026-10-26,
+     laptop prompt). warmColdShell() is null-guarded and returns
+     unless the shell is loading, so loading it unconditionally is
+     safe on every fleet paint. #}
+  <script type="module" src="{% static 'scitex_agent_container/js/fleet-details.js' %}?v={{ app_version }}"></script>
 
   {# B1: cold shell renders as `loading`. The warm poll lives in #}
   {# fleet-details.js `warmColdShell()` (no inline scripts in HTML). #}

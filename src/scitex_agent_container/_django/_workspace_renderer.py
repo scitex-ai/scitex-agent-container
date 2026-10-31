@@ -11,7 +11,7 @@ except ImportError as exc:
         "scitex-agent-container[gui]."
     ) from exc
 
-from .views import _fleet_context
+from .views import _fleet_context, _leaf_version
 
 
 def _mount_base(prefix: str) -> str:
@@ -43,4 +43,8 @@ def render_content(request, current_project=None, *, stx_mount: str):
     base = _mount_base(stx_mount)
     context = _fleet_context(request)
     context["url_base"] = base
+    # Same leaf-version cache-buster the app-shell pages carry: the
+    # workspace fragment loads the same JS/CSS, so it must version them
+    # identically or a rebake serves stale assets in this mount.
+    context["app_version"] = _leaf_version()
     return render(request, "scitex_agent_container/_workspace_content.html", context)

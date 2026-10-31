@@ -26,7 +26,7 @@ as <h1>. (A lede paragraph used to render below; dropped per operator
        {% if app_version %}data-app-version="{{ app_version }}"{% endif %}></div>
   <script type="module" src="{% static 'scitex_sdk/ui/js/app/app-header.js' %}"></script>
   {% if project_picker_available %}{% include "scitex_agent_container/_project_picker.html" %}{% endif %}
-  <script type="module" src="{% static 'scitex_agent_container/js/header-picker.js' %}"></script>
+  <script type="module" src="{% static 'scitex_agent_container/js/header-picker.js' %}?v={{ app_version }}"></script>
 </div>
 {# Operator 2026-10-22: the pagehead h1 duplicated the SDK AppHeader row — #}
 {# the row already carries the app title, so the extra h1 is dropped. #}
