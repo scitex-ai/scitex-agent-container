@@ -37,7 +37,7 @@ def restart_capped_agents(document, *, state_path: Path, running_names, restart,
         seen = state.setdefault("seen", {})
         # A recovered allowance re-arms a later, independently observed cap.
         state["seen"] = seen = {name: value for name, value in seen.items() if name in candidates}
-        budget = Budget(history=history)
+        budget = Budget(history=history, pass_cap=2)
 
         def persist():
             temporary = state_path.with_suffix(".tmp")
