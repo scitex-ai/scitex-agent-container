@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -101,6 +103,41 @@ def _build(cfg: AgentConfig, tmp_path: Path) -> list[str]:
     return rt.build_run_argv(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
+
+
+@pytest.fixture
+def node_local_base(tmp_path: Path, request) -> Path:
+    """A base dir the jail guard accepts, wherever tmp_path lives.
+
+    The allow-tests assert a launch SUCCEEDS, so their workdir/bind
+    sources must clear the REAL forbidden-prefix guard. pytest's tmp_path
+    follows the runner's TMPDIR — under ``/home`` on self-hosted runners,
+    where the guard correctly refuses. Resolve a compliant base with the
+    guard's own matcher (no duplicated prefix knowledge); skip only if
+    the box offers no node-local scratch. Outside tmp_path the dir is
+    removed on teardown so runners collect no litter.
+    """
+    prefixes = jail.forbidden_prefixes()
+    roots = [tmp_path]
+    for key in ("TMPDIR", "TEMP", "TMP"):
+        value = os.environ.get(key)
+        if value:
+            roots.append(Path(value))
+    roots += [Path(tempfile.gettempdir()), Path("/var/tmp")]
+    for root in roots:
+        try:
+            base = root / "sac-jail-allow"
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if jail.match_forbidden(str(base), prefixes) is None:
+            if base != tmp_path / "sac-jail-allow":
+                request.addfinalizer(
+                    lambda: shutil.rmtree(base, ignore_errors=True)
+                )
+            return base
+    pytest.skip("no node-local scratch: every candidate trips the jail guard")
+    raise AssertionError("unreachable: pytest.skip always raises")
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +256,13 @@ def test_jailed_symlinked_source_realpath_refused(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # (c) /homework near-miss → NOT rejected (component-aware match)
 # ---------------------------------------------------------------------------
-def test_jailed_homework_near_miss_allowed(tmp_path: Path) -> None:
-    # Arrange — /homework must NOT match the /home forbidden prefix.
+def test_jailed_homework_near_miss_allowed(tmp_path: Path, node_local_base: Path) -> None:
+    # Arrange — /homework must NOT match the /home forbidden prefix. The
+    # workdir itself sits on node-local scratch: on runners whose TMPDIR
+    # is under /home the guard correctly refuses tmp_path, which would
+    # fail this allow-test for the box, not the code.
     cfg = _solver_cfg(
-        tmp_path / "wd",
+        node_local_base / "wd",
         apptainer=ApptainerSpec(binds=["/homework/mine:/x"]),
     )
     # Act
@@ -234,12 +274,14 @@ def test_jailed_homework_near_miss_allowed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # (d) clean jailed spec (node-local bind) → launches, --containall present
 # ---------------------------------------------------------------------------
-def test_jailed_node_local_bind_launches_with_containall(tmp_path: Path) -> None:
+def test_jailed_node_local_bind_launches_with_containall(
+    tmp_path: Path, node_local_base: Path
+) -> None:
     # Arrange
-    node_local = tmp_path / "nl"
+    node_local = node_local_base / "nl"
     node_local.mkdir()
     cfg = _solver_cfg(
-        tmp_path / "wd",
+        node_local_base / "wd",
         apptainer=ApptainerSpec(binds=[f"{node_local}:/work:rw"]),
     )
     # Act
@@ -248,13 +290,13 @@ def test_jailed_node_local_bind_launches_with_containall(tmp_path: Path) -> None
     assert "--containall" in argv
 
 
-def test_jailed_relaxed_still_forces_containall(tmp_path: Path) -> None:
+def test_jailed_relaxed_still_forces_containall(tmp_path: Path, node_local_base: Path) -> None:
     # Arrange — relaxed=true normally SKIPS the hardened --containall; the
     # jail assert FORCES it back regardless (non-bypassable).
-    node_local = tmp_path / "nl"
+    node_local = node_local_base / "nl"
     node_local.mkdir()
     cfg = _solver_cfg(
-        tmp_path / "wd",
+        node_local_base / "wd",
         apptainer=ApptainerSpec(relaxed=True, binds=[f"{node_local}:/work:rw"]),
     )
     # Act
@@ -296,15 +338,15 @@ def test_non_jailed_gpfs_bind_unaffected(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # (g) missing-leaf node-local source → launches (realpath tolerates it)
 # ---------------------------------------------------------------------------
-def test_jailed_missing_leaf_source_launches(tmp_path: Path) -> None:
+def test_jailed_missing_leaf_source_launches(tmp_path: Path, node_local_base: Path) -> None:
     # Arrange — $TMPDIR/workdir is created AT launch, so the leaf is absent
     # when the assert runs. realpath resolves the existing parent + appends
     # the missing leaf WITHOUT failing.
-    existing_parent = tmp_path / "tmpdir"
+    existing_parent = node_local_base / "tmpdir"
     existing_parent.mkdir()
     missing = existing_parent / "workdir"  # deliberately not created
     cfg = _solver_cfg(
-        tmp_path / "wd",
+        node_local_base / "wd",
         apptainer=ApptainerSpec(binds=[f"{missing}:/work:rw"]),
     )
     # Act

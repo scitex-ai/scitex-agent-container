@@ -65,6 +65,7 @@ def _install_ssh_shim(
     landed_manifest: str | None = None,
     extract_exit: int = 0,
     extract_stderr: str = "",
+    dir_present: bool = False,
     stdout: str = "{}",
     stderr: str = "",
     exit: int = 0,
@@ -80,6 +81,8 @@ def _install_ssh_shim(
         ``peer_manifest`` so a peer that received nothing keeps saying so).
         Splitting the two is what lets a test model a transport that exits 0
         and delivers nowhere.
+      * ``[ -d ``    — the parity-gate presence probe. Answers ``dir_present``
+        (exit 0 = dir exists, 1 = absent/first launch).
       * ``tar -C``  — receive the spec (``extract_exit``).
       * anything else — the ``sac agents start --json`` handoff (``stdout``).
     """
@@ -102,6 +105,8 @@ def _install_ssh_shim(
         "    sys.stdout.write(before if n == 0 else after)\n"
         f"    sys.stderr.write({json.dumps(manifest_stderr)})\n"
         f"    sys.exit({int(manifest_exit)})\n"
+        "if '[ -d ' in joined:\n"
+        f"    sys.exit({0 if dir_present else 1})\n"
         "if 'tar -C' in joined:\n"
         "    sys.stdin.buffer.read()\n"
         f"    sys.stderr.write({json.dumps(extract_stderr)})\n"
@@ -1011,3 +1016,58 @@ class TestTryDispatchClassification:
             "--no-redispatch",
             "--json",
         ]
+
+
+class TestDispatchPeerBehindRefuses:
+    """Identical file contents or nothing: a peer whose spec dir EXISTS but
+    is behind the lead (has some files, lacks others) must refuse — the
+    fix is syncing the shared checkout, never a silent push. Operator rule
+    2026-10-24: fail fast, fail loud, no silent fallbacks. Only a wholly
+    ABSENT peer dir (first launch) may receive the lead's spec."""
+
+    def test_behind_peer_raises_runtime_error(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
+        # Arrange — the peer dir exists (says so) but holds nothing: every
+        # lead file is new, none differ.
+        sk = dict(peer_manifest="", dir_present=True)
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert isinstance(scen.raised, RuntimeError)
+
+    def test_behind_peer_ships_nothing(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
+        # Arrange
+        sk = dict(peer_manifest="", dir_present=True)
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert scen.shipped_count == 0
+
+    def test_behind_peer_message_names_the_missing_file(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
+        # Arrange
+        sk = dict(peer_manifest="", dir_present=True)
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert "spec.yaml" in scen.message
+
+    def test_absent_peer_dir_still_pushes_first_launch(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
+        # Arrange — the peer dir does not exist at all: genuine first
+        # launch, the one case where shipping is allowed.
+        sk = dict(
+            peer_manifest="",
+            dir_present=False,
+            landed_manifest=_DELIVERED,
+            stdout=_OK_JSON,
+        )
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert scen.raised is None and scen.shipped_count == 1

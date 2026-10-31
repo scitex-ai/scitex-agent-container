@@ -1,38 +1,17 @@
-"""Pre-dispatch creds expiry probe for ``sac agents send``.
+"""Selected local-target auth guard for the library send surface.
 
-Companion to :mod:`scitex_agent_container._state._preflight_creds`
-(which guards ``sac agents start``). Same hard-rule shape: refuse the
-dispatch loudly when the target host can't authenticate, so a stale
-OAuth token surfaces as a clear ``creds-expired`` status instead of
-silently becoming a 401 buried in ``session.jsonl``.
-
-Two surfaces are probed:
-
-* The lead-local credentials file (``~/.claude/.credentials.json``)
-  always gates the call — the lead's token is what the in-container
-  agent will bind-mount and use, regardless of which host runs the
-  actual subprocess.
-* When the target row points at a remote peer, an ``ssh`` probe runs a
-  tiny Python one-liner on the peer to verify that *its* credentials
-  file is still good. Failure modes are categorised explicitly:
-
-  =======================  =============================================
-  ssh exit code            mapped status
-  =======================  =============================================
-  0                        pass (return None)
-  1                        ``status="creds-expired"``
-  any other (incl. raise)  ``status="error"``
-  =======================  =============================================
-
-Skipped entirely when ``ANTHROPIC_API_KEY`` or ``SAC_ANTHROPIC_API_KEY``
-is set — that's the API-key auth path and the OAuth credentials file
-is moot.
+Container prompts use the authenticated host send route before this function.
+Foreign live endpoints use the canonical authenticated SSH/turn route; the
+sender must never infer that peer's model credentials from a local spec or a
+hardcoded Claude file. The selected local spec owns any genuine Claude check.
+The legacy SSH probe remains exported for compatibility but is not invoked by
+send dispatch.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,13 +31,6 @@ PROBE_PYTHON_SCRIPT = (
 )
 
 SshRunner = Callable[..., "subprocess.CompletedProcess[str]"]
-
-
-def _api_key_env_is_set() -> bool:
-    """True when the operator has opted into the API-key auth path."""
-    return bool(
-        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SAC_ANTHROPIC_API_KEY")
-    )
 
 
 def default_ssh_runner(
@@ -103,95 +75,61 @@ def preflight_send_creds(
     ssh_runner: SshRunner | None = None,
     now: float | None = None,
 ) -> dict[str, Any] | None:
-    """Probe lead + (optionally) peer creds; return ``None`` on pass.
+    """Validate local selected auth; foreign transport keeps peer authority.
 
-    Returns
-    -------
-    None
-        Every surface looks healthy — caller may proceed with dispatch.
-    dict
-        Failure payload shaped like the rest of ``_send.py``'s error
-        returns:
-
-        * ``{"status": "creds-expired", "error": str, "agent": str, ...}``
-          when an OAuth token is expired / near-expiry on either side.
-        * ``{"status": "error", "error": str, "agent": str, ...}`` when
-          the ssh probe itself fails for an unexpected reason
-          (non-{0,1} exit code or runner exception).
-
-    Parameters
-    ----------
-    name
-        Agent name; echoed back in the failure payload so the caller
-        doesn't have to re-thread it.
-    peer_host
-        ``row["host"]`` from state.db — the host that will actually
-        receive the /v1/turn POST.
-    current_host
-        Lead-side resolved host (``_resolve_host(None)``); when equal
-        to ``peer_host`` the ssh probe is skipped and only the lead's
-        local creds are checked.
-    lead_creds_path
-        Override path for the lead-local credentials file. Defaults to
-        ``~/.claude/.credentials.json``. Tests pass an explicit
-        ``tmp_path`` so the operator's real file is never read.
-    remote_creds_path
-        Path to the credentials file on the peer (passed verbatim to
-        ``ssh ... python3 -c <probe> <path>``). Defaults to
-        ``~/.claude/.credentials.json``.
-    ssh_runner
-        Injection seam for tests. Defaults to :func:`default_ssh_runner`.
-    now
-        Override for the wall clock; threaded through to
-        :func:`check_oauth_token_expiry` for deterministic tests.
+    ``lead_creds_path`` is a legacy test seam for an unpinned Claude target
+    only. It never changes a spec-declared account/file and cannot substitute
+    for a missing, ambiguous or invalid selected target spec.
     """
-    if _api_key_env_is_set():
+    if peer_host != current_host:
+        # Exactly the CLI's canonical foreign SSH/live-turn route. The peer's
+        # existing runtime owns provider auth; sender Claude files are irrelevant.
         return None
 
-    from .._state._preflight_creds import check_oauth_token_expiry
+    from .._state._preflight_creds import (
+        check_spec_oauth_credentials,
+        spec_credential_candidates,
+    )
+    from ..config import load_config
+    from ..config._harness_lookup import canonical_harness
+    from ..config._resolve import resolve_with_prefix
+    from .lifecycle._common import _local_host_names
+    from .lifecycle._host_routing import classify_spec_host_route
 
-    # Lead-local creds: always check.
     try:
-        check_oauth_token_expiry(
-            lead_creds_path or (Path.home() / ".claude" / ".credentials.json"),
-            now=now,
+        config = load_config(resolve_with_prefix(name))
+        family = canonical_harness(config.harness)
+        if family is None:
+            raise ValueError(f"unknown selected harness {config.harness!r}")
+        kind, _peer = classify_spec_host_route(
+            config.hosts_spec.host,
+            current_host,
+            {},
+            local_names=_local_host_names(current_host),
         )
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
-        return {
-            "status": "creds-expired",
-            "error": f"lead creds: {exc}",
-            "agent": name,
-        }
-
-    # Cross-host: ssh-probe the peer.
-    if peer_host != current_host:
-        runner = ssh_runner or default_ssh_runner
-        try:
-            result = runner(peer_host, remote_creds_path)
-        except Exception as exc:  # noqa: BLE001 — categorise loudly below
-            return {
-                "status": "error",
-                "error": f"ssh probe to {peer_host} failed: {exc}",
-                "agent": name,
-                "peer": peer_host,
-            }
-        if result.returncode == 0:
-            return None
-        if result.returncode == 1:
-            return {
-                "status": "creds-expired",
-                "error": f"creds expired on {peer_host}",
-                "agent": name,
-                "peer": peer_host,
-            }
+        if kind != "local":
+            raise ValueError(
+                "selected spec host conflicts with the local live endpoint"
+            )
+    except (LookupError, OSError, ValueError, RuntimeError) as exc:
         return {
             "status": "error",
-            "error": (
-                f"ssh probe to {peer_host} returned rc={result.returncode}: "
-                f"{result.stderr[:200]}"
-            ),
             "agent": name,
-            "peer": peer_host,
+            "error": f"selected target spec: {exc}",
         }
+    if family != "anthropic" or config.claude.provider is not None:
+        return None
 
+    _candidates, declared = spec_credential_candidates(config.claude)
+    if lead_creds_path is not None and not declared:
+        config = deepcopy(config)
+        config.claude.credentials_file = str(lead_creds_path)
+    try:
+        check_spec_oauth_credentials(config, now=now)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {
+            "status": "creds-expired",
+            "agent": name,
+            "error": f"target creds: {exc}",
+        }
     return None

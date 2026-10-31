@@ -23,6 +23,12 @@ GITIGNORED/
 # file is absent (runtimes/_cct_token_pool.py).
 .envrc
 
+# Agent runtime state (liveness heartbeats, incarnation records). Per-run
+# scratch written under .scitex/agent-container/runtime/ — never sources.
+# Untracked + ignored so no routine `git add -A` can re-commit it
+# (PS-234: the index carried .gitkeep/README.md entries).
+.scitex/agent-container/runtime/
+
 # cld session artifacts (mirrors of ~/.claude/to_claude/ — canonical source
 # in ~/.dotfiles/src/.claude/to_claude/).
 .claude/
@@ -103,3 +109,5 @@ tests/results/
 # The fleet-wide move-aside trashbin. Nothing is ever deleted in this fleet;
 # displaced files land in .old/<timestamp>/ and must never be committed back.
 .old/
+# Hook self-test / block-audit logs (written next to the hook on deny)
+src/scitex_agent_container/_baseline_assets/*/*.log

@@ -25,10 +25,10 @@ PACKAGE = "scitex-agent-container"
 
 def _embed():
     try:
-        import scitex_app.embed as embed
+        import scitex_sdk.app.embed as embed
     except ImportError as exc:  # stx-allow: fallback (reason: clear install hint)
         raise click.ClickException(
-            "The SAC GUI requires scitex-app. Install it with: "
+            "The SAC GUI requires scitex-sdk. Install it with: "
             "uv pip install 'scitex-agent-container[gui]'"
         ) from exc
     return embed
@@ -59,7 +59,6 @@ def gui_group() -> None:
 @click.option("--port", default=DEFAULT_PORT, show_default=True, type=int)
 @click.option("--host", default=DEFAULT_HOST, show_default=True)
 @click.option("--allow-remote", is_flag=True, help="Allow a non-loopback bind.")
-@click.option("--force", is_flag=True, help="Reclaim a previous SAC GUI instance.")
 @click.option("--hot-reload", is_flag=True, help="Enable Django auto-reload.")
 @click.option("--dry-run", is_flag=True, help="Print the launch without starting it.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
@@ -67,12 +66,12 @@ def gui_serve(
     port: int,
     host: str,
     allow_remote: bool,
-    force: bool,
     hot_reload: bool,
     dry_run: bool,
     as_json: bool,
 ) -> None:
     """Run the Agents dashboard in the foreground."""
+    force = False
     _guard_bind(host, allow_remote)
     if dry_run:
         payload = {"would_serve": True, "host": host, "port": port, "force": force}

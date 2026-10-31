@@ -167,6 +167,24 @@ async def agent_send(request: Request) -> Response:
     if live is not None:
         return live
 
+    # 1b) Cross-host leg. The local forward only knows loopback: for an
+    # agent that lives on another host it resolves the port but posts
+    # it at 127.0.0.1 — a foreign agent's port becomes a local URL
+    # (measured 2026-10-27 as accepted-but-never-surfaced, 2026-10-31
+    # as a loud refusal of the same wrong URL). When the shared live
+    # row names a peer host, push over the fixed ssh transport to the
+    # peer's loopback sidecar instead; anything unresolvable falls
+    # through to the 409 refusal below, unchanged.
+    from .._state.state_store import _resolve_host as _resolve_local_host
+    from ._forward import forward_to_remote_runner
+
+    local_host = getattr(request.app.state, "local_host", None) or (
+        _resolve_local_host(None)
+    )
+    remote = await forward_to_remote_runner(name, prompt, local_host=local_host)
+    if remote is not None:
+        return remote
+
     # Public prompt delivery has exactly one transport. A missing live endpoint
     # is a refusal, never permission to launch a second Claude process against
     # the session store or to type into a tmux pane.

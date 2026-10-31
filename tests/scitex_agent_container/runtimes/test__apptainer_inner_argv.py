@@ -832,3 +832,19 @@ def test_build_inner_argv_anthropic_harness_still_gets_the_claude_runner():
     argv = build_inner_argv(cfg)
     # Assert
     assert "claude_session" in " ".join(argv)
+
+
+# ---------------------------------------------------------------------------
+# Opencode TUI dispatches to the gateway owner argv (branch
+# feat/opencode-gateway-probe) instead of the Claude TUI guard refusal.
+# ---------------------------------------------------------------------------
+
+
+def test_build_inner_argv_renders_the_opencode_owner_for_opencode_tui():
+    # Arrange
+    cfg = _mk_cfg(harness="opencode")
+    cfg.runtime = "tui"
+    # Act
+    argv = build_inner_argv(cfg, tui=True)
+    # Assert
+    assert "scitex_agent_container.runtimes._opencode_tui_owner" in " ".join(argv)

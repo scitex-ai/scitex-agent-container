@@ -71,6 +71,28 @@ from scitex_agent_container.cli_pkg._dev_jobs import (  # noqa: E402
 from scitex_agent_container.cli_pkg.dev_group import dev_group  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_job_catalog(tmp_path):
+    """Exercise the catalog independently of an operator's live pause file."""
+    import os
+
+    previous_dir = os.environ.get("SCITEX_DIR")
+    previous_enabled = os.environ.get("SAC_JOBS_ENABLED")
+    os.environ["SCITEX_DIR"] = str(tmp_path / "ecosystem-root")
+    os.environ.pop("SAC_JOBS_ENABLED", None)
+    try:
+        yield
+    finally:
+        if previous_dir is None:
+            os.environ.pop("SCITEX_DIR", None)
+        else:
+            os.environ["SCITEX_DIR"] = previous_dir
+        if previous_enabled is None:
+            os.environ.pop("SAC_JOBS_ENABLED", None)
+        else:
+            os.environ["SAC_JOBS_ENABLED"] = previous_enabled
+
+
 def _declared(kind: str) -> list[str]:
     """Canonical names of the jobs sac really declares for ``kind``."""
     return [j.name for j in provide_jobs() if j.kind == kind]

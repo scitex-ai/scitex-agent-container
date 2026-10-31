@@ -36,6 +36,7 @@ from ._loaders import compose_effective_name, load_v3
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
+from ._worktree import WorktreeSpec
 from ._types import (
     AgentConfig,
     ClaudeSpec,
@@ -75,6 +76,7 @@ __all__ = [
     "StartupCommand",
     "UnknownEngineError",
     "WatchdogSpec",
+    "WorktreeSpec",
     "apply_engine",
     "compose_effective_name",
     "derive_hermes_fleet_context_budget",

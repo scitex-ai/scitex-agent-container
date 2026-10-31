@@ -47,6 +47,7 @@ def _instances_store(pg_schema: str):
     """
     yield
 
+
 # ---------------------------------------------------------------------------
 # Collaborator swaps (test seams — no mocks, no monkeypatch)
 # ---------------------------------------------------------------------------
@@ -117,8 +118,24 @@ def fresh_lead_creds_path(tmp_path) -> Path:
 def state_store_env(tmp_path):
     saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_host = os.environ.get("SAC_HOST")
+    saved_yaml = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(tmp_path / "state.db")
     os.environ["SAC_HOST"] = "lead-host"
+    import yaml
+
+    from tests.scitex_agent_container.config.test__explicit_validation import (
+        _explicit_doc,
+    )
+
+    agents = tmp_path / "agents"
+    for name in ("alpha", "beta"):
+        target = agents / name / "spec.yaml"
+        target.parent.mkdir(parents=True)
+        doc = _explicit_doc()
+        # Agent names come from the parent directory; v3 rejects metadata.name.
+        doc["spec"]["host"] = "lead-host"
+        target.write_text(yaml.safe_dump(doc))
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(agents)
     import scitex_agent_container._state.state_store as _state_store_mod
 
     importlib.reload(_state_store_mod)
@@ -133,6 +150,10 @@ def state_store_env(tmp_path):
             os.environ.pop("SAC_HOST", None)
         else:
             os.environ["SAC_HOST"] = saved_host
+        if saved_yaml is None:
+            os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
+        else:
+            os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = saved_yaml
         importlib.reload(_state_store_mod)
 
 
@@ -155,7 +176,9 @@ def _seed_remote(name: str, peer: str, a2a_port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_returns_dict_with_status_field(state_store_env, fresh_lead_creds_path):
+def test_agent_send_returns_dict_with_status_field(
+    state_store_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -233,7 +256,9 @@ def test_agent_send_error_message_when_agent_not_running(state_store_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_status_timeout_on_slow_sidecar(state_store_env, fresh_lead_creds_path):
+def test_agent_send_status_timeout_on_slow_sidecar(
+    state_store_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -312,7 +337,9 @@ def test_agent_send_neither_prompt_nor_key_raises_value_error(state_store_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_cross_host_routes_through_ssh(state_store_env, fresh_lead_creds_path):
+def test_agent_send_cross_host_routes_through_ssh(
+    state_store_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_remote("beta", peer="peer-x", a2a_port=18888)
     captured: dict = {}
@@ -342,7 +369,9 @@ def test_agent_send_cross_host_routes_through_ssh(state_store_env, fresh_lead_cr
     assert captured["url"] == "ssh://peer-x:18888/v1/turn"
 
 
-def test_agent_send_local_host_uses_loopback_url(state_store_env, fresh_lead_creds_path):
+def test_agent_send_local_host_uses_loopback_url(
+    state_store_env, fresh_lead_creds_path
+):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     captured: dict = {}
@@ -532,8 +561,7 @@ def test_agent_send_not_running_diagnosis_reports_stopped(state_store_env):
 
 
 def test_agent_send_diagnosis_reports_busy_heartbeat_state(
-    pg_schema: str,
-    state_store_env, fresh_lead_creds_path
+    pg_schema: str, state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -557,8 +585,7 @@ def test_agent_send_diagnosis_reports_busy_heartbeat_state(
 
 
 def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
-    pg_schema: str,
-    state_store_env, fresh_lead_creds_path
+    pg_schema: str, state_store_env, fresh_lead_creds_path
 ):
     # Arrange — real listener so the port is reachable and the heartbeat
     # state (working) is what drives likely_causes.
@@ -584,8 +611,7 @@ def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
 
 
 def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
-    pg_schema: str,
-    state_store_env, fresh_lead_creds_path
+    pg_schema: str, state_store_env, fresh_lead_creds_path
 ):
     # Arrange — real listener (port reachable) but heartbeat far older
     # than the staleness window, so "stale/dead" is the deciding factor.

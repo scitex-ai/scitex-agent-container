@@ -172,6 +172,17 @@ DEFAULT_TEXTUAL_PATTERNS: tuple[str, ...] = (
     # A cap detector that depends on one sentence surviving a copy edit is
     # one A/B test away from silence.
     r"/usage-credits",
+    # Billing-exhaustion phrasing (prepaid / credit-balance providers).
+    # Measured 2026-10-15: commandcode returned HTTP 400
+    #   "You have insufficient credits to make this request. Please
+    #    purchase more credits to continue using the service."
+    # and NONE of the patterns above matched it, so the detector fell
+    # through and the session stopped instead of rotating to a headroom
+    # account (operator manual restart). Same class as the DeepSeek 402
+    # "insufficient balance" shape this list already anticipates.
+    r"insufficient credits",
+    r"purchase more credits",
+    r"insufficient balance",
 )
 
 

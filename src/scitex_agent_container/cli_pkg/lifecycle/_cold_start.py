@@ -163,7 +163,7 @@ class ColdStartConflictError(RuntimeError):
 
     Fail-loud (operator directive): never silently clobber a customised spec
     nor silently launch the wrong workdir. The operator resolves it with a
-    different label or ``--force``.
+    different label.
     """
 
 
@@ -325,7 +325,7 @@ def materialize_cold_start(
         raise ColdStartConflictError(
             f"agent {target.label!r} already exists at {spec_path} with a "
             f"different workdir/host than {target.workdir!r}@{target.host!r}. "
-            "Use a different <label>, or pass --force to overwrite."
+            "Use a different <label> or edit the existing spec explicitly."
         )
 
     if dry_run:

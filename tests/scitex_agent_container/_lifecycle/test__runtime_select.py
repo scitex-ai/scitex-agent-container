@@ -91,6 +91,17 @@ def test_get_runtime_returns_hermes_tui_for_hermes_tui_spec():
     assert isinstance(runtime, HermesTuiSessionRuntime)
 
 
+def test_get_runtime_returns_opencode_tui_for_opencode_tui_spec():
+    # Arrange
+    from scitex_agent_container.runtimes.opencode_tui import OpencodeTuiSessionRuntime
+
+    config = AgentConfig(name="alpha", harness="opencode", runtime="tui")
+    # Act
+    runtime = _get_runtime(config)
+    # Assert
+    assert isinstance(runtime, OpencodeTuiSessionRuntime)
+
+
 # ---------------------------------------------------------------------------
 # apptainer back-compat — maps to claude-agent-sdk + deprecation log
 # ---------------------------------------------------------------------------

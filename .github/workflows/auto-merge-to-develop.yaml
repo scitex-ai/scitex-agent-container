@@ -228,15 +228,23 @@ jobs:
           # ones stay valid as a record, they just stop being recognised.
           ATTRIB_MARKER: "auto-merge-to-develop:attribution"
           # Space-separated; every entry must accept a bare workflow_dispatch.
+          # ci.yml is the one caller: it fans out to the pytest matrix,
+          # import smoke, quality audit, and the Sphinx docs build behind a
+          # single dispatch. The three inline workflows it supersedes
+          # (pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml,
+          # import-smoke-on-ubuntu-py3-12.yml,
+          # rtd-sphinx-build-on-ubuntu-latest.yml) are deleted; dispatching
+          # them would 404 and leave develop's head un-checked.
           POST_MERGE_GATES: >-
-            pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
+            ci.yml
             lint.yml
-            import-smoke-on-ubuntu-py3-12.yml
-            no-hosted-runners-guard-on-self-hosted.yml
           REQUIRED_CONTEXTS: >-
-            pytest-matrix-on-ubuntu-py3.11
-            pytest-matrix-on-ubuntu-py3.13
-            ci-verdict-to-pushing-agent
+            pytest-matrix / pytest-matrix-on-ubuntu-py3.11
+            pytest-matrix / pytest-matrix-on-ubuntu-py3.13
+          # `ci-verdict-to-pushing-agent` is NOT in the list above on purpose:
+          # that check was a job inside the deleted inline pytest workflow, so
+          # no future run can produce it and requiring it would deadlock the
+          # sweep (every PR skipped as "required context absent").
         run: |
           set -uo pipefail
 

@@ -45,9 +45,7 @@ from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: The tracked library, at the path the module docstring commits to.
-TRACKED_LIBRARY = (
-    _REPO_ROOT / ".scitex" / "agent-container" / FLEET_ENGINES_FILENAME
-)
+TRACKED_LIBRARY = _REPO_ROOT / ".scitex" / "agent-container" / FLEET_ENGINES_FILENAME
 
 #: The gateway engine's key. A LITERAL, because the point of this file is
 #: that the key is DATA now — deriving it from the code under test would make
@@ -120,7 +118,7 @@ def test_the_tracked_library_declares_the_gateway_engine(library) -> None:
     # Act
     keys = sorted(library.engines)
     # Assert
-    assert keys == [FLEET_QWEN_KEY]
+    assert keys == ["muse-spark-1.3-contributor", FLEET_QWEN_KEY]
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +180,72 @@ def test_the_gateway_engine_carries_the_measured_context_window(library) -> None
     assert engine.max_context_tokens == 1048576
 
 
-def test_the_tracked_library_declares_no_fleet_default(library) -> None:
-    # Arrange — writing `engine:` here repoints every unpinned agent, which
-    # is the operator's one-line decision and not the migration's to make.
+def test_the_tracked_library_declares_the_operator_future_default(library) -> None:
+    # Arrange — operator2423/2424 sets future preference; explicit pins win.
     # Act
     default_key = library.default_key
     # Assert
-    assert default_key == ""
+    assert default_key == "muse-spark-1.3-contributor"
+
+
+def test_unpinned_hermes_loads_muse_through_the_normal_loader(tmp_path, library):
+    # Arrange
+    document = explicit_doc({"harness": "hermes", "runtime": "tui"})
+    path = tmp_path / "future" / "spec.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    # Act
+    config = load_config(path)
+    rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+    # Assert
+    assert (config.harness, config.model, rendered["model"]["provider"]) == (
+        "hermes",
+        "muse-spark-1.3-contributor",
+        "opencode-go",
+    )
+
+
+def test_explicit_native_choice_keeps_account_and_session(tmp_path, library):
+    # Arrange
+    document = explicit_doc(
+        {
+            "harness": "codex",
+            "runtime": "tui",
+            "engine": "retained",
+            "available_harnesses": {
+                "codex": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "approval_policy": "never",
+                    "sandbox_mode": "danger-full-access",
+                },
+            },
+            "available_engines": {
+                "retained": {
+                    "model": "gpt-6.1-sol",
+                    "subscription": {
+                        "provider": "openai",
+                        "account": "openai:retained",
+                    },
+                },
+            },
+        }
+    )
+    document["spec"].pop("claude")
+    document["spec"].pop("watchdog")
+    document["spec"].pop("container")
+    document["spec"]["comms"]["channels"] = []
+    path = tmp_path / "retained" / "spec.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    # Act
+    config = load_config(path)
+    # Assert
+    assert (
+        config.harness,
+        config.model,
+        config.subscription_account,
+        config.claude.session,
+    ) == ("codex", "gpt-6.1-sol", "openai:retained", "continue")
 
 
 # ---------------------------------------------------------------------------
@@ -241,9 +298,7 @@ engines:
 
 
 def _dependent_document() -> dict:
-    return explicit_doc(
-        {"harness": "hermes", "runtime": "tui", "engine": "fleet-qwen"}
-    )
+    return explicit_doc({"harness": "hermes", "runtime": "tui", "engine": "fleet-qwen"})
 
 
 @pytest.mark.parametrize(

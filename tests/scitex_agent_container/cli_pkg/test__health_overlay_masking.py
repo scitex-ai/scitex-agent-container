@@ -6,8 +6,9 @@ UNKNOWN payload, never a crashed health command, never a fabricated CLEAN),
 and the RED rendering must quote THE operational rule verbatim so the
 operator reading a fired detector also reads what not to do next time.
 
-No mocks: real temp overlay layouts; rendering asserted through a real
-``rich.console.Console`` writing to a real ``StringIO``.
+No mocks: real temp overlay layouts; rendering asserted on stdout
+(capsys) because rendering routes through the logging-routed
+render_rich — a passed Console captures nothing.
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 """
@@ -67,7 +68,7 @@ def test_payload_degrades_exploding_config_to_unknown(tmp_path):
     assert payload["verdict"] == M.VERDICT_UNKNOWN
 
 
-def test_masked_rendering_quotes_the_operational_rule(tmp_path):
+def test_masked_rendering_quotes_the_operational_rule(tmp_path, capsys):
     # Arrange — a real masked verdict (fossil dist-info + injected base).
     from scitex_agent_container._maintenance._overlay_masking import (
         inspect_agent_overlay,
@@ -80,12 +81,12 @@ def test_masked_rendering_quotes_the_operational_rule(tmp_path):
     payload = inspect_agent_overlay(
         "agent-x", _config_for(root), lambda: base
     ).to_dict()
-    buffer = io.StringIO()
-    console = Console(file=buffer, width=200, no_color=True)
-    # Act
-    print_overlay_masking(console, payload)
+    # Act — rendering routes through the logging-routed render_rich, so a
+    # passed Console captures nothing; assert on stdout (a buffer-based
+    # assertion here passes vacuously on the empty buffer).
+    print_overlay_masking(Console(width=200), payload)
     # Assert — the RED line carries the rule, verbatim from the one string.
-    assert "NEVER pip-install a base-baked package" in buffer.getvalue()
+    assert "NEVER pip-install a base-baked package" in capsys.readouterr().out
 
 
 def test_clean_rendering_stays_a_single_green_line(tmp_path):

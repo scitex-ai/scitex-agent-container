@@ -1,0 +1,11 @@
+{% load scitex_project_picker %}{% comment %}
+Agents project picker — the element the SDK AppHeader slot receives.
+
+Fleet scope maps to the picker's user scope: this app watches every
+project, so the user scope (All Projects) is the correct one, not a
+project default. The tag fail-fasts (ImproperlyConfigured, since
+scitex-sdk 0.3.14) on a signed-in render with no provider URL — fail
+loud by design, never a silent empty slot — so a host MUST register
+a project provider; standalone without one 500s instead of serving
+unchanged markup.
+{% endcomment %}{% scitex_project_picker scope="user" allow_user_scope=True %}

@@ -76,6 +76,10 @@ def run_launch_gate(config: Any, argv: list[str], *, state_dir: Path) -> None:
     if launch_sif is not None:
         reconcile_overlay_venv_for_launch(config, launch_sif, state_dir)
 
+    from ._private_python_gate import assert_private_python_runs
+
+    assert_private_python_runs(config, argv)
+
     from ._entry_point_gate import assert_entry_point_runs
 
     assert_entry_point_runs(config.name, argv)

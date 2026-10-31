@@ -29,6 +29,9 @@ import pytest
 import yaml
 
 from scitex_agent_container._lifecycle import lifecycle as lc
+from scitex_agent_container._lifecycle._restart_preflight import (
+    RestartPreflightAbort,
+)
 from scitex_agent_container._lifecycle._start_outcome import (
     KIND_ALREADY_RUNNING,
     outcome_kind,
@@ -1677,6 +1680,82 @@ def test_agent_restart_no_row_force_stops_before_start(
     )
     # Assert — force-stop tolerated the dead session and start still ran.
     assert ok is True and len(runtime.start_calls) == 1
+
+
+class _ProofBlipRuntime(FakeRuntime):
+    """Start leg script: raise the given abort on the first start, then behave.
+
+    Drives the restart start-leg retry without touching the network: the
+    abort instance carries its own retryable flag, exactly as the Hermes
+    proof sets it.
+    """
+
+    def __init__(
+        self, *args: Any, abort: Exception | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._abort = abort
+        self._started = 0
+
+    def start(self, config: AgentConfig, **kwargs: Any) -> bool:
+        self._started += 1
+        self.start_calls.append(config)
+        self.start_kwargs = dict(kwargs)
+        if self._abort is not None and self._started == 1:
+            raise self._abort
+        return self.start_result
+
+
+def test_agent_restart_retries_start_leg_on_transient_proof_abort(
+    pg_schema: str, tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the start leg fails once with a cooldown-gated (retryable)
+    # proof abort; sleeps are recorded instead of waited out.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    blip = RestartPreflightAbort("synthetic storm blip")
+    blip.retryable = True
+    runtime = _ProofBlipRuntime(start_result=True, abort=blip)
+    sleeps: list[float] = []
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        sleep_fn=sleeps.append,
+        handover_mod=FakeHandover(),
+        thread_factory=FakeThread,
+    )
+    # Assert — one stop, two starts, one backoff sleep, then success.
+    assert ok is True and len(runtime.start_calls) == 2 and sleeps == [5.0]
+
+
+def test_agent_restart_fails_fast_on_invalid_proof_abort(
+    pg_schema: str, tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the start leg fails with a revoked-key (non-retryable)
+    # proof abort; a retry could never succeed.
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _ProofBlipRuntime(
+        start_result=True, abort=RestartPreflightAbort("synthetic revoked key")
+    )
+    sleeps: list[float] = []
+    # Act
+    try:
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: runtime,
+            sleep_fn=sleeps.append,
+            handover_mod=FakeHandover(),
+            thread_factory=FakeThread,
+        )
+        raised = False
+    except RestartPreflightAbort:
+        raised = True
+    # Assert — no retry, no backoff sleep, the abort propagates.
+    assert raised and len(runtime.start_calls) == 1 and sleeps == []
 
 
 def test_agent_restart_no_row_uses_default_resolver_discovery_chain(

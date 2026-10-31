@@ -1450,3 +1450,37 @@ def test_the_runtime_dir_env_carries_a_usable_path(tui_config, tmp_path):
 
 
 # EOF
+
+
+# ---------------------------------------------------------------------------
+# Opencode TUI passes the guard and renders the owner argv (branch
+# feat/opencode-gateway-probe: OPENCODE_TUI joins the HERMES_TUI /
+# CODEX_SDK exemption — a second gateway harness, not a wrong vendor).
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_renders_the_opencode_owner_for_opencode_tui(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange
+    from scitex_agent_container.config._provider_types import ProviderSpec
+    from scitex_agent_container.runtimes._opencode_profile import (
+        materialize_opencode_profile,
+    )
+
+    env_save_restore.set("OPENCODE_ARGV_TEST_KEY", "secret-must-not-be-serialized")
+    cfg = AgentConfig(name="t", runtime="tui", harness="opencode")
+    cfg.workdir = str(tmp_path / "work")
+    cfg.engine_key = "free"
+    cfg.model = "m"
+    cfg.claude.provider = ProviderSpec(
+        base_url="http://127.0.0.1:18779/v1",
+        auth_token_env="OPENCODE_ARGV_TEST_KEY",
+    )
+    materialize_opencode_profile(cfg, state_dir=tmp_path / "state")
+    # Act
+    argv = build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "img.sif", tui=True
+    )
+    # Assert
+    assert "scitex_agent_container.runtimes._opencode_tui_owner" in " ".join(argv)

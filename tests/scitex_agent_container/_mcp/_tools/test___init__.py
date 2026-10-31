@@ -52,7 +52,14 @@ _LEAF_MODULES = (_agent, _store, _host, _image, _account, _info, _h)
 def _recording() -> Iterator[list[tuple[str, list[str]]]]:
     """Swap invoke_cli_{json,text} on every leaf module with real
     capturing callables. Yields the shared capture list."""
+    import os
+
     captured: list[tuple[str, list[str]]] = []
+    # These tests pin the CLI-wrapper argv contract, not the in-SIF fleet
+    # branch: this host exports SAC_LISTEN_BASE_URL (its own listener),
+    # which would route agent_list through the fleet client and capture
+    # nothing. Clear it for the duration, then restore.
+    previous_base_url = os.environ.pop("SAC_LISTEN_BASE_URL", None)
 
     def fake_json(argv):
         captured.append(("json", list(argv)))
@@ -75,6 +82,8 @@ def _recording() -> Iterator[list[tuple[str, list[str]]]]:
     finally:
         for mod, attr, orig in saved:
             setattr(mod, attr, orig)
+        if previous_base_url is not None:
+            os.environ["SAC_LISTEN_BASE_URL"] = previous_base_url
 
 
 @contextmanager

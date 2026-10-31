@@ -23,6 +23,7 @@ restore it on teardown — no ``monkeypatch``, per the ecosystem rule.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 
@@ -36,6 +37,7 @@ from scitex_agent_container.config._harness_registry import (
     HARNESS_DESCRIPTORS,
     HERMES_TUI,
     OPENAI_AGENTS,
+    OPENCODE_TUI,
     UnmappableHarnessError,
     known_harnesses,
     resolve_harness_key,
@@ -219,7 +221,7 @@ def test_unknown_harness_error_lists_codex_among_the_known_families():
 
 def test_known_harnesses_includes_registered_families():
     # Arrange
-    expected = ("anthropic", "codex", "hermes", "openai")
+    expected = ("anthropic", "codex", "hermes", "openai", "opencode")
     # Act
     families = known_harnesses()
     # Assert
@@ -270,6 +272,7 @@ def test_the_registry_holds_exactly_the_six_known_harness_keys():
             CODEX_SDK,
             CODEX_TUI,
             HERMES_TUI,
+            OPENCODE_TUI,
         ]
     )
     # Act
@@ -402,9 +405,9 @@ def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
     encoded = next(
         value.split("=", 1)[1]
         for value in argv
-        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_JSON=")
+        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_B64=")
     )
-    overrides = json.loads(encoded)
+    overrides = json.loads(base64.b64decode(encoded))
     # Assert
     assert (
         "SAC_CODEX_MODEL=qwen38-27b" in argv,

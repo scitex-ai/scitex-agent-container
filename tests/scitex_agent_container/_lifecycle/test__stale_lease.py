@@ -121,7 +121,7 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
     )
 
     dead_pid = _spawn_dead_pid()
-    record_instance_start(name=name, host="h", pid=dead_pid)
+    record_instance_start(name=name, host=None, pid=dead_pid)
     cleared = clear_stale_instance_lease(name)
     active = [r for r in list_active_instances() if r["name"] == name]
     # Read the tombstone back through the PRODUCTION reader rather than with
@@ -194,7 +194,7 @@ def _drive_live_pid_scenario(name: str) -> tuple[int, list[dict]]:
         record_instance_start,
     )
 
-    record_instance_start(name=name, host="h", pid=os.getpid())
+    record_instance_start(name=name, host=None, pid=os.getpid())
     cleared = clear_stale_instance_lease(name)
     active = [r for r in list_active_instances() if r["name"] == name]
     return cleared, active
@@ -250,8 +250,8 @@ def _drive_name_scoped_scenario() -> tuple[int, set[str]]:
     )
 
     dead_pid = _spawn_dead_pid()
-    record_instance_start(name="target", host="h", pid=dead_pid)
-    record_instance_start(name="bystander", host="h", pid=dead_pid)
+    record_instance_start(name="target", host=None, pid=dead_pid)
+    record_instance_start(name="bystander", host=None, pid=dead_pid)
     cleared = clear_stale_instance_lease("target")
     by_name = {r["name"] for r in list_active_instances()}
     return cleared, by_name
@@ -305,7 +305,7 @@ def _drive_null_pid_scenario(name: str) -> tuple[int, list[dict]]:
         record_instance_start,
     )
 
-    record_instance_start(name=name, host="h")  # pid defaults to None
+    record_instance_start(name=name, host=None)  # pid defaults to None
     cleared = clear_stale_instance_lease(name)
     active = [r for r in list_active_instances() if r["name"] == name]
     return cleared, active
@@ -443,7 +443,7 @@ def _drive_dead_runtime_start_scenario(
 
     spec = _write_zombie_spec(tmp_path)
     dead_pid = _spawn_dead_pid()
-    record_instance_start(name="zombie", host="h", pid=dead_pid)
+    record_instance_start(name="zombie", host=None, pid=dead_pid)
 
     runtime = _DeadRuntime()
     reg = Registry(registry_dir=tmp_path / "reg")
@@ -504,7 +504,7 @@ def _drive_live_lease_preserve_scenario() -> tuple[int, int, list[dict]]:
         record_instance_start,
     )
 
-    instance_id = record_instance_start(name="livepin", host="h", pid=os.getpid())
+    instance_id = record_instance_start(name="livepin", host=None, pid=os.getpid())
     cleared = clear_stale_instance_lease("livepin")
     rows = [r for r in list_active_instances() if r["name"] == "livepin"]
     return instance_id, cleared, rows

@@ -33,11 +33,42 @@ class SessionIdReader:
 
 def test_present_session_resolves_the_route():
     # Arrange
-    lister = SessionLister(["tui-peer", "tui-other"])
+    lister = SessionLister(["peer", "tui-other"])
     # Act
     route = resolve_route("peer", strategy=STRATEGY_TUI, list_sessions_fn=lister)
     # Assert
     assert route.resolved is True
+
+
+def test_present_bare_session_routes_to_the_bare_name():
+    # Arrange — new sessions are minted bare; the route must name the bare
+    # session, not a legacy rewrite of it.
+    lister = SessionLister(["peer", "other"])
+    # Act
+    route = resolve_route("peer", strategy=STRATEGY_TUI, list_sessions_fn=lister)
+    # Assert
+    assert route.session == "peer"
+
+
+def test_legacy_prefixed_session_still_resolves():
+    # Arrange — a pre-cutover agent still runs under ``tui-peer``; the route
+    # must reach it there rather than reporting the agent unreachable.
+    lister = SessionLister(["tui-peer", "tui-other"])
+    # Act
+    route = resolve_route("peer", strategy=STRATEGY_TUI, list_sessions_fn=lister)
+    # Assert
+    assert route.session == "tui-peer"
+
+
+def test_bare_session_is_preferred_over_legacy():
+    # Arrange — a cutover-straddling host carries BOTH names; the live line
+    # is the bare one (start refuses to mint over a live legacy session, so
+    # a live bare session is always the newer line).
+    lister = SessionLister(["tui-peer", "peer"])
+    # Act
+    route = resolve_route("peer", strategy=STRATEGY_TUI, list_sessions_fn=lister)
+    # Assert
+    assert route.session == "peer"
 
 
 def test_absent_among_others_refutes_route():
@@ -87,7 +118,7 @@ def test_recorded_session_id_selects_sdk():
 
 def test_missing_session_id_falls_back_tui():
     # Arrange
-    lister = SessionLister(["tui-peer"])
+    lister = SessionLister(["peer"])
     # Act
     route = resolve_route(
         "peer",
@@ -101,7 +132,7 @@ def test_missing_session_id_falls_back_tui():
 
 def test_auto_never_enumerates_when_sdk_resolves():
     # Arrange
-    lister = SessionLister(["tui-peer"])
+    lister = SessionLister(["peer"])
     # Act
     resolve_route(
         "peer",

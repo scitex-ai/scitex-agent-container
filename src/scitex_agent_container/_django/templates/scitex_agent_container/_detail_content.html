@@ -1,22 +1,16 @@
 {% comment %}
-Shared Agents detail content. Included by detail.html (standalone shell) and
-detail_hub.html (Hub global_base). `url_base` is the app mount prefix so the
-back link and the lifecycle form action are correct in both modes.
+Shared Agents detail content. Included by detail.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
+`url_base` is the app mount prefix so the
+back link and the lifecycle form action are correct at any mount.
 {% endcomment %}
-<div class="agents-app" data-page="detail">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      {% if agent %}
-      <h1><i class="fas fa-robot"></i> {{ agent.name }}</h1>
-      {% else %}
-      <h1><i class="fas fa-ghost"></i> Agent not in scope</h1>
-      {% endif %}
-      {% if agent %}
-      <span class="agents-sub">{{ agent.host }} · acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-      {% endif %}
-    </div>
-  </header>
+<div class="agents-app agents-app--fragment" data-page="detail">
+  {# Fragment render (?partial=1 into the fleet Details pane): no app #}
+  {# header - the fleet page already owns the one header row. The full #}
+  {# detail.html page includes the header through its own block. #}
+  {% if not fragment %}
+  {% include "scitex_agent_container/_app_header.html" %}
+  {% endif %}
 
   {% if not agent %}
   <div class="agents-bannor err" role="alert">
@@ -42,8 +36,23 @@ back link and the lifecycle form action are correct in both modes.
     {% if notice.dispatch_id %}<small class="dim mono">dispatch {{ notice.dispatch_id }}</small>{% endif %}
   </div>
   {% endif %}
-  <div class="detail-grid">
-    <div class="detail-card">
+  {% if not fragment %}
+  <h2 class="detail-name">{{ agent.name }}</h2>
+  {% endif %}
+  {# Operator 2026-10-22: 5 tabs (Identity, Runtime Activity, Control, #}
+  {# Resources, Recent Session Log) — the standalone Message thread card is #}
+  {# gone (its thread renders in the center DM pane). No-JS fallback: every #}
+  {# panel is visible until fleet-details.js activates the first tab. POST #}
+  {# forms/endpoints inside are byte-identical to the old <details> cards. #}
+  <div class="detail-tabs" data-detail-tabs>
+    <div class="detail-tablist" role="tablist" aria-label="Agent details">
+      <button type="button" class="detail-tab detail-tab--active" role="tab" id="dt-{{ agent.name }}-identity" aria-controls="dp-{{ agent.name }}-identity" aria-selected="true" data-detail-tab="identity">Identity</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-activity" aria-controls="dp-{{ agent.name }}-activity" aria-selected="false" data-detail-tab="activity" tabindex="-1">Runtime Activity</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-control" aria-controls="dp-{{ agent.name }}-control" aria-selected="false" data-detail-tab="control" tabindex="-1">Control</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-resources" aria-controls="dp-{{ agent.name }}-resources" aria-selected="false" data-detail-tab="resources" tabindex="-1">Resources</button>
+      <button type="button" class="detail-tab" role="tab" id="dt-{{ agent.name }}-session" aria-controls="dp-{{ agent.name }}-session" aria-selected="false" data-detail-tab="session" tabindex="-1">Recent Session Log</button>
+    </div>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-identity" aria-labelledby="dt-{{ agent.name }}-identity" data-detail-panel="identity" tabindex="0">
       <div class="detail-state">
         <span class="dot {{ agent.state_tone }}"></span>
         <span class="detail-state-label {{ agent.state_tone }}">{{ agent.state_label }}</span>
@@ -66,10 +75,9 @@ back link and the lifecycle form action are correct in both modes.
         <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
         {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
       </dl>
-    </div>
+    </section>
 
-    <div class="detail-card detail-card-wide">
-      <h2>Runtime activity</h2>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-activity" aria-labelledby="dt-{{ agent.name }}-activity" data-detail-panel="activity" tabindex="0">
       <dl class="kv activity-kv">
         <dt>Phase</dt><dd>{% if agent.activity.phase.state == "observed" %}{{ agent.activity.phase.value }}{% else %}<span class="unknown" title="{{ agent.activity.phase.reason }}">Unknown</span>{% endif %}</dd>
         <dt>Operation</dt><dd>{% if agent.activity.operation.state == "observed" %}{{ agent.activity.operation.value }}{% else %}<span class="unknown" title="{{ agent.activity.operation.reason }}">Unknown</span>{% endif %}</dd>
@@ -81,10 +89,9 @@ back link and the lifecycle form action are correct in both modes.
         <dt>Wait</dt><dd>{% if agent.activity.wait.state == "observed" %}{{ agent.activity.wait.value }}{% else %}<span class="unknown" title="{{ agent.activity.wait.reason }}">Unknown</span>{% endif %}</dd>
       </dl>
       <p class="dim activity-note">Only runner-published state is shown. Unknown means SAC has no authoritative signal; session logs are not guessed into activity.</p>
-    </div>
+    </section>
 
-    <div class="detail-card">
-      <h2>Control</h2>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-control" aria-labelledby="dt-{{ agent.name }}-control" data-detail-panel="control" tabindex="0">
       {% if agent.state_detail %}
       <p class="dim">Status: <span class="mono">{{ agent.state_detail }}</span></p>
       {% endif %}
@@ -114,16 +121,41 @@ back link and the lifecycle form action are correct in both modes.
       constructs a host/port and never drives tmux. Each submit carries a
       dispatch id so a double-click cannot inject the text twice.
       {% endcomment %}
-      <h3 class="control-sub" id="message">Send a message</h3>
-      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form">
+      {# Message thread (operator 2026-10-23): chat-style, Cards DM idiom #}
+      {# ported leaf-side (no cross-app dependency, different ports). Same #}
+      {# POST endpoint + gate; operator sends render right, session lines #}
+      {# render left. The console still keeps no operator transcript — the #}
+      {# last-send banner below is the delivery receipt. #}
+      <h3 class="control-sub" id="message">Messages</h3>
+      <div class="chat-thread" data-role="chat-thread">
+      {% if notice and notice.operation == "message" or notice and notice.operation == "control" %}
+      <div class="chat-row chat-row--out">
+        <div class="chat-bubble chat-bubble--out">
+          <span class="mono">{{ notice.message|default:notice.operation }}</span>
+        </div>
+        <div class="chat-meta">{{ notice.operation }} · {{ notice.state }}</div>
+      </div>
+      {% endif %}
+      {% if agent.session_lines %}
+      {% for line in agent.session_lines|slice:"-8:" %}
+      <div class="chat-row chat-row--in">
+        <div class="chat-bubble chat-bubble--in mono">{{ line }}</div>
+      </div>
+      {% endfor %}
+      {% elif not notice %}
+      <p class="dim session-note">No messages yet. Send the first one below.</p>
+      {% endif %}
+      </div>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form chat-composer" data-composer="dm">
         {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
         <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
         <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
         <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
-                  placeholder="Message or steering instruction…"></textarea>
-        <div class="lifecycle-btns">
-          <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>
-        </div>
+                  placeholder="Message {{ agent.name }}… (Enter to send, Shift+Enter for a new line)"></textarea>
+        <span class="composer-actions">
+          <button type="button" class="btn emoji-btn" data-emoji-button title="Insert emoji" aria-label="Insert emoji">😀</button>
+          <button type="submit" class="btn" title="Send"><i class="fas fa-paper-plane"></i></button>
+        </span>
       </form>
 
       <h3 class="control-sub">UI control</h3>
@@ -143,39 +175,12 @@ back link and the lifecycle form action are correct in both modes.
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
       cross-host agents, the cross-host operator allowlist{% endif %}.</p>
       {% endif %}
-    </div>
+    </section>
 
-    <div class="detail-card" id="message-thread">
-      <h2>Message thread</h2>
-      {% comment %}
-      The thread the daemon actually stores: the agent's session log tail
-      (GET /agents/<name>/tail, summarized + redacted server-side). The
-      console deliberately keeps no operator-message transcript — a delivery
-      is either reported delivered or reported failed (see the banner above
-      and the send form), never parked in the dashboard. So "history" here
-      is the session records, newest last, capped to the recent few; the
-      full tail stays in the session-log card below.
-      {% endcomment %}
-      {% if notice and notice.operation == "message" or notice and notice.operation == "control" %}
-      <p class="dim">Last send: <span class="mono">{{ notice.operation }} · {{ notice.state }}</span>{% if notice.message %} — <span class="mono">{{ notice.message }}</span>{% endif %}</p>
-      {% endif %}
-      {% if agent.session_error %}
-      <p class="dim">History unavailable: <span class="mono">{{ agent.session_error }}</span></p>
-      {% elif agent.session_lines %}
-      <ul class="session-log mono">
-        {% for line in agent.session_lines|slice:"-5:" %}
-        <li>{{ line }}</li>
-        {% endfor %}
-      </ul>
-      <p class="dim session-note">Most recent session records. <a href="#message">Send a message</a> to steer this agent.</p>
-      {% else %}
-      <p class="dim">No session records yet — and the console holds no earlier
-      operator messages to show. <a href="#message">Send the first one</a>.</p>
-      {% endif %}
-    </div>
+    {# Message thread card removed (operator 2026-10-22): its thread already #}
+    {# renders in the fleet center DM pane (moved out of Control above). #}
 
-    <div class="detail-card">
-      <h2>Resources</h2>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-resources" aria-labelledby="dt-{{ agent.name }}-resources" data-detail-panel="resources" tabindex="0">
       {% with r=agent.resources %}
       {% if r.state == "ok" %}
       <dl class="kv">
@@ -193,10 +198,9 @@ back link and the lifecycle form action are correct in both modes.
       <p class="dim"><i class="fas fa-power-off"></i> No process to read (agent not started or stopped).</p>
       {% endif %}
       {% endwith %}
-    </div>
+    </section>
 
-    <div class="detail-card">
-      <h2>Recent session log</h2>
+    <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-session" aria-labelledby="dt-{{ agent.name }}-session" data-detail-panel="session" tabindex="0">
       {% if agent.session_error %}
       <p class="dim">Log unavailable: <span class="mono">{{ agent.session_error }}</span></p>
       {% elif agent.session_lines %}
@@ -209,7 +213,7 @@ back link and the lifecycle form action are correct in both modes.
       {% else %}
       <p class="dim">No session log recorded yet.</p>
       {% endif %}
-    </div>
+    </section>
   </div>
   {% endif %}
 </div>

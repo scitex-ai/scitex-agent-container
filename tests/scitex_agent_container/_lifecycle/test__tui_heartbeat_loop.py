@@ -41,7 +41,10 @@ from scitex_agent_container._runners._session_state import write_heartbeat
 
 PINNED_ACTIVITY_TS = 1_750_000_000
 
-# The loop looks the agent up under its ``tui-<name>`` session key.
+# The loop looks the agent up under its live session key: bare canonical
+# first, legacy ``tui-`` second. The fixture agent is literally named
+# ``tui-demo``, so its bare key is ``tui-demo`` and its legacy key is
+# ``tui-tui-demo`` — the suite pins BOTH readings below.
 LIVE_SNAPSHOT = {"tui-tui-demo": PINNED_ACTIVITY_TS}
 
 
@@ -186,20 +189,23 @@ async def test_heartbeat_pid_is_zero_for_tui_agent(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_looks_the_agent_up_under_its_tui_prefixed_session_key(tmp_path: Path):
-    # Arrange — a snapshot keyed WITHOUT the ``tui-`` prefix must not match
-    # (the loop owns the ``tui-<name>`` convention TuiSessionRuntime sets).
+async def test_beats_for_the_bare_canonical_session_key(tmp_path: Path):
+    # Arrange — the fixture agent is literally named ``tui-demo``, so a
+    # snapshot keyed ``tui-demo`` is its BARE canonical session, not an
+    # unprefixed miss: the loop must beat for it. (Pre-cutover this key
+    # shape read as "no tui- prefix → absent".)
     state_dir = tmp_path / "tui-demo"
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
         sessions_fn=lambda: {"tui-demo": PINNED_ACTIVITY_TS},
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
     # Assert
-    assert not (state_dir / "heartbeat.json").exists()
+    assert (state_dir / "heartbeat.json").is_file()
 
 
 # ---------------------------------------------------------------------------

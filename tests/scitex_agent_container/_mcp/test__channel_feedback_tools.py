@@ -53,6 +53,143 @@ def _registered(listen_url: str = "http://127.0.0.1:1") -> _ToolRecorder:
     return recorder
 
 
+@pytest_asyncio.fixture
+async def submitted_handshake():
+    # Arrange: challenge identity is listen-minted, never caller-selected.
+    from scitex_dev.status import new_exchange_id
+
+    from scitex_agent_container._mcp._channel_feedback_tools import send_agentic_ack
+
+    exchange_id = new_exchange_id(host="test-listen")
+    orig = {
+        "from_agent": "daemon",
+        "to_agent": "bob",
+        "kind": "agentic_challenge",
+        "extra": {
+            "handshake": {
+                "exchange_id": exchange_id,
+                "nonce": "nonce-issued",
+                "target": {"agent": "bob"},
+            }
+        },
+    }
+    proof = {
+        "exchange_id": exchange_id,
+        "nonce": "nonce-issued",
+        "instance_id": "instance",
+        "boot_id": "boot",
+        "session_id": "thread",
+        "answer": "a" * 64,
+    }
+    arguments = {
+        "dispatch_id": "nonce-issued",
+        "understood": "Compute and verify ownership.",
+        "owner": "bob",
+        "next_checkpoint": "Report current tool activity.",
+        "handshake_proof": proof,
+    }
+    posts = []
+
+    async def send(target, path, payload):
+        posts.append((target, path, payload))
+        return {"status": 202, "body": {"proven": None}}
+
+    # Act
+    result = await send_agentic_ack(arguments, orig, wrap=lambda **kw: kw, send=send)
+    # Assert
+    return posts, result, orig, arguments, exchange_id
+
+
+@pytest.mark.asyncio
+async def test_server_handshake_ack_uses_exact_exchange_route(submitted_handshake):
+    # Arrange
+    posts, result, orig, arguments, exchange_id = submitted_handshake
+    # Act
+    actual = posts
+    # Assert
+    assert actual == [
+        ("daemon", f"/agents/bob/handshakes/{exchange_id}/ack", {"feedback": arguments})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_handshake_ack_preserves_authored_fields(submitted_handshake):
+    # Arrange
+    posts, result, orig, arguments, exchange_id = submitted_handshake
+    # Act
+    response = _payload(result)
+    # Assert
+    assert response["body"]["proven"] is None and orig["_agentic_ack"] == arguments
+
+
+def _foreign_exchange(arguments, orig):
+    from scitex_dev.status import new_exchange_id
+
+    arguments["handshake_proof"]["exchange_id"] = new_exchange_id(host="other")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda arguments, orig: arguments.pop("handshake_proof"), id="missing_proof"
+        ),
+        pytest.param(
+            _foreign_exchange,
+            id="foreign_exchange",
+        ),
+        pytest.param(
+            lambda arguments, orig: orig.update(from_agent="unrelated-peer"),
+            id="foreign_sender",
+        ),
+        pytest.param(
+            lambda arguments, orig: orig["extra"]["handshake"]["target"].update(
+                agent="foreign-agent"
+            ),
+            id="foreign_target",
+        ),
+    ],
+)
+async def test_server_challenge_ack_never_falls_back_to_ordinary_message_send(mutate):
+    # Arrange
+    from scitex_dev.status import new_exchange_id
+
+    from scitex_agent_container._mcp._channel_feedback_tools import send_agentic_ack
+
+    exchange_id = new_exchange_id(host="test-listen")
+    orig = {
+        "from_agent": "daemon",
+        "to_agent": "bob",
+        "kind": "agentic_challenge",
+        "extra": {
+            "handshake": {
+                "exchange_id": exchange_id,
+                "nonce": "nonce-issued",
+                "target": {"agent": "bob"},
+            }
+        },
+    }
+    arguments = {
+        "dispatch_id": "nonce-issued",
+        "understood": "Compute and verify ownership.",
+        "owner": "bob",
+        "next_checkpoint": "Report current tool activity.",
+        "handshake_proof": {"exchange_id": exchange_id, "nonce": "nonce-issued"},
+    }
+    mutate(arguments, orig)
+    calls = []
+
+    async def send(*args):
+        calls.append(args)
+        return {"status": 202}
+
+    # Act
+    result = await send_agentic_ack(arguments, orig, wrap=lambda **kw: kw, send=send)
+    # Assert: no endpoint received malformed or downgraded feedback.
+    assert calls == [] and "_agentic_ack" not in orig and _payload(result).get("error")
+
+
 class _Listen:
     def __init__(self) -> None:
         self.posts: list[dict[str, Any]] = []
@@ -219,7 +356,9 @@ async def test_progress_posts_typed_status_for_exact_nonce(listen: _Listen) -> N
 
 
 @pytest.mark.asyncio
-async def test_http_200_send_returns_delivered_unacknowledged_hint(listen: _Listen) -> None:
+async def test_http_200_send_returns_delivered_unacknowledged_hint(
+    listen: _Listen,
+) -> None:
     # Arrange
     recorder = _registered(f"http://127.0.0.1:{listen.port}")
     # Act

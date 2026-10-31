@@ -8,13 +8,16 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.host_config import PeerSpec
 from scitex_agent_container.cli_pkg._image_distribute_core import (
     _REMOTE_PROGRAM,
     LinkState,
+    SshImageTransport,
     distribute,
     resolve_artifact,
     validate_target_root,
@@ -325,3 +328,124 @@ def test_inline_receiver_stages_commits_verifies_and_activates(tmp_path: Path):
     )
     # Assert
     assert observed == (after, Path(artifact.source).read_bytes(), True)
+
+
+@contextmanager
+def _local_ssh_receiver(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "receiver-interpreters"
+    ssh = bin_dir / "ssh"
+    ssh.write_text(
+        f"#!{sys.executable}\n"
+        "import os,shlex,sys\n"
+        "from pathlib import Path\n"
+        "i=sys.argv.index('synthetic-image-peer')\n"
+        "command=shlex.split(' '.join(sys.argv[i+1:]))\n"
+        "if command[0]=='--':command=command[1:]\n"
+        f"with Path({str(calls)!r}).open('a') as f:f.write(command[0]+'\\n')\n"
+        "os.execv(command[0],command)\n"
+    )
+    ssh.chmod(0o755)
+    previous = os.environ["PATH"]
+    os.environ["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    try:
+        yield calls
+    finally:
+        os.environ["PATH"] = previous
+
+
+def test_explicit_receiver_binding_runs_the_real_receiver_without_path_fallback(
+    tmp_path,
+):
+    # Arrange
+    artifact = _artifact(tmp_path)
+    root = tmp_path / "remote"
+    interpreter = tmp_path / "receiver's interpreter"
+    interpreter.symlink_to(sys.executable)
+    bindings = {"a": str(interpreter)}
+    transport = SshImageTransport(
+        {"a": PeerSpec("a", "synthetic-image-peer")}, receiver_python=bindings
+    )
+    bindings["a"] = "/does/not/exist"
+
+    # Act
+    with _local_ssh_receiver(tmp_path) as calls:
+        result = distribute(
+            artifact=artifact, hosts=("a",), target_root=str(root), transport=transport
+        )
+    observed = (
+        result.success,
+        set(calls.read_text().splitlines()),
+        (root / "sac-base.sif").resolve().read_bytes(),
+    )
+
+    # Assert
+    assert observed == (True, {str(interpreter)}, Path(artifact.source).read_bytes())
+
+
+def test_missing_explicit_receiver_binding_refuses_before_ssh(tmp_path):
+    # Arrange
+    artifact = _artifact(tmp_path)
+    transport = SshImageTransport(
+        {"a": PeerSpec("a", "synthetic-image-peer")}, receiver_python={}
+    )
+
+    # Act
+    with _local_ssh_receiver(tmp_path) as calls:
+        result = distribute(
+            artifact=artifact,
+            hosts=("a",),
+            target_root=str(tmp_path / "remote"),
+            transport=transport,
+        )
+    observed = (result.success, calls.exists(), result.hosts[0].error)
+
+    # Assert
+    assert observed == (
+        False,
+        False,
+        "receiver interpreter is missing for explicitly bound host: a",
+    )
+
+
+def _receiver_binding_refusal(peers, bindings):
+    try:
+        SshImageTransport(peers, receiver_python=bindings)
+    except ValueError as error:
+        return str(error)
+    return None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python3",
+        "/",
+        "/a/../python",
+        "/a//python",
+        "/a\npython",
+        "/a\rpython",
+        "/a\x00python",
+    ],
+)
+def test_invalid_explicit_receiver_binding_is_rejected_before_transport(path):
+    # Arrange
+    peers = {"a": PeerSpec("a", "synthetic-image-peer")}
+
+    # Act
+    observed = _receiver_binding_refusal(peers, {"a": path})
+
+    # Assert
+    assert observed is not None and "canonical absolute path" in observed
+
+
+def test_unknown_explicit_receiver_owner_is_rejected_before_transport():
+    # Arrange
+    peers = {"a": PeerSpec("a", "synthetic-image-peer")}
+
+    # Act
+    observed = _receiver_binding_refusal(peers, {"other": sys.executable})
+
+    # Assert
+    assert observed is not None and "host is not configured" in observed

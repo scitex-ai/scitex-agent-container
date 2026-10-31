@@ -130,13 +130,13 @@ def test_fresh_alive_heartbeat_repairs_unknown_process_probe() -> None:
     }
 
 
-def test_disconnected_heartbeat_projects_typed_unknown_health() -> None:
-    # Arrange
-    resident_state = "disconnected"
+def test_working_heartbeat_projects_healthy() -> None:
+    # Arrange — binary verdict (CCT 4276/4299): WORKING is healthy.
+    resident_state = "working"
     # Act
     result = heartbeat_health_state(resident_state)
     # Assert
-    assert result == "unknown"
+    assert result == "healthy"
 
 
 def test_dead_heartbeat_projects_typed_unhealthy_health() -> None:
@@ -148,10 +148,10 @@ def test_dead_heartbeat_projects_typed_unhealthy_health() -> None:
     assert result == "unhealthy"
 
 
-def test_direct_alive_process_projects_healthy_despite_disconnected_resident() -> None:
+def test_direct_alive_process_projects_healthy_despite_dead_resident() -> None:
     # Arrange
     status = {
-        "resident_state": "disconnected",
+        "resident_state": "dead",
         "observation": {"process": {"state": "alive"}},
     }
     # Act
@@ -162,7 +162,7 @@ def test_direct_alive_process_projects_healthy_despite_disconnected_resident() -
 
 def test_missing_process_observation_projects_unknown_health() -> None:
     # Arrange
-    status = {"resident_state": "disconnected"}
+    status = {"resident_state": "working"}
     # Act
     result = status_health_state(status)
     # Assert

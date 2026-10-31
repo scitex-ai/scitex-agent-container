@@ -85,7 +85,7 @@ def _probe_local(cfg) -> bool | None:
     ``spec.runtime``) — NOT a hardcoded ``ClaudeSessionRuntime``. That
     hardcode was the root cause of "live agent reads stopped" (fix
     ``liveness-live-agents-read-stopped``): the DEFAULT runtime is
-    ``tui``, whose liveness is the ``tui-<name>`` tmux session's
+    ``tui``, whose liveness is the agent's tmux session's
     pane-activity (``TuiSessionRuntime.is_running``). Probing a live TUI
     agent through ``ClaudeSessionRuntime`` instead reached
     ``ApptainerContainerRuntime.is_running`` → ``os.kill(read_pid, 0)``,
@@ -206,6 +206,7 @@ def get_agent_list_data(
     running_only: bool = False,
     remote_status_probe=None,
     remote_run_ssh=None,
+    detail_level: int | None = None,
 ) -> list[dict]:
     """Get agent list as plain dicts for JSON or table output.
 
@@ -586,6 +587,16 @@ def get_agent_list_data(
         _spec_cache.flush()
     except Exception:
         pass
+    if detail_level is not None:
+        from ._agent_observation import enrich_rows
+
+        results = enrich_rows(
+            results,
+            active_instances,
+            local_host,
+            detail=detail_level,
+            births=births_by_name,
+        )
     return results
 
 

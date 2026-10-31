@@ -3,35 +3,46 @@
 Read-only by default. A view never invents state: it asks the listener, scopes
 the result to the caller, and projects it. Control is a separate, gated path.
 
-DUAL MODE. The same views render two ways, chosen by the mount prefix (derived
-with scitex-ui's ``mount_prefix`` — the single source of truth):
+ONE TEMPLATE PER PAGE. Every page template extends the documented SDK adapter
+``scitex_sdk/app/app_shell.html`` and fills its ``scitex_app_content`` block
+(the adapter delegates to the SDK-owned UI shell). This package names no host
+shell: a host maps the content block into its own chrome by shadowing
+``scitex_sdk/app/app_shell.html`` with a project-DIRS template (project DIRS
+win); standalone serving (``sac gui serve``) uses the SDK-owned shell through
+the same adapter. The mount prefix (via the SDK's ``mount_prefix`` SSOT) is
+LOCATION for content links and the lifecycle redirect, never a platform signal.
 
-* **Standalone** (root mount, ``sac gui serve``): extend the full
-  ``scitex_ui/standalone_shell.html`` (``fleet.html`` / ``detail.html``).
-* **Mounted in SciTeX Hub** (``/apps/agents/``): extend the Hub's
-  ``global_base.html`` (``fleet_hub.html`` / ``detail_hub.html``), which already
-  renders the header + nav. This is what makes "no duplicate header, no project
-  switcher" true: the package supplies content only, the Hub supplies the shell.
-
-Per-row links and the lifecycle redirect use ``url_base`` so they are correct in
-both modes.
+Per-row links and the lifecycle redirect use ``url_base`` so they are correct
+at any mount.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from django.http import (
-    HttpRequest,
-    HttpResponseForbidden,
-    HttpResponseRedirect,
-    JsonResponse,
-)
-from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
+try:
+    from django.http import (
+        HttpRequest,
+        HttpResponseForbidden,
+        HttpResponseRedirect,
+        JsonResponse,
+    )
+    from django.shortcuts import render
+    from django.views.decorators.http import (
+        require_GET,
+        require_http_methods,
+        require_POST,
+    )
+except ImportError as exc:
+    raise ImportError(
+        "SAC GUI dependencies are unavailable; install "
+        "scitex-agent-container[gui]."
+    ) from exc
 
 from ._authorization import can_control, fleet_visibility, resolve_identity, scope_rows
 from ._constants import API_URL_ENV
@@ -39,6 +50,7 @@ from ._projection import project_detail, project_row
 from ._remote import RemoteFleet, safe_error_message
 from ._timeline import (
     KINDS,
+    NATIVE_LABELS,
     REFRESH_SECONDS,
     STALE_AFTER_SECONDS,
     build_timeline,
@@ -47,7 +59,7 @@ from ._timeline import (
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
-    """The app's mount prefix for the route currently rendering, via scitex-ui's
+    """The app's mount prefix for the route currently rendering, via the SDK's
     SSOT. ``view_path`` must be the route this view is registered under (relative
     to the app root) — ``mount_prefix`` subtracts it from ``request.path`` to
     recover the prefix, and raises on a mismatch (a wiring bug), so this is
@@ -55,8 +67,14 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
     Content links and the lifecycle redirect are built from this value, so they
     are correct whether the app is standalone (base "") or mounted (base
-    "/apps/agents")."""
-    from scitex_ui.mount import mount_prefix
+    "/apps/agent-container")."""
+    try:
+        from scitex_sdk.ui.mount import mount_prefix
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     try:
         return mount_prefix(request, view_path=view_path)
@@ -65,12 +83,22 @@ def _mount_base(request: HttpRequest, view_path: str) -> str:
 
 
 def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
-    """Context for the standalone shell only (mounted mode uses global_base)."""
-    from scitex_ui.branding import shell_context
-    from scitex_ui.mount import mount_context
+    """Context for the SDK app-shell adapter (both standalone and host-shadowed).
+
+    Supplies the shell vars the adapter's UI shell needs (title, panes, mount
+    marker). All three side panes are unused: this is a server-rendered fleet
+    table, not a file workspace. Declaring them unused is the SDK branding API."""
+    try:
+        from scitex_sdk.ui.branding import shell_context
+        from scitex_sdk.ui.mount import mount_context
+    except ImportError as exc:
+        raise ImportError(
+            "SAC GUI dependencies are unavailable; install "
+            "scitex-agent-container[gui]."
+        ) from exc
 
     # All three side panes are unused: this is a server-rendered fleet table,
-    # not a file workspace. Declaring them unused is the scitex-ui API.
+    # not a file workspace. Declaring them unused is the SDK branding API.
     panes = {"ai": "unused", "files": "unused", "viewer": "unused"}
     ctx = dict(shell_context(title, accent="agents", panes=panes))
     try:
@@ -80,25 +108,66 @@ def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
     return ctx
 
 
-def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tuple[dict, bool]:
-    """Build the render context and decide mounted (hub) vs standalone.
+def _leaf_version() -> str:
+    """The installed leaf package version serving this page, never raised.
 
-    Returns ``(context, is_standalone)``. ``url_base`` is the app's mount prefix
-    (no trailing slash — the templates add it), derived for the route currently
-    rendering. Because the four routes all share the same mount prefix, this is
-    the same value on every view: "" at a root (standalone) mount, e.g.
-    "/apps/agents" when mounted in the Hub. A non-empty base means we are
-    mounted in the Hub, whose ``global_base`` owns the header.
+    Read from the manifest's ``pip_package`` (Writer pattern) so the header
+    states which installed distribution renders the page, not a source-tree
+    constant. ``"unknown"`` when the distribution metadata is absent (e.g. an
+    uninstalled source checkout serving tests) — a header must degrade, not 500.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:
+        return "unknown"
+    try:
+        manifest = json.loads((Path(__file__).parent / "manifest.json").read_text(encoding="utf-8"))
+        return version(manifest["pip_package"])
+    except (OSError, ValueError, KeyError, PackageNotFoundError):
+        return "unknown"
+
+
+def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> dict:
+    """Build the render context for the documented SDK app-shell adapter.
+
+    Every page renders the SAME leaf template, which extends
+    ``scitex_sdk/app/app_shell.html`` and fills ``scitex_app_content``. There
+    is no Hub-vs-standalone branch in this package: a host maps the content
+    block into its own chrome by shadowing ``scitex_sdk/app/app_shell.html``
+    with a project-DIRS template (project DIRS win); standalone serving uses
+    the SDK-owned shell through the same adapter. ``url_base`` is the app's
+    mount prefix (no trailing slash — the templates add it), derived for the
+    route currently rendering; it is LOCATION for content links, never a
+    platform signal.
     """
     base = _mount_base(request, view_path)
     ctx = dict(data)
     ctx["url_base"] = base
-    if base == "":
-        ctx.update(_shell_context(request, title, view_path))
-        return ctx, True
-    # Mounted in the Hub: global_base owns the header/nav; the package renders
-    # content only, so there is no duplicate header and no project switcher.
-    return ctx, False
+    ctx["app_version"] = _leaf_version()
+    ctx["project_picker_available"] = _project_picker_available()
+    ctx.update(_shell_context(request, title, view_path))
+    return ctx
+
+
+def _project_picker_available() -> bool:
+    """True when the host registered the `scitex_project_picker` tag library.
+
+    Writer/Storage precedent: `{% load %}` of a missing library is a hard
+    TemplateSyntaxError, so the guard lives here, not in the template.
+    Provider presence is deliberately NOT part of this guard: since
+    scitex-sdk 0.3.14 a signed-in render with no provider URL fail-fasts
+    (ImproperlyConfigured) by design — house rule is fail loud, never a
+    silent empty slot. Tests wire the provider URL in _test_settings,
+    mirroring what a mounted host provides.
+    """
+    try:
+        from django.template import engines
+    except Exception:
+        return False
+    try:
+        return "scitex_project_picker" in engines["django"].engine.template_libraries
+    except Exception:
+        return False
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
@@ -108,7 +177,15 @@ def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
     # HTTP N+1 and repeated those same store scans N times.
     rows = scope_rows(fleet.list_all(), identity)
     agents = [project_row(row, row) for row in rows]
+    # Operator 2026-10-23: roster ordered by state — online (good) first,
+    # then needs-attention (warn/bad), then idle (muted), alphabetical
+    # within each band.
+    agents.sort(key=lambda a: (_TONE_RANK.get(str(a.get("state_tone") or ""), 99), str(a.get("name") or "")))
     return agents, ""
+
+
+# Roster band order: online first, attention second, idle last.
+_TONE_RANK = {"good": 0, "warn": 1, "bad": 1, "muted": 2}
 
 
 def _is_configured() -> bool:
@@ -116,8 +193,7 @@ def _is_configured() -> bool:
     return bool(os.environ.get(API_URL_ENV, "").strip())
 
 
-@require_GET
-def index(request: HttpRequest):
+def _fleet_context(request: HttpRequest) -> dict:
     """Render the fleet SHELL immediately; never block on the control plane.
 
     P0 (operator-reproduced): this view used to run the whole control-plane read
@@ -132,6 +208,7 @@ def index(request: HttpRequest):
     `unavailable` + Retry instead of a perpetual "loading". The browser-side
     poll (see _fleet_content.html) drives loading -> inventory / unavailable.
     """
+    from ._control import new_dispatch_id
     from ._inventory_cache import CACHE
 
     identity = resolve_identity(request)
@@ -143,7 +220,12 @@ def index(request: HttpRequest):
     elif snapshot.error:
         # A completed failure is the last thing observed for this identity:
         # show unavailable + Retry, not a pending spinner, and not an empty fleet.
-        agents, comm_error, fleet_state, observed_age = [], snapshot.error, "unavailable", snapshot.age()
+        agents, comm_error, fleet_state, observed_age = (
+            [],
+            snapshot.error,
+            "unavailable",
+            snapshot.age(),
+        )
     else:
         agents = [dict(row) for row in snapshot.agents]
         comm_error = ""
@@ -173,10 +255,7 @@ def index(request: HttpRequest):
         on_error=_record_failure,
     )
 
-    context, is_standalone = _app_context(
-        request,
-        "Agents",
-        view_path="",
+    return dict(
         agents=agents,
         summary=_summary(agents),
         identity=identity,
@@ -189,12 +268,20 @@ def index(request: HttpRequest):
         comm_error=comm_error,
         observed_age=observed_age,
         cache_ttl=CACHE.ttl,
+        dispatch_id=new_dispatch_id(),
         page="fleet",
         fleet_state=fleet_state,
-        diagnostic_reason="the control plane did not answer" if fleet_state == "unavailable" else "",
+        diagnostic_reason="the control plane did not answer"
+        if fleet_state == "unavailable"
+        else "",
     )
-    template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
-    return render(request, template, context)
+
+
+@require_GET
+def index(request: HttpRequest):
+    """Render the standalone or mounted leaf shell from the same fleet context."""
+    context = _app_context(request, "Agent Container", view_path="", **_fleet_context(request))
+    return render(request, "scitex_agent_container/fleet.html", context)
 
 
 @require_GET
@@ -222,14 +309,14 @@ def timeline(request: HttpRequest):
         agent=agent_filter if isinstance(agent_filter, str) and agent_filter else None,
         kind=kind_filter if isinstance(kind_filter, str) and kind_filter else None,
     )
-    context, is_standalone = _app_context(
+    context = _app_context(
         request,
-        "Agents · Activity",
+        "Agent Container · Activity",
         view_path="timeline/",
         entries=timeline_rows(entries),
         summary=_timeline_summary(entries),
         agent_names=sorted(names),
-        kinds=KINDS,
+        kinds=[(name, NATIVE_LABELS.get(name, name)) for name in KINDS],
         selected_agent=agent_filter,
         selected_kind=kind_filter,
         refresh_seconds=REFRESH_SECONDS,
@@ -239,11 +326,7 @@ def timeline(request: HttpRequest):
         comm_error=comm_error,
         page="timeline",
     )
-    template = (
-        "scitex_agent_container/timeline.html"
-        if is_standalone
-        else "scitex_agent_container/timeline_hub.html"
-    )
+    template = "scitex_agent_container/timeline.html"
     return render(request, template, context)
 
 
@@ -309,7 +392,7 @@ def timeline_api(request: HttpRequest) -> JsonResponse:
             "ok": True,
             "identity": identity,
             "count": len(entries),
-            "entries": [e.as_dict() for e in entries],
+            "entries": timeline_rows(entries),
             "stale_after_seconds": STALE_AFTER_SECONDS,
         }
     )
@@ -359,11 +442,15 @@ def detail(request: HttpRequest, name: str):
     if row is None:
         # Not own-scope (hidden) or genuinely absent. We do not reveal which —
         # an ordinary caller simply does not see cross-host agents.
-        context, is_standalone = _app_context(
+        context = _app_context(
             request, f"Agent · {name}", view_path=f"{name}/",
             agent=None, identity=identity, list_error=list_error, not_found=True, page="detail",
         )
-        template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+        if request.GET.get("partial") == "1":
+            template = "scitex_agent_container/_detail_content.html"
+            context = dict(context, fragment=True)
+        else:
+            template = "scitex_agent_container/detail.html"
         return render(request, template, context)
     try:
         status = fleet.read_status(name)
@@ -374,7 +461,7 @@ def detail(request: HttpRequest, name: str):
     agent.update(_detail_extras(fleet, name, status))
     from ._control import CONTROL_KEYS, new_dispatch_id
 
-    context, is_standalone = _app_context(
+    context = _app_context(
         request, f"Agent · {name}", view_path=f"{name}/",
         agent=agent,
         identity=identity,
@@ -386,7 +473,16 @@ def detail(request: HttpRequest, name: str):
         list_error=list_error,
         page="detail",
     )
-    template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+    if request.GET.get("partial") == "1":
+        # Fragment for the fleet page's dynamic Details pane (operator
+        # 2026-10-23): the same context, the _detail_content partial only —
+        # no shell, no <html> wrapper. Same auth/visibility gating as the
+        # full page (row resolved above); a hidden agent renders the same
+        # not-visible fragment as its page.
+        template = "scitex_agent_container/_detail_content.html"
+        context = dict(context, fragment=True)
+    else:
+        template = "scitex_agent_container/detail.html"
     return render(request, template, context)
 
 
@@ -481,12 +577,21 @@ def message_action(request: HttpRequest, name: str):
     control_key = field("control_key")
     dispatch_id = field("dispatch_id") or new_dispatch_id()
 
+    # Send-in-place (operator 2026-10-26): the fleet composer POSTs with
+    # `Accept: application/json` so Enter-to-send stays on the fleet page
+    # instead of following the detail-page redirect below. JSON carries
+    # the same outcome the redirect query string would have.
+    wants_json = "application/json" in request.headers.get("Accept", "")
+
     if not exactly_one_of(message.strip(), control_key.strip()):
+        refusal = "Provide either a message or a single control key."
+        if wants_json:
+            return JsonResponse({"ok": False, "error": refusal}, status=400)
         query = urlencode(
             {
                 "operation": "message",
                 "state": "refused",
-                "message": "Provide either a message or a single control key.",
+                "message": refusal,
             }
         )
         return HttpResponseRedirect(f"{base}/{name}/?{query}")
@@ -537,6 +642,15 @@ def message_action(request: HttpRequest, name: str):
             "dispatch_id": result.dispatch_id,
         }
     )
+    if wants_json:
+        return JsonResponse(
+            {
+                "ok": result.state in ("delivered", "replay"),
+                "state": result.state,
+                "message": result.message[:240],
+                "dispatch_id": result.dispatch_id,
+            }
+        )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 
@@ -588,15 +702,15 @@ def launch(request: HttpRequest):
     identity = resolve_identity(request)
     allowed = can_control(identity, cross_host=False, request=request)
     if request.method == "GET":
-        context, is_standalone = _app_context(
+        context = _app_context(
             request,
-            "Agents · Launch",
+            "Agent Container · Launch",
             view_path="launch/",
             identity=identity,
             can_launch=allowed,
             page="launch",
         )
-        template = "scitex_agent_container/launch.html" if is_standalone else "scitex_agent_container/launch_hub.html"
+        template = "scitex_agent_container/launch.html"
         return render(request, template, context)
 
     value = request.POST.get("name", "")
@@ -674,7 +788,7 @@ def forget_action(request: HttpRequest, name: str):
     unregisters the ``comms_nodes`` pin. No ssh, no signal — purely
     local state mutations, so this is also the verb for entries the
     listener no longer lists (the gate then requires the
-    lifecycle-operator list). A refusal (live rows, no ``force``) and
+    lifecycle-operator list). A refusal (live rows) and
     any backend failure FAIL LOUD as 409/502 with the reason in the
     body — never a silent redirect. Grants, denials and outcomes are
     audited.
@@ -694,18 +808,28 @@ def forget_action(request: HttpRequest, name: str):
             }
         )
         return HttpResponseForbidden("You are not authorized for this action.")
-    force_raw = request.POST.get("force", "")
-    force = (
-        force_raw.strip().lower() in {"on", "true", "1", "yes"}
-        if isinstance(force_raw, str)
-        else False
-    )
+    if "force" in request.POST:
+        record_audit(
+            {
+                "event": "forget_action",
+                "identity": fleet_identity,
+                "agent": name,
+                "cross_host": cross_host,
+                "state": "refused",
+                "message": "force is unsupported; stop the agent before forgetting it",
+                "path": request.path,
+            }
+        )
+        return JsonResponse(
+            {"error": "force is unsupported; stop the agent before forgetting it"},
+            status=400,
+        )
     try:
         from click import ClickException
 
         from ..cli_pkg.lifecycle._forget import _forget_one
 
-        envelope = _forget_one(name, force=force, dry_run=False)
+        envelope = _forget_one(name, force=False, dry_run=False)
         message = (
             f"forgot {name!r}: tombstoned "
             f"{len(envelope['forgotten_instance_ids'])} instance row(s)"
@@ -718,8 +842,8 @@ def forget_action(request: HttpRequest, name: str):
 
         raw_message = str(exc)  # kept for the server-side audit only
         if isinstance(exc, ClickException):
-            # The live-row refusal: names the remedy (``--force`` / stop
-            # first), so it is a 409 with the reason, not a redirect the
+            # The live-row refusal names the remedy (stop first), so it is
+            # a 409 with the reason, not a redirect the
             # fleet page would swallow.
             record_audit(
                 {
@@ -855,8 +979,7 @@ def create_agent(request: HttpRequest):
     live-scanned from the agents root on every GET, so it cannot go
     stale. Unknown templates, invalid names and existing specs fail
     loud as 400/409 with the CLI's own reason — never a silent
-    redirect, never an overwrite (the GUI offers no ``--force``; use
-    the CLI to replace a spec).
+    redirect, never an overwrite. Edit an existing spec directly.
 
     Authorization mirrors :func:`launch` at its strictest: the caller
     must be in the lifecycle-operator allowlist. Grants, denials and
@@ -868,9 +991,9 @@ def create_agent(request: HttpRequest):
     allowed = can_control(fleet_identity, cross_host=False, request=request)
     if request.method == "GET":
         inline, dir_templates, templates_error = _create_template_choices()
-        context, is_standalone = _app_context(
+        context = _app_context(
             request,
-            "Agents · Create",
+            "Agent Container · Create",
             view_path="create/",
             identity=fleet_identity,
             can_create=allowed,
@@ -879,7 +1002,7 @@ def create_agent(request: HttpRequest):
             templates_error=templates_error,
             page="create",
         )
-        template = "scitex_agent_container/create.html" if is_standalone else "scitex_agent_container/create_hub.html"
+        template = "scitex_agent_container/create.html"
         return render(request, template, context)
 
     # POST — scaffold through the CLI's own backend.
@@ -1040,9 +1163,9 @@ def a2a_panel(request: HttpRequest):
     except Exception:  # stx-allow: fallback (reason: per-agent reachability degrades to unknown)
         statuses = {}
     grants, grants_error = _read_grants()
-    context, is_standalone = _app_context(
+    context = _app_context(
         request,
-        "Agents · A2A",
+        "Agent Container · A2A",
         view_path="a2a/",
         peers=_a2a_peers(rows, statuses if isinstance(statuses, dict) else {}),
         grants=grants,
@@ -1054,7 +1177,7 @@ def a2a_panel(request: HttpRequest):
         comm_error=comm_error,
         page="a2a",
     )
-    template = "scitex_agent_container/a2a.html" if is_standalone else "scitex_agent_container/a2a_hub.html"
+    template = "scitex_agent_container/a2a.html"
     return render(request, template, context)
 
 

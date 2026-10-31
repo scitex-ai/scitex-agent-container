@@ -403,6 +403,17 @@ def resolve_agent_harness(config: AgentConfig) -> str:
     return harness or "anthropic"
 
 
+def anthropic_oauth_active(config: AgentConfig) -> bool:
+    """True iff the selected launch consumes Claude OAuth; unknown refuses."""
+    from ..config._harness_lookup import canonical_harness
+
+    selected = resolve_agent_harness(config)
+    family = canonical_harness(selected)
+    if family is None:
+        raise ProviderEnvError(f"Cannot resolve auth for unknown harness {selected!r}")
+    return family == "anthropic" and not provider_active(config)
+
+
 def openai_harness_active(config: AgentConfig) -> bool:
     """True when this launch resolves to the ``openai`` harness."""
     return resolve_agent_harness(config) == "openai"
@@ -481,6 +492,7 @@ def openai_env_flags(config: AgentConfig) -> list[str]:
 
 
 __all__ = [
+    "anthropic_oauth_active",
     "AGENT_HARNESS_ENV",
     "ENGINE_KEY_ENV",
     "ENGINE_MAX_CONTEXT_TOKENS_ENV",

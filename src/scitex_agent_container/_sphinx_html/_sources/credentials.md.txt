@@ -30,7 +30,7 @@ including when the candidate list contains exactly one account.
 ### Claude Code harness with Codex subscriptions
 
 SAC uses the nested `spec.claude.provider` backend axis for this mode. Do not
-set the top-level `spec.provider: openai`: that selects the OpenAI Agents SDK
+set the top-level `spec.harness: openai`: that selects the OpenAI Agents SDK
 and replaces the Claude Code harness.
 
 Start the scitex-genai gateway with its account homes and a local gateway key:
@@ -62,8 +62,11 @@ configured on the gateway, not repeated in each agent's
 `claude.credentials_files`. The gateway key authenticates only the local SAC
 to gateway hop; Codex OAuth tokens remain in each `auth.json`.
 
-This document describes the on-disk files Claude Code manages for a user
-and which fields `scitex-agent-container` is allowed to read and surface.
+The remainder of this document is **Claude Code-specific reference
+material**: the on-disk files Claude Code manages for a user, and which
+fields `scitex-agent-container` is allowed to read and surface. It applies
+when an agent runs a Claude-family harness; the formats below are
+Anthropic's, not sac's.
 
 ## Claude Code files
 
@@ -108,14 +111,15 @@ material on the host.
 ### `~/.claude/settings.json`
 
 Per-user Claude Code settings. Common keys: `permissions`, `statusLine`
-(command used to render the bottom bar, often claude-hud),
+(command used to render the bottom bar; sac agents run `sac-statusline`),
 `enabledPlugins`. Contains no secrets but may reveal which plugins /
 skills are enabled.
 
 ## Fleet hosts
 
-Each fleet host runs exactly one Claude Code OAuth identity shared by
-all tmux-managed agents on that host:
+On hosts running the Claude Code harness, each fleet host carries
+exactly one Claude Code OAuth identity, shared by all tmux-managed
+agents on that host:
 
 | Host              | Domain role            | Credential home |
 |-------------------|------------------------|-----------------|

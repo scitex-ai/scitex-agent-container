@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_goals import HermesGoalSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 from ._launch_plan import LaunchPlan
 
@@ -31,6 +32,8 @@ def compile_hermes_config(
     *,
     workdir: str,
     run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
+    max_turns: int | None = None,
+    goals: HermesGoalSpec | None = None,
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
     background_review: bool = False,
@@ -69,6 +72,15 @@ def compile_hermes_config(
         raise ValueError("approval_mode must be manual, smart, or off")
     if type(background_review) is not bool:
         raise ValueError("background_review must be a boolean")
+    if max_turns is not None and (type(max_turns) is not int or max_turns <= 0):
+        raise ValueError("max_turns must be a positive integer")
+    goals = goals or HermesGoalSpec()
+    if goals.max_turns is not None and (
+        type(goals.max_turns) is not int or goals.max_turns <= 0
+    ):
+        raise ValueError("goals.max_turns must be a positive integer")
+    if goals.judge_engine and goals.judge_engine != plan.engine.key:
+        raise ValueError("Hermes goals.judge_engine must be the selected agent engine")
     compression = compression or HermesCompressionSpec()
     workspace = str(PurePosixPath(workdir))
     if not workspace.startswith("/"):
@@ -127,12 +139,20 @@ def compile_hermes_config(
             # therefore must be selected through the named-custom identity.
             "provider": f"custom:{provider_key}",
             "api_mode": api_mode,
+            # Auxiliary judge calls (goal_judge) build their own client and
+            # do NOT inherit the provider entry's extra_headers — without
+            # x-opencode-session OpenCode Go answers 400 MissingSessionID
+            # and every goal pauses after 5 transport failures. Verified live.
+            "extra_headers": {
+                "x-opencode-session": session_id,
+            },
         }
         providers_block = {provider_key: provider}
     agent: dict[str, Any] = {
         # SAC's autonomous loop has its own independent safety cap.  Hermes'
-        # TUI defaults an omitted value to 500, so emit its unlimited sentinel.
-        "max_turns": "none",
+        # TUI defaults an omitted value to 500. Preserve our unlimited default
+        # unless the author explicitly supplies a positive limit.
+        "max_turns": "none" if max_turns is None else max_turns,
         # Hermes subtracts disabled toolsets after expanding ``hermes-cli``.
         # Naming its one-tool ``delegation`` toolset removes delegate_task
         # completely instead of relying on prompt compliance.
@@ -146,10 +166,44 @@ def compile_hermes_config(
         if not system_prompt.strip():
             raise ValueError("Hermes system_prompt must contain non-whitespace text")
         agent["system_prompt"] = system_prompt
+    auxiliary: dict[str, Any] = {
+        "title_generation": {"enabled": False},
+        "background_review": {"enabled": background_review},
+        # Operator rule: the goal judge runs on the same Muse route as
+        # the agent itself (muse-spark-1.3-contributor via the primary
+        # custom provider). An undefined goal_judge falls back to Hermes
+        # defaults, which left fleet agents' goal loops dying on
+        # unreachable-judge pauses — the definition (spec + generated
+        # profile) must show everything, no implicit behavior.
+        "goal_judge": {
+            # Same lane AND same model the agent itself runs on (native
+            # name or the named-custom identity — never a Hermes default).
+            # Operator order 2026-10-22 (prompt-2026-1022): the judge model
+            # is muse-spark-1.3-contributor just like agents — never
+            # deepseek, and never the meta- alias spellings (those are
+            # same-family aliases for validation only; the opencode Go
+            # endpoint serves the bare agent model id).
+            "provider": model_block["provider"],
+            "model": model_block["default"],
+            "reasoning_effort": "xhigh",
+            "timeout": 60,
+            "max_tokens": 4096,
+        },
+    }
+    # A declared judge_engine is a VALIDATION hint only (same engine, same
+    # model — enforced in validate_hermes_goal_engine). It never changes the
+    # emitted judge: always the agent-lane muse-spark block above, never the
+    # "main" Hermes default pool (which follows whichever vendor is live).
     return {
         "model": model_block,
         "providers": providers_block,
         "fallback_providers": [],
+        # Operator order 2026-10-06: the Hermes default goal budget (20
+        # turns) stalls fleet agents mid-work. The SAC autonomous loop is
+        # the spend backstop; the goal budget must not be the tighter one.
+        # Operator CCT 3820: every running agent gets goals.max_turns 99999
+        # on the running config immediately.
+        "goals": {"max_turns": 99999},
         "toolsets": ["hermes-cli"],
         "agent": agent,
         "delegation": {
@@ -194,10 +248,12 @@ def compile_hermes_config(
             # them in terminal.env_passthrough forwards the inherited values.
             "env_passthrough": ["CCT_BOT_TOKEN", "CCT_AGENT_ID"],
         },
-        "auxiliary": {
-            "title_generation": {"enabled": False},
-            "background_review": {"enabled": background_review},
-        },
+        "auxiliary": auxiliary,
+        **(
+            {"goals": {"max_turns": goals.max_turns}}
+            if goals.max_turns is not None
+            else {}
+        ),
     }
 
 

@@ -1,9 +1,9 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
-  [WHEN] Launching/managing a Claude Code agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
-  [HOW] `pip install scitex-agent-container`, then `sac agents start <name>` or `import scitex_agent_container`.
+  [WHAT] `spec.yaml` selects Claude, Codex, Hermes or OpenCode in Apptainer; A2A inbound (`POST /v1/turn`), SSH deploy and JSON status.
+  [WHEN] Agents, fleets, Hermes profiles, goal_judge errors, MCP, A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
+  [HOW] `pip install scitex-agent-container`; `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
 interfaces:
@@ -18,10 +18,14 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Declarative lifecycle management for AI coding agents (Claude Code):
-define an agent in `spec.yaml`, launch it as a long-lived Claude SDK
-session inside Apptainer (local or remote via SSH), observe via
+Define an agent in `spec.yaml`, select its harness and launch mode,
+run it in Apptainer locally or via SSH, and observe with
 `sac agents list`/`tail`/`health`.
+
+Claude and direct Codex support TUI/headless; Hermes and OpenCode support
+TUI. Authentication is separate from harness selection. OpenAI Agents SDK
+has no lifecycle launch adapter; Command Code is unregistered. See
+[how-sac-works.md](../../../../docs/how-sac-works.md) for the support matrix.
 
 ## What the package ships
 
@@ -36,9 +40,9 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Onboarding & interfaces
 - [01_installation.md](01_installation.md) — pip install + auth + per-host hook
-- [02_quick-start.md](02_quick-start.md) — first agent in 30 seconds
-- [03_python-api.md](03_python-api.md) — programmatic surface (`agent.start`, `peer.post_turn`, ...)
-- [04_cli-reference.md](04_cli-reference.md) — every `sac` subcommand
+- [02_quick-start.md](02_quick-start.md) — first agent
+- [03_python-api.md](03_python-api.md) — Python API
+- [04_cli-reference.md](04_cli-reference.md) — CLI reference
 - [05_mcp-tools.md](05_mcp-tools.md) — `sac mcp` server + tool inventory
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
@@ -80,14 +84,16 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
-- [42](42_tui-auth-watchdog.md) — TUI auth-banner detection contract (§1–4)
-- [43](43_tui-auth-watchdog-maintenance.md) — package matcher, auth-heal guards + extend-matcher runbook (§5–6)
-- [44](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
-- [45](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
+- [42](42_tui-auth-watchdog.md) — TUI auth detection
+- [43](43_tui-auth-watchdog-maintenance.md) — auth matcher maintenance
+- [44](44_agent-to-agent-recovery.md) — wedged-peer recovery
+- [45](45_agent-to-agent-recovery-tmux.md) — tmux recovery and MCP reconnect
 - [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
+- [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md) — profiles, project context, skills, judge errors
+- [48_model-availability.md](48_model-availability.md) — API preflights, caps, fresh restarts, Say Hi
 
 ### Lessons
-- [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
+- [40_troubleshooting.md](40_troubleshooting.md) — troubleshooting
 - [40b](40_periodic-drive-consumer.md)
 - [41](41_claude-worktree-relocation.md)
 
@@ -102,7 +108,6 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ## 30-second start
 
-See [02_quick-start.md](02_quick-start.md) — `pip install
-scitex-agent-container`, drop a `spec.yaml` under
-`~/.scitex/agent-container/agents/<name>/`, then `sac agents start
-<name>` / `list` / `tail`.
+See [02_quick-start.md](02_quick-start.md). After installation, place
+`spec.yaml` in `~/.scitex/agent-container/agents/<name>/`; use
+`sac agents start <name>` / `list` / `tail`.

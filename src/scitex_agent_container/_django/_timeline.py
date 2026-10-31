@@ -30,12 +30,15 @@ as a duplicate.
 
 from __future__ import annotations
 
+import json
+import math
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 from typing import Any
 
 #: The signal families the runner publishes, in the order they render.
-KINDS = (
+LEGACY_KINDS = (
     "phase",
     "operation",
     "turn_elapsed",
@@ -45,6 +48,22 @@ KINDS = (
     "tool",
     "wait",
 )
+
+# Native lifecycle counters are snapshots, never individual tool events or
+# evidence that a tool succeeded. Capacity has no supported measurement type.
+NATIVE_LABELS = {
+    "turns_accepted": "Turns accepted",
+    "turns_completed": "Turns completed",
+    "tools_started": "Native tool calls started",
+    "tools_completed": "Native tool lifecycles completed",
+    "tools_inflight": "Native tool calls in flight",
+    "last_turn_status": "Last turn status",
+    "last_error_code": "Last error code",
+    "session_id": "Native session",
+    "capacity": "Provider capacity",
+}
+KINDS = LEGACY_KINDS + tuple(NATIVE_LABELS)
+NATIVE_PROGRESS_SOURCE = "heartbeat.authoritative_heartbeat.progress_at"
 
 #: Bounded window: the timeline shows a recent slice, not an archive. A poll
 #: must not grow the page with the square of the fleet.
@@ -67,8 +86,13 @@ class TimelineEntry:
     kind: str
     value: Any
     state: str
-    at: float
+    at: float | None
     source: str
+    reason: str = ""
+    note: str = ""
+    snapshot: bool = False
+    native_session: str = ""
+    native_session_at: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,9 +105,8 @@ class TimelineEntry:
         by construction; if they computed the key differently the page would
         duplicate rows the API considers identical.
         """
-        return "|".join(
-            (self.agent, self.kind, str(self.value), self.state, f"{self.at:.3f}")
-        )
+        timestamp = f"{self.at:.3f}" if self.at is not None else "undated"
+        return "|".join((self.agent, self.kind, str(self.value), self.state, timestamp))
 
 
 _STATE_LABELS = {
@@ -102,8 +125,10 @@ def timeline_rows(entries: list[TimelineEntry], *, now: float | None = None) -> 
     moment = time.time() if now is None else now
     rows: list[dict] = []
     for entry in entries:
-        age = max(0, int(moment - entry.at))
-        if age < 60:
+        age = max(0, int(moment - entry.at)) if entry.at is not None else None
+        if age is None:
+            relative = "Age unknown"
+        elif age < 60:
             relative = f"{age}s ago"
         elif age < 3600:
             relative = f"{age // 60}m ago"
@@ -112,9 +137,33 @@ def timeline_rows(entries: list[TimelineEntry], *, now: float | None = None) -> 
         row = entry.as_dict()
         row["key"] = entry.key
         row["state_label"] = _STATE_LABELS.get(entry.state, entry.state)
+        native_progress = entry.kind == "last_progress" and entry.source == NATIVE_PROGRESS_SOURCE
+        row["kind_label"] = "Last native progress event" if native_progress else NATIVE_LABELS.get(entry.kind, entry.kind)
+        row["static"] = entry.snapshot or native_progress
+        row["display_value"] = (
+            "Unknown" if (entry.snapshot or native_progress) and entry.value is None else entry.value
+        )
+        if entry.snapshot and type(entry.value) is int:
+            row["display_value"] = str(entry.value)  # Preserve counter precision in browser JSON.
+        row["snapshot_key"] = (
+            json.dumps([entry.agent, entry.kind]) if entry.snapshot else ""
+        )
+        # Presentation state ages from observed to stale without creating a
+        # second event. Preserve value, source and the original event time.
+        dated = (
+            not isinstance(entry.at, bool) and isinstance(entry.at, (int, float))
+            and math.isfinite(entry.at) and 0 < entry.at <= moment
+        )
+        row["event_key"] = (
+            json.dumps([entry.agent, entry.kind, entry.value, entry.at, entry.source], default=str)
+            if dated and not entry.snapshot else ""
+        )
         row["relative"] = relative
         row["age_seconds"] = age
-        row["iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(entry.at))
+        row["iso"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(entry.at))
+            if entry.at is not None else ""
+        )
         rows.append(row)
     return rows
 
@@ -143,6 +192,71 @@ def dedupe_entries(entries: list[TimelineEntry]) -> list[TimelineEntry]:
     return out
 
 
+def _observation_time(value: Any, now: float) -> float | None:
+    """Only a usable published timestamp establishes the observation's age."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        at = float(value)
+    except OverflowError:
+        return None
+    return at if math.isfinite(at) and 0 < at <= now else None
+
+
+def _native_progress_time(value: Any, now: float) -> float | None:
+    """An explicit timezone-bearing native event time, never poll/mtime time."""
+    if not isinstance(value, str) or not 20 <= len(value) <= 128 or value[10] != "T":
+        return None
+    try:
+        event = datetime.fromisoformat(value)
+        if event.tzinfo is None or event.utcoffset() is None:
+            return None
+        return _observation_time(event.timestamp(), now)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _native_entry(agent: str, name: str, signal: Any, at: float | None, now: float) -> TimelineEntry:
+    """Validate one typed native snapshot, keeping its provenance and limits."""
+    if not isinstance(signal, dict):
+        return TimelineEntry(agent, name, None, "unknown", None, "",
+                             note="No usable native observation is published.", snapshot=True)
+    source = signal.get("source")
+    source = source if isinstance(source, str) else ""
+    reason = signal.get("reason")
+    reason = reason if isinstance(reason, str) else ""
+    if "observed_at" in signal:
+        at = _observation_time(signal["observed_at"], now)
+    published_state = signal.get("state")
+    supported_state = isinstance(published_state, str) and published_state in {
+        "observed", "stale", "unreachable"
+    }
+    value = signal.get("value")
+    if name in {"turns_accepted", "turns_completed", "tools_started", "tools_completed", "tools_inflight"}:
+        valid = type(value) is int and value >= 0
+    else:
+        valid = isinstance(value, str) and bool(value.strip()) and len(value) <= 256 and not any(ord(c) < 32 for c in value)
+    note = ""
+    if name == "capacity":
+        # The contract offers an explicit unknown, with no units or source for
+        # an authoritative provider measurement. Never interpret a number here.
+        value, state = None, "unknown"
+        if not reason:
+            note = "No supported authoritative capacity measurement is published."
+    elif not supported_state or not valid or not source.strip():
+        value = None
+        state = published_state if published_state in ("stale", "unreachable") else "unknown"
+        if not reason:
+            note = "No usable native observation is published."
+    elif published_state != "observed":
+        state = published_state
+    elif at is None:
+        state = "unknown"
+    else:
+        state = "stale" if now - at > STALE_AFTER_SECONDS else "observed"
+    return TimelineEntry(agent, name, value, state, at, source, reason, note, True)
+
+
 def _entries_for(
     agent: str, status: Any, *, now: float, kind: str | None
 ) -> list[TimelineEntry]:
@@ -163,33 +277,59 @@ def _entries_for(
     activity = status.get("activity")
     if not isinstance(activity, dict):
         return []
-    observed_at = status.get("observed_at")
-    at = float(observed_at) if isinstance(observed_at, (int, float)) else now
+    at = _observation_time(status.get("observed_at"), now)
     out: list[TimelineEntry] = []
+    native = any(name in activity for name in NATIVE_LABELS)
+    session = _native_entry(agent, "session_id", activity.get("session_id"), at, now) if native else None
     for name in KINDS:
         if kind is not None and name != kind:
             continue
         signal = activity.get(name)
+        if name in NATIVE_LABELS:
+            if native:
+                entry = _native_entry(agent, name, signal, at, now)
+                out.append(replace(entry, native_session=session.value or "",
+                                   native_session_at=session.at if session.value else None))
+            continue
         if not isinstance(signal, dict):
             continue
-        if signal.get("state") != "observed":
+        published_state = signal.get("state")
+        native_progress = name == "last_progress" and signal.get("source") == NATIVE_PROGRESS_SOURCE
+        reason = signal.get("reason") if native_progress and isinstance(signal.get("reason"), str) else ""
+        entry_at = at
+        if native_progress:
+            entry_at = _native_progress_time(signal.get("value"), now) if published_state == "observed" else None
+        if not isinstance(published_state, str) or published_state not in {
+            "observed", "stale", "unreachable"
+        }:
             out.append(
                 TimelineEntry(
-                    agent=agent, kind=name, value=None, state="unknown", at=at, source=""
+                    agent=agent, kind=name, value=None, state="unknown", at=entry_at,
+                    source=NATIVE_PROGRESS_SOURCE if native_progress else "", reason=reason,
                 )
             )
             continue
         # A published observation that has aged out is STALE: the fact is real
         # history, but it is no longer a current reading.
-        state = "stale" if (now - at) > STALE_AFTER_SECONDS else "observed"
+        # Poll time is transport freshness, not runtime evidence. Without a
+        # timestamp, preserve the value as undated but never call it current.
+        # Explicit source degradation must also survive a recent timestamp.
+        if published_state != "observed":
+            state = published_state
+        elif entry_at is None:
+            state = "unknown"
+        else:
+            state = "stale" if (now - entry_at) > STALE_AFTER_SECONDS else "observed"
         out.append(
             TimelineEntry(
                 agent=agent,
                 kind=name,
-                value=signal.get("value"),
+                value=None if native_progress and entry_at is None and published_state == "observed" else signal.get("value"),
                 state=state,
-                at=at,
+                at=entry_at,
                 source=str(signal.get("source") or "")[:80],
+                reason=reason,
+                note="Native progress event time is unknown." if native_progress and entry_at is None and not reason else "",
             )
         )
     return out
@@ -216,13 +356,14 @@ def build_timeline(
             continue
         entries.extend(_entries_for(name, status, now=moment, kind=kind))
     entries = dedupe_entries(entries)
-    entries.sort(key=lambda e: e.at, reverse=True)
+    entries.sort(key=lambda e: e.at if e.at is not None else -math.inf, reverse=True)
     return entries[:window]
 
 
 __all__ = [
     "DEFAULT_WINDOW",
     "KINDS",
+    "NATIVE_LABELS",
     "REFRESH_SECONDS",
     "STALE_AFTER_SECONDS",
     "TimelineEntry",

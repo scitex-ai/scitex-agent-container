@@ -97,6 +97,7 @@ def build_run_argv(
         CODEX_SDK,
         CODEX_TUI,
         HERMES_TUI,
+        OPENCODE_TUI,
         resolve_harness_key,
     )
     from ..config._harness_types import ensure_harness_matches_claude_launch
@@ -104,7 +105,7 @@ def build_run_argv(
 
     harness_key = resolve_harness_key(config)
     codex_pane = bool(tui) and codex_harness_active(config)
-    if harness_key not in {HERMES_TUI, CODEX_SDK}:
+    if harness_key not in {HERMES_TUI, CODEX_SDK, OPENCODE_TUI}:
         ensure_harness_matches_claude_launch(
             config,
             launching=(

@@ -40,7 +40,7 @@ import sys
 
 import click
 
-from ..._logging import render_rich
+from ..._logging import render_rich, write_stream
 from .._helpers import agent_name_complete
 
 # The LOCAL leg (perform + verify + render) lives in ``_restart_local``;
@@ -50,7 +50,6 @@ from .._helpers import agent_name_complete
 from ._restart_local import (  # noqa: F401
     _NOT_CYCLED,
     _print_local_outcome,
-    _refuse_fresh_on_bare_host,
     _restart_locally,
     _restart_via_broker,
 )
@@ -132,27 +131,62 @@ def _restart_one(
                 "listen`, whose request body has no engine field, so the "
                 "engine would be silently dropped and the agent would "
                 "restart on its DEFAULT engine. Run on the host: sac "
-                f"agents start {name} --force --yes --engine {engine}"
+                f"agents restart {name} --yes --engine {engine}"
             )
             if not as_json:
-                render_rich(f"[red]{msg}[/red]", __name__)
+                # level="error": colour is not severity (see
+                # lifecycle/_stop.py) — this refusal must survive
+                # SCITEX_LOGGING_LEVEL > INFO.
+                render_rich(f"[red]{msg}[/red]", __name__, level="error")
             out, ok = {"name": name, "error": msg, "restarted": False}, False
         elif broker:
             broker_kwargs = {"as_json": as_json, "fresh": fresh}
             if drain_timeout_s > 0:
                 broker_kwargs["drain_timeout_s"] = drain_timeout_s
             out, ok = _restart_via_broker(name, **broker_kwargs)
-        elif fresh:
-            out, ok = _refuse_fresh_on_bare_host(name, as_json=as_json)
         else:
             local_kwargs = {"as_json": as_json, "engine": engine}
+            if fresh:
+                local_kwargs["fresh"] = True
             if drain_timeout_s > 0:
                 local_kwargs["drain_timeout_s"] = drain_timeout_s
             out, ok = _restart_locally(name, **local_kwargs)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if not as_json:
-            render_rich(f"[red]Error: {exc}[/red]", __name__)
-        out, ok = {"name": name, "error": str(exc)}, False
+        # A stop-leg REFUSAL (the agent is actively working, so the
+        # turn guard refused before anything was torn down) must read
+        # as what it is — a restart that never happened, with the
+        # agent still intact on its OLD process — never as a generic
+        # "Error: ..." with no cause and no remedy. The envelope
+        # always carries "restarted": False (absence of the key once
+        # read as unknown-but-not-failure one hop away).
+        out = {"name": name, "error": str(exc), "restarted": False}
+        ok = False
+        from ..._lifecycle._managed_turn_drain import ManagedTurnDrainRefusal
+
+        if isinstance(exc, ManagedTurnDrainRefusal):
+            out["reason"] = "stop-refused-active-turn"
+            out["hint"] = (
+                f"the agent is still the OLD process and nothing cycled "
+                f"— wait for the turn to finish, or retry with: "
+                f"sac agents restart {name} -y --drain-timeout SECONDS"
+            )
+            if not as_json:
+                render_rich(
+                    f"[red]Agent '{name}' NOT restarted — it is actively "
+                    f"working, so the stop leg was refused and nothing "
+                    f"cycled. It is still the OLD process.[/red]\n"
+                    f"[yellow]Wait for the turn to finish, or retry with:\n"
+                    f"  sac agents restart {name} -y --drain-timeout "
+                    f"SECONDS[/yellow]",
+                    __name__,
+                    level="error",
+                )
+        elif not as_json:
+            render_rich(f"[red]Error: {exc}[/red]", __name__, level="error")
+            # The levelled record above is lost when stdout is not a TTY
+            # (piped/ssh runs exited 1 with EMPTY output while --json showed
+            # the abort). The stream write below is the delivery guarantee.
+            write_stream(f"Error: {exc}", sys.stderr, flush=True)
     log_restart_decision(
         event="completed",
         agent=name,
@@ -206,11 +240,9 @@ def _restart_one(
     is_flag=True,
     default=False,
     help=(
-        "Start a NEW Claude session instead of resuming (brokers "
-        "'start --force --fresh' to the host). The deterministic recovery for "
-        "an agent wedged on a boot prompt whose queued input keeps returning "
-        "on a plain restart. In-container only; on a bare host run "
-        "'sac agents start <name> --force --fresh' directly."
+        "Start a new session after stopping the current process. "
+        "Available on the host and through the host broker; active Hermes "
+        "turns must finish before the restart proceeds."
     ),
 )
 @click.option(
@@ -335,22 +367,6 @@ def restart(
                 err=True,
             )
         raise SystemExit(2)
-
-    if fresh and drain_timeout_s > 0:
-        click.echo(
-            "Error: --fresh force-bounces into a new harness session and cannot "
-            "honour --drain-timeout. Use a plain restart to drain the current "
-            "turn, or retry --fresh without --drain-timeout only when discarding "
-            "the active turn/session is intentional.",
-            err=True,
-        )
-        raise SystemExit(2)
-    if fresh:
-        click.echo(
-            "WARNING: --fresh force-bounces the harness; an active response, "
-            "session context, and SGLang prefix-cache continuity may be lost.",
-            err=True,
-        )
 
     results: list[dict] = []
     any_failed = False

@@ -375,8 +375,9 @@ def test_tui_runtime_reports_a_live_session_as_running():
     reason="this guard drives the real probe against a real tmux session",
 )
 def test_probe_local_reports_a_live_tui_session_as_running():
-    # Arrange — a REAL tmux session under the ``tui-<name>`` convention
-    # TuiSessionRuntime keys on, with a live pane process. The original
+    # Arrange — a REAL legacy ``tui-<name>`` session (pre-cutover naming)
+    # with a live pane process. The production probe must resolve it without
+    # requiring a restart under the new bare name. The original
     # defect in one line: a running TUI agent the list must not call
     # "stopped". Hardcode ClaudeSessionRuntime back into _probe_local and
     # this goes RED (no apptainer pidfile → False) — which is exactly what

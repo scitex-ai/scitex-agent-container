@@ -23,6 +23,7 @@ from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
 from ._instances import resolve_local_stop_instance
+from ._lifecycle_audit import audit as _audit_lifecycle
 from ._runtime_select import _get_runtime
 
 logger = slogging.getLogger(__name__)
@@ -36,6 +37,13 @@ logger = slogging.getLogger(__name__)
 # lock file → new bun child's ``acquireLock`` sees the live old PID and
 # exits 1 → claude silently drops the MCP.
 _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S = 15.0
+# Start-leg proof retries after a TRANSIENT Hermes preflight abort
+# (rate limits, timeouts — never revoked keys). The pre-stop proof stays
+# single-shot: its abort leaves the agent UP, so failing loud is safe and
+# the operator retries. The start-leg abort strands the agent DOWN, so a
+# bounded retry is the safer default. Pre-stop passing then start flapping
+# is exactly the storm window (compute-03 scholar, 2026-10-22).
+_START_PROOF_RETRY_DELAYS_S = (5.0, 15.0)
 
 
 def _load_config_for_teardown(path: str | Path, expected_name: str) -> AgentConfig:
@@ -105,6 +113,14 @@ def agent_stop(
             direct force-stop callers; restart passes ``False`` explicitly.
     """
     registry = registry or Registry()
+    _audit_lifecycle(
+        "agent-stop",
+        name,
+        force=force,
+        prune_runtime=prune_runtime,
+        drain_timeout_s=drain_timeout_s,
+        allow_active_turn_kill=allow_active_turn_kill,
+    )
     entry = registry.get(name)
     if entry is None:
         resolver = config_resolver
@@ -116,9 +132,15 @@ def agent_stop(
         except FileNotFoundError as exc:
             if force:
                 return True
+            from ..config._name_hints import suggest_agent_names
+            from ..config._resolve import enumerate_agent_names
+
+            hint = suggest_agent_names(
+                name, enumerate_agent_names(), verb="stop"
+            )
             raise RuntimeError(
                 f"Agent '{name}' not found in registry and no spec could be "
-                f"resolved by name ({exc})"
+                f"resolved by name ({exc}).{hint}"
             ) from exc
         entry = {"name": name, "config": config_path}
 
@@ -363,6 +385,7 @@ def agent_restart(
     engine_override: str | None = None,
     probe_engine: bool | None = None,
     drain_timeout_s: float = 0.0,
+    session_override: str | None = None,
     managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
@@ -380,9 +403,9 @@ def agent_restart(
     ``sac agents start`` (so they predate the auto-record and have no
     registry row). Without it, ``restart`` hard-failed with
     "not found in registry" for exactly those agents (the Spartan
-    compute-node case, 2026-05-24). The stop leg uses ``force=True`` so
-    a missing/stale registry row never blocks the kill — it mirrors the
-    working manual recipe (``stop --yes`` then ``start --yes``).
+    compute-node case, 2026-05-24). Restart resolves the recorded or
+    authored target even when its registry row is stale, then applies the
+    normal activity guard before stopping it.
 
     Cross-host routing is the **CLI**'s responsibility
     (``cli_pkg/lifecycle/_restart.py`` dispatches to the agent's
@@ -415,7 +438,7 @@ def agent_restart(
     after which the CLI printed "Agent 'neurovista' restarted" over an
     agent that was left DOWN. A stop that could not stop the thing must
     not walk into a start that is guaranteed to collide with it. The gate
-    now escalates SIGTERM → SIGKILL (the normal forced-stop contract,
+    now escalates SIGTERM → SIGKILL after normal teardown failed,
     aimed at ``runtime.agent_pid`` — the TUI PANE pid, not the launcher
     that already exited), re-verifies with the runtime's OWN
     ``is_running``, and raises :class:`._stop_escalate.StopEscalationError`
@@ -466,6 +489,13 @@ def agent_restart(
     from ._start import agent_start
 
     registry = registry or Registry()
+    _audit_lifecycle(
+        "agent-restart",
+        name,
+        engine_override=engine_override,
+        drain_timeout_s=drain_timeout_s,
+        wait_for_stop_timeout_s=wait_for_stop_timeout_s,
+    )
     entry = registry.get(name)
 
     if entry is not None:
@@ -483,9 +513,15 @@ def agent_restart(
         try:
             config_path = resolver(name)
         except FileNotFoundError as exc:
+            from ..config._name_hints import suggest_agent_names
+            from ..config._resolve import enumerate_agent_names
+
+            hint = suggest_agent_names(
+                name, enumerate_agent_names(), verb="restart"
+            )
             raise RuntimeError(
                 f"Agent '{name}' not found in registry and no spec could be "
-                f"resolved by name ({exc}). Pass a spec path, or start the "
+                f"resolved by name ({exc}).{hint} Pass a spec path, or start the "
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
@@ -499,16 +535,23 @@ def agent_restart(
     # lets a REJECTED grant ABORT the restart via
     # :class:`_restart_preflight.RestartPreflightAbort` — which propagates out
     # of ``agent_restart`` so ``agent_stop`` below is NEVER reached and the
-    # running container is LEFT UP. A network/endpoint failure fails OPEN (a
-    # false-negative that blocks a HEALTHY restart is worse than the bug). This
-    # covers the manual ``sac agents restart`` AND the listen-brokered external
-    # restart (both shell ``sac agents restart`` → here); the self-restart
-    # bounce (``sac agents start --force``, PR #628) is covered by the twin
-    # check in ``agent_start``'s force branch. Injectable for tests.
+    # running container is LEFT UP. Anthropic OAuth retains its existing
+    # fail-open transport policy. Hermes requires one declared route to prove
+    # native inference access and reject an invalid-key control; a failing
+    # secondary does not block a separately verified primary. Manual, listen,
+    # reconciliation, and health-recovery restarts all enter here. Internal
+    # process replacement is also guarded in agent_start. Injectable for tests.
     from ._restart_preflight import preflight_from_config_path
 
-    _auth_check = successor_auth_check or preflight_from_config_path
-    _auth_check(config_path)
+    prepared_hermes_route = None
+    if successor_auth_check is not None:
+        successor_auth_check(config_path)
+    else:
+        prepared_hermes_route = preflight_from_config_path(
+            config_path,
+            engine_override=engine_override,
+            session_override=session_override,
+        )
 
     # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
     # reason the credential pre-flight above does. ``agent_start`` refuses
@@ -522,6 +565,24 @@ def agent_restart(
     from ._engine_select import check_engine_before_stop
 
     check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+
+    if runtime_factory is None:
+        from ..runtimes._native_tui_admission import (
+            preflight_native_tui_from_config_path,
+        )
+        from ._restart_preflight import preflight_workspace_from_config_path
+
+        preflight_native_tui_from_config_path(
+            config_path, engine_override=engine_override
+        )
+        preflight_workspace_from_config_path(
+            config_path, engine_override=engine_override
+        )
+
+    if prepared_hermes_route is not None:
+        from ._hermes_restart_preflight import assert_prepared_source_current
+
+        assert_prepared_source_current(prepared_hermes_route)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
@@ -589,25 +650,45 @@ def agent_restart(
     #     (a runtime whose ``is_running`` reads False while a stale tmux session
     #     lingers) is torn down by the start leg rather than silently no-op'd
     #     into a fictional success.
-    return agent_start(
-        config_path,
-        registry,
-        assume_yes=True,
-        force=True,
-        # A plain restart replaces the process while preserving the harness
-        # conversation. Only the CLI's explicit --fresh route may request a
-        # new conversation; internal force is teardown mechanics, not consent
-        # to erase session_id/session_id_history.
-        session_override="continue",
-        engine_override=engine_override,
-        probe_engine=probe_engine,
-        runtime_factory=runtime_factory,
-        sleep_fn=sleep_fn,
-        handover_mod=handover_mod,
-        # Forwarded so a test can keep the health monitor from spawning a
-        # REAL daemon thread that outlives it. Every other seam already
-        # passed through; this one did not, so the 11 restart tests in
-        # test_lifecycle.py each leaked a monitor that fired ~90 s later
-        # into an unrelated test's caplog (develop red, 2026-08-24).
-        thread_factory=thread_factory,
-    )
+    #
+    # Bounded start-leg retry on a TRANSIENT Hermes proof abort: the pre-stop
+    # proof already passed, so the keys exist and the failure is a blip
+    # (rate limit, timeout) in the storm window between the two proofs.
+    # Retrying leaves a revoked-key abort (retryable=False) to fail loud
+    # immediately, and every other start-leg error propagates untouched.
+    from ._restart_preflight import RestartPreflightAbort
+
+    for _attempt, _delay in enumerate((0.0, *_START_PROOF_RETRY_DELAYS_S)):
+        if _attempt:
+            sleep_fn(_delay)
+        try:
+            return agent_start(
+                config_path,
+                registry,
+                assume_yes=True,
+                force=True,
+                # A plain restart replaces the process while preserving the harness
+                # conversation. Only the CLI's explicit --fresh route may request a
+                # new conversation; internal force is teardown mechanics, not consent
+                # to erase session_id/session_id_history.
+                session_override=session_override or "continue",
+                engine_override=engine_override,
+                probe_engine=probe_engine,
+                runtime_factory=runtime_factory,
+                sleep_fn=sleep_fn,
+                handover_mod=handover_mod,
+                # Forwarded so a test can keep the health monitor from spawning a
+                # REAL daemon thread that outlives it. Every other seam already
+                # passed through; this one did not, so the 11 restart tests in
+                # test_lifecycle.py each leaked a monitor that fired ~90 s later
+                # into an unrelated test's caplog (develop red, 2026-08-24).
+                thread_factory=thread_factory,
+                **(
+                    {"prepared_hermes_route": prepared_hermes_route}
+                    if prepared_hermes_route is not None
+                    else {}
+                ),
+            )
+        except RestartPreflightAbort as exc:
+            if not exc.retryable or _attempt >= len(_START_PROOF_RETRY_DELAYS_S):
+                raise

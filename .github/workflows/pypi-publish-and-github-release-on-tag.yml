@@ -84,8 +84,8 @@ jobs:
         # this gate exists to be byte-identical to what ships (same SIF, same
         # xdist invocation, same runner expression). Divergence between the
         # release gate and the release itself is what left PyPI at 0.21.17 while
-        # eight tags shipped nothing — see the header of
-        # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+        # eight tags shipped nothing — see the header of ci.yml (which
+        # superseded the old inline pytest-matrix workflow).
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Resolve version
@@ -123,8 +123,18 @@ jobs:
   build:
     needs: test
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # release-identity.py talks to the GitHub API (run/job/artifact witnesses).
+    # Unauthenticated calls share 60 req/h per egress IP across the whole
+    # fleet and 403 mid-release (measured). Hand the job token through; the
+    # SIF inherits host env (no --cleanenv), so the in-SIF proof sees it too.
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      commit: ${{ steps.identity.outputs.commit }}
     steps:
       - name: Resolve version
         id: ver
@@ -139,6 +149,23 @@ jobs:
         with:
           ref: ${{ steps.ver.outputs.version }}
           fetch-depth: 0
+      # build/publish-in-sif.sh REQUIRE RELEASE_TAG + RELEASE_COMMIT (the
+      # release-identity proof, #1576). Resolve-version only feeds checkout, so
+      # export both here - valid on the tag-push AND dispatch paths, since the
+      # tag commit is resolved from the tag itself, not from HEAD.
+      - name: Export release identity for the SIF steps
+        id: identity
+        run: |
+          TAG="${{ steps.ver.outputs.version }}"
+          git fetch origin "refs/tags/${TAG}" --depth 1
+          echo "commit=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_OUTPUT"
+          # Admission for release-identity.py: a tag push or manual dispatch on
+          # the canonical repo already requires collaborator access (GitHub
+          # enforces it); forks cannot consume this repo's PyPI OIDC trust.
+          # The workflow run itself is the admission decision this var carries.
+          echo "RELEASE_AUTHORIZED=true" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Build INSIDE the SIF (no setup-python on the bare Spartan node).
       # build-in-sif.sh installs the `build` frontend into a writable --target
       # inside the SIF, then `python -m build` → dist/. fail-loud on empty dist.
@@ -161,9 +188,12 @@ jobs:
           echo "OK: dist/ contains a wheel for the tagged version ${V}."
       # upload-artifact is a JS action — runs fine on the self-hosted runner.
       - uses: actions/upload-artifact@v4
+        id: upload
         with:
-          name: dist
+          name: dist-${{ steps.identity.outputs.commit }}
           path: dist/
+          # Reruns of a failed build re-upload the same commit-scoped name.
+          overwrite: true
 
       # build-in-sif.sh leaks the same way run-in-sif.sh did, just once per
       # release instead of three times per push — slower to notice, not smaller
@@ -182,16 +212,29 @@ jobs:
       url: https://pypi.org/p/scitex-agent-container
     # id-token: write is what populates ACTIONS_ID_TOKEN_REQUEST_{TOKEN,URL},
     # which publish-in-sif.sh uses to mint the OIDC JWT. Keep it.
+    # actions:read lets the in-SIF proof witness the run/artifacts with an
+    # authenticated quota instead of the shared 60/hr anonymous one.
     permissions:
       id-token: write
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # Need the repo checked out so .github/ci/exec-in-sif.sh +
       # publish-in-sif.sh are on disk (the build job uploaded only dist/).
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ needs.build.outputs.commit }}
           path: dist
+      - name: Export release identity for the SIF step
+        run: |
+          TAG="${{ needs.build.outputs.version }}"
+          git fetch origin "refs/tags/${TAG}" --depth 1
+          echo "RELEASE_AUTHORIZED=true" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$(git rev-list -n 1 "${TAG}")" >> "$GITHUB_ENV"
       # Manual OIDC trusted publishing INSIDE the SIF — pypa/gh-action-pypi-
       # publish is a Docker action and the Spartan compute nodes have no Docker.
       # publish-in-sif.sh: GitHub OIDC JWT (audience=pypi) → PyPI mint-token →
@@ -286,7 +329,7 @@ jobs:
           ref: ${{ needs.build.outputs.version }}
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ needs.build.outputs.commit }}
           path: dist
       - name: Extract release notes from CHANGELOG.md
         run: |

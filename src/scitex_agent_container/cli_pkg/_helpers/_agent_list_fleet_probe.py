@@ -83,15 +83,19 @@ def _looks_like_missing_sac(rc: int, stderr: str) -> bool:
 
 
 def _remote_argv(
-    *, capability: str | None, machine: str | None, group: str | None, guard: bool
+    *,
+    capability: str | None,
+    machine: str | None,
+    group: str | None,
+    guard: bool,
+    detail_level: int | None = None,
 ) -> list[str]:
     """The command run ON the peer.
 
     The label filters travel WITH the request so the peer applies them itself
     (one listing, filtered at the source) rather than shipping its whole roster
-    back to be discarded here. ``-v`` / ``--all`` deliberately do NOT travel:
-    those choose what the READER sees, and that decision belongs to the local
-    render layer which holds every host's rows at once.
+    back to be discarded here. Incremental ``-v`` requests the peer's owning
+    process/account metadata. ``--all`` remains a local rendering choice.
     """
     argv = list(_REMOTE_BASE_ARGV)
     if guard:
@@ -102,6 +106,8 @@ def _remote_argv(
         argv += ["--machine", machine]
     if group:
         argv += ["--group", group]
+    if detail_level:
+        argv += ["-" + "v" * min(3, detail_level)]
     return argv
 
 
@@ -230,6 +236,7 @@ def ssh_peer_probe(
     capability: str | None = None,
     machine: str | None = None,
     group: str | None = None,
+    detail_level: int | None = None,
     peers: dict | None = None,
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> tuple[HostReport, list[dict]]:
@@ -243,7 +250,11 @@ def ssh_peer_probe(
         target,
         timeout_s,
         argv=_remote_argv(
-            capability=capability, machine=machine, group=group, guard=True
+            capability=capability,
+            machine=machine,
+            group=group,
+            guard=True,
+            detail_level=detail_level,
         ),
         envelope_key="agents",
         peers=peers,
@@ -367,7 +378,9 @@ def ssh_json_probe(
                 # all the way onto that machine. Measured live on two NAS boxes
                 # the first time this shipped; calling it "unreachable" would
                 # send the operator to debug a network that is fine.
-                status=SAC_MISSING if _looks_like_missing_sac(rc, stderr) else UNREACHABLE,
+                status=SAC_MISSING
+                if _looks_like_missing_sac(rc, stderr)
+                else UNREACHABLE,
                 instrument=INSTRUMENT_SSH,
                 detail=f"ssh exit {rc}{tail}",
                 elapsed_ms=_ms_since(started),

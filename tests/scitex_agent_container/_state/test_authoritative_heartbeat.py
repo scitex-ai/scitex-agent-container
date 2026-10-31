@@ -7,10 +7,15 @@ import pytest
 from scitex_agent_container._state.authoritative_heartbeat import (
     AuthoritativeHeartbeatError,
     classify_resident_state,
+    issue_challenge_nonce,
+    nonce_echo_confirms,
     read_card_lease,
+    read_challenge_nonce,
+    scan_session_echo,
     select_federated_heartbeats,
     validate_heartbeat,
     write_card_lease,
+    write_challenge_nonce,
 )
 
 
@@ -154,30 +159,153 @@ def test_stable_identity_cannot_change_inside_one_boot() -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload", "process_alive", "connected", "expected"),
+    ("payload", "expected"),
     [
-        (_beat(state="idle"), True, True, "idle"),
-        (_beat(state="active"), True, True, "active"),
-        (_beat(state="blocked"), True, True, "blocked"),
-        (_beat(state="active", progress_at=50.0), True, True, "stalled"),
-        (_beat(lease_expires_at=90.0), True, False, "disconnected"),
-        (_beat(lease_expires_at=90.0), False, False, "dead"),
+        # Positive session delta in window → WORKING.
+        (_beat(session_jsonl_delta_bytes=512), "working"),
+        # Positive subagent/tasks delta alone → WORKING.
+        (_beat(subagent_jsonl_delta_bytes=2048), "working"),
+        # Zero deltas = no work evidence → DEAD (never idle/ready).
+        (_beat(session_jsonl_delta_bytes=0, subagent_jsonl_delta_bytes=0), "dead"),
+        # Idle beat (no delta keys at all) → DEAD.
+        (_beat(), "dead"),
+        # Negative deltas clamp to zero → DEAD.
+        (
+            _beat(session_jsonl_delta_bytes=-10, subagent_jsonl_delta_bytes=-5),
+            "dead",
+        ),
+        # Non-numeric deltas read as zero → DEAD.
+        (
+            _beat(session_jsonl_delta_bytes="lots", subagent_jsonl_delta_bytes=None),
+            "dead",
+        ),
     ],
 )
-def test_resident_state_classification(
-    payload, process_alive, connected, expected
-) -> None:
-    # Arrange
+def test_resident_state_classification(payload, expected) -> None:
+    # Arrange — the default _beat() fixture carries state="active" with
+    # progress_seq=4; the verdict must ignore counters/phase entirely.
     # Act
-    state = classify_resident_state(
-        payload,
-        now=101.0,
-        process_alive=process_alive,
-        federation_connected=connected,
-        progress_stale_s=30.0,
-    )
+    state = classify_resident_state(payload, now=101.0)
     # Assert
     assert state == expected
+
+
+def test_resident_state_window_sums_deltas() -> None:
+    # Arrange — beats fire ~60s; the 10-minute window sums deltas: one
+    # zero-delta latest with a positive older in-window beat is WORKING.
+    # Act
+    state = classify_resident_state(
+        [
+            _beat(observed_at=90.0, session_jsonl_delta_bytes=300),
+            _beat(
+                observed_at=100.0,
+                seq=8,
+                monotonic_ns=800,
+                session_jsonl_delta_bytes=0,
+            ),
+        ],
+        now=101.0,
+    )
+    # Assert
+    assert state == "working"
+
+
+def test_resident_state_out_of_window_deltas_are_dead() -> None:
+    # Arrange — positive deltas older than the window do not count.
+    # Act
+    state = classify_resident_state(
+        _beat(observed_at=90.0, session_jsonl_delta_bytes=9000), now=101.0, window_s=5.0
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_nonce_match_plus_delta_is_working() -> None:
+    # Arrange — dual confirmation (CCT 4309): challenge + byte-exact echo.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+            nonce_echo="1234567890123456",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "working"
+
+
+def test_nonce_mismatch_is_dead_despite_positive_delta() -> None:
+    # Arrange — failed echo confirmation kills even with byte evidence.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+            nonce_echo="9999999999999999",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_nonce_missing_echo_is_dead_despite_positive_delta() -> None:
+    # Arrange — challenge with no reflected echo = failed confirmation.
+    # Act
+    state = classify_resident_state(
+        _beat(
+            session_jsonl_delta_bytes=128,
+            nonce_challenge="1234567890123456",
+        ),
+        now=101.0,
+    )
+    # Assert
+    assert state == "dead"
+
+
+def test_issued_challenge_nonces_are_16_digit_tokens() -> None:
+    # Arrange
+    # Act
+    challenge_a = issue_challenge_nonce()
+    challenge_b = issue_challenge_nonce()
+    # Assert — zero-padded fixed-width tokens, greppable in session.jsonl.
+    assert (
+        len(challenge_a) == 16
+        and challenge_a.isdigit()
+        and len(challenge_b) == 16
+        and challenge_b.isdigit()
+    )
+
+
+def test_byte_exact_echo_confirms_the_challenge() -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    confirmed = nonce_echo_confirms(
+        {"nonce_challenge": challenge, "nonce_echo": challenge}
+    )
+    # Assert
+    assert confirmed is True
+
+
+def test_mismatched_echo_fails_confirmation() -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    confirmed = nonce_echo_confirms(
+        {"nonce_challenge": challenge, "nonce_echo": "0" * 16}
+    )
+    # Assert
+    assert confirmed is False
+
+
+def test_beat_without_challenge_defers_to_deltas() -> None:
+    # Arrange — writer not enrolled in the nonce protocol.
+    # Act
+    confirmed = nonce_echo_confirms({})
+    # Assert
+    assert confirmed is None
 
 
 def test_card_lease_role_is_bounded() -> None:
@@ -227,3 +355,80 @@ def test_failover_waits_for_old_host_lease_to_expire() -> None:
         selected[0]["host"],
         selected[0]["boot_id"],
     ) == (True, "compute-04", "new")
+
+
+def test_progress_seq_absent_passes_validation() -> None:
+    # Arrange — HEARTBEAT SPEC forbids requiring the self-reported counter.
+    no_counter = _beat()
+    del no_counter["progress_seq"]
+    # Act
+    first = validate_heartbeat(
+        no_counter, expected_agent="scholar", expected_host="compute-04", now=101.0
+    )
+    # Assert
+    assert "progress_seq" not in first
+
+
+def test_progress_seq_present_but_regressed_is_rejected() -> None:
+    # Arrange
+    regressed = _beat(seq=8, monotonic_ns=800, observed_at=102.0, progress_seq=3)
+    # Act
+    # Assert: monotonicity still enforced when the counter is sent.
+    with pytest.raises(AuthoritativeHeartbeatError, match="progress sequence"):
+        validate_heartbeat(
+            regressed,
+            expected_agent="scholar",
+            expected_host="compute-04",
+            now=103.0,
+            previous=_beat(),
+        )
+
+
+def test_challenge_enrollment_starts_empty(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    enrolled = read_challenge_nonce(tmp_path)
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert (enrolled, echoed) == (None, None)
+
+
+def test_challenge_round_trip_reads_back_enrolled_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    # Act
+    write_challenge_nonce(tmp_path, challenge)
+    # Assert
+    assert read_challenge_nonce(tmp_path) == challenge
+
+
+def test_session_echo_scan_confirms_agentically_repeated_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    write_challenge_nonce(tmp_path, challenge)
+    (tmp_path / "session.jsonl").write_text(
+        '{"event": "assistant-turn", "text": "ack %s done"}\n' % challenge
+    )
+    # Act
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert echoed == challenge
+
+
+def test_session_echo_scan_misses_an_unrepeated_token(tmp_path) -> None:
+    # Arrange
+    challenge = issue_challenge_nonce()
+    (tmp_path / "session.jsonl").write_text('{"event": "assistant-turn"}\n')
+    # Act
+    echoed = scan_session_echo(tmp_path, challenge)
+    # Assert
+    assert echoed is None
+
+
+def test_malformed_challenge_nonce_is_rejected(tmp_path) -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(AuthoritativeHeartbeatError, match="invalid challenge"):
+        write_challenge_nonce(tmp_path, "not-a-nonce")

@@ -127,7 +127,9 @@ def _register_peers(tmp_path: Path, env_revert) -> None:
 def _host_line(output: str) -> str:
     """The one preflight line this module is about."""
     for line in output.splitlines():
-        if line.strip().startswith(_HOST_LINE):
+        # Records arrive with a level prefix (``INFO:   host: ...``), so
+        # the marker is searched past it rather than at the line start.
+        if _HOST_LINE in line:
             return line
     return ""
 
@@ -236,14 +238,34 @@ def test_check_with_the_local_host_passes_the_host_line(tmp_path):
     assert "OK" in _host_line(result.output)
 
 
-def test_check_with_the_local_host_says_it_is_this_machine(tmp_path):
-    # Arrange
+@pytest.mark.parametrize(
+    "hostname",
+    ["local-check-host", "local-" + "a" * 25, "local-" + "a" * 57],
+)
+def test_check_with_the_local_host_says_it_is_this_machine(
+    tmp_path, env_revert, hostname
+):
+    # Arrange -- valid hostnames must not split the verdict at the boundary.
+    env_revert("SCITEX_AGENT_CONTAINER_HOSTNAME", hostname)
     spec = _write(tmp_path, "${HOSTNAME}")
     runner = CliRunner()
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
     assert "this machine" in result.output
+
+
+def test_check_with_long_local_hostname_preserves_the_whole_name(
+    tmp_path, env_revert
+):
+    # Arrange -- preserve the exact host that the report classified as local.
+    hostname = "local-" + "b" * 57
+    env_revert("SCITEX_AGENT_CONTAINER_HOSTNAME", hostname)
+    spec = _write(tmp_path, "${HOSTNAME}")
+    # Act
+    result = CliRunner().invoke(check, [str(spec)])
+    # Assert
+    assert hostname in result.output
 
 
 def test_check_never_invokes_ssh(tmp_path, env_revert):

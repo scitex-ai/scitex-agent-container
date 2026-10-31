@@ -280,10 +280,9 @@ def _detect_codex_dir_trust(content: str) -> bool:
     first live codex pane (handyman-01), where the drain sat at this
     screen until its timeout.
     """
-    return (
-        "Do you trust the contents of this directory" in content
-        and "1. Yes, continue" in content
-    )
+    from ...runtimes.prompts import _detect_codex_dir_trust as detect_trust
+
+    return detect_trust(content)
 
 
 def _detect_codex_hooks_review(content: str) -> bool:
@@ -307,11 +306,9 @@ def _detect_codex_done(content: str) -> bool:
     ready state is the "OpenAI Codex (vX)" box with the permissions row
     ("YOLO mode" when sac turns the sandbox off) and no pending picker.
     """
-    return (
-        "OpenAI Codex (v" in content
-        and "permissions:" in content
-        and "Press enter to continue" not in content
-    )
+    from ...runtimes.prompts import _detect_codex_done as detect_ready
+
+    return detect_ready(content)
 
 
 def _detect_done(content: str) -> bool:
@@ -320,6 +317,10 @@ def _detect_done(content: str) -> bool:
     Claude's status bar shows "bypass permissions" when ready; Codex has its
     own banner (:func:`_detect_codex_done`).
     """
+    from ...runtimes.prompts import codex_blocking_modal
+
+    if codex_blocking_modal(content):
+        return False
     if "bypass permissions" in content and "Enter to confirm" not in content:
         return True
     return _detect_codex_done(content)
@@ -374,13 +375,13 @@ PROMPT_HANDLERS: list[PromptHandler] = [
     PromptHandler(
         name="codex-dir-trust",
         detect=_detect_codex_dir_trust,
-        keys=["Enter"],  # cursor already on "1. Yes, continue"
+        keys=[],  # reviewed project trust is configured before native launch
         priority=1,
     ),
     PromptHandler(
         name="codex-hooks-review",
         detect=_detect_codex_hooks_review,
-        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
+        keys=[],  # unknown or changed hooks require reviewed authority
         priority=1,
     ),
     PromptHandler(
@@ -482,6 +483,14 @@ def detect_and_respond(
     Returns:
         Name of the matched prompt, or None if no match.
     """
+    from ...runtimes.prompts import codex_blocking_modal
+
+    blocked = codex_blocking_modal(content)
+    if blocked:
+        logger.warning(
+            "Native prompt %s requires reviewed authority; no keys sent", blocked
+        )
+        return blocked
     for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
         if handler.name in accepted:
             continue

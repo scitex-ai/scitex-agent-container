@@ -94,7 +94,7 @@ def perform(
             f"re-run with --apply to actually restart)",
         )
 
-    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the fleet is still down and still needs recovering; the failure is carded and reported)
+    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the fleet is still down and still needs recovering; the failure is carded and reported in the sweep report, stderr via scitex-logging)
     try:
         ok = restart_fn(name)
     except Exception as exc:

@@ -21,12 +21,19 @@ from ._delegation_types import DelegationSpec  # noqa: E402,F401
 from ._engine_types import EngineSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_failover import HermesFailoverSpec
+from ._hermes_goals import HermesGoalSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
+from ._worktree import WorktreeSpec  # noqa: E402,F401 (AgentConfig field default)
+from ._opencode_approval import DEFAULT_OPENCODE_APPROVAL_POLICY
+from ._opencode_run_budget import DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
+from ._opencode_serve import DEFAULT_OPENCODE_SERVE_PORT
 
 # ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
 # ``from ...config._types import ProviderSpec`` is an existing import path.
 from ._provider_types import ProviderSpec  # noqa: E402,F401
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
+from ._secret_scope_types import DEFAULT_AGENT_SECRET_SCOPE, AgentSecretScope
 
 
 @dataclass
@@ -266,6 +273,14 @@ class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
     name: str
+    # Immutable per-spec identity (card sac-identity-spec-uuid-20261026).
+    # Minted at ``sac agents create``, backfilled first-seen-stable for
+    # older specs. The directory-derived ``name`` stays the MUTABLE,
+    # operator-facing label; this uuid is what ``instances`` rows and the
+    # name resolver key on, so renames and stale same-name rows on peer
+    # hosts stop being unresolvable. "" = not yet stamped (loader
+    # tolerates it; the start path stamps it).
+    uuid: str = ""
     # Launch-mode selector. Default ``"tui"`` (interactive in-apptainer
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
@@ -296,6 +311,7 @@ class AgentConfig:
     # nothing new. Empty / None = the engine states no opinion. Delivered
     # to the container by ``runtimes._apptainer_provider.engine_env_flags``.
     reasoning_effort: str = ""
+    service_tier: str = ""
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
@@ -306,6 +322,15 @@ class AgentConfig:
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when
     # the conversation completes. v4 step 6 — see config._residency_types.
     residency: AgentResidency = DEFAULT_AGENT_RESIDENCY
+    # SECRET-SCOPE: how much of the operator pool lands in the agent env.
+    # "full" (default) = every pool-file-defined secret — development
+    # agents need all authentications and permissions for daily work.
+    # "capsule" = declared inference keys + delivery tokens only —
+    # insulated environments (capsule solvers). Container defaults stay
+    # limited for both; this axis governs only the secret payload, never
+    # values in specs (values resolve from the trusted pool at launch).
+    # See config._secret_scope_types.
+    secret_scope: AgentSecretScope = DEFAULT_AGENT_SECRET_SCOPE
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a
@@ -335,10 +360,24 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hermes_background_review: bool = False
+    hermes_max_turns: int | None = None
+    hermes_goals: HermesGoalSpec = field(default_factory=HermesGoalSpec)
+    hermes_failover: HermesFailoverSpec = field(default_factory=HermesFailoverSpec)
+    hermes_yolo: bool = False
     hermes_run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )
+    # WORKTREE — per-project authority-branch override
+    # (``spec.worktree.authority_branch``). Empty (default) = the bundled
+    # manifest decides (``develop``); a non-empty value names the branch
+    # this project's authority checkout sits on. OPTIONAL, deliberately
+    # absent from the explicit-required map: existing specs keep today's
+    # behaviour without declaring anything new. See config._worktree.
+    worktree: WorktreeSpec = field(default_factory=WorktreeSpec)
+    opencode_approval_policy: str = DEFAULT_OPENCODE_APPROVAL_POLICY
+    opencode_run_budget_seconds: int | None = DEFAULT_OPENCODE_RUN_BUDGET_SECONDS
+    opencode_serve_port: int | None = DEFAULT_OPENCODE_SERVE_PORT
     apptainer: ApptainerSpec = field(default_factory=ApptainerSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)

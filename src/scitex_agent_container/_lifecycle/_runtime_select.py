@@ -41,6 +41,7 @@ from ..config._harness_registry import (
     CODEX_SDK,
     CODEX_TUI,
     HERMES_TUI,
+    OPENCODE_TUI,
     resolve_harness_key,
     runtime_spellings_for,
 )
@@ -113,6 +114,14 @@ def _get_runtime(config: AgentConfig):
         from ..runtimes.hermes_tui import HermesTuiSessionRuntime
 
         return HermesTuiSessionRuntime()
+    if key == OPENCODE_TUI:
+        # Pilot-gated no longer: the opencode gateway driver passed its
+        # hermetic contract + live temp-port probe (branch
+        # feat/opencode-gateway-probe). Launch stays loud on failure —
+        # the owner refuses without a resolved engine or profile.
+        from ..runtimes.opencode_tui import OpencodeTuiSessionRuntime
+
+        return OpencodeTuiSessionRuntime()
     if key == CODEX_SDK:
         from ..runtimes.codex_session import CodexSessionRuntime
 

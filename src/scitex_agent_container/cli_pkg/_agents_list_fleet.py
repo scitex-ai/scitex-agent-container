@@ -88,7 +88,7 @@ def run_fleet_list(
     capability: str | None = None,
     machine: str | None = None,
     group: str | None = None,
-    verbose: bool = False,
+    verbose: int = 0,
     show_all: bool = False,
 ) -> None:
     """Collect the fleet, print the header, then the rows.
@@ -117,6 +117,7 @@ def run_fleet_list(
             running_only=(not use_json) and not show_full,
             hosts=hosts,
             no_fanout=no_fanout,
+            detail_level=min(3, int(verbose)),
             host_timeout_s=(
                 DEFAULT_HOST_TIMEOUT_S if host_timeout is None else host_timeout
             ),

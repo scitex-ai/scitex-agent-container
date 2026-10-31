@@ -236,7 +236,7 @@ def _load_or_synthesize_config(spec_path: Path | None, name: str) -> Any:
     """Load ``name``'s spec, or synthesize a bare ``AgentConfig(name=name)``.
 
     The remote probe only needs a config to derive the agent's tmux session
-    name (:func:`_verdict_tmux.session_name_for_config` → ``tui-<name>``). A
+    name (:func:`_verdict_tmux.session_name_for_config` → the bare agent name). A
     remote agent's spec DOES live on the master's disk (that is how the master
     ssh-dispatched it), so ``load_config`` normally succeeds; the synthesize
     fallback keeps the probe working — never silently skipped — even if the

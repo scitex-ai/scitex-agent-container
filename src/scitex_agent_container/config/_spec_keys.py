@@ -27,6 +27,12 @@ __all__ = [
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
+        # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+        # minted at create, backfilled first-seen-stable, never the
+        # content-hash spec_id. OPTIONAL (not in the explicit-required
+        # map) so the existing corpus keeps loading while the backfill
+        # lands — the same posture residency/to_home_layers took.
+        "uuid",
         "harness",  # which agent SDK runs the session: anthropic | openai
         "provider",  # DEPRECATED alias of "harness" — still honoured so the
         # existing spec corpus loads unchanged. Unrelated to the nested
@@ -36,6 +42,13 @@ _KNOWN_SPEC_KEYS = frozenset(
         # axis the live corpus predates; requiring it would red-start the
         # fleet for declaring nothing new. See _residency_types.
         "access",  # host-access posture: full (default) | capsule
+        # REMOVED 2026-06-23 — host access + cwd are explicit binds +
+        # workdir now; a spec still carrying it is rejected loud. Do NOT
+        # reuse this name: secret scoping is the separate secret_scope axis.
+        "secret_scope",  # pool-secret scope: full (default) | capsule —
+        # how much of the operator pool lands in the agent env. DEFAULTED,
+        # not required: a NEW axis the live corpus predates. See
+        # _secret_scope_types.
         "workdir",
         "python-venv",
         "container",
@@ -92,6 +105,17 @@ _KNOWN_SPEC_KEYS = frozenset(
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         "delegation",  # harness-neutral child concurrency/isolation policy
+        # Per-project worktree controls (``authority_branch`` override).
+        # OPTIONAL, deliberately: absent/empty keeps the manifest default
+        # (``develop``), so existing specs load unchanged. Absent from the
+        # explicit-required map for the same reason ``residency`` and
+        # ``to_home_layers`` are. See ``config._worktree``.
+        "worktree",
+        # Declared secret NAMES (never values): env names the launcher
+        # resolves from host credential stores into the 0600 env-file at
+        # start. OPTIONAL, documentation-first: a spec that omits it still
+        # loads. Values must never appear here — only names.
+        "secrets",
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),

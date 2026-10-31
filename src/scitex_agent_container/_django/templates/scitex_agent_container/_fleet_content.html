@@ -1,17 +1,27 @@
 {% comment %}
-Shared Agents fleet content. Included by:
-  * fleet.html        (standalone: inside scitex_ui/standalone_shell.html)
-  * fleet_hub.html    (Hub: inside global_base.html — no second header)
-`url_base` is the app's mount prefix ("" at root, "/apps/agents" when
-mounted) so the per-row links are correct in both modes.
+Shared Agents fleet content. Included by fleet.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
+`url_base` is the app's mount prefix ("" at root, "/apps/agent-container" when
+mounted) so the per-row links are correct at any mount.
 {% endcomment %}
-<div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}">
-  <header class="agents-head">
-    <div class="agents-title">
-      <h1><i class="fas fa-robot"></i> Agents</h1>
-      <span class="agents-sub">{% if observed_age is not None %}Last known {{ observed_age|floatformat:0 }}s ago{% else %}Fleet{% endif %}</span>
+{% load static %}
+<div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
+     data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
+     data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
+  {% include "scitex_agent_container/_app_header.html" %}
+  {# Single action row (operator 2026-10-23): Launch/Create/A2A/Activity buttons + fleet stats share one row - no stacked bands. #}
+  <div class="agents-pagehead">
+    {# Operator 2026-10-23: the pagehead h1 duplicated the SDK AppHeader row #}
+    {# (data-stx-app-header above, "Agent Container" + version) - dropped. #}
+    <div class="agents-actions" role="toolbar" aria-label="Fleet actions">
+    {% if can_launch %}
+    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
+    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
+    {% endif %}
+    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
+    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
     </div>
-    <div class="agents-summary">
+    <div class="agents-summary" role="status" aria-label="Fleet summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
       <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
       <div class="sum-card warn"><span class="sum-num">{{ summary.attention }}</span><span class="sum-label">need attention</span></div>
@@ -19,7 +29,7 @@ mounted) so the per-row links are correct in both modes.
       <div class="sum-card cross"><span class="sum-num">{{ summary.cross_host }}</span><span class="sum-label">cross-host</span></div>
       {% endif %}
     </div>
-  </header>
+  </div>
 
   {% comment %}
   P0: this banner used to print the raw listener URL, the env-var names and a
@@ -50,66 +60,60 @@ mounted) so the per-row links are correct in both modes.
   {% endif %}
 
   {% if fleet_state == "cached" %}
-  <div class="agents-bannor" role="status">
+  <div class="agents-bannor" role="status" data-role="fleet-banner">
     <i class="fas fa-clock-rotate-left"></i>
-    <span>Showing the last known inventory{% if observed_age is not None %} from {{ observed_age|floatformat:0 }}s ago{% endif %}.</span>
+    <span>Showing the last known inventory{% if observed_age is not None %} from <span data-role="fleet-age-short">{{ observed_age|floatformat:0 }}s ago</span>{% endif %}.</span>
     <small>This may be out of date; it refreshes automatically.</small>
   </div>
   {% endif %}
 
-  <div class="agents-scope-note">
-    <span><i class="fas fa-user"></i> acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    {% if crosshost_authorized %}
-    <span class="pill cross"><i class="fas fa-globe"></i> cross-host fleet authorized</span>
-    {% else %}
-    <span class="pill own"><i class="fas fa-lock"></i> own-scope only</span>
-    {% endif %}
-    {% if can_launch %}
-    <a class="btn good" href="{{ url_base }}/launch/"><i class="fas fa-rocket"></i> Launch agent</a>
-    <a class="btn good" href="{{ url_base }}/create/"><i class="fas fa-plus"></i> Create agent</a>
-    {% endif %}
-    <a class="btn" href="{{ url_base }}/a2a/"><i class="fas fa-share-nodes"></i> A2A</a>
-    <a class="btn" href="{{ url_base }}/timeline/"><i class="fas fa-timeline"></i> Activity</a>
-  </div>
+  {# Operator 2026-10-22: scope-note row (acting-as + scope pill) dropped - #}
+  {# redundant with the workspace identity; action buttons moved up into #}
+  {# the pagehead single action row. #}
 
   {% if agents %}
+  <div class="agents-filterbar">
+    <label class="visually-hidden" for="agents-filter">Filter agents</label>
+    <div class="agents-filterbox">
+    <input id="agents-filter" type="search" name="q" maxlength="200"
+           placeholder="Filter agents…" autocomplete="off"
+           data-role="agents-filter">
+    <span class="shortcuts-hint agents-filter-hint"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>
+    </div>
+  </div>
+  <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
+  {# Operator 2026-10-23: three-column DM layout (Cards DM idiom, leaf-side). #}
+  {# Left: agent + state LED (narrow). Center: DM chat with selected agent. #}
+  {# Right: shared Details column. #}
+  <div data-stx-panes="agents" class="agents-3col" style="--stx-panes-columns: 300px minmax(0,1fr) 360px">
+  <section data-stx-pane="fleet" data-stx-label="Agents">
   <div class="agents-table-wrap">
-  <table class="agents-table">
+  <table class="agents-table agents-roster" data-fleet-table>
     <thead>
       <tr>
-        <th>Agent</th><th>State</th><th>Runtime</th><th>Billing</th>
-        <th>Auth identity</th><th>Harness</th><th>Engine / Model</th>
-        <th>Activity</th><th>Host</th><th>a2a port</th>
-        <th class="row-actions">Actions</th>
+        <th>Agent</th>
       </tr>
     </thead>
     <tbody>
       {% for a in agents %}
-      <tr class="agent-row {{ a.state_tone }}{% if a.cross_host %} cross{% endif %}">
-        <td class="c-name"><a href="{{ url_base }}/{{ a.name }}/" title="{{ a.name }}">{{ a.name }}</a>
+      <tr class="agent-row {{ a.state_tone }}{% if a.cross_host %} cross{% endif %}"
+          data-agent-name="{{ a.name }}"
+          data-agent-runtime="{{ a.runtime }}"
+          data-agent-billing="{{ a.billing_mode }}"
+          data-agent-auth="{{ a.auth_identity }}"
+          data-agent-harness="{{ a.harness }}"
+          data-agent-engine="{{ a.engine }}"
+          data-agent-model="{{ a.model }}"
+          data-agent-host="{{ a.host }}"
+          data-agent-port="{{ a.a2a_port|default:'' }}">
+        {# Operator 2026-10-26: LED leftmost, name second, status text lives #}
+        {# in the tooltip only (Alive etc. as hover tip, not a label). #}
+        <td class="c-name" title="{{ a.name }} — {{ a.state_label }}{% if a.state_detail %}: {{ a.state_detail }}{% endif %}"><span class="dot {{ a.state_tone }}" aria-hidden="true"></span><span>{{ a.name }}</span>
           {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
-        <td title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
-        <td>{{ a.runtime }}</td>
-        <td>{{ a.billing_mode }}</td>
-        <td title="identity source: {{ a.runtime_identity_source }}">{{ a.auth_identity }}</td>
-        <td>{{ a.harness }}</td>
-        <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span><span class="identity-source">{{ a.runtime_identity_source }}</span></td>
-        <td class="c-activity">
-          {% if a.activity.operation.state == "observed" %}{{ a.activity.operation.value }}{% else %}<span class="dim" title="{{ a.activity.operation.reason }}">unknown</span>{% endif %}
-          {% if a.activity.phase.state == "observed" %}<span class="dim"> · {{ a.activity.phase.value }}</span>{% endif %}
-        </td>
-        <td class="c-host">{{ a.host }}</td>
-        <td class="c-port">{% if a.a2a_port %}{{ a.a2a_port }}{% else %}<span class="dim">—</span>{% endif %}</td>
-        <td class="row-actions">
+        {# Operator 2026-10-23: no Actions column — inspect/start/stop etc live in the right-click row menu. The gated forms below stay in the DOM (visually hidden) so the menu submits the same POSTs with the same gates. #}
+        <td class="row-actions row-actions--menu-only" hidden>
           <a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a>
-          {% comment %}
-          Per-row quick actions: the same Start/Restart/Stop POSTs the detail
-          page offers (same <name>/action route, same operator gate), plus a
-          one-line message POST to <name>/message. Gate mirrors the POST
-          handlers exactly: own-scope rows need the lifecycle-operator list
-          (`can_launch`), cross-host rows need the cross-host list
-          (`can_control_crosshost`, decided once per render, not per row).
-          {% endcomment %}
+          {# Per-row quick actions: same POSTs as the detail page. #}
           {% if a.cross_host and can_control_crosshost or not a.cross_host and can_launch %}
           <span class="quick-actions">
             <form method="post" action="{{ url_base }}/{{ a.name }}/action" class="qa-form">
@@ -118,19 +122,11 @@ mounted) so the per-row links are correct in both modes.
               <button type="submit" name="action" value="restart" class="btn qa" title="Restart {{ a.name }}">Restart</button>
               <button type="submit" name="action" value="stop" class="btn qa bad" title="Stop {{ a.name }}">Stop</button>
             </form>
-            {% comment %}
-            Registry verbs: Forget tombstones stale/unreachable rows (the
-            `sac agents forget` backend — no ssh, no signal); Delete fully
-            removes the agent (the `sac agents delete` backend — stop +
-            deregister + remove dirs). Same operator gate as the lifecycle
-            quick actions above; both confirm before POSTing and both fail
-            loud (409/404/502 with the reason) rather than vanishing.
-            {% endcomment %}
-            <form method="post" action="{{ url_base }}/{{ a.name }}/forget" class="qa-form"
-                  onsubmit="return confirm('Forget {{ a.name }}? This tombstones its registry rows (no ssh, no signal). Tick force for rows the store still shows as live.')">
+            {# Registry verbs: forget + delete, same gates. #}
+            <form method="post" action="{{ url_base }}/{{ a.name }}/forget" class="qa-form">
+                  onsubmit="return confirm('Forget {{ a.name }}? This drops inactive registry state (no ssh, no signal). Stop any live agent first.')">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
               <button type="submit" class="btn qa warn" title="Forget {{ a.name }}: drop stale registry rows">Forget</button>
-              <label class="qa-force" title="Also forget rows the store still shows as live (like `sac agents forget --force`)"><input type="checkbox" name="force" value="on"> force</label>
             </form>
             <form method="post" action="{{ url_base }}/{{ a.name }}/delete" class="qa-form"
                   onsubmit="return confirm('Delete {{ a.name }}? This stops it, deregisters it and removes its spec and runtime dirs. This cannot be undone.')">
@@ -152,28 +148,61 @@ mounted) so the per-row links are correct in both modes.
     </tbody>
   </table>
   </div>
+  </section>
+  <section data-stx-pane="chat" data-stx-label="Chat">
+    <div class="agents-chat-pane stx-shell-sidebar" data-role="fleet-chat" aria-live="polite">
+      <div class="stx-shell-sidebar__header agents-chat-label">
+        <span class="stx-shell-sidebar__title">DM</span>
+      </div>
+      <div class="stx-shell-sidebar__content agents-chat-body" data-role="fleet-chat-body">
+      <div class="agents-chat-empty dim">Select an agent to open the DM thread.</div>
+      {# Operator 2026-10-22: ALWAYS-VISIBLE fleet DM composer (same POST #}
+      {# shape as the detail message-form: message + dispatch_id + emoji + #}
+      {# send). Disabled with hint text until a row is selected; fleet-details.js #}
+      {# retargets its action + textarea on selection (incl. auto-select). #}
+      <form method="post" action="" class="message-form chat-composer" data-composer="fleet-dm" data-role="fleet-composer">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <label class="visually-hidden" for="msg-fleet" data-role="fleet-composer-label">Message</label>
+        <textarea id="msg-fleet" name="message" rows="3" maxlength="4000" disabled
+                  placeholder="Select an agent to open the DM thread…"></textarea>
+        <span class="composer-actions">
+          <button type="button" class="btn emoji-btn" data-emoji-button title="Insert emoji" aria-label="Insert emoji" disabled>😀</button>
+          <button type="submit" class="btn" title="Send" data-role="fleet-composer-send" disabled><i class="fas fa-paper-plane"></i></button>
+        </span>
+      </form>
+      </div>
+    </div>
+  </section>
+  <section data-stx-pane="detail" data-stx-label="Details">
+    <div class="agents-detail-pane stx-shell-sidebar" data-role="fleet-detail" aria-live="polite">
+      <div class="stx-shell-sidebar__header agents-detail-label">
+        <span class="stx-shell-sidebar__title">Details</span>
+      </div>
+      <div class="stx-shell-sidebar__content" data-role="fleet-detail-body">
+      </div>
+    </div>
+  </section>
+  </div>
+  <script type="module" src="{% static 'scitex_sdk/ui/js/app/panes.js' %}"></script>
   {% else %}
   {% if fleet_state == "empty" %}
   <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
     <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
   {% endif %}
   {% endif %}
+  {# Cold shells (agents empty, fleet_state loading) loaded no poller:
+     fleet.js skips loading state by contract and this module used to
+     live inside the agents branch above — the page then sat on
+     "Reading the fleet…" until a hard refresh (operator 2026-10-26,
+     laptop prompt). warmColdShell() is null-guarded and returns
+     unless the shell is loading, so loading it unconditionally is
+     safe on every fleet paint. #}
+  <script type="module" src="{% static 'scitex_agent_container/js/fleet-details.js' %}?v={{ app_version }}"></script>
 
-  {% comment %}
-  B1: a cold shell renders as `loading`. This READ-ONLY poll warms the server's
-  last-known snapshot via /api/fleet, then a single reload shows the true state
-  (the inventory, or unavailable + Retry). It only fires while loading, stops
-  after the one authoritative response, and issues only a GET - it never blocks
-  first paint and never loops. (The Retry button above does the same reload.)
-  {% endcomment %}
+  {# B1: cold shell renders as `loading`. The warm poll lives in #}
+  {# fleet-details.js `warmColdShell()` (no inline scripts in HTML). #}
   {% if fleet_state == "loading" %}
-  <script>
-  (function () {
-    var base = "{{ url_base }}";
-    fetch(base + "/api/fleet", { method: "GET", credentials: "same-origin" })
-      .then(function () { window.location.reload(); })
-      .catch(function () { /* console itself unreachable: stay in loading, do not loop */ });
-  })();
-  </script>
+  <noscript><p class="dim">Loading the agent fleet… <a href="{{ url_base }}/">Retry</a></p></noscript>
   {% endif %}
 </div>

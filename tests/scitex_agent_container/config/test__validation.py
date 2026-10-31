@@ -1320,3 +1320,19 @@ def test_normal_dir_name_gets_no_reserved_error():
     errors = validate_raw(_BASE, path=path)
     # Assert
     assert not [e for e in errors if "reserved" in e]
+
+
+def test_validate_raw_accepts_declared_secrets_names():
+    """A ``secrets`` name list is a known spec field, not an unknown key."""
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "apptainer", "secrets": ["OPENCODE_GO_API_KEY_1"]},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert — no unknown-field complaint names the declared key.
+    assert not any("secrets" in e for e in errors), (
+        f"declared secrets names must load; got {errors!r}"
+    )

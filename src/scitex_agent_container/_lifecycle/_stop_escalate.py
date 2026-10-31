@@ -244,7 +244,7 @@ def _remedy(name: str, config: AgentConfig, pid: int | None) -> str:
 
     runtime_spelling = (getattr(config, "runtime", "") or "").strip().lower()
     if runtime_spelling in runtime_spellings_for(CLAUDE_CODE_TUI):
-        lines.append(f"  tmux kill-session -t tui-{name}")
+        lines.append(f"  tmux kill-session -t {name}")
     lines.append(f"  sac agents start {name} -y --fresh")
     return "\n".join(lines)
 

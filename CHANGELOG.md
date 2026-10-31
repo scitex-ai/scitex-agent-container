@@ -4,6 +4,160 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+## [0.38.2] - 2026-10-31
+
+The unpublished 0.38.1 candidate was superseded before deployment.
+
+### Fixed
+- Resolve API-key probes through the same sourced secret pool as launch so a
+  rotated key in an authored secret file overrides stale inherited values.
+  Report provider-confirmed key expiry separately from quota exhaustion.
+- Keep Hermes goal judging aligned with named custom-provider credential-pool
+  rotation, and recover subscription-required 403 responses through the pinned
+  Hermes runtime. Pause guidance now names the active profile.
+- Require separate main-model and judge inference proofs before replacing a
+  running Hermes process; reject error envelopes returned with HTTP 200.
+- Read current API-key credential-store envelopes and provider quota windows.
+  The optional quota-recovery sweep fresh-restarts running configured-slot
+  consumers only after successor preflight, with persistent debounce and at
+  most two restart attempts per pass.
+
+### Added
+- Audited installed-package skill projections through the scitex-dev dispatcher,
+  respecting package opt-outs and SAC exclusions inside generated Hermes homes.
+- Source-backed profile-resolution and model-availability skills, corrected image
+  build guidance, and executable offline documentation examples in daily CI.
+
+## [0.38.0] - 2026-10-26
+
+### Added
+- **Immutable per-spec identity (`spec.uuid`).** Minted at
+  `sac agents create`, backfilled first-seen-stable; `instances` rows
+  carry it as an immutable `spec_uuid` field. The directory-derived
+  name stays the mutable label. New `resolve_live_by_name`: one live
+  row resolves, one live + stale rows resolve live with a
+  misalignment hint naming the exact per-stale-host cleanup, two live
+  claimants stay fail-closed (`DualLiveClaimants`).
+- **Fleet DM composer sends in place.** Enter-to-send POSTs via fetch
+  (`Accept: application/json`, new JSON branch in `message_action`)
+  so the fleet page is never left for the agent detail redirect;
+  failures fall back to the native submit and its notice banner.
+- **Details tabs follow the shared SDK contract.**
+  `stx-content-tabs` values: 13px labels, underline-only accent
+  selected state, no box, no uppercase.
+
+### Fixed
+- **Cross-host ssh multiplexing on long runtime roots.** OpenSSH
+  appends a random `.<16>` master-listener suffix, so `ssh-cm/%C`
+  cost dir+1+40+1+16 — compute-03's 58-byte runtime dir totaled 116B
+  > 107B `sockaddr_un`, breaking every cross-host lane with
+  `unix_listener: path ... too long`. Resolution now prefers
+  `$XDG_RUNTIME_DIR/sac-ssh-cm` when the runtime dir does not fit the
+  suffix-aware budget, then multiplexing-off; explicit pins stay
+  verbatim.
+
+## [0.37.0] - 2026-10-25
+
+### Added
+- **Fleet DM composer always visible.** The center pane now carries its
+  own message composer (same POST shape as the detail message-form),
+  disabled with a hint until a row is selected, retargeted on selection
+  via the new `dispatch_id` in the fleet context.
+- **Details column: 5 tabs instead of 6 cards.** Identity, Runtime
+  Activity, Control, Resources, Recent Session Log as a tab strip
+  (vanilla JS, no-JS fallback shows all panels); the standalone
+  Message-thread card is gone (the thread already renders in the DM
+  pane). All lifecycle/message/control POST endpoints unchanged.
+- **Bounded fleet loading retry.** The cold shell polls `/api/fleet`
+  JSON up to 8 times before settling on unavailable+Retry instead of
+  reload-looping; the hard-reload path has a Retry link.
+- **Spec-configurable worktree authority branch.**
+  `spec.worktree.authority_branch` (default `develop`, unchanged when
+  unset); unknown names fail loud. Lets main-checkout projects
+  (e.g. scitex-sdk) provision worktrees without authority refusals.
+
+### Fixed
+- **Goal judge follows the verified lane.** When preflight rewrites the
+  launch onto a verified provider, `goal_judge` moves with the agent
+  (same provider + model, never DeepSeek/Hermes defaults/meta-
+  aliases); a judge left on the dead primary paused every goal after 5
+  transport failures.
+- **Adopt stale suffix worktrees.** Live `sac-<slug>-<suffix>` worktrees
+  from the older naming are adopted instead of refusing the start.
+
+## [0.36.0] - 2026-10-24
+
+### Fixed
+- **Release gate green: project-picker provider wiring.** Since
+  scitex-sdk 0.3.14 the picker tag fail-fasts with no provider URL;
+  the test suite now registers the conventional host path in
+  `_test_settings.py` (fail loud on missing wiring, never a silent
+  empty slot). `scitex-sdk[gui]` is pinned to `==0.3.14` as the
+  reproducibility SSoT so CI and dev venvs resolve the same SDK.
+- **Release gate green: audit findings cleared.** Absorbed the owned
+  PA-306/PS-204 slices (env_save_restore, mirror test names), split
+  six multi-assert tests to one-assert (STX-TQ007), untracked
+  `.scitex/agent-container/runtime/` from the index + ignore
+  (PS-234), and updated two stale asserts to the no-inline-scripts
+  contract (`data-fleet-api`, "Create spec" submit).
+
+## [0.35.0] - 2026-10-24
+
+### Added
+- **DM composer Enter-to-send + emoji stamp.** Enter submits the DM
+  (Shift+Enter newline); emoji button inserts at the cursor. Text-only,
+  POST contract unchanged.
+
+## [0.34.0] - 2026-10-24
+
+### Fixed
+- **Goal judge stays on the agent lane, never DeepSeek.** A declared
+  `goals.judge_engine` no longer rebuilds `goal_judge` as
+  `{provider: main}` (the live pool, currently DeepSeek-serving). It is
+  validation-only now; the emitted judge is always the agent-lane
+  `meta-muse-spark-1.3-contributor` block (xhigh reasoning).
+- **Fail-fast owned-worktree check.** The ownership read now runs before
+  the prelaunch gauntlet instead of after minutes of credential
+  rotation and store work — a branch/record mismatch refuses in under
+  a second (measured 0.36s live on a real mismatch).
+
+### Added
+- **Heartbeat nonce enrollment + rotation.** The listen server now
+  enrolls and rotates the goal-judge challenge (`SAC_NONCE_CHALLENGE_ROTATION=1`
+  to arm; dark by default). Verdict side already wired; ledger untouched.
+- **Image prune + disk pressure verbs.** `sac image prune [--keep 3]
+  [--dry-run] [--yes]` reclaims dated SIFs; `sac image disk [--path]
+  [--alert-threshold 85]` reports pressure with an alert pointer.
+
+## [0.33.0] - 2026-10-24
+
+### Added
+- **State-ordered roster + pin-to-top.** Online agents first, then
+  needs-attention, then idle (alphabetical in-band). Right-click pin
+  floats favorites above the bands (localStorage, square PIN chip);
+  pinned agents win auto-select.
+- **Auto-open first online agent.** The DM thread + Details populate on
+  load instead of a dead placeholder (bounded retry for late rows).
+
+### Changed
+- **Telegram-style DM.** Thread fills the pane and scrolls; composer
+  pinned at the bottom with breathing room on all four sides.
+- **Name shown once.** Roster carries the context; DM pane and Details
+  fragment no longer repeat the agent name (full detail page keeps it).
+- **Equal-height 3-col panes** sharing one viewport-based row height with
+  internal scroll; bottom dead band reclaimed (133px to 3px).
+- **Unmistakable selection.** Accent bar + tinted fill + bold name + hover.
+
+## [0.29.3]
+
+### Fixed
+- **Cross-host fleet rows render as `remote`, not blank.**
+  Registry rows declaring a different host (no local config, no local
+  runtime observation possible) now carry `status="remote"` with the
+  owning host in the liveness evidence, instead of no status at all.
+
 ## [0.29.2]
 
 ### Fixed
@@ -18,7 +172,98 @@ versioning follows [SemVer](https://semver.org/).
   Own-scope control includes `SCITEX_AGENT_CONTAINER_HOSTNAME`, so web
   actions work from inside the Hub django container.
 
+## [0.32.1] - 2026-10-23
+
+### Fixed
+- **Center column labeled DM; Details cards expand hierarchically.**
+  Short first, expand on demand (Identity + Message thread open).
+- **No inline scripts in leaf templates.** The cold-shell warm poll lives
+  in fleet-details.js.
+
+## [0.32.0] - 2026-10-23
+
+### Added
+- **Fleet page is a three-column DM workspace.** Narrow agent+LED roster,
+  center DM chat thread, right shared Details column (Cards DM idiom,
+  leaf-side). Row click loads the chat center + facts right.
+- **Buzz filter with Ctrl+K.** Free-substring match across the roster;
+  Ctrl/⌘+K focuses, Esc clears; the kbd hint sits inside the box.
+- **Right-click row menu.** Inspect / Open / Start / Restart / Stop /
+  Forget / Delete / Focus message — no agent-name suffixes.
+
+### Fixed
+- **No duplicate title.** The SDK AppHeader row carries the title; the
+  pagehead h1 is dropped. Tab titles unified on Agent Container.
+- **No inline scripts in leaf templates.** The cold-shell warm poll lives
+  in fleet-details.js (`warmColdShell`).
+- **Squared UI (2px max).** No rounded objects except textarea/button/badge.
+
+## [0.31.0] - 2026-10-22
+
+### Added
+- **Name-miss hints on attach/start/stop/restart.** An unresolvable
+  agent name prints Did-you-mean candidates with the exact command per
+  candidate, via one shared helper (regexp, bounded, invalid falls back
+  to literal, never auto-acts). Attach's inline matcher now uses it.
+
+## [0.30.1] - 2026-10-22
+
+### Fixed
+- **Profile `.env` values with whitespace are quoted.** An unquoted
+  multi-word pool value (e.g. `SciTeX Scholar`) word-split at apptainer
+  `--env-file` evaluation and executed its tail as a command, so the agent
+  FATALed before boot on every start. `shlex.quote` now protects values
+  that need it; plain values pass through byte-identical.
+- **Pool shadowing warning fires only across distinct files.** The same
+  pool file listed twice (resolve + explicit overlap) named itself a
+  shadowing hazard; the warning now requires two or more distinct files
+  with different values.
+
 ## [Unreleased]
+
+### Changed
+- **New TUI sessions are minted bare — the session name IS the agent name.**
+  The `tui-` prefix is dropped for new sessions; pre-cutover `tui-<agent>`
+  sessions keep resolving everywhere (start guard, stop, delivery routing,
+  liveness probes, auth-status, attach, heartbeat, registry sweep) until
+  they are restarted. No migration step: restart an agent and its session
+  comes back bare.
+- Remove the generic `--force` option from SAC commands. Use `agents restart`
+  to replace an agent, including `--fresh` for a new session; restart keeps
+  active-turn draining and supports the same behavior locally and remotely.
+- Ship the worktree policy checker and defaults in the Python package as
+  `sac worktree policy`. Host policy overrides and SAC-owned MCP state live
+  under `~/.scitex/agent-container`; no dotfiles executable is required.
+- Route start previews and diagnostics through `scitex-logging`, preserve
+  exact protocol stdout, and remove raw-print lint exemptions from `src`.
+- Keep rendered stdout free of ANSI color codes when redirected, while
+  retaining log prefixes and terminal colors. Account refresh also refuses
+  the removed force override through its internal expiry gate.
+- Advertise lazy public API names through `dir()` and load each API group
+  when that group is accessed.
+
+### Added
+- **Worktree policy is now decided in-process; no operator-side executable
+  required.** The retired `~/.dotfiles/src/.bin/scitex-worktree-policy` CLI is
+  ported into SAC as `_lifecycle/_worktree_policy_engine.py` with the manifest
+  bundled at `_baseline_assets/worktree_policy/worktree-policy.json` (plus
+  generated harness projections). Starts, dry-runs, explain, and
+  restore-worktree use the engine by default, so hosts without the dotfiles
+  executable no longer fail closed at `check-projections`. An explicit
+  `cli_path` still selects an external policy executable, and
+  `SAC_WORKTREE_POLICY_PATH` / `SAC_WORKTREE_POLICY_PROJECTION_DIR` override
+  the selected manifest and projections without code changes (without
+  overrides, the per-host `~/.scitex/agent-container/worktree-policy/` copy
+  wins over the bundle when present).
+- **Operator secrets pass into the Hermes profile secret scope.** The
+  materializer adds an allowlisted operator set (inference keys) from the
+  trusted pool at launch, on top of failover-resolved credentials; missing
+  slots warn by name and values are never logged.
+- **Secret scope is a declared per-agent axis: `full` (default) | `capsule`.**
+  Full passes every pool-file-defined name into the profile env for
+  development agents; capsule keeps declared inference keys + delivery
+  tokens only for insulated environments. Ambient-only names never pass
+  in either mode, and same-name-different-value pool files warn by name.
 
 ### Fixed
 - **Lifecycle spec authority now fails closed instead of warning through
@@ -65,10 +310,15 @@ versioning follows [SemVer](https://semver.org/).
   now emit `process/3` with explicit unverified ownership instead of leaking a
   raw `KeyError`, and never authorize a name-based signal.
 - **Plain agent restart preserves the harness conversation.** Internal
-  `start --force` now means process replacement only; it no longer clears
+  process replacement during guarded `agents restart` no longer clears
   `session_id` or `session_id_history` when the resolved session policy is
-  `continue`. Only a forced start with an explicit `fresh` override
-  resets those artifacts.
+  `continue`. An explicit `--fresh` restart resets those artifacts.
+- **Restarts survive transient credential-proof blips and report loudly.**
+  The start leg retries twice (5s, 15s) on a cooldown-gated Hermes proof
+  abort instead of stranding the agent DOWN; revoked-key aborts and the
+  pre-stop proof still fail loud immediately. Restart errors now also
+  reach stderr when stdout is piped (previously only `--json` showed
+  them).
 
 ### Removed
 - **The retired per-agent SQLite contract and its misleading Python namespace.**
@@ -81,14 +331,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 - **Write-capable agent tasks now pass the harness-neutral worktree policy
-  gate.** SAC invokes the operator-owned `scitex-worktree-policy` CLI before a
+  gate.** SAC invokes its packaged worktree policy checker before a
   new Claude, Codex, or Hermes harness process starts; automatically resolves a
   stable agent-owned linked worktree while preserving/refusing dirty or
   conflicting checkouts; exposes the migration plan in dry-run/explain; fails
   closed on missing, denied, stale, malformed, or hash-inconsistent results;
   and records `policy_sha256` plus `projection_sha256` on the incarnation.
-  Policy remains in dotfiles; SAC adds no hook-, skill-, prompt-, or doc-based
-  rule copy or bypass.
+  Host policy overrides and generated projections live under
+  `~/.scitex/agent-container`; no external script or bypass is required.
 - **Hermes Cards messages now enter the visible TUI as durable steer turns.**
   Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
   doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed

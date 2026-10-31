@@ -17,9 +17,7 @@ def is_agentic_feedback_event(event: dict[str, Any]) -> bool:
     return event.get("kind") in (AGENTIC_ACK_KIND, PROGRESS_KIND)
 
 
-def absorb_agentic_feedback(
-    event: dict[str, Any], *, agent: str | None = None
-) -> bool:
+def absorb_agentic_feedback(event: dict[str, Any], *, agent: str | None = None) -> bool:
     """Verify exact nonce + expected peer and update sender-owned state.
 
     Every malformed, stale, wrong-nonce, or wrong-peer envelope is refused.
@@ -40,7 +38,9 @@ def absorb_agentic_feedback(
         understood = extra.get("understood")
         owner = extra.get("owner")
         next_checkpoint = extra.get("next_checkpoint")
-        if not all(isinstance(value, str) for value in (understood, owner, next_checkpoint)):
+        if not all(
+            isinstance(value, str) for value in (understood, owner, next_checkpoint)
+        ):
             return False
     else:
         status = extra.get("status")
@@ -51,6 +51,10 @@ def absorb_agentic_feedback(
         from .._state.dispatch_feedback import record_agentic_ack, record_progress
 
         if kind == AGENTIC_ACK_KIND:
+            if "handshake_proof" in extra:
+                from .._state._agentic_handshake import record_handshake_ack
+
+                return record_handshake_ack(event)
             saved = record_agentic_ack(
                 dispatch_id,
                 from_agent=from_agent,

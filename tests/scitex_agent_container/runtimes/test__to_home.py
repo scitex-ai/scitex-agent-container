@@ -693,7 +693,13 @@ class TestDeployToHomeFromConfig:
         assert (
             (home / "AGENTS.md").exists(),
             (home / "HERMES.md").is_file(),
-            (home / ".sac" / "prompt-projections.json").is_file(),
+            (
+                home
+                / ".scitex"
+                / "agent-container"
+                / "runtime"
+                / "prompt-projections.json"
+            ).is_file(),
         ) == (False, True, True)
 
     def test_metadata_name_is_interpolated_in_claude_md(self, tmp_path):

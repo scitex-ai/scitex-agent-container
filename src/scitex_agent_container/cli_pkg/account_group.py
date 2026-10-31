@@ -60,6 +60,9 @@ class _AccountsGroup(HelpRecursiveGroup):
                 # hand in the normal case, and both are inert if their timer
                 # is not running.
                 "probe-entitlement",
+                # Same shape again (operator order 2026-10-16):
+                # TUI-independent key-liveness sweep, read from cache.
+                "probe-api-keys",
             ],
         ),
     ]
@@ -390,6 +393,19 @@ register_refresh_quota_cache_command(account)
 from ._account_probe_entitlement import register_probe_entitlement_command
 
 register_probe_entitlement_command(account)
+
+
+# ---------------------------------------------------------------------------
+# probe-api-keys — the PRODUCER for the per-slot key-liveness verdicts the
+# boot picker and the listen key-health endpoint read. Same relationship
+# as probe-entitlement above: the readers are cache-only by contract, so
+# without a periodic run of this every slot reads UNKNOWN and the gate is
+# inert. Operator order 2026-10-16 (TUI-independent key health): one cheap
+# read-only billing-endpoint GET per declared slot, never a turn.
+# ---------------------------------------------------------------------------
+from ._account_probe_api_keys import register_probe_api_keys_command
+
+register_probe_api_keys_command(account)
 
 
 # ---------------------------------------------------------------------------

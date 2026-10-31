@@ -124,7 +124,25 @@ def test_apply_reloads_only_bridge_and_proves_same_tui_survived() -> None:
         result.tui_preserved,
         starts,
         sessions,
-    ) == ("reloaded", 222, True, [19_000], ["tui-scitex-hub"] * 2)
+    ) == ("reloaded", 222, True, [19_000], ["scitex-hub"] * 2)
+
+
+def test_legacy_live_session_is_reconciled_not_refused() -> None:
+    # Arrange — only the pre-cutover ``tui-scitex-hub`` session is live: the
+    # bridge reloads against it instead of refusing a "missing" TUI.
+    config = _config()
+    # Act
+    result = reconcile_turn_bridge(
+        config,
+        apply=False,
+        current_host="scitex-compute-03",
+        live_port_fn=lambda _config, **_kwargs: (19_000, "instance_row"),
+        session_alive_fn=lambda session: session == "tui-scitex-hub",
+        bridge_pid_read_fn=lambda _config: 111,
+        pid_alive_fn=lambda pid: pid == 111,
+    )
+    # Assert
+    assert (result.status, result.session) == ("would-reload", "tui-scitex-hub")
 
 
 def test_missing_tui_refuses_bridge_only_reconcile() -> None:

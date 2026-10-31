@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from typing import Callable, Iterator
 
-import click
+from ..._logging import get_logger
+from ...config._resolve import AmbiguousAgent
 
 
 def _target_needs_anthropic_oauth(cfg: object) -> bool:
@@ -57,6 +58,7 @@ def make_preflight_runner(
     bulk_yamls: list[str],
     no_redispatch: bool,
     broker_self: bool,
+    engine_override: str | None = None,
 ) -> Callable[[], None]:
     """Build the idempotent ("once per invocation") OAuth preflight runner.
 
@@ -81,6 +83,9 @@ def make_preflight_runner(
     agent is what took the whole fleet down on 2026-08-10: the lead token
     had lapsed, every declared pool credential was fresh, and every start
     on the host was refused anyway.
+
+    An explicit start-time engine is folded before this auth check: its
+    selected provider must not be gated on the stored default's OAuth pool.
 
     A spec that will not load is REFUSED HERE, naming the load error. It
     is no longer gated on the lead's ``~/.claude/.credentials.json``, and
@@ -107,18 +112,38 @@ def make_preflight_runner(
         try:
             for raw, cfg, err in _iter_target_configs(single_targets, bulk_yamls):
                 if cfg is None:
+                    hint = ""
+                    if isinstance(err, (FileNotFoundError, AmbiguousAgent)):
+                        # Operator order (card
+                        # sac-attach-agent-name-hints-20260919): a miss
+                        # suggests, never auto-starts. Same helper as
+                        # attach/stop/restart.
+                        try:
+                            from ...config._name_hints import suggest_agent_names
+                            from ...config._resolve import enumerate_agent_names
+
+                            hint = suggest_agent_names(
+                                raw, enumerate_agent_names(), verb="start"
+                            )
+                        except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                            pass
                     raise RuntimeError(
                         f"cannot start {raw!r}: its spec could not be loaded "
-                        f"({type(err).__name__}: {err}). Check that the agent "
+                        f"({type(err).__name__}: {err}).{hint} Check that the agent "
                         "name is registered on this host and that its spec "
                         "parses. This is NOT a credential fault — sac does not "
                         "read ~/.claude/.credentials.json for agent starts."
                     )
+                if engine_override:
+                    from ..._lifecycle._engine_select import select_engine_at_start
+
+                    # Match this start's auth without adding a network probe.
+                    select_engine_at_start(cfg, engine_override, probe=False, log=False)
                 if not _target_needs_anthropic_oauth(cfg):
                     continue
                 check_spec_oauth_credentials(cfg)
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
-            click.echo(f"Error: {exc}", err=True)
+            get_logger(__name__).error(str(exc))
             raise SystemExit(1)
 
     return _run_preflight_once

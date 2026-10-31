@@ -249,7 +249,29 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
-    # ---- 3b. A STABLE PATH FOR THE BROWSER -----------------------------
+    # ---- 3b. bun runtime (pinned) --------------------------------------
+    # The fleet's CCT stack (claude-code-telegrammer TS server + poller,
+    # a SAC dependency) runs on bun. Agent specs and the installed
+    # cct-gateway resolve bun from $BUN_BIN, PATH, or ~/.bun — none of which
+    # exist in-image, so container-contained CCT execution needs bun HERE.
+    # Pinned by version + SHA256 (matches the fleet-known-good 1.3.14 that
+    # the host checkouts run); verified 2026-10-14, zip holds exactly one
+    # file, bun-linux-x64/bun. Follow-up tracked separately: installed TS
+    # dependencies (or a vendored dist bundle) so the packaged TS can run
+    # without a host checkout.
+    BUN_VERSION=1.3.14
+    BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
+    curl -fsSL -o /tmp/bun.zip \
+        "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+    echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c -
+    mkdir -p /opt/bun
+    python3 -c "import zipfile; open('/opt/bun/bun','wb').write(zipfile.ZipFile('/tmp/bun.zip').read('bun-linux-x64/bun'))"
+    chmod 0755 /opt/bun/bun
+    ln -sf /opt/bun/bun /usr/local/bin/bun
+    rm -f /tmp/bun.zip
+    bun --version
+
+    # ---- 3c. A STABLE PATH FOR THE BROWSER -----------------------------
     # Puppeteer installs under a VERSION-NUMBERED directory:
     #
     #   /root/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome
@@ -309,9 +331,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # in section 4c covers the headless ``gdu -o-`` JSON case sac
     # itself needs (apt's ambiguous ``gdu`` package was dropped).
     #
-    # For the operator's hand-curated extra Rust-CLI set (per-host,
-    # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
-    # in the operator dotfiles.
+    # Additional per-agent Rust CLIs belong in a packaged downstream image
+    # or the agent's authored startup commands, using its managed overlay.
     # The rustup INSTALLER at sh.rustup.rs is unversioned, but the toolchain
     # it lays down is what actually ends up in the image — so pin THAT with
     # --default-toolchain. Without it, `sh.rustup.rs -y` installs whatever
@@ -392,7 +413,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
     done
     /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
-    python3 -m pip install --no-cache-dir --break-system-packages pipx
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pipx
     # pre-commit into SYSTEM python on purpose: every repo's git hook execs
     # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
     # ``pre-commit install`` bakes into .git/hooks/pre-commit. A module
@@ -404,7 +425,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # still stays in the venv, section 6b). Regression context: this was a
     # runtime overlay install that the fresh-SIF refresh wiped fleet-wide
     # (figrecipe 2026-06-28) — pinning it into the image makes it durable.
-    python3 -m pip install --no-cache-dir --break-system-packages pre-commit
+    /usr/local/bin/uv pip install --no-cache --python /usr/bin/python3 --break-system-packages pre-commit
 
     # ---- 6a. python convenience symlink -----------------------------
     # Ubuntu 24.04's `python3-is-python3` doesn't ship by default; many
@@ -633,8 +654,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # by the build frontend. This is not a moving branch ref and the local path
     # is explicit in the resolver transaction. Filesystem
     # requirements cannot carry a PEP 440 comparator; SAC's project metadata
-    # honestly declares the supported floor (scitex-cards>=0.52.1), while the
-    # local candidate reports 0.52.1 and the commit marker proves its content.
+    # honestly declares the supported floor (scitex-cards>=0.53.4), while the
+    # local candidate reports 0.53.4 and the commit marker proves its content.
     # Keep both runtime extras explicit even though that source currently
     # promotes their dependencies to core: the aliases are the install-time
     # contract that fastmcp and psycopg must remain resolvable.
@@ -644,6 +665,16 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         "claude-agent-sdk" \
         "/opt/scitex-cards-src[mcp,postgres]" \
         "/opt/scitex-agent-container-src[all,dev]"
+
+    # ---- 6b-x. CCT TS dependencies (for contained MCP/poller) ------------
+    # The packaged telegram-server.ts needs its node_modules; without them
+    # the contained MCP path (dotfiles lead specs) cannot start, and any
+    # agent restart on those specs loses CCT (measured 2026-10-15). Install
+    # once at build with the in-image bun (section 3b); bun.lock ships in
+    # the package so --frozen-lockfile is deterministic.
+    CCT_TS_DIR="$(/opt/venv-sac/bin/python -c 'import os, claude_code_telegrammer; print(os.path.join(os.path.dirname(claude_code_telegrammer.__file__), "ts"))')"
+    /usr/local/bin/bun install --cwd "$CCT_TS_DIR" --frozen-lockfile
+    test -d "$CCT_TS_DIR/node_modules/@modelcontextprotocol"
 
     # ---- 6c. Hermes harness + official TUI ---------------------------
     # Hermes is a harness available to every SAC agent, not a separate image
@@ -666,12 +697,43 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
     npm cache clean --force
 
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/ywatanabe1989/hermes-agent.git"
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "e9533b0e43c2f2d8b1f6a4606db52f86481fc083"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "1a3815aac3b4162cf3adea29344deea280d3aab8"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
-    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.2"'
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
+
+    # ---- 6c-2. Hermes local browser (agent-browser + pinned Chromium) --
+    # hermes browser tools (browser_exec / browser-harness) resolve their
+    # Chromium through hermes_cli.browser_runtime.chromium_executable():
+    #   $AGENT_BROWSER_EXECUTABLE_PATH, else pm.installed_package("chromium").
+    # Neither is present in a fresh image: agent-browser is an OPTIONAL
+    # default PM package (not installed by `uv sync`), and the "chromium"
+    # PM package is not a default at all. Without both, every browser tool
+    # fails at launch — silently from the agent's point of view.
+    #
+    # `hermes pm install agent-browser` installs the pinned CLI (lock.json,
+    # agent-browser 0.26.0) AND its declared dep `chromium` (pinned
+    # 1208+145.0.7632.6, sha256 in lock).
+    #
+    # STORE ANCHORING — the critical half. pm.store_root() resolves to
+    # HERMES_RUNTIME_DIR when set, else $HERMES_HOME/tools. A bare install
+    # at build time (HOME=/root) would bake the store at /root/.hermes —
+    # invisible to every agent (HOME=/home/agent). So the store lives at
+    # the image-absolute /opt/hermes-tools and HERMES_RUNTIME_DIR pins it
+    # for every process via %environment below. Local-first: no cloud key,
+    # no CDP override, no real-profile browsing, no consent change.
+    HERMES_RUNTIME_DIR=/opt/hermes-tools \
+        "$HERMES_ROOT/.venv/bin/hermes" pm install agent-browser
+    # Gate resolves exactly as an agent process will: same override, no HOME.
+    _BROWSER_EXE=$(HERMES_RUNTIME_DIR=/opt/hermes-tools "$HERMES_ROOT/.venv/bin/python" -c 'from hermes_cli.browser_runtime import chromium_executable; print(chromium_executable() or "")')
+    test -n "$_BROWSER_EXE" || { echo "BROWSER: FAIL - no Chromium resolves after pm install agent-browser" >&2; exit 1; }
+    test -x "$_BROWSER_EXE" || { echo "BROWSER: FAIL - not executable: $_BROWSER_EXE" >&2; exit 1; }
+    echo "BROWSER: $_BROWSER_EXE"
+    # Launch smoke: the binary must START headless, not just exist.
+    "$_BROWSER_EXE" --headless --no-sandbox --disable-gpu --dump-dom about:blank
+    unset _BROWSER_EXE
 
     # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
@@ -837,7 +899,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.52.1``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.53.4``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -1031,14 +1093,21 @@ EOF
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
     export HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
+    # Hermes PM tool store (agent-browser + pinned Chromium, section 6c-2).
+    # HERMES_RUNTIME_DIR wins over $HERMES_HOME/tools in pm.store_root(),
+    # so every agent resolves the image-baked store regardless of HOME.
+    export HERMES_RUNTIME_DIR=/opt/hermes-tools
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
 %test
-    # The image must not be published with a console entry point whose
-    # packaged target is absent. Apptainer runs this after %post and fails
-    # the build before scitex-container atomically promotes the SIF.
-    /opt/venv-sac/bin/sac --version
+    set -eu
+    # Keep import-time Logging state writable during the read-only image test.
+    # SCITEX_DIR is its supported state root; preserve the declared HOME.
+    sac_test_state="$(mktemp -d /tmp/sac-base-test.XXXXXX)"
+    trap 'rm -rf -- "$sac_test_state"' EXIT
+    # A failed console check must fail the image test before later tool checks.
+    SCITEX_DIR="$sac_test_state" /opt/venv-sac/bin/sac --version
     env -i \
         PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         HOME=/tmp \
@@ -1054,9 +1123,9 @@ EOF
     org.scitex.runtime apptainer
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
-    org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
-    org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
-    org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
+    org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
+    org.scitex.hermes.commit e9533b0e43c2f2d8b1f6a4606db52f86481fc083
+    org.scitex.cards.commit 1a3815aac3b4162cf3adea29344deea280d3aab8
 
 %help
     scitex-agent-container :base layer.

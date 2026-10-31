@@ -528,3 +528,42 @@ def test_scitex_without_local_base_provenance_fails_actionably(
             runner.calls == [],
         )
     )
+
+
+class TestReferenceSizeSkipsDanglingLinks:
+    """Dangling live symlinks (pruned targets) must not kill the space check.
+
+    Measured 2026-10-15: two dangling sac-base links made
+    ``_reference_size`` raise FileNotFoundError, failing bake-remote before
+    any remote work.
+    """
+
+    def test_dangling_links_are_skipped(self, tmp_path: Path) -> None:
+        # Arrange
+        layer_dir = tmp_path / "sac-base"
+        layer_dir.mkdir()
+        (layer_dir / "sac-base-2026-0930-032921.sif").symlink_to(
+            "/nonexistent/sac-base-sha256-deadbeef.sif"
+        )
+
+        # Act
+        result = core._reference_size(layer_dir, "base")
+
+        # Assert
+        assert result is None
+
+    def test_live_file_beside_dangling_link_wins(self, tmp_path: Path) -> None:
+        # Arrange
+        layer_dir = tmp_path / "sac-base"
+        layer_dir.mkdir()
+        (layer_dir / "sac-base-2026-0930-032921.sif").symlink_to(
+            "/nonexistent/sac-base-sha256-deadbeef.sif"
+        )
+        live = layer_dir / "sac-base-2026-1015-041758.sif"
+        live.write_bytes(b"x" * 64)
+
+        # Act
+        result = core._reference_size(layer_dir, "base")
+
+        # Assert
+        assert result == 64

@@ -25,6 +25,8 @@ import sys
 
 import click
 
+from ..._logging import get_logger
+
 group_option = click.option(
     "--group",
     "groups",
@@ -98,20 +100,16 @@ def apply_group_targets(
     --json / logs).
     """
     if not targets and not groups:
-        click.echo(
-            "Error: missing TARGETS (or pass --group NAME to bulk-start "
+        get_logger(__name__).error(
+            "missing TARGETS (or pass --group NAME to bulk-start "
             "by group membership).",
-            err=True,
         )
         sys.exit(2)
     if not groups:
         return targets
     resolved = resolve_group_targets(groups)
     if not resolved:
-        click.echo(
-            f"Error: --group matched no agents for: {', '.join(groups)}",
-            err=True,
-        )
+        get_logger(__name__).error(f"--group matched no agents for: {', '.join(groups)}")
         sys.exit(2)
     return tuple(dict.fromkeys((*targets, *resolved)))
 

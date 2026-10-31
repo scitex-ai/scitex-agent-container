@@ -102,7 +102,10 @@ _HEARTBEAT_COLUMNS = {
     "monotonic_ns": "heartbeat_monotonic_ns",
     "observed_at": "heartbeat_observed_at",
     "progress_at": "heartbeat_progress_at",
-    "progress_seq": "heartbeat_progress_seq",
+    "session_jsonl_delta_bytes": "heartbeat_session_jsonl_delta_bytes",
+    "subagent_jsonl_delta_bytes": "heartbeat_subagent_jsonl_delta_bytes",
+    "nonce_challenge": "heartbeat_nonce_challenge",
+    "nonce_echo": "heartbeat_nonce_echo",
     "state": "heartbeat_state",
     "lease_expires_at": "lease_expires_at",
     "card_id": "heartbeat_card_id",
@@ -169,12 +172,19 @@ def record_instance_start(
     bound_port: int | None = None,
     remote: bool = False,
     spawned_by: str | None = None,
+    spec_uuid: str | None = None,
 ) -> str:
     """Insert an ``instances`` record for a freshly-started agent.
 
     Returns the new ``instance_id`` (uuid7). ``expected_revision=NEW_RECORD``
     makes a re-used id a loud ``RevisionMismatchError`` rather than a silent
     overwrite of somebody else's lifetime.
+
+    ``spec_uuid`` is the immutable ``spec.uuid`` of the spec this start
+    launched from (card sac-identity-spec-uuid-20261026). ``None``
+    (pre-backfill rows, lead-side remote rows whose peer did not report
+    one) writes nothing — ``strip_unset`` drops it and the field stays
+    NULL rather than stamped.
 
     ``bound_port`` is FOLDED into ``a2a_port`` rather than stored beside it:
     both columns always carried one value, and keeping two copies is how the
@@ -202,6 +212,7 @@ def record_instance_start(
     values = strip_unset(
         {
             "name": name,
+            "spec_uuid": spec_uuid or None,
             "pid": pid,
             "process_start_time": process_start_time,
             "process_uid": process_uid,

@@ -81,7 +81,9 @@ Selected fields:
     suitable for dashboards.
 
 ``quota_5h_used_pct``, ``quota_7d_used_pct``, ``quota_*_reset_at``
-    Claude usage (best-effort; cached between calls).
+    Anthropic subscription usage (best-effort; cached between calls).
+    Populated only on the Anthropic OAuth account axis — empty under a
+    ``spec.claude.provider`` override or a non-Anthropic harness.
 
 ``metrics``
     Host-level CPU / memory / load / disk (psutil).
