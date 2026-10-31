@@ -697,7 +697,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
     npm cache clean --force
 
-    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "e9533b0e43c2f2d8b1f6a4606db52f86481fc083"
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY")" = "https://github.com/scitex-ai/hermes-agent.git"
     test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "1a3815aac3b4162cf3adea29344deea280d3aab8"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
@@ -1124,7 +1124,7 @@ EOF
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
     org.scitex.hermes.repository https://github.com/scitex-ai/hermes-agent.git
-    org.scitex.hermes.commit 17c5fde5a3f3642262003cd6aa09d54cf4d11de3
+    org.scitex.hermes.commit e9533b0e43c2f2d8b1f6a4606db52f86481fc083
     org.scitex.cards.commit 1a3815aac3b4162cf3adea29344deea280d3aab8
 
 %help

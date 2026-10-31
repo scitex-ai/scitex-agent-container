@@ -128,7 +128,7 @@ sys.stdout.write(json.dumps({'binary':binary,'returncode':result.returncode,
         True,
         HERMES_BINARY,
         os.environ.get(
-            "SAC_TEST_HERMES_PIN", "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+            "SAC_TEST_HERMES_PIN", "e9533b0e43c2f2d8b1f6a4606db52f86481fc083"
         ),
     )
 

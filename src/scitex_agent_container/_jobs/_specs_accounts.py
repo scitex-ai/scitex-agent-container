@@ -373,11 +373,12 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-accounts-key-liveness",
             schedule="*/15 * * * *",  # every 15min (cron form; timer below)
-            # SELF-BOUNDING (300s). One cheap billing-endpoint GET per
-            # declared slot (fleet holds ~13 distinct aliases); 300s covers
-            # slow providers with wide headroom. A pass killed at this
-            # timeout writes NOTHING, and the previous cache stands with
-            # its checked_at honestly aging. Stale verdicts never take a
+            # SELF-BOUNDING (900s). One cheap billing-endpoint GET per
+            # declared slot, followed by at most two preflighted fresh
+            # restarts. The old read-only 300s budget cannot cover restart
+            # drain/boot verification as well. Restart budget is persisted
+            # before each attempt, so interruption cannot erase it.
+            # Stale verdicts never take a
             # slot out of service, so a missed pass degrades to older
             # data, never to a wrong action.
             #
@@ -391,16 +392,18 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # infra-lead stop (commandcode 400 insufficient credits, no
             # pattern matched, no ROTATE) is what happens without it.
             command=(
-                "/usr/bin/timeout 300 "
-                f"{sac} accounts probe-api-keys --all"
+                "/usr/bin/timeout 900 "
+                f"{sac} accounts probe-api-keys --all --restart-capped"
             ),
             description=(
                 "TUI-independent API-key liveness sweep: one read-only "
                 "billing-endpoint GET per declared key slot with key to "
                 "agent mapping from specs' failover pools; records "
                 "alive/exhausted/dead/unknown verdicts for the boot picker "
-                "and key-health readers. Read-only: rotates nothing, spends "
-                "no turns. NOT armed by this declaration."
+                "and key-health readers. Confirmed capped slots trigger one "
+                "bounded fresh restart of running consumers, after successor "
+                "preflight; unknown evidence never triggers a restart. "
+                "NOT armed by this declaration."
             ),
             kind="timer",
             on_boot_sec="5min",

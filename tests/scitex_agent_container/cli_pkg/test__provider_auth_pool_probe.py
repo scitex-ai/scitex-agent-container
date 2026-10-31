@@ -58,7 +58,7 @@ def test_real_native_http_pool_probe_is_shared_and_discriminates_invalid_keys(
             ) == (
                 expected,
                 expected,
-                1 if accept_all else 2,
+                1 if accept_all else 3,
                 True,
             )
     finally:

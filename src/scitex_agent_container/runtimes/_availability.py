@@ -196,6 +196,18 @@ def probe_provider_key(
         )
     code = response.status_code
     if 200 <= code < 300:
+        try:
+            accepted = response.json()
+        except ValueError:
+            accepted = None
+        if isinstance(accepted, dict) and (
+            accepted.get("error") or accepted.get("status") in {"failed", "cancelled"}
+        ):
+            return ProbeResult(
+                available=False,
+                status=ProbeStatus("provider_error", code),
+                check=ProbeCheck("backend returned a failed inference result"),
+            )
         return ProbeResult(
             available=True,
             status=ProbeStatus("http", code),

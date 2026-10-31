@@ -50,6 +50,67 @@ _DEAD = "synthetic-dead-token"
 _OTHER = "synthetic-other-token"
 
 
+@pytest.mark.parametrize("hours", [5, 24, 24 * 7, 24 * 30, 24 * 31])
+def test_judge_cap_requires_a_verified_alternative(tmp_path, hours):
+    # Arrange: the first key serves main inference but rejects the judge.
+    value = _config(["FIRST", "SECOND"])
+    calls = []
+    reset = _NOW + hours * 3600
+
+    def probe(spec, token):
+        purpose = spec.get("purpose", "main")
+        calls.append((purpose, token))
+        if token == _CONTROL:
+            return {"last_status": "dead", "last_error_code": 401}
+        if token == _LIVE and purpose == "goal_judge":
+            return {
+                "last_status": "exhausted", "last_error_code": 429,
+                "last_error_reset_at": reset, "failure_reason": "rate_limit",
+            }
+        return {"last_status": "ok", "last_status_at": _NOW}
+
+    # Act
+    proof = prepare_hermes_successor(
+        value, probe=probe, resolver=_resolver({"FIRST": _LIVE, "SECOND": _OTHER}),
+        profiles=[], now=lambda: _NOW,
+    )
+    # Assert: preserve the cap; select a key independently proven for both roles.
+    rows = next(iter(proof.pools.values())).credentials
+    assert (proof.provider_key, rows[0]["last_error_reset_at"],
+            ("main", _OTHER) in calls, ("goal_judge", _OTHER) in calls) == (
+        _OTHER, reset, True, True,
+    )
+
+
+def test_main_success_does_not_hide_unavailable_judge(tmp_path):
+    # Arrange
+    value = _config(["FIRST"])
+    profile_dir = tmp_path / ".hermes"
+    profile_dir.mkdir()
+    original = '{"sentinel": "live profile"}'
+    (profile_dir / "config.yaml").write_text(original)
+
+    def probe(spec, token):
+        if token == _CONTROL:
+            return {"last_status": "dead", "last_error_code": 401}
+        if spec.get("purpose") == "goal_judge":
+            return {"last_status": "exhausted", "last_error_code": 503}
+        return {"last_status": "ok"}
+
+    # Act
+    error = None
+    try:
+        prepare_hermes_successor(
+            value, probe=probe, resolver=_resolver({"FIRST": _LIVE}),
+            profiles=[profile_dir], now=lambda: _NOW,
+        )
+    except RestartPreflightAbort as exc:
+        error = str(exc)
+    # Assert
+    assert (error is not None and "No declared Hermes credential" in error,
+            (profile_dir / "config.yaml").read_text()) == (True, original)
+
+
 @pytest.fixture(autouse=True)
 def _fresh_probe_cache():
     reset_probe_cache()
@@ -625,7 +686,7 @@ def test_expired_quota_cooldown_is_rechecked(tmp_path):
     calls = []
     proof = prepare(value, calls=calls)
     # Assert
-    assert (len(calls), proof.provider_key) == (3, TOKENS["SAC_TEST_A"])
+    assert (len(calls), proof.provider_key) == (5, TOKENS["SAC_TEST_A"])
 
 
 def test_changed_token_cannot_inherit_dead_metadata_under_stale_same_id(tmp_path):
@@ -645,7 +706,7 @@ def test_changed_token_cannot_inherit_dead_metadata_under_stale_same_id(tmp_path
     calls = []
     proof = prepare(value, calls=calls)
     # Assert
-    assert (len(calls), proof.provider_key) == (3, TOKENS["SAC_TEST_A"])
+    assert (len(calls), proof.provider_key) == (5, TOKENS["SAC_TEST_A"])
 
 
 def test_healthy_primary_survives_unreachable_backup_control():
@@ -733,7 +794,7 @@ def test_bulk_concurrent_agents_share_native_health_for_identical_vendor_keys():
             )
         )
     # Assert
-    assert (len(calls), len(results)) == (3, 4)
+    assert (len(calls), len(results)) == (5, 4)
 
 
 def test_probe_cache_expires_and_drops_old_key_material():
@@ -901,7 +962,7 @@ def test_handoff_consumes_exact_proof_once_without_any_new_probe_or_resolver(
         True,
         True,
         TOKENS["SAC_TEST_A"],
-        3,
+        5,
         None,
         "",
         {

@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-10-31
+
+### Fixed
+- Keep Hermes goal judging aligned with named custom-provider credential-pool
+  rotation, and recover subscription-required 403 responses through the pinned
+  Hermes runtime. Pause guidance now names the active profile.
+- Require separate main-model and judge inference proofs before replacing a
+  running Hermes process; reject error envelopes returned with HTTP 200.
+- Read current API-key credential-store envelopes and provider quota windows.
+  The optional quota-recovery sweep fresh-restarts running configured-slot
+  consumers only after successor preflight, with persistent debounce and at
+  most two restart attempts per pass.
+
+### Added
+- Audited installed-package skill projections through the scitex-dev dispatcher,
+  respecting package opt-outs and SAC exclusions inside generated Hermes homes.
+- Source-backed profile-resolution and model-availability skills, corrected image
+  build guidance, and executable offline documentation examples in daily CI.
+
 ## [0.38.0] - 2026-10-26
 
 ### Added

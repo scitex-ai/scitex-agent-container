@@ -220,6 +220,8 @@ not copy policy rules into hooks, skills, prompts, or docs. See
 
 **[Full directory reference →](docs/directories.md)** — complete tree, configuration cascade (CLI flag → env var → project config → user config).
 
+**[Hermes profile resolution →](docs/hermes-profile-resolution.md)** — active host/container profiles, project skills, and goal judge troubleshooting; maintained in the shipped SAC skill.
+
 ```
 ~/.scitex/agent-container/
 ├── agents/<name>/spec.yaml    ← agent definition (SSoT)
