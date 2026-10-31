@@ -13,6 +13,16 @@ from scitex_agent_container._account.api_key_liveness import (
 )
 
 
+def test_provider_confirmed_expired_key_stays_distinct_from_quota():
+    # Arrange
+    body = json.dumps({"error": {"code": "UNAUTHORIZED", "message":
+        "Your API key has expired. Log in again to get a new key."}})
+    # Act
+    verdict = classify_status("commandcode", 401, body)
+    # Assert
+    assert verdict == ("dead", "http-401-key-expired")
+
+
 def _spec(agent, pools, primaries=None):
     engines = {
         key: {"provider": {"auth_token_env": env}}

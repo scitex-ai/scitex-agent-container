@@ -30,6 +30,14 @@ from __future__ import annotations
 import click
 
 
+def _slot_secrets(slots):
+    """Use the same sourced pool as launch; file rotations override stale env."""
+    from ..runtimes._secret_pool import read_pool
+
+    pool = read_pool().env
+    return {alias: pool.get(alias, "") for alias in slots}
+
+
 def register_probe_api_keys_command(group) -> None:
     """Attach ``probe-api-keys`` onto the ``accounts`` group."""
 
@@ -69,7 +77,6 @@ def register_probe_api_keys_command(group) -> None:
           $ sac accounts probe-api-keys --all --restart-capped --json
         """
         import json as _json
-        import os
         from pathlib import Path
 
         from .._account.api_key_liveness import (
@@ -100,12 +107,7 @@ def register_probe_api_keys_command(group) -> None:
                 spec["agent_name"] = agent_name
                 specs.append(spec)
         slots = collect_slots(specs)
-        from ..runtimes._secret_pool import read_pool
-
-        canonical_secrets = read_pool().env
-        secrets = {
-            alias: os.environ.get(alias) or canonical_secrets.get(alias, "") for alias in slots
-        }
+        secrets = _slot_secrets(slots)
         doc = sweep(slots, secrets)
         if restart_capped:
             from .._account.quota_restart import restart_capped_agents

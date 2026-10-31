@@ -45,6 +45,12 @@ measurements stay unknown. Do not invent a 5h/24h/7d/30d/monthly window that the
 provider did not report. Preserve its exact reset time; expired windows are
 not current cap evidence.
 
+Probe credentials use the same sourced secret pool as launch: authored file
+rotations override stale inherited process values. Compare sanitized fingerprints
+and full lengths when a provider rejects authentication. A truncated key and an
+expired full key are different faults. CommandCode's explicit expired-key 401 is
+reported as `http-401-key-expired`; resetting or restarting cannot renew it.
+
 ```bash
 # Measure declared slots; no restart requested.
 sac accounts probe-api-keys --all --json
