@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-31
+
+### Added
+- **Cross-host turn delivery via the host send route.** `POST
+  /agents/<name>/send` now forwards to agents on other hosts: when
+  the shared live row names a peer host, the turn is ssh-posted to
+  the peer's loopback sidecar (the fixed ssh transport) and the
+  canonical 202 receipt is proxied back for the caller to poll.
+  Unresolvable targets keep the existing 409 refusal; transport
+  failures are loud 502s naming peer host and port.
+
+### Fixed
+- **Fleet page cold-load freeze.** The cold shell now loads the
+  warm-poll module and static assets carry versions (cache-bust),
+  so a hung first data fetch settles into the retry/banner path
+  instead of reading the fleet forever.
+
 ## [0.38.0] - 2026-10-26
 
 ### Added
