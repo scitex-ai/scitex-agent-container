@@ -158,6 +158,8 @@ def classify_status(
     text = (body or "").lower()
     if http_status is None:
         return "unknown", "no-answer"
+    if http_status == 401 and "api key has expired" in text:
+        return "dead", "http-401-key-expired"
     if http_status in (401, 403):
         return "dead", f"http-{http_status}"
     if "insufficient credits" in text or "insufficient balance" in text:

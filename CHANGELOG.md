@@ -6,9 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.38.1] - 2026-10-31
+## [0.38.2] - 2026-10-31
+
+The unpublished 0.38.1 candidate was superseded before deployment.
 
 ### Fixed
+- Resolve API-key probes through the same sourced secret pool as launch so a
+  rotated key in an authored secret file overrides stale inherited values.
+  Report provider-confirmed key expiry separately from quota exhaustion.
 - Keep Hermes goal judging aligned with named custom-provider credential-pool
   rotation, and recover subscription-required 403 responses through the pinned
   Hermes runtime. Pause guidance now names the active profile.
