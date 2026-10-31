@@ -392,15 +392,17 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # pattern matched, no ROTATE) is what happens without it.
             command=(
                 "/usr/bin/timeout 300 "
-                f"{sac} accounts probe-api-keys --all"
+                f"{sac} accounts probe-api-keys --all --restart-capped"
             ),
             description=(
                 "TUI-independent API-key liveness sweep: one read-only "
                 "billing-endpoint GET per declared key slot with key to "
                 "agent mapping from specs' failover pools; records "
                 "alive/exhausted/dead/unknown verdicts for the boot picker "
-                "and key-health readers. Read-only: rotates nothing, spends "
-                "no turns. NOT armed by this declaration."
+                "and key-health readers. Confirmed capped slots trigger one "
+                "bounded fresh restart of running consumers, after successor "
+                "preflight; unknown evidence never triggers a restart. "
+                "NOT armed by this declaration."
             ),
             kind="timer",
             on_boot_sec="5min",

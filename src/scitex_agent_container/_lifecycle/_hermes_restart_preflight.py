@@ -167,7 +167,10 @@ def _cached_probe(spec, token, probe, now):
             not in {"x-scitex-agent-id", "x-scitex-session-id", "x-opencode-session"}
         )
     )
-    identity = (spec["url"], spec["protocol"], spec["model"], headers, token)
+    identity = (
+        spec["url"], spec["protocol"], spec["model"], headers, token,
+        spec.get("purpose", "main"),
+    )
     with _CACHE_LOCK:
         stamp = now()
         for key, (observed_at, _) in tuple(_CACHE.items()):
@@ -325,6 +328,13 @@ def prepare_hermes_successor(
             )
             if not skip:
                 result = _cached_probe(spec, row["access_token"], probe, now)
+                if result.get("last_status") == "ok":
+                    # The judge uses this same provider/model, but its
+                    # inference admission must be observed independently.
+                    result = _cached_probe(
+                        {**spec, "purpose": "goal_judge"},
+                        row["access_token"], probe, now,
+                    )
                 for key in _ERROR_FIELDS:
                     row.pop(key, None)
                 row.update(result)

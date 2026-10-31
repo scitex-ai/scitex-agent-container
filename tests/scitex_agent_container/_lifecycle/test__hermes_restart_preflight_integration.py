@@ -253,7 +253,7 @@ def test_real_restart_resumes_existing_image_and_carries_exact_sibling_proof(pg_
         True,
         1,
         1,
-        2,
+        3,
         [
             (
                 "continue",
@@ -303,7 +303,7 @@ def test_real_spec_proof_crosses_engine_gate_and_reload_without_install_or_repro
         rendered["auxiliary"]["goal_judge"],
         rendered["agent"]["max_turns"],
     ) == (
-        2,
+        3,
         "continue",
         "/existing/base.sif",
         {

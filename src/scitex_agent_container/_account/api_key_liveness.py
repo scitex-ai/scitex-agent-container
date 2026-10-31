@@ -104,8 +104,9 @@ def collect_slots(specs: list[dict]) -> dict[str, dict]:
     contribute nothing — an agent without failover has no slots to map.
     """
     slots: dict[str, dict] = {}
-    for spec in specs:
-        agent = spec.get("agent_name") or spec.get("name") or "unknown"
+    for document in specs:
+        spec = document.get("spec", document)
+        agent = document.get("agent_name") or document.get("metadata", {}).get("name") or spec.get("name") or "unknown"
         harnesses = spec.get("available_harnesses") or {}
         hermes = harnesses.get("hermes") or {}
         failover = hermes.get("failover") or {}
@@ -116,12 +117,16 @@ def collect_slots(specs: list[dict]) -> dict[str, dict]:
             for env_name in env_names or []:
                 names.setdefault(env_name, set()).add(engine_key)
         for engine_key, engine in engines.items():
+            if not isinstance(engine, dict):
+                continue
             provider = (engine or {}).get("provider") or {}
+            if not isinstance(provider, dict):
+                continue
             env_name = provider.get("auth_token_env")
             if env_name:
                 names.setdefault(env_name, set()).add(engine_key)
         for env_name, engine_keys in names.items():
-            if not KEY_ALIAS_RE.fullmatch(env_name):
+            if not isinstance(env_name, str) or not KEY_ALIAS_RE.fullmatch(env_name):
                 continue
             slot = slots.setdefault(
                 env_name,
@@ -139,7 +144,7 @@ def collect_slots(specs: list[dict]) -> dict[str, dict]:
 
 
 def classify_status(
-    provider: str, http_status: int | None, body: str = ""
+    provider: str, http_status: int | None, body: str = "", *, now: float | None = None
 ) -> tuple[str, str]:
     """Reduce one provider answer to a (verdict, reason) pair.
 
@@ -158,12 +163,32 @@ def classify_status(
     if "insufficient credits" in text or "insufficient balance" in text:
         return "exhausted", f"http-{http_status}-billing-exhausted"
     if http_status == 200:
+        capped = capped_windows(provider, body, now=now)
+        if capped:
+            return "exhausted", "http-200-quota-" + ",".join(row["name"] for row in capped)
         if provider == "commandcode" and _zero_balance(body):
             return "exhausted", "http-200-zero-balance"
         return "alive", "http-200"
     if 500 <= http_status <= 599:
         return "unknown", f"http-{http_status}"
     return "unknown", f"http-{http_status}-unshaped"
+
+
+def capped_windows(provider: str, body: str, *, now: float | None = None) -> list[dict]:
+    """Only current, provider-measured quota windows can establish a cap."""
+    from datetime import datetime, timezone
+    from .provider_usage_projection import project
+
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    observed = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc)
+    payloads = {"credits" if provider == "commandcode" else "quota": data}
+    snapshot = project(provider, payloads, observed)
+    return [row for row in snapshot["windows"] if row["state"] == "known" and row["remaining"] == 0]
 
 
 def _zero_balance(body: str) -> bool:
@@ -176,6 +201,12 @@ def _zero_balance(body: str) -> bool:
         return False
     balances = data.get("balances")
     candidates: list[float] = []
+    credits = data.get("credits")
+    if isinstance(credits, dict):
+        for field in ("monthlyCredits", "purchasedCredits", "freeCredits"):
+            value = credits.get(field)
+            if type(value) in (int, float) and value >= 0:
+                candidates.append(float(value))
     if isinstance(balances, dict):
         for value in balances.values():
             if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
@@ -267,7 +298,7 @@ def sweep(
             }
             continue
         status, body = _probe_once(url, token.strip(), timeout_s, opener=opener)
-        verdict, reason = classify_status(slot.get("provider") or "", status, body)
+        verdict, reason = classify_status(slot.get("provider") or "", status, body, now=checked_at)
         verdicts[alias] = {
             "verdict": verdict,
             "reason": reason,
@@ -276,6 +307,7 @@ def sweep(
             "agents": slot.get("agents", []),
             "engines": slot.get("engines", []),
             "checked_at": checked_at,
+            "capped_windows": capped_windows(slot.get("provider") or "", body, now=checked_at),
         }
     return {"checked_at": checked_at, "slots": verdicts}
 

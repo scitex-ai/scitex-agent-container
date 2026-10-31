@@ -65,7 +65,8 @@ def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
     now = time.time()
     status = result.status
     logger.info(
-        "Provider availability: provider=%s model=%s available=%s status=%s code=%s",
+        "Provider availability: purpose=%s provider=%s model=%s available=%s status=%s code=%s",
+        spec.get("purpose", "main"),
         spec["provider"],
         spec["model"],
         result.available,
@@ -89,7 +90,11 @@ def probe_key(spec: dict, token: str, *, timeout_s: float = 20) -> dict:
     detail = result.check.detail.lower()
     billing = code == 402 or any(
         word in detail
-        for word in ("insufficient credits", "credits exhausted", "out of credits")
+        for word in (
+            "insufficient credits", "credits exhausted", "out of credits",
+            "subscription is required", "requires a subscription",
+            "quota exceeded", "usage limit exceeded",
+        )
     )
     reason = (
         "auth"
@@ -154,6 +159,10 @@ def preflight_pools(rendered: dict, pools: dict, profiles: list[Path]) -> None:
             )
             if not skip:
                 result = probe_key(pool.probe, row["access_token"])
+                if result.get("last_status") == "ok":
+                    result = probe_key(
+                        {**pool.probe, "purpose": "goal_judge"}, row["access_token"]
+                    )
                 for key in _ERROR_FIELDS:
                     row.pop(key, None)
                 row.update(result)

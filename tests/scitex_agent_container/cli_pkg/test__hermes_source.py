@@ -33,7 +33,7 @@ def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
         "https://github.com/scitex-ai/hermes-agent.git",
-        "17c5fde5a3f3642262003cd6aa09d54cf4d11de3",
+        "e9533b0e43c2f2d8b1f6a4606db52f86481fc083",
     )
 
     # Act

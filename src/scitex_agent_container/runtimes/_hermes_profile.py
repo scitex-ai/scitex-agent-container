@@ -25,6 +25,7 @@ from ._apptainer_provider import resolve_provider_api_key
 from ._hermes_failover import configure_failover, materialize_pools, resolve_primary_key
 from ._hermes_key_probe import preflight_pools
 from ._hermes_profile_logs import ensure_hermes_log_files
+from ._hermes_skills import materialize_installed_skills
 from ._operator_secret_env import operator_secret_env, scope_allows_full
 from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
@@ -565,6 +566,7 @@ def materialize_hermes_profile(
         setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
+    skill_dirs = materialize_installed_skills(config, [target / ".hermes" for target in targets])
     api_key = ensure_api_key(state_dir)
     provider_key = _profile_primary_key(config)
     rendered = compile_hermes_config(
@@ -579,6 +581,7 @@ def materialize_hermes_profile(
         system_prompt=system_prompt,
     )
     _apply_verified_route(rendered, selection)
+    rendered.setdefault("skills", {})["external_dirs"] = skill_dirs
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -656,6 +659,7 @@ def materialize_hermes_tui_profile(
         targets.append(resolved_upper)
     system_prompt = _verified_instruction_text(config, targets)
     provider_key = _profile_primary_key(config)
+    skill_dirs = materialize_installed_skills(config, [target / ".hermes" for target in targets])
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
@@ -671,6 +675,7 @@ def materialize_hermes_tui_profile(
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )
+    rendered.setdefault("skills", {})["external_dirs"] = skill_dirs
     if servers:
         _bind_mcp_runtime_env(config, servers)
     from ._hermes_cct import wire_hermes_cct_rail

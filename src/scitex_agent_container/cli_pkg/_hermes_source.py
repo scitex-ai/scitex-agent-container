@@ -15,7 +15,7 @@ from .._runtime_paths import runtime_base_dir
 # fork so Hermes-side fixes (vision aux cascade, attachment re-homing)
 # ship in the hermes SIF. Always export this immutable commit; the branch
 # records its origin and is never substituted for the build pin.
-HERMES_COMMIT = "17c5fde5a3f3642262003cd6aa09d54cf4d11de3"
+HERMES_COMMIT = "e9533b0e43c2f2d8b1f6a4606db52f86481fc083"
 HERMES_REPOSITORY = "https://github.com/scitex-ai/hermes-agent.git"
 HERMES_BRANCH = "scitex-main"
 HERMES_SOURCE_ENV = "SAC_HERMES_SOURCE_DIR"

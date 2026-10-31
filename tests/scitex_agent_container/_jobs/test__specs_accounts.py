@@ -221,7 +221,7 @@ def test_accounts_key_liveness_command_runs_probe_verb() -> None:
     # Assert
     assert (bound, rest) == (
         "/usr/bin/timeout 300",
-        "accounts probe-api-keys --all",
+        "accounts probe-api-keys --all --restart-capped",
     )
 
 

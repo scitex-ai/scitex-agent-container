@@ -2,7 +2,7 @@
 name: scitex-agent-container
 description: |
   [WHAT] `spec.yaml` selects Claude, Codex, Hermes or OpenCode in Apptainer; A2A inbound (`POST /v1/turn`), SSH deploy and JSON status.
-  [WHEN] Managing agents/fleets, remote launch, MCP wiring or A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
+  [WHEN] Managing agents/fleets, remote launch, Hermes profiles or goal_judge errors, MCP wiring or A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
   [HOW] `pip install scitex-agent-container`; `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -89,6 +89,8 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [44](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
 - [45](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
 - [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
+- [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md) — host/container profiles, project context, skill discovery, and goal judge diagnostics
+- [48_model-availability.md](48_model-availability.md) — official API preflights, quota caps, bounded fresh restarts, and Say Hi goal verification
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging

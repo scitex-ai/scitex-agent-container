@@ -22,6 +22,6 @@ second runtime environment, shadow individual packages, or rebuild the image.
 
 Run `tests/integration/test_hermes_installed_sac_runtime.py` with
 `SAC_TEST_HERMES_SIF` set to the reviewed image. The default reviewed Hermes
-pin is `17c5fde5a3f3642262003cd6aa09d54cf4d11de3`; an explicitly reviewed
+pin is `e9533b0e43c2f2d8b1f6a4606db52f86481fc083`; an explicitly reviewed
 replacement can be supplied through `SAC_TEST_HERMES_PIN`. The test uses
 disposable state and verifies the real Hermes subprocess environment.

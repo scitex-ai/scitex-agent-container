@@ -79,6 +79,21 @@ def test_collect_slots_includes_primary_engine_env():
     assert slots["COMMANDCODE_API_KEY_07"]["engines"] == ["engine-x"]
 
 
+def test_collect_slots_reads_the_actual_v3_document_envelope():
+    # Arrange: the CLI reads whole spec.yaml files, not flattened test records.
+    inner = _spec("agent-a", {"muse": ["OPENCODE_GO_API_KEY_03"]})
+    document = {
+        "apiVersion": "scitex-agent-container/v3", "kind": "Agent",
+        "metadata": {"name": "agent-a"},
+        "spec": {key: value for key, value in inner.items() if key != "agent_name"},
+    }
+    document["spec"]["available_engines"]["unsupported-selector"] = "some-provider"
+    # Act
+    slots = collect_slots([document])
+    # Assert
+    assert slots["OPENCODE_GO_API_KEY_03"]["agents"] == ["agent-a"]
+
+
 def test_collect_slots_ignores_non_key_env():
     # Arrange — a pool naming something that is not a key slot.
     specs = [_spec("agent-a", {"engine-x": ["SOME_OTHER_VAR"]})]

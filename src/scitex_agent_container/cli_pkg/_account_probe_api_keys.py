@@ -17,8 +17,10 @@ the agents actually consume). Four verdicts: alive / exhausted (valid key,
 empty allowance — the 2026-10-15 infra-lead stop) / dead (401/403) /
 unknown (no answer), plus unresolved for slots with no value on this host.
 
-Read-only: it rotates nothing, spends no conversation turns, and costs
-one billing-endpoint GET per slot. Exit 0 even with dead/exhausted slots:
+By default it rotates nothing, spends no conversation turns, and costs
+one billing-endpoint GET per slot. With --restart-capped, confirmed quota caps
+trigger bounded fresh restarts of running consumers through lifecycle preflight.
+Exit 0 even with dead/exhausted slots:
 recording a dead key is this command SUCCEEDING — a non-zero exit would
 mark the timer unit failed on every pass for as long as a key stays dead.
 """
@@ -45,6 +47,10 @@ def register_probe_api_keys_command(group) -> None:
         help="Write the verdict cache file (default: record).",
     )
     @click.option(
+        "--restart-capped", is_flag=True,
+        help="Fresh-restart running consumers of confirmed capped keys after successor preflight.",
+    )
+    @click.option(
         "--json",
         "as_json",
         is_flag=True,
@@ -52,7 +58,7 @@ def register_probe_api_keys_command(group) -> None:
         help="Emit the sweep document as JSON.",
     )
     def probe_api_keys_cmd(
-        all_slots: bool, record: bool, as_json: bool
+        all_slots: bool, record: bool, as_json: bool, restart_capped: bool
     ) -> None:
         """Probe every declared API key once and cache the verdicts.
 
@@ -60,6 +66,7 @@ def register_probe_api_keys_command(group) -> None:
         Examples:
           $ sac accounts probe-api-keys --all
           $ sac accounts probe-api-keys --all --json
+          $ sac accounts probe-api-keys --all --restart-capped --json
         """
         import json as _json
         import os
@@ -93,10 +100,34 @@ def register_probe_api_keys_command(group) -> None:
                 spec["agent_name"] = agent_name
                 specs.append(spec)
         slots = collect_slots(specs)
+        from ..runtimes._secret_pool import read_pool
+
+        canonical_secrets = read_pool().env
         secrets = {
-            alias: os.environ.get(alias, "") for alias in slots
+            alias: os.environ.get(alias) or canonical_secrets.get(alias, "") for alias in slots
         }
         doc = sweep(slots, secrets)
+        if restart_capped:
+            from .._account.quota_restart import restart_capped_agents
+            from .._lifecycle.lifecycle import agent_restart
+            from .._state.registry import Registry
+            from ..runtimes._hermes_tui_rpc import active_sessions, HermesTuiRpcError
+            from .._runtime_paths import runtime_base_dir
+
+            running = []
+            for row in Registry().list_all():
+                name = row.get("name")
+                if not name:
+                    continue
+                try:
+                    if active_sessions(runtime_base_dir() / name, timeout_s=3):
+                        running.append(name)
+                except HermesTuiRpcError:
+                    doc.setdefault("restart_unobserved", []).append(name)
+            doc["restarts"] = restart_capped_agents(
+                doc, state_path=runtime_base_dir() / "quota-restarts.json",
+                running_names=running, restart=agent_restart,
+            )
         recorded = None
         if record:
             cache_path = (
@@ -113,6 +144,8 @@ def register_probe_api_keys_command(group) -> None:
                     f"  {alias:<32} {row['verdict']:<10} "
                     f"{row.get('reason', ''):<28} {agents}"
                 )
+            for outcome in doc.get("restarts", ()):
+                click.echo("  quota restart: " + _json.dumps(outcome, sort_keys=True))
             counts: dict[str, int] = {}
             for row in doc["slots"].values():
                 counts[row["verdict"]] = counts.get(row["verdict"], 0) + 1
