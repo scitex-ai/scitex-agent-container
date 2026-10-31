@@ -1,7 +1,7 @@
 """Django settings for the Agents GUI test suite.
 
 Used only when the GUI tests are run (``DJANGO_SETTINGS_MODULE`` is pointed at
-this module). It mirrors what ``scitex_app._standalone.run_standalone`` builds
+this module). It mirrors what ``scitex_sdk.app.embed.run_standalone`` builds
 for the live server, so tests exercise the same app, not a divergent config.
 """
 
@@ -14,7 +14,8 @@ USE_TZ = True
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
-    "scitex_ui",
+    "scitex_sdk.app",
+    "scitex_sdk.ui",
     "scitex_agent_container._django.apps.AgentContainerDashboardConfig",
 ]
 MIDDLEWARE = [
@@ -31,7 +32,7 @@ TEMPLATES = [
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
-                "scitex_ui.context_processors.element_inspector",
+                "scitex_sdk.ui.context_processors.element_inspector",
             ],
         },
     },
@@ -40,3 +41,9 @@ DATABASES: dict[str, dict[str, str]] = {}
 STATIC_URL = "/static/"
 STATICFILES_DIRS = []
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+# Stand-in for the host wiring a mounted deployment provides: the SDK
+# project-picker tag fail-fasts (ImproperlyConfigured, since scitex-sdk
+# 0.3.14) when no provider URL is configured, so the suite registers the
+# conventional host path the same way a host would. House rule: fail loud
+# on missing wiring, never render a silent empty slot.
+SCITEX_PROJECT_PROVIDER_URL = "/api/project_scope/"

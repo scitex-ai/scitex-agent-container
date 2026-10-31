@@ -217,6 +217,57 @@ the existing start preflight checks that exact stored-account preference and
 the auth bind resolves its snapshot. `account` is rejected on other harness
 entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
 
+### `spec.available_harnesses.hermes.max_turns` and `.goals`
+
+Hermes has separate per-response tool-turn and standing-goal continuation
+limits. Set both explicitly when a long-running agent needs the same budget:
+
+```yaml
+spec:
+  engine: opencode-go-muse-spark-1.3-contributor
+  available_harnesses:
+    hermes:
+      session: {mode: continue, max_age_minutes: null}
+      max_turns: 99999
+      goals:
+        max_turns: 99999
+        judge_engine: opencode-go-muse-spark-1.3-contributor
+  autonomous:
+    enabled: true
+    max_turns: 99999
+```
+
+The two Hermes limits accept positive integers; booleans, strings, null, and
+non-positive limits are rejected. Omitted controls preserve the existing
+Hermes configuration: unlimited per-response turns and its default goal
+budget. SAC's `autonomous.max_turns` separately limits the headless daemon
+loop; it does not set either Hermes limit.
+`goals.max_turns` supplies the default for newly created goals. Existing
+persisted goals retain their own budgets; a profile refresh does not rewrite them.
+
+An explicit `goals.judge_engine` must name the declared selected agent engine.
+It is a validation hint only: the emitted goal judge always stays on the
+agent lane (`meta-muse-spark-1.3-contributor` via the agent's own provider,
+xhigh reasoning) and never follows the live `main` pool, which tracks
+whichever vendor is currently serving.
+This configures the judge used by an active `/goal`; it does not create a goal
+or enable background memory/skill review. The generated runtime Hermes
+profile owns these settings and overwrites an authored `to_home/.hermes/config.yaml`.
+
+### `spec.available_harnesses.hermes.failover`
+
+`accounts` maps engine keys to explicit credential environment-name lists.
+`engines` is the explicit ordered backup-engine list; omit it or use `[]` to
+refuse rather than changing model or provider. A configured slot or a usage
+balance is not proof that the selected model is admitted.
+
+`strategy` defaults to `fill_first`. Set `round_robin` to balance a declared
+account pool using Hermes' existing selector. It requires `accounts`, refuses
+unknown values, and does not discover additional accounts. Aliases of the same
+credential retain one pool member. Profile refresh preserves account cooldowns;
+exhausted pools retain the normal bounded refusal instead of unpooled fallback.
+No strategy change restarts a session or crosses an existing engine/account pin.
+
 ### `spec.available_harnesses.<key>.compression` — Hermes only
 
 Hermes context compaction is configured beside the Hermes harness that owns
@@ -275,6 +326,50 @@ sessions. This keeps Hermes' own tool loop unbounded while leaving
 `spec.autonomous.max_turns` as the independent safety cap for SAC's outer
 drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.
 
+### `spec.available_harnesses.hermes.failover`
+
+Failover happens inside the existing Hermes session. Declare account pools by
+engine key and an ordered list of backup engines; merely listing an available
+engine does not authorize automatic switching to it.
+
+```yaml
+available_harnesses:
+  hermes:
+    failover:
+      accounts:
+        scitex-free:
+          - OPENCODE_GO_API_KEY_1
+          - OPENCODE_GO_API_KEY_2
+        command-code-muse-spark-1.3-contributor:
+          - COMMANDCODE_API_KEY_01
+          - COMMANDCODE_API_KEY_02
+          - COMMANDCODE_API_KEY_ywatanabe
+      engines:
+        - command-code-muse-spark-1.3-contributor
+```
+
+Each backup must exist in `available_engines` and support the selected Hermes
+harness. Unresolved keys, unknown engines, repeated routes, and unused account
+pools fail before writing the profile. Keys are deduplicated by value and stored
+in owner-only Hermes secret files. Declared pools suppress ordinary environment
+seeding so extra aliases cannot become undeclared routes.
+
+Hermes tries accounts in the declared order, staying on a healthy account until
+it is exhausted. A usage-cap 429 triggers immediate account failover; transient
+429s retain Hermes' bounded retry. Published reset times persist across profile
+materialization and restart, including resets days in the future. Once the
+primary pool is exhausted, only declared backup engines may run. Account
+switches name the selected account in a visible diagnostic and the warning log; provider switches use
+Hermes' native fallback notices. Exhausted pools fail with the next reset time
+instead of bypassing the pool with an ordinary environment key. When no declared
+route can continue, quota failures return immediately with the reset time,
+without timed retries, automatic recovery, or an agent restart.
+
+SAC's base-image staging applies the bundled Hermes quota failover patch to the
+immutable source pin and records `quota-failover-fail-closed` in
+`SAC_LOCAL_PATCHES`. An incompatible source tree fails the build. Rebuild the
+base image to deploy it; updating SAC alone does not update a baked image.
+
 Telegram is an edge transport, not a per-agent dependency. Select the CCT
 Telegram channel only on the human-facing gateway agent (normally
 `scitex-lead`); application agents communicate through Cards, SAC, or A2A.
@@ -319,6 +414,7 @@ spec:
 | `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
 | `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. While it is accepted, exactly ONE entry may set it: with a single entry it is the default implicitly, and two defaults, or two entries with none, are hard load errors naming the offenders. |
 | `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
+| `service_tier`       | `fast` or omitted                   | Only for a selected Codex harness with an explicit `subscription: {provider: openai, account: openai:<slug>}` engine. Generates `-c service_tier="fast"` independently of reasoning effort; other tiers, harnesses and providers are refused. Omission preserves existing generation. Codex documents `fast` as the request's `priority` tier in its [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference#service_tier). |
 | `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |
 | `timeouts`           | mapping                             | Declares the endpoint's `upstream_deadline_seconds` and the later `client_abandonment_seconds` together. The client value must be strictly greater. Hermes maps the latter to both its request and no-output stale deadlines, so slow prefill is not mistaken for a dead provider; a provider that accepts a connection and never responds still fails at that finite bound. Both values are preserved in the incarnation birth certificate. |
 | `env`                | mapping                             | Merged OVER `spec.apptainer.env` for this engine only — the escape hatch for a gateway knob sac does not model. |

@@ -33,12 +33,11 @@
 apiVersion: scitex-agent-container/v3
 kind: EngineLibrary
 
-# THE FLEET DEFAULT is deliberately NOT set here. Uncommenting one line moves
-# every agent that pins nothing onto that engine, and picking which one is the
-# operator's call, not the migration's:
-#
-#   engine: qwen38-27b
-#
+# Operator 2423/2424 (2026-10-03): Muse Spark 1.3 Contributor is the
+# future default. Existing explicit engine/account/harness choices remain pins.
+# This declaration does not stop, migrate or restart an existing session.
+engine: muse-spark-1.3-contributor
+
 # Note the precedence (`_engine_precedence`): a spec's own `engine:` pin, a
 # spec-local engines block, and a legacy `spec.claude` backend all sit ABOVE
 # this line, so writing it changes nothing for a spec that still states its
@@ -46,6 +45,14 @@ kind: EngineLibrary
 # legacy pin.
 
 engines:
+  muse-spark-1.3-contributor:
+    model: muse-spark-1.3-contributor
+    provider:
+      hermes_provider: opencode-go
+      auth_token_env: OPENCODE_GO_API_KEY
+    reasoning_effort: high
+    max_context_tokens: 1048576
+
   # The fleet Qwen gateway, declared ONCE instead of copied into 119 specs —
   # which is what `sac agents migrate-engines` used to do, and why this file
   # exists. Selectable anywhere with `--engine qwen38-27b`; pinnable in one

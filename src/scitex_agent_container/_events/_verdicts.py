@@ -37,6 +37,8 @@ TRANSITIONS, NOT A HEARTBEAT PER SUBJECT
 
 from __future__ import annotations
 
+from .._logging import write_stream
+
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -159,7 +161,7 @@ def _warn(message: str, *, err_stream: Any) -> None:
 
         scitex_logging.getLogger(__name__).warning(message)
     else:
-        print(f"[sac-events] {message}", file=err_stream)
+        write_stream(f"[sac-events] {message}", err_stream)
 
 
 def _load_degraded(target: Path, *, err_stream: Any = None) -> set[str]:

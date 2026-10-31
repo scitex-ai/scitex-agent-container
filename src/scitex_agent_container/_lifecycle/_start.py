@@ -24,6 +24,7 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._identity_drift import check_board_identity_at_launch  # noqa: F401
 from ._instances import record_local_instance as _record_local_instance
 from ._layers_preflight import check_to_home_layers_at_launch  # noqa: F401
+from ._lifecycle_audit import audit as _audit_lifecycle
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy  # noqa: F401
@@ -80,6 +81,10 @@ def agent_start(
     verdict_override: Any = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
+    managed_turn_probe: Callable[[AgentConfig], Any] | None = None,
+    stop_instance_resolver: Callable[[AgentConfig, Any], dict | None] | None = None,
+    prepared_hermes_route: Any = None,
+    instance_sweep_fn: Callable[[], dict] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -135,40 +140,40 @@ def agent_start(
         handover_mod: Injectable real handover collaborator exposing the
             module-level API of :mod:`._lifecycle.handover`. Default
             ``None`` resolves to the real module.
+        managed_turn_probe: Native activity observer for an internal process
+            replacement. The stop guard always preserves active Hermes turns.
+        stop_instance_resolver: Resolve the exact instance during an internal
+            process replacement; defaults to the stop backend's resolver.
+        instance_sweep_fn: Injectable dead-instance sweeper for the
+            self-cleaning start-path sweep (default is the real
+            ``gc_dead_instances``). Never blocks the start.
 
     Truthy on success, False on failure; the already-running no-op
     returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
     """
+    _audit_lifecycle(
+        "agent-start",
+        None,
+        config_path=config_path,
+        force=force,
+        session_override=session_override,
+        engine_override=engine_override,
+        dry_run=dry_run,
+        foreground=foreground,
+        one_shot=one_shot,
+    )
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = load_config(config_path)
 
-    # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
-    # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
-    # the deployment shape we target — POST the spawn to bare-host
-    # ``sac listen`` instead. The host re-runs ``check_spawn`` + records
-    # lineage + shells the real ``sac agent start``. Bypassed on
-    # dry-run (dry-run inspects the LOCAL planned workspace). Fail-loud
-    # contract lives in :func:`_in_sif_broker.maybe_broker_in_sif_spawn`.
+    # Nested apptainer launches are unsupported: broker them to the host,
+    # which checks spawn authority and records lineage. Dry-run stays local.
     from ._in_sif_broker import is_in_sif, maybe_broker_in_sif_spawn
 
-    # PR-α (lead msg d96a468c 2026-06-06): propagate --foreground /
-    # --one-shot through the broker so the host listen's /agents handler
-    # appends them to its inner `sac agents start` argv. The cohort
-    # one-shot capsule runs synchronously → real rc + real stderr land
-    # in STARTUP_FAILED on crash (the diagnostic clew needs to find
-    # WHY the bm172 capsule dies after one heartbeat).
-    # ``force`` is LOAD-BEARING here (incident 2026-07-12): this broker
-    # fires BEFORE the local force branch below, so dropping it silently
-    # downgraded an in-SIF RESTART into an unforced host start that
-    # no-op'd over the live agent and still reported SUCC + rc=0.
-    # The broker's POST body threads force/foreground/one_shot/assume_yes
-    # EXPLICITLY and drops anything not listed, so an --engine passed
-    # in-SIF would reach the host as a plain start on the DEFAULT engine
-    # — the silent fallback operator answer Q3 rules out, arriving by way
-    # of a dropped field rather than a decision. Refuse instead, naming
-    # the command that works. (Threading engine through the broker body,
-    # the host listen handler and its argv builder is the follow-up.)
+    # The spawn broker refuses obsolete replacement requests; container-side
+    # restarts use the dedicated restart endpoint. Foreground/one-shot/consent
+    # are forwarded, but engine and resume IDs are unsupported by this wire
+    # contract. Refuse those requests before dropping their explicit intent.
     if engine_override and not dry_run and is_in_sif():
         raise RuntimeError(
             f"--engine {engine_override!r} cannot be honoured from inside "
@@ -177,8 +182,13 @@ def agent_start(
             "engine would be silently dropped and the agent would start "
             "on its DEFAULT engine. sac refuses to start rather than "
             f"start on a backend you did not ask for. Run on the host: "
-            f"sac agents start {config.name} --force --yes --engine "
+            f"sac agents restart {config.name} --yes --engine "
             f"{engine_override}"
+        )
+    if resume_id_override and not dry_run and is_in_sif():
+        raise RuntimeError(
+            "an explicit --resume ID cannot be carried by this host spawn protocol; "
+            "run the exact resume command on the owning host"
         )
     if maybe_broker_in_sif_spawn(
         config.name,
@@ -188,9 +198,22 @@ def agent_start(
         one_shot=one_shot,
         assume_yes=assume_yes,
         force=force,
+        session=session_override,
     ):
         return True
 
+    # FAIL-FAST ownership read: a deterministic branch/repo mismatch must
+    # refuse BEFORE the prelaunch gauntlet (rotation, spawn gate, ports,
+    # wake) and the store sweep — none can fix a mismatched worktree.
+    # Read-only; session/resume overrides apply first so this reads the
+    # same identity the late provision below records (re-application in
+    # run_prelaunch is idempotent). Injected runtimes skip it.
+    if runtime_factory is None:
+        if session_override:
+            config.claude.session = session_override
+        if resume_id_override is not None:
+            config.claude.resume_id = resume_id_override
+        enforce_task_worktree_policy(config, provision=False)
     # The PRE-LAUNCH GAUNTLET — every gate that must hold before the
     # runtime is built and before any forced stop, so a refusal never
     # tears down a running agent it cannot bring back: the two
@@ -210,6 +233,10 @@ def agent_start(
         one_shot=one_shot,
         dry_run=dry_run,
     )
+    if prepared_hermes_route is not None:
+        from ._hermes_restart_preflight import attach_prepared_route
+
+        attach_prepared_route(config, prepared_hermes_route)
 
     uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
@@ -225,7 +252,7 @@ def agent_start(
 
             ensure_instances_ownership_schema()
 
-    # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (force-restart
+    # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (restart cleanup
     # stops here; ``agent_restart`` starts there).
     from ._stop import agent_stop
 
@@ -242,17 +269,20 @@ def agent_start(
 
         clear_stale_instance_lease(config.name)
 
-    # TERNARY liveness (ALIVE / DEAD / UNKNOWN), never a bool. Only POSITIVE
-    # evidence of life pins the no-op branch; UNKNOWN now falls through to a
-    # real start, which is what makes a previously-unfalsifiable row
-    # recoverable WITHOUT ``--force --fresh``. Safe because starting is not
-    # destroying — the runtime's own duplicate-session guard no-ops over a
-    # live session. Full rationale (incl. why this is strictly LESS
-    # destructive than the old three-way AND) in :mod:`._start_verdict`.
-    # ``verdict_override`` is the injection seam for the no-op WIRING (a real
-    # LivenessVerdict, not a mock): the decision rule and the resolvers have
-    # their own suites, so what remains to pin is "does ALIVE no-op, and does
-    # UNKNOWN start?".
+    # Self-cleaning sweep (card infra-start-silent-noop-and-stale-rows):
+    # ``sac store clean``/``tick`` previously ran only by hand — no timer
+    # ships and nothing invoked them — so dead rows accumulated until an
+    # operator looked. Every start now runs the same host-scoped sweep
+    # best-effort BEFORE the verdict, and the announcement below reports
+    # what it cleared. Never blocks the start (see _start_sweep).
+    from ._start_sweep import sweep_before_start
+
+    swept = sweep_before_start(dry_run=dry_run, sweep_fn=instance_sweep_fn)
+
+    # Only observed ALIVE pins the no-op; UNKNOWN proceeds to the runtime's
+    # duplicate-session guard without destroying a live session. See
+    # _start_verdict for the decision rule. verdict_override supplies a real
+    # observation when testing this wiring independently of the instruments.
     from ._start_verdict import resolve_start_verdict
 
     verdict = (
@@ -271,25 +301,51 @@ def agent_start(
         assert_explicit_engine_noop_safe(
             config, engine_override, force=force, dry_run=dry_run
         )
-    if not really_running and not dry_run:
-        _announce_start_verdict(verdict)
+    if not dry_run:
+        # Announced on BOTH paths (operator order 2026-10-16): the old
+        # `not really_running` gate made a confused-ALIVE verdict exit 0
+        # silently with no session — the storage 2026-10-15 incident, ten
+        # no-op starts nobody could distinguish from success. A no-op must
+        # name the evidence that vouched the agent alive.
+        _announce_start_verdict(verdict, swept=swept)
+    if uses_production_runtime and force and not dry_run:
+        from ..runtimes._native_tui_admission import preflight_native_tui
+
+        preflight_native_tui(config, production=True)
     if really_running:
         if force:
             # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
             # 20260712): probe the already-rotated successor credential; a
             # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
-            # the live container is LEFT UP. Covers `start --force` (the PR #628
-            # self-restart bounce); `sac agents restart` is covered upstream.
+            # the live container is LEFT UP. Internal restart cleanup also
+            # guards activity again in case another process appeared meanwhile.
             from ._restart_preflight import assert_successor_auth_usable
 
-            _auth_check = successor_auth_check or assert_successor_auth_usable
-            _auth_check(config)
+            if successor_auth_check is not None:
+                successor_auth_check(config)
+            elif config.harness == "hermes":
+                from ._hermes_restart_preflight import (
+                    assert_prepared_source_current,
+                    attach_prepared_route,
+                    prepare_hermes_successor,
+                )
+
+                prepared = getattr(config, "_hermes_prepared_route", None)
+                if prepared is None:
+                    prepared = prepare_hermes_successor(config)
+                    attach_prepared_route(config, prepared)
+                assert_prepared_source_current(prepared)
+            else:
+                assert_successor_auth_usable(config)
             agent_stop(
                 config.name,
                 registry=registry,
                 force=True,
                 runtime_factory=runtime_factory,
                 handover_mod=handover_mod,
+                allow_active_turn_kill=False,
+                managed_turn_probe=managed_turn_probe,
+                stop_instance_resolver=stop_instance_resolver,
             )
             forced_stop = True
             # Small grace period so the previous container is fully torn
@@ -327,24 +383,20 @@ def agent_start(
             force=True,
             runtime_factory=runtime_factory,
             handover_mod=handover_mod,
+            allow_active_turn_kill=False,
+            managed_turn_probe=managed_turn_probe,
+            stop_instance_resolver=stop_instance_resolver,
         )
         forced_stop = True
 
-    # Re-establish the A2A port claim after a ``--force`` ``agent_stop``.
-    # ``agent_stop`` calls ``release_a2a_port`` which DELETEs the claim
-    # row that the ``resolve_a2a_port`` above inserted. Without this,
-    # ``record_local_instance`` reads ``get_port(name)`` from the now-empty
-    # claim table → the ``instances`` row is written with ``a2a_port=None``
-    # and ``/v1/turn`` routing (which reads that row) fails after a
-    # ``sac agents start --force`` restart. ``resolve_a2a_port`` is
-    # idempotent: it re-INSERTs the same int already held in
-    # ``config.a2a.port``, keeping the ``a2a_ports`` claim table,
-    # ``config.a2a.port``, and the ``instances`` row all consistent.
+    # Cleanup releases the port allocated above. Re-establish its claim before
+    # recording the successor, or the new row would have a2a_port=None and
+    # inbound turn routing would fail. Resolution preserves config.a2a.port.
     if forced_stop:
         resolve_a2a_port(config)
 
     # Process replacement and conversation replacement are independent.
-    # ``--force`` guarantees a clean PROCESS cycle; only an explicitly
+    # Internal restart cleanup replaces the process; only an explicitly
     # requested ``--fresh`` session override may wipe the conversation.
     if _should_clear_persisted_session(
         force=force,

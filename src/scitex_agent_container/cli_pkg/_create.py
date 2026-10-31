@@ -30,9 +30,8 @@ Two templates ship out of the box:
     operator-agnostic). Edit the labels + prompt for the real mission;
     delete blocks you don't need.
 
-The CLI refuses to overwrite an existing ``spec.yaml`` unless ``--force``
-is passed — protects the "60 stale ``*-quality`` specs already pending
-uncommitted" scenario the card calls out.
+The CLI refuses to overwrite an existing ``spec.yaml``. Edit that spec
+explicitly or choose a different agent name.
 
 Named ``create`` (renamed from ``new``, card
 refactor/consolidate-create-into-new-templates): CRUD naming
@@ -257,15 +256,6 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
         "primary agents root (resolver search-chain entry #1)."
     ),
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Overwrite an existing spec.yaml. Off by default so accidental "
-        "re-runs cannot clobber a customised spec."
-    ),
-)
 def create(
     name: str,
     template_name: str,
@@ -273,7 +263,6 @@ def create(
     agent_id: str | None,
     set_pairs: tuple[str, ...],
     base_dir: Path | None,
-    force: bool,
 ) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
@@ -293,6 +282,7 @@ def create(
         sac agents create dev1 --template python_developer --project myproj
         sac agents create r1 --template researcher --project p --set TEAM=x
     """
+    force = False
     if not _is_valid_agent_name(name):
         raise click.UsageError(
             f"Invalid agent name {name!r}. Use lowercase letters, "
@@ -319,6 +309,7 @@ def create(
         force=force,
     )
 
+
 def scaffold_agent(
     name: str,
     *,
@@ -336,12 +327,16 @@ def scaffold_agent(
     its own copy of this logic: one template set, one validation
     chain, one failure shape. Raises :class:`click.UsageError` for an
     unknown template and :class:`click.ClickException` for an
-    existing spec without ``--force`` (callers map these to their own
+    existing spec (callers map these to their own
     loud failure surface). Returns the written ``spec.yaml`` path.
 
     Name-shape validation (dir-as-SSoT chars + reserved slots) stays
     with the CALLERS — both must refuse before anything is written.
     """
+    if force:
+        raise click.ClickException(
+            "force is unsupported; edit an existing spec explicitly"
+        )
     base = base_dir if base_dir is not None else _default_base_dir()
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
@@ -377,13 +372,21 @@ def scaffold_agent(
             )
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
+        # Stamp the immutable spec identity BEFORE adoption so the adopting
+        # commit carries it (card sac-identity-spec-uuid-20261026).
+        # Lazy import: config parsing stays OFF the `sac --help` import
+        # closure (see 21_cli-startup-budget.md).
+        from ..config._spec_uuid import ensure_spec_uuid
+
+        ensure_spec_uuid(agent_dir / "spec.yaml")
+        _adopt_agent_dir(agent_dir, name)
         system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return agent_dir / "spec.yaml"
 
-    if spec_path.exists() and not force:
+    if spec_path.exists():
         raise click.ClickException(
             f"Refusing to overwrite existing spec at {spec_path}. "
-            "Re-run with --force to replace, or pick a different name."
+            "Choose a different name or edit the existing spec explicitly."
         )
 
     template = _TEMPLATES[kind]
@@ -443,6 +446,14 @@ def scaffold_agent(
 
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(body)
+    # Mint the immutable spec identity at create (card
+    # sac-identity-spec-uuid-20261026). Loud on failure: a scaffold
+    # without uuid violates the invariant this change establishes.
+    # Lazy import: config parsing stays OFF the `sac --help` import
+    # closure (see 21_cli-startup-budget.md).
+    from ..config._spec_uuid import ensure_spec_uuid
+
+    ensure_spec_uuid(spec_path)
 
     # to_home/ sibling — the runtime auto-discovers it as the materialised
     # container $HOME source (ADR-0006). Empty dir is fine; operator
@@ -450,8 +461,55 @@ def scaffold_agent(
     to_home = agent_dir / "to_home"
     to_home.mkdir(parents=True, exist_ok=True)
 
+    _adopt_agent_dir(agent_dir, name)
+
     system_msg(f"Wrote {spec_path} (template={kind}).")
     return spec_path
+
+
+def _adopt_agent_dir(agent_dir: Path, name: str) -> None:
+    """Adopt the new spec into git management, or say why not — loudly.
+
+    Inside a ``.scitex`` tree the containing home is adopted (tracked
+    spec files committed) so the launch gate can prove the spec — the
+    home is derived FROM THE SPEC PATH, never from the process user, so
+    a root process with data under /home/user adopts the right tree.
+    Outside any ``.scitex`` tree — custom ``--base-dir``, test fixtures —
+    nothing is touched: the operator owns that repo and commits it by
+    hand, and the gate proves THAT repo at launch. Both branches report;
+    neither is silent.
+
+    Create-side is warn-not-fail by deliberate asymmetry with the launch
+    gate: the spec files are the deliverable and must land even where
+    ``scitex-dev`` is older than the ``scitex_dev.home`` floor, while the
+    launch path (``_start_preflight``) stays fail-closed and refuses with
+    the same message. So an unmanaged home can never launch silently —
+    but creating one never destroys work either.
+    """
+    from .._drift._managed_home import ensure_home_managed, home_for_spec
+
+    spec_home = home_for_spec(agent_dir)
+    if spec_home is None:
+        system_msg(
+            f"Spec is outside any .scitex tree ({agent_dir}): leaving its "
+            f"repo untouched — commit it by hand; the launch gate will "
+            f"prove that repo instead.",
+            style="info",
+        )
+        return
+    try:
+        ensure_home_managed(home=spec_home, commit_message=f"sac: create agent {name}")
+    except RuntimeError as exc:
+        click.echo(
+            click.style(
+                f"WARNING: ~/.scitex is NOT git-managed ({exc}). The spec "
+                f"above was written but WILL NOT LAUNCH until the home is "
+                f"adopted — upgrade scitex-dev past the scitex_dev.home "
+                f"floor and re-run create, or adopt the home by hand.",
+                fg="red",
+            ),
+            err=True,
+        )
 
 
 __all__ = ["create", "scaffold_agent"]

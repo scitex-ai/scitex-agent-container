@@ -19,26 +19,26 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
-import click
-
 from ..._creds import NoHealthyAccountError
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
-from ..._logging import render_rich
+from ..._logging import get_logger, render_content, render_rich, write_stream
 from ...config import load_config
 from ...config._host import resolve_hostname
-from ...config._resolve import resolve_with_prefix
+from ...config._resolve import AmbiguousAgent, resolve_with_prefix
 from ...runtimes._apptainer_bind_guard import BindCapabilityError
 from .._helpers import system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
+from ._start_progress import starting_progress
 
 
 def should_preflight_claude_resume(config, resume_id: str | None) -> bool:
     """Use the Claude transcript preflight only for Claude-family IDs."""
-    return bool(resume_id) and str(getattr(config, "harness", "")).lower() != "hermes"
+    harness = str(getattr(config, "harness", "") or "anthropic").strip().lower()
+    return bool(resume_id) and harness in {"anthropic", "claude-code", "claude"}
 
 
 def should_preview_and_require_yes(
@@ -144,7 +144,7 @@ def run_single_targets(
     effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
     def _emit_json(payload: dict) -> None:
-        click.echo(_json.dumps(payload, ensure_ascii=False))
+        render_content(_json.dumps(payload, ensure_ascii=False))
 
     if single_targets:
         preflight_runner()
@@ -171,6 +171,10 @@ def run_single_targets(
             try:
                 config_path = resolve_with_prefix(raw_target)
                 config = load_config(config_path)
+                if engine:
+                    from ..._lifecycle._engine_select import select_engine_at_start
+
+                    select_engine_at_start(config, engine, probe=False, log=False)
                 try:
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
@@ -220,7 +224,9 @@ def run_single_targets(
                             }
                         )
                     else:
-                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__)
+                        # level="warning": the default info level hides
+                        # this skip when SCITEX_LOGGING_LEVEL > INFO.
+                        render_rich(f"[yellow]Skipping '{config.name}': {skip}[/yellow]", __name__, level="warning")
                     continue
                 # Location reads as `host@<host-workdir>:<container-workdir>`.
                 host = resolve_hostname() or "local"
@@ -235,7 +241,10 @@ def run_single_targets(
                     line = _json.dumps(obj, ensure_ascii=False)
                     if _err:
                         line = "\n" + line
-                    click.echo(line, err=_err)
+                    if _err:
+                        write_stream(line, sys.stderr)
+                    else:
+                        render_content(line)
 
                 if not as_json:
                     verb_now = "dry-run" if dry_run else "starting"
@@ -279,7 +288,7 @@ def run_single_targets(
                         if verbose
                         else render_plan_summary(config, spec_path=Path(config_path))
                     )
-                    click.echo(plan)
+                    get_logger(__name__).info(plan)
                     system_msg(
                         f"refusing to start {config.name} without --yes/-y — the "
                         "plan above shows exactly what will mount and run; re-run "
@@ -291,7 +300,7 @@ def run_single_targets(
                     # exit code, and this branch's sys.exit(1) below is
                     # indistinguishable from a real launch failure without
                     # this sentinel — see write_marker's guard).
-                    click.echo(DECLINE_SENTINEL, err=True)
+                    system_msg(DECLINE_SENTINEL, style="warning")
                     refused = True
                     continue
 
@@ -302,7 +311,11 @@ def run_single_targets(
                 # explicit — never a silent fresh start. Skipped on --no-preflight
                 # and dry-run.
                 if (
-                    should_preflight_claude_resume(config, resume_id)
+                    resume_id
+                    and (
+                        should_preflight_claude_resume(config, resume_id)
+                        or str(getattr(config, "harness", "")).lower() == "codex"
+                    )
                     and not no_preflight
                     and not dry_run
                 ):
@@ -320,29 +333,41 @@ def run_single_targets(
                     is_remote = is_remote_placement(
                         config.hosts_spec.host, current_host
                     )
-                    preflight_resume_id(
-                        config,
-                        resume_id,
-                        is_remote=is_remote,
-                        tail_lines=tail_lines,
-                    )
+                    if str(getattr(config, "harness", "")).lower() == "codex":
+                        from ._native_resume_preflight import preflight_native_resume_id
+
+                        preflight_native_resume_id(
+                            config, resume_id, is_remote=is_remote
+                        )
+                    else:
+                        preflight_resume_id(
+                            config,
+                            resume_id,
+                            is_remote=is_remote,
+                            tail_lines=tail_lines,
+                        )
                 # Wall-clock stamp taken BEFORE the launch — heartbeat
                 # freshness in the launch verdict is judged against it.
                 _launched_at = time.time()
-                _outcome = agent_start(
-                    config_path,
-                    no_preflight=no_preflight,
-                    force=force,
-                    dry_run=dry_run,
-                    session_override=session_mode,
-                    resume_id_override=resume_id,
-                    engine_override=engine,
-                    probe_engine=probe_engine,
-                    foreground=foreground,
-                    one_shot=one_shot,
-                    assume_yes=effective_yes,
-                    strict_drift=strict_drift,
-                )
+                # Long silent launch (boot drain / image / hooks can take
+                # minutes): heartbeat progress lines while agent_start
+                # blocks, human console only — never in --json, where
+                # stdout must stay a pure envelope.
+                with starting_progress(config.name, enabled=not as_json):
+                    _outcome = agent_start(
+                        config_path,
+                        no_preflight=no_preflight,
+                        force=force,
+                        dry_run=dry_run,
+                        session_override=session_mode,
+                        resume_id_override=resume_id,
+                        engine_override=engine,
+                        probe_engine=probe_engine,
+                        foreground=foreground,
+                        one_shot=one_shot,
+                        assume_yes=effective_yes,
+                        strict_drift=strict_drift,
+                    )
                 _noop = outcome_kind(_outcome) == KIND_ALREADY_RUNNING
                 # v4 step 1 — the launch VERDICT: the launch only counts
                 # as STARTED once evidence shows the agent actually came
@@ -421,17 +446,32 @@ def run_single_targets(
                     system_msg(str(exc), style="red")
             except Exception as exc:
                 any_error = True
+                message = str(exc)
+                if isinstance(exc, (FileNotFoundError, AmbiguousAgent)):
+                    # Operator order (card
+                    # sac-attach-agent-name-hints-20260919): a miss
+                    # suggests, never auto-starts. The same helper as
+                    # attach/stop/restart so the verbs cannot disagree.
+                    try:
+                        from ...config._name_hints import suggest_agent_names
+                        from ...config._resolve import enumerate_agent_names
+
+                        message += suggest_agent_names(
+                            raw_target, enumerate_agent_names(), verb="start"
+                        )
+                    except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                        pass
                 if as_json:
                     _emit_json(
                         {
                             "name": raw_target,
                             "status": "error",
-                            "error": str(exc),
+                            "error": message,
                             "dry_run": dry_run,
                         }
                     )
                 else:
-                    system_msg(f"{raw_target}: {exc}", style="red")
+                    system_msg(f"{raw_target}: {message}", style="red")
                     traceback.print_exc()
     # Non-zero on a real failure OR on a shown-and-refused interactive launch
     # (nothing started without --yes) — so scripts/operators see it clearly.

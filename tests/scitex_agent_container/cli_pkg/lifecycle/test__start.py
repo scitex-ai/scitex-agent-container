@@ -31,9 +31,23 @@ import time
 from pathlib import Path
 
 from click.testing import CliRunner
+import pytest
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
+
+@pytest.fixture(autouse=True)
+def visible_start_output():
+    """CLI prose assertions exercise the normal visible INFO threshold."""
+    import scitex_logging
+
+    saved_level = scitex_logging.get_level()
+    scitex_logging.set_level(scitex_logging.INFO)
+    try:
+        yield
+    finally:
+        scitex_logging.set_level(saved_level)
 
 
 def _install_fresh_creds(home: Path) -> Path:
@@ -636,7 +650,7 @@ class TestDispatchBranch:
         yaml_path = _write_singleton_yaml(tmp_path, "mini", "remote-host")
         runner = CliRunner()
         # Act
-        result = runner.invoke(start, [str(yaml_path), "--dry-run", "--force"])
+        result = runner.invoke(start, [str(yaml_path), "--dry-run"])
         # Assert
         assert result.exit_code != 0
 

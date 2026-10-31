@@ -22,17 +22,18 @@ class ProcessIdentity:
     control_group: str
 
 
-def _control_group(pid: int) -> str:
-    for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines():
+def _control_group(pid: int, proc_root: Path = Path("/proc")) -> str:
+    for line in (proc_root / str(pid) / "cgroup").read_text().splitlines():
         hierarchy, controllers, path = line.split(":", 2)
         if hierarchy == "0" and not controllers:
             return path
     return ""
 
 
-def _identity(pid: int) -> ProcessIdentity | None:
+def _identity(pid: int, *, proc_root: Path = Path("/proc")) -> ProcessIdentity | None:
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
+        process_dir = proc_root / str(pid)
+        stat = (process_dir / "stat").read_text()
         close = stat.rfind(")")
         fields = stat[close + 2 :].split()
         return ProcessIdentity(
@@ -41,9 +42,9 @@ def _identity(pid: int) -> ProcessIdentity | None:
             process_group=int(fields[2]),
             session=int(fields[3]),
             start_time=int(fields[19]),
-            uid=Path(f"/proc/{pid}").stat().st_uid,
+            uid=process_dir.stat().st_uid,
             state=fields[0],
-            control_group=_control_group(pid),
+            control_group=_control_group(pid, proc_root),
         )
     except (FileNotFoundError, OSError, ValueError, IndexError):
         return None
@@ -72,16 +73,18 @@ def capture_owned_process_group(pane_pid: int) -> tuple[ProcessIdentity, ...]:
     return tuple(sorted(members, key=lambda item: item.pid))
 
 
-def capture_owned_process_tree(pane_pid: int) -> tuple[ProcessIdentity, ...]:
+def capture_owned_process_tree(
+    pane_pid: int, *, proc_root: Path = Path("/proc")
+) -> tuple[ProcessIdentity, ...]:
     """Snapshot every same-user descendant of the pane before teardown."""
-    pane = _identity(pane_pid)
+    pane = _identity(pane_pid, proc_root=proc_root)
     if pane is None or pane.uid != os.getuid():
         return ()
     processes = tuple(
         identity
-        for entry in Path("/proc").iterdir()
+        for entry in proc_root.iterdir()
         if entry.name.isdigit()
-        if (identity := _identity(int(entry.name))) is not None
+        if (identity := _identity(int(entry.name), proc_root=proc_root)) is not None
         and identity.uid == pane.uid
     )
     owned = {pane.pid}

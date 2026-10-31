@@ -14,13 +14,17 @@ unit-testable functions in :mod:`_tui_drain` — the mixin supplies the
 (fail-fast-on-session-death, settle-before-send, verified-resend, dismiss by
 REGISTERED keys and never Escape) live in ``_tui_drain`` and are unchanged.
 
-Behaviour is IDENTICAL to the pre-extraction methods — this is a pure move.
+Hermes boot uses its native session registry: a running startup turn is
+initialized even while its input field is occupied. Input-delivery waits
+retain the separate idle-input contract below.
 """
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._tui_drain import (
     drain_modals_until_ready,
@@ -30,17 +34,80 @@ from ._tui_drain import (
 )
 
 
-def _session_name(config: AgentConfig) -> str:
-    """Resolve the agent's ``tui-<name>`` session.
+def wait_for_hermes_boot(
+    config,
+    *,
+    exists_fn,
+    timeout_s,
+    poll_s=0.5,
+    probe_fn=None,
+    poll_ui=None,
+    time_fn=time.monotonic,
+    sleep_fn=time.sleep,
+):
+    """A native working session proves boot readiness without waiting for idle.
 
-    Local import of :func:`tui_session.session_name_for` keeps the session
-    naming on its one canonical implementation without a module-level import
-    cycle (``tui_session`` imports this mixin). Same pattern as
+    Optional UI polling returns True to observe the native session, False to
+    refuse boot, or None after answering a modal that needs another frame.
+    """
+    from ._hermes_tui_rpc import HermesTuiRpcError, observe_turn_activity
+    from .tui_session import state_dir_for_config
+
+    probe = probe_fn or observe_turn_activity
+    deadline = time_fn() + timeout_s
+    last_error = "no initialized native session"
+    while time_fn() < deadline:
+        if not exists_fn():
+            return False
+        if poll_ui is not None:
+            ui_result = poll_ui()
+            if ui_result is False:
+                return False
+            if ui_result is None:
+                sleep_fn(max(0.01, min(poll_s, deadline - time_fn())))
+                continue
+        try:
+            activity = probe(
+                state_dir_for_config(config),
+                config.name,
+                timeout_s=min(2.0, max(0.01, deadline - time_fn())),
+            )
+            if activity.session_id and activity.session_status in {
+                "idle",
+                "working",
+                "waiting",
+            }:
+                return bool(exists_fn())
+            last_error = f"native session status {activity.session_status!r}"
+        except (HermesTuiRpcError, FileNotFoundError) as error:
+            last_error = str(error)
+        sleep_fn(max(0.01, min(poll_s, deadline - time_fn())))
+    get_logger(__name__).error(
+        "Hermes boot not ready for %s: %s", config.name, last_error
+    )
+    return False
+
+
+def _session_name(config: AgentConfig, mux: Any = None) -> str:
+    """Resolve the agent's live session: bare canonical first, legacy second.
+
+    ``mux`` is the host's ``TmuxManager``-shaped multiplexer (the mixin host
+    always has one as ``self._mux``). Without it — or when neither candidate
+    is live — this is the canonical bare name, which is also what a fresh
+    :meth:`start` just minted, so the boot path never needs the probe.
+
+    Local import of :func:`tui_session.resolve_live_session_for` keeps the
+    session naming on its one canonical implementation without a module-level
+    import cycle (``tui_session`` imports this mixin). Same pattern as
     :func:`_runners._tmux._tmux_probe._display_field`.
     """
-    from .tui_session import session_name_for
+    if mux is None:
+        from .tui_session import session_name_for
 
-    return session_name_for(config)
+        return session_name_for(config)
+    from .tui_session import resolve_live_session_for
+
+    return resolve_live_session_for(config, mux)
 
 
 class TuiBootDrainMixin:
@@ -64,9 +131,16 @@ class TuiBootDrainMixin:
         wrapper over :meth:`_drain_modals_until_ready`. Best-effort: never
         raises. Returns True iff a ready signal was observed within the window.
         """
-        name = _session_name(config)
+        name = _session_name(config, self._mux)
         if not self._mux.exists(name):
             return False
+        if str(getattr(config, "harness", "") or "").lower() == "hermes":
+            return wait_for_hermes_boot(
+                config,
+                exists_fn=lambda: self._mux.exists(name),
+                timeout_s=timeout_s,
+                poll_s=poll_s,
+            )
         return self._drain_modals_until_ready(name, timeout_s=timeout_s, poll_s=poll_s)
 
     def _drain_modals_until_ready(
@@ -112,7 +186,7 @@ class TuiBootDrainMixin:
         :class:`TuiInputNotReadyError` on timeout.
         """
         del sleep_fn  # honoured internally by the extracted function's default
-        name = _session_name(config)
+        name = _session_name(config, self._mux)
         return _wait_until_input_ready(
             name,
             capture_fn=self._mux.capture_content,

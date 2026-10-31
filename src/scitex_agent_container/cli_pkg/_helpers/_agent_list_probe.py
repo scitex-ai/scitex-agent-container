@@ -61,7 +61,7 @@ def probe_local_detail(cfg) -> LocalProbe:
     (:func:`_lifecycle._runtime_select._get_runtime`, which branches on
     ``spec.runtime``) — NOT a hardcoded ``ClaudeSessionRuntime``. That
     hardcode was the root cause of "live agent reads stopped": the DEFAULT
-    runtime is ``tui``, whose liveness is the ``tui-<name>`` tmux session's
+    runtime is ``tui``, whose liveness is the agent's tmux session's
     pane process. Probing a live TUI agent through ``ClaudeSessionRuntime``
     reached ``ApptainerContainerRuntime.is_running`` → ``os.kill(read_pid,
     0)``, but a TUI agent NEVER writes an ``apptainer_pid`` file, so

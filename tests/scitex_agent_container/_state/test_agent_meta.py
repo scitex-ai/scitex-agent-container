@@ -861,14 +861,20 @@ def test_read_sdk_session_state_heartbeat_carries_total_tokens(
 
 
 @pytest.fixture
-def collect_rich_env(isolated_home, env_save_restore, tmp_path):
+def collect_rich_env(isolated_home, env_save_restore, tmp_path, chdir_restore):
     """Common env setup for collect_rich tests — PATH cleared so no tmux.
 
-    Returns the home directory; tests use ``workspace`` for the workdir."""
+    Returns the home directory; tests use ``workspace`` for the workdir.
+    Chdirs into tmp with a tmp git scope so project-scoped state resolves
+    under tmp — never the repo checkout (whose runtime/ must stay absent
+    for the PS-234 runtime-hygiene audit)."""
     empty_bin = tmp_path / "_no_bin"
     empty_bin.mkdir(exist_ok=True)
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    (tmp_path / ".scitex" / "agent-container").mkdir(parents=True, exist_ok=True)
     env_save_restore.set("PATH", str(empty_bin))
     env_save_restore.set("SCITEX_DIR", str(isolated_home / "_scitex"))
+    chdir_restore(tmp_path)
     return isolated_home
 
 

@@ -10,7 +10,14 @@ from ._explicit_validation import validate as _validate_explicit_fields
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._hermes_background_review import parse_selected_hermes_background_review
 from ._hermes_compression import parse_selected_hermes_compression
+from ._hermes_failover import parse_selected_hermes_failover
+from ._hermes_goals import (
+    parse_selected_hermes_goals,
+    parse_selected_hermes_max_turns,
+    validate_hermes_goal_engine,
+)
 from ._hermes_run_budget import parse_selected_hermes_run_budget
+from ._hermes_yolo import parse_selected_hermes_yolo
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -26,6 +33,9 @@ from ._loader_startup_defaults import (
     DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
     _with_default_direnv_allow,
 )
+from ._opencode_approval import parse_selected_opencode_approval_policy
+from ._opencode_run_budget import parse_selected_opencode_run_budget
+from ._opencode_serve import parse_selected_opencode_serve_port
 from ._parsers import (
     MODEL_ENV_KEY,
     interpolate_mcp_servers,
@@ -49,7 +59,10 @@ from ._parsers import (
     parse_watchdog,
     resolve_model_surface,
 )
+from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
+from ._secret_scope_types import resolve_spec_secret_scope
+from ._worktree import parse_spec_worktree
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
 
@@ -104,63 +117,6 @@ def _name_from_path(path: Path | str) -> str:
     ``metadata.name`` field, and the file is always named ``spec.yaml``.
     """
     return Path(path).parent.name
-
-
-def _is_relative_path(p: str) -> bool:
-    """True when ``p`` is a relative path (not absolute, not ~-prefixed)."""
-    return bool(p) and not p.startswith("/") and not p.startswith("~")
-
-
-def _resolve_python_venv(venv: str | list[str] | None) -> str:
-    """Resolve ``spec.python-venv`` to a single venv path on this host.
-
-    Accepts:
-      * empty/None: no venv activation (returns "").
-      * single string: literal path; must exist or RuntimeError.
-        Relative paths (no leading / or ~) are returned as-is and
-        resolved at start time relative to the workspace dir on the
-        target host — launcher-side existence check is skipped.
-      * list of strings: explicit fallback chain — first existing
-        absolute/home path wins; relative paths are returned at
-        first occurrence (no launcher-side check).
-        If none exist/match, raises RuntimeError.
-
-    The fallback chain is intentionally per-agent (in the YAML), not a
-    sac-internal default — different agents may want different chains,
-    and putting it in the YAML keeps the precedence visible to readers.
-    """
-    if venv is None or venv == "" or venv == []:
-        return ""
-
-    if isinstance(venv, str):
-        if _is_relative_path(venv):
-            # Relative: defer existence check to target-side launch.
-            return venv
-        if (Path(venv).expanduser() / "bin" / "activate").exists():
-            return venv
-        raise RuntimeError(
-            f"python-venv {venv!r} has no bin/activate on this host. "
-            "Set an existing path or use a list for a fallback chain."
-        )
-
-    if isinstance(venv, list):
-        if not all(isinstance(p, str) for p in venv):
-            raise RuntimeError(f"python-venv list must contain strings, got: {venv!r}")
-        for candidate in venv:
-            if _is_relative_path(candidate):
-                # First relative candidate wins immediately (resolved on target).
-                return candidate
-            if (Path(candidate).expanduser() / "bin" / "activate").exists():
-                return candidate
-        raise RuntimeError(
-            f"python-venv chain {venv!r} matched no existing venv on this "
-            "host. Create one of these paths or extend the chain."
-        )
-
-    raise RuntimeError(
-        f"python-venv must be a string or list of strings, got "
-        f"{type(venv).__name__}: {venv!r}"
-    )
 
 
 def _parse_env_files(spec: dict) -> list[str]:
@@ -260,6 +216,15 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     labels = metadata.get("labels", {}) or {}
 
     name = compose_effective_name(raw_name, hosts_spec, hostname)
+
+    # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+    # minted at create, backfilled first-seen-stable. Validated loud —
+    # a malformed uuid must never load as "no uuid" and re-stamp later.
+    # Lazy import: spec-uuid parsing stays OFF the `sac --help` import
+    # closure (see 21_cli-startup-budget.md).
+    from ._spec_uuid import parse_spec_uuid
+
+    spec_uuid = parse_spec_uuid(spec.get("uuid"), path=str(path))
 
     # Auto-derive workdir (user can override).
     # Default lives under runtime/workspaces/ (2026-04-17 layout).
@@ -413,6 +378,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     engines = resolve_engine_namespace(spec)
     config = AgentConfig(
         name=name,
+        uuid=spec_uuid,
         runtime=str(spec.get("runtime") or "tui"),
         engines=engines,
         # HARNESS — which agent SDK runs the session. NOT
@@ -427,13 +393,20 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         # config._residency_types explains why this NEW axis is
         # defaulted while the red-start map exists).
         residency=resolve_spec_residency(spec),
+        # SECRET-SCOPE — how much of the operator pool lands in the
+        # agent env: full (default) | capsule. See
+        # config._secret_scope_types for the layering rationale.
+        secret_scope=resolve_spec_secret_scope(spec),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.
         image=apptainer_spec.image,
         model=model,
         workdir=workdir,
-        python_venv=_resolve_python_venv(spec.get("python-venv", "")),
+        python_venv=_resolve_python_venv(
+            spec.get("python-venv", ""),
+            container_namespace=spec.get("runtime", "tui") in {"tui", "apptainer"},
+        ),
         env=merged_env,
         env_files=_parse_env_files(spec),
         screen_name=screen_name,
@@ -445,8 +418,16 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
         hermes_background_review=parse_selected_hermes_background_review(spec),
+        hermes_max_turns=parse_selected_hermes_max_turns(spec),
+        hermes_goals=parse_selected_hermes_goals(spec),
+        hermes_failover=parse_selected_hermes_failover(spec),
+        hermes_yolo=parse_selected_hermes_yolo(spec),
         hermes_run_budget_seconds=parse_selected_hermes_run_budget(spec),
         hermes_compression=parse_selected_hermes_compression(spec),
+        worktree=parse_spec_worktree(spec),
+        opencode_approval_policy=parse_selected_opencode_approval_policy(spec),
+        opencode_run_budget_seconds=parse_selected_opencode_run_budget(spec),
+        opencode_serve_port=parse_selected_opencode_serve_port(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),
@@ -485,6 +466,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # ``_engine_types.apply_default_engine`` for why those belong on the
     # START path instead).
     apply_default_engine(config, engines, spec)
+    validate_hermes_goal_engine(config)
     return config
 
 

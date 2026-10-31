@@ -519,7 +519,7 @@ def test_gate_error_carries_a_remedy_that_works(tmp_path: Path) -> None:
     except StopEscalationError as exc:
         message = str(exc)
     # Assert — NOT `sac agents restart` (the command that just failed).
-    assert "tmux kill-session -t tui-neurovista" in message
+    assert "tmux kill-session -t neurovista" in message
 
 
 def test_gate_error_carries_the_pid_it_could_not_kill(tmp_path: Path) -> None:

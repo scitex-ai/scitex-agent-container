@@ -216,8 +216,14 @@ async def _push_channel_event(
     and NOT injected into the running session — receipts are a wire
     signal, not a user-visible message. See ``_channel_reaction_ack``.
     """
-    from mcp.shared.message import SessionMessage
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    try:
+        from mcp.shared.message import SessionMessage
+        from mcp.types import JSONRPCMessage, JSONRPCNotification
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     # Semantic feedback is model-authored on the peer. Verify its exact nonce,
     # update our sender-owned ledger, and keep the protocol envelope out of the
@@ -308,8 +314,14 @@ async def _serve(
     from contextlib import AsyncExitStack
 
     import anyio
-    from mcp.server.lowlevel import Server
-    from mcp.server.session import ServerSession
+    try:
+        from mcp.server.lowlevel import Server
+        from mcp.server.session import ServerSession
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     server = Server(name=f"sac-channel-{name}")
     _register_tools(server, agent_name=name, listen_url=listen_url, bearer=bearer)
@@ -410,7 +422,13 @@ async def _run(
     *,
     subscribe: bool = True,
 ) -> None:
-    from mcp.server.stdio import stdio_server
+    try:
+        from mcp.server.stdio import stdio_server
+    except ImportError as exc:
+        raise ImportError(
+            "SAC MCP dependencies are unavailable; install "
+            "scitex-agent-container[mcp]."
+        ) from exc
 
     async with stdio_server() as (read_stream, write_stream):
         await _serve(

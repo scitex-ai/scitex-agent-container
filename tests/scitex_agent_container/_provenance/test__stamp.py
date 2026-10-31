@@ -247,7 +247,7 @@ class TestStampPath:
         package = root / "src" / "scitex_agent_container"
         package.parent.mkdir(parents=True)
         shutil.copy2(source_root / "pyproject.toml", root / "pyproject.toml")
-        shutil.copy2(source_root / "src" / "hatch_build.py", root / "src")
+        shutil.copy2(source_root / "scripts" / "hatch_build.py", root / "src")
         shutil.copytree(
             source_root / "src" / "scitex_agent_container" / "_provenance",
             package / "_provenance",

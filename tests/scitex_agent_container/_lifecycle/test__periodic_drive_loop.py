@@ -14,6 +14,7 @@ STX-TQ002 AAA-markers + STX-TQ007 one-assert. No mocks.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import pytest
@@ -171,6 +172,48 @@ async def test_loop_emit_targets_the_due_agent_name() -> None:
 # ---------------------------------------------------------------------------
 # Cancellation — SIGTERM-equivalent propagation
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Exchange-id logging — one stable id per agent per tick, observable in logs
+# ---------------------------------------------------------------------------
+
+
+def _logged_exchange_ids(caplog: pytest.LogCaptureFixture) -> list[str]:
+    import re
+
+    ids: list[str] = []
+    for record in caplog.records:
+        ids.extend(re.findall(r"xch_[0-9a-zA-Z_.-]+", record.getMessage()))
+    return ids
+
+
+@pytest.mark.asyncio
+async def test_loop_emit_logs_one_exchange_id_per_agent(caplog) -> None:
+    # Arrange
+    from scitex_dev.status import is_exchange_id
+
+    state = _AppState()
+    agents = [_due_agent("alpha")]
+    # Act — spin the loop once via cancellation after one tick.
+    with caplog.at_level(logging.DEBUG):
+        task = asyncio.create_task(
+            periodic_drive_loop(
+                state,
+                tick_interval_s=0.05,
+                agents_source=agents,
+            )
+        )
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.05)
+    # Assert — exactly one canonical exchange id logged for the agent.
+    logged = [i for i in _logged_exchange_ids(caplog) if is_exchange_id(i)]
+    assert len(logged) == 1
 
 
 @pytest.mark.asyncio

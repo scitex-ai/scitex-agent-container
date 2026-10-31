@@ -260,7 +260,7 @@ def stop_turn_bridge(
 
     Incident fix (2026-07-12): ``await_bridge_release`` only reaps the ONE
     bridge PID sac TRACKED. A DIFFERENT holder of the SAME port — an orphaned
-    prior bridge, or a process tied to the ``tui-<name>`` session (the operator
+    prior bridge, or a process tied to the agent's tmux session (the operator
     saw survivor PID 2170086) — kept the port, so the next start's
     ``ensure_port_free_or_raise`` failed loud and the operator had to run
     ``fuser -k <port>/tcp`` by hand. With ``force_free_survivors`` (default True

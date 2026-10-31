@@ -1,169 +1,94 @@
 ---
 description: |
-  [TOPIC] scitex-agent-container — agent image build & rebuild (apptainer .sif)
-  [DETAILS] Where sac-base / sac-scitex .def + .sif live (dotfiles containers/), how sac is installed from git@develop, the `sac image build scitex` / `scitex-container build` commands, the @develop→@tag stable pin, and the gotcha that runner/channel changes do NOT reach running agents until the image is rebuilt.
+  [TOPIC] Build and deliver SAC Apptainer images
+  [DETAILS] Build from the installed package source and immutable Hermes pin, verify the timestamped SIF before distribution, and restart consumers through the lifecycle preflight.
 tags: [scitex-agent-container-image-build]
 ---
 
-# Image build & rebuild (apptainer .sif)
+# Image builds
 
-The container images agents run are **apptainer** `.sif` files, defined in the
-dotfiles (canonical SSoT), **not** in this repo:
+Use when a runtime change must reach the code inside Apptainer. A host package
+upgrade alone does not replace the Python code baked into an existing SIF.
 
-```
-~/.dotfiles/src/.scitex/agent-container/containers/
-  sac-base/sac-base.def       sac-base.sif      # base layer (git, uv, node, …)
-  sac-scitex/sac-scitex.def   sac-scitex.sif    # default image (sac + scitex[all])
-  overlays/
-```
+## Source authority
 
-An agent uses `sac-scitex` unless its `spec.yaml` sets `spec.image`.
+Recipes ship in `src/scitex_agent_container/containers/`. The CLI selects
+`apptainer-base.def`, `apptainer-scitex.def`, or `apptainer-proxy.def` through
+`cli_pkg/image_group.py`; editing an unrelated host recipe does not change this
+selection.
 
-## How sac gets into the image
+`cli_pkg/_image_source_build.py` checks package provenance and stages a copy of
+the installed SAC source beside the recipe. `%files` copies this source into the
+image, where it is installed locally. The build does not silently substitute
+GitHub's current `develop` tip for the selected SAC source.
 
-`sac-scitex.def` (`%post`) installs the runner from **git, branch-pinned**:
+Hermes is a separate staged package. `cli_pkg/_hermes_source.py` resolves
+`HERMES_COMMIT`, an immutable full Git commit, from `HERMES_REPOSITORY`.
+`SAC_HERMES_SOURCE_DIR` may provide a local source repository, but it must contain
+the declared commit. The recipe checks the pin before installation. Keep the
+pin consistent with `[tool.scitex-agent-container.hermes-harness]` in
+`pyproject.toml`, the recipe assertion/label, and `spartan-sif-bake.sh`.
 
-```bash
-uv pip install --python /opt/venv-sac/bin/python \
-    ... claude-agent-sdk "scitex[all]" \
-    "git+https://github.com/ywatanabe1989/scitex-agent-container.git@develop"
-```
-
-So the image is a **point-in-time snapshot of `@develop`** taken at build time —
-NOT an editable mount of the host checkout.
-
-## ⚠️ Critical gotcha — rebuild to ship runner/channel changes
-
-A merged change to the runner / channel adapter (e.g. a new `--channels` flag, the
-`sac mcp channel` auto-register, the auto-ack) **does NOT reach running agents**
-until the image is rebuilt. The in-container `/opt/venv-sac` runner stays at
-whatever `@develop` was when the `.sif` was last built. Symptom of the mismatch:
-the runner crash-loops at boot, e.g.
-
-```
-python -m scitex_agent_container._runners.claude_session: error:
-  unrecognized arguments: --channels server:sac
-```
-
-(host emits the new flag; stale container runner rejects it). Always rebuild the
-image after a runner/channel change before expecting agents to pick it up.
-
-## Build / rebuild commands
+## Build
 
 ```bash
-# Preferred (versioned):
-sac image build scitex            # or: scitex-container build scitex-agent-container-scitex
-sac image build base              # rebuild the base layer first if it changed
-
-# Raw apptainer (from the containers/ dir):
-apptainer build sac-base.sif   sac-base.def
-apptainer build sac-scitex.sif sac-scitex.def   # uses sac-base.sif as bootstrap
+sac image build --help
+sac image build base --dry-run
+sac image build base --yes
+# The scitex layer requires an existing base image.
+sac image build scitex --yes
 ```
 
-`sac-scitex.sif` is multi-GB; the build pulls `scitex[all]` (≈1–3 min with uv) plus
-apt deps — budget several minutes. Restart agents after a rebuild so they pick up
-the new `.sif`.
+Artifacts live under the configured SAC containers directory. The CLI creates
+`<containers>/sac-<layer>/build-context/` for staged inputs and delegates to
+scitex-container for the build. A successful build produces a timestamped SIF
+and atomically updates the stable boot symlink; a failed build preserves the
+previous image. Inspect the resolved symlink and resulting image, rather than
+assuming a build succeeded from the command's launch message.
 
-### Low-priority default (incident-local-heavy-build)
+Builds use low CPU/IO priority by default. `--no-nice` disables that demotion;
+use it only on a host assigned for builds. Check disk capacity on the build and
+recipient hosts before transferring multi-GB images. Keep large artifacts and
+runtime state outside the configuration Git repository, using configured paths
+or symlinks.
 
-`sac image build` **self-demotes by default** — the whole bake (staging copy,
-`apptainer build`, `%post` apt/pip, mksquashfs) runs at CPU `nice 19` + IO
-best-effort lowest (`ionice -c 2 -n 7`) so a ~40-min build can't starve an
-interactive host (2026-07-10: load 27 → 50+ during a normal-priority bake).
-A one-line notice is printed when demotion is active:
+`--reproducible` captures the package versions, writes a pinned recipe, rebuilds,
+and compares environment identity. This is not a claim of byte-identical SIF
+files. `--skip-verify` captures inputs without proving the second build.
 
-```
-building at low priority (nice 19 + ionice best-effort low); pass --no-nice for full speed
-```
+## Verify and distribute
 
-**Why best-effort-low and NOT the idle IO class (`-c 3`)**: field-tested the
-same night — a host SIF build at `ionice -c 3` died silently at the
-"Creating SIF file..." (mksquashfs) stage on the loaded host: process
-vanished, no error in the build log, no OOM trace, the publish symlink never
-swapped. Idle-class IO is only serviced when the disk is otherwise idle, so
-under sustained load it can starve indefinitely (and appears to have gotten
-the squash stage killed or wedged-then-reaped). `-c 2 -n 7` still yields to
-all interactive IO but is guaranteed forward progress. If you ever *want*
-harder demotion, run the build under `ionice -c 3` yourself and accept the
-starvation risk.
+1. Verify the built SAC version and expected Hermes source inside the actual
+   SIF without overlay overrides. Use the recipe's symbol/pin checks and the
+   build log; compare expected source hashes when deploying a runtime repair.
+2. Select recipient hosts through scitex-dev's `24_host-registry` skill and
+   check their free space. Use the configured SSH route and image destination,
+   never a copied inventory or an assumed default path.
+3. Transfer to a temporary destination, verify the checksum, then publish the
+   versioned image and update boot symlinks atomically. Preserve the prior image
+   for rollback; do not overwrite an image used by live processes in place.
+4. Upgrade host SAC code and restart active listen services so host controls
+   use the same release. Restart only the selected running consumers through
+   SAC's normal successor preflight. Preserve explicit operator exclusions.
+5. Verify the new processes use the intended image and home backing. For Hermes,
+   check main and judge access, then run the isolated Say Hi acceptance check
+   from `48_model-availability.md` without replacing standing goals.
 
-Opt out on dedicated build machines / CI with `sac image build ... --no-nice`,
-or fleet-wide via `SAC_BUILD_NO_NICE=1`. When `ionice` is missing the build
-degrades gracefully to nice-only (warning line, no crash). Agent-start lazy SIF
-builds (`resolve_sif` → `apptainer build` for a cold `docker://` image or
-`def_file`) are prefixed with `nice -n 19 ionice -c 2 -n 7` the same way; the
-same env var opts out.
+An interim directory-overlay code repair can mask a subsequently rebuilt base
+image. Remove only the exact previously deployed override after verifying that
+the new image contains the tested fix; retain backups and receipts. Do not
+remove unrelated overlay contents or change the active home backing.
 
-## Pinning a stable version (vs tracking @develop)
+## When builds are unavailable
 
-`@develop` means every rebuild tracks the tip of develop. For a reproducible
-**stable** image, edit the def to pin a release tag, then rebuild:
+Check actual Apptainer/user-namespace capabilities. A missing build privilege
+is a deployment limitation, not evidence that the host's package upgrade has
+changed the image. An explicit package-source bind or a narrowly verified
+overlay repair can be a temporary deployment mechanism, but dependency and
+Python-version compatibility must be checked against the image. Record the
+interim mechanism and remove it after a qualified image replaces it.
 
-```bash
-# in sac-scitex.def: change @develop → @v0.17.3 (a released tag)
-sac image build scitex -y
-```
-
-This is the concrete mechanism behind a "stable vs develop" SAC split: the agent
-image = the pinned stable runner; bump it deliberately.
-
-## When `sac image build` is impossible — bind the host editable over the SIF
-
-On HPC sites (e.g. Spartan) where `sudo` is forbidden AND the user has **no
-`/etc/subuid` mapping** (no unprivileged user-namespace), `apptainer build`
-cannot run at all — neither the sudo path nor the auto-fakeroot path from
-`sac image build` (PR #307) succeeds. Verify with:
-
-```bash
-grep "$USER" /etc/subuid /etc/subgid    # empty → fakeroot is unavailable
-```
-
-In that case you **cannot rebuild the SIF**. The canonical workaround is to
-**bind-mount the host editable `scitex_agent_container` package over the SIF's
-site-packages copy**. The SIF's `/opt/venv-sac/bin/sac` is a click entry-point
-wrapper that imports `scitex_agent_container`; if that package path is
-bind-overridden by the host editable, the SIF's `sac` transparently runs the
-host code without any rebuild — `git pull` + re-exec is the whole update loop.
-
-### Spec-level bind (recommended for fleet)
-
-Add to the agent's `spec.apptainer.binds` so every launch picks it up:
-
-```yaml
-spec:
-  apptainer:
-    binds:
-      - source: /abs/path/to/scitex-agent-container/src/scitex_agent_container
-        target: /opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container
-        read_only: true
-```
-
-### Direct `apptainer exec` (operator one-shot)
-
-For a quick test before baking into spec:
-
-```bash
-apptainer exec \
-  --bind /abs/.../src/scitex_agent_container:/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro \
-  sac-scitex.sif \
-  sac --version    # → reports the HOST editable's version, not the SIF-baked one
-```
-
-### Caveats
-
-* The host editable's **Python deps must be a subset** of what the SIF's venv
-  already has installed. If a sac PR adds a new dep (rare — most PRs are
-  code-only), `import scitex_agent_container` inside the SIF will hit
-  `ModuleNotFoundError` for the new dep. That's the signal a real rebuild
-  is needed.
-* The host repo's `src/scitex_agent_container/` path **must exist on a
-  filesystem the SIF can see** (typically a shared `/data/...` mount on HPC).
-* Use `read_only: true` (or `:ro` on the CLI) so the in-SIF process can't
-  mutate host source files.
-* This is a workaround for the no-sudo/no-subuid case; on hosts where
-  rebuild IS possible, prefer `sac image build` so the SIF is a real
-  point-in-time snapshot (auditability, reproducibility).
-
-This pattern is also documented in [11_remote-deploy.md](11_remote-deploy.md)
-under the HPC-deployment section — the deploy-side reader gets the same
-workaround without having to spelunk image-build docs first.
+Source evidence: `cli_pkg/image_group.py`, `cli_pkg/_image_source_build.py`,
+`cli_pkg/_image_repro_build.py`, `cli_pkg/_hermes_source.py`, and
+`containers/apptainer-base.def`. Pin/provenance regressions live in
+`tests/integration/test_apptainer_base_def_hermes.py` and the image-build tests.

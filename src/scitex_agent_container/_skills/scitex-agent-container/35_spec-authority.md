@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Fail-closed lifecycle authority for agent specs.
-  [DETAILS] Start accepts only a clean/current develop main checkout or an exact detached sac-authority source/commit/spec-digest snapshot. Unknown, unreachable, dirty, wrong-branch, linked-feature, ahead, behind and diverged sources refuse with no bypass.
+  [DETAILS] Start accepts only a clean/current develop main checkout, an exact detached sac-authority source/commit/spec-digest snapshot, or a git-managed ~/.scitex home (no origin, clean, spec blob matches HEAD). Unknown, unreachable, dirty, wrong-branch, linked-feature, ahead, behind and diverged sources refuse with no bypass.
 tags: [scitex-agent-container-spec-authority, spec, authority, drift, worktree, snapshot]
 ---
 
@@ -14,6 +14,11 @@ Only these shapes pass:
   freshly fetched `develop` upstream; or
 - a clean detached `sac-authority/<source>-<40-hex-commit>` checkout whose
   normalized origin identity, HEAD, and loaded spec blob all match the path.
+- a git-managed `~/.scitex` home repository: no `origin` remote, clean
+  tree, spec blob tracked and equal to HEAD (`managed-home` kind,
+  identity `local-dotscitex`). `sac agents create` and the launch path
+  itself adopt the home via `scitex_dev.home` before proving, so created
+  specs are provable; a repo that names an origin never rides this path.
 
 Everything unknown or mutable refuses: non-git, unreachable, dirty,
 wrong-main-branch, linked feature worktree, ahead, behind, diverged, or a

@@ -30,6 +30,12 @@ from .._runners._tmux.tmux import (
     TmuxManager,
     TuiInputNotReadyError,
 )
+from ._tui_session_names import (
+    candidate_session_names,
+    canonical_session_name,
+    legacy_session_name,
+    resolve_live_session,
+)
 from ..config import AgentConfig
 from . import _tui_delivery
 from ._apptainer_build_argv import build_run_argv
@@ -57,8 +63,11 @@ __all__ = [
     "TuiSessionRuntime",
     "TuiStopVerificationError",
     "_compose_pending_live",
+    "candidate_session_names_for",
     "clear_compose_buffer",
     "drain_modals_until_ready",
+    "legacy_session_name_for",
+    "resolve_live_session_for",
     "session_name_for",
     "start_succeeded",
     "state_dir_for_config",
@@ -121,13 +130,57 @@ def start_succeeded(
 
 
 def session_name_for(config: AgentConfig) -> str:
-    """Return the tmux session name owned by sac for this agent.
+    """Return the tmux session name sac mints for this agent: the bare name.
 
-    ``tui-<agent-name>`` namespace-prefixes the session so it cannot collide
-    with operator-owned tmux sessions; ``TmuxManager.exists`` keys off the same
-    string so the runtime probes its own session deterministically.
+    New sessions carry NO prefix — the session name IS the agent name.
+    Sessions minted before the cutover are named ``tui-<name>`` and are still
+    recognised: use :func:`candidate_session_names_for` / :func:`resolve_live_session_for`
+    for any read path, and :func:`legacy_session_name_for` only to name the
+    legacy form explicitly. ``TmuxManager.exists`` keys off the same string,
+    so the runtime probes its own session deterministically.
     """
-    return f"tui-{config.name}"
+    return canonical_session_name(config.name)
+
+
+def legacy_session_name_for(config: AgentConfig) -> str:
+    """The pre-cutover ``tui-<name>`` session name. Recognised, never minted."""
+    return legacy_session_name(config.name)
+
+
+def candidate_session_names_for(config: AgentConfig) -> tuple[str, str]:
+    """Every session name this agent could be running under, preferred first.
+
+    Canonical bare first, legacy ``tui-`` second — the same order
+    :func:`._tui_session_names.candidate_session_names` defines.
+    """
+    return candidate_session_names(config.name)
+
+
+def resolve_live_session_for(
+    config: AgentConfig, sessions: Any | None = None
+) -> str:
+    """The live session for this agent: bare when present, else legacy.
+
+    ``sessions`` is a tmux session listing, or — the common runtime case — a
+    ``TmuxManager``-shaped multiplexer exposing ``exists`` / ``list_sessions``.
+    ``None`` resolves to the canonical bare name (the minting default).
+    """
+    if sessions is None:
+        return canonical_session_name(config.name)
+    if hasattr(sessions, "list_sessions"):
+        try:
+            return resolve_live_session(config.name, sessions.list_sessions())
+        except Exception:  # stx-allow: fallback (an unreadable listing resolves to the canonical name — callers treat probe failure as unknown, never as absence)
+            return canonical_session_name(config.name)
+    if hasattr(sessions, "exists"):
+        for candidate in candidate_session_names(config.name):
+            try:
+                if sessions.exists(candidate):
+                    return candidate
+            except Exception:  # stx-allow: fallback (a failed exists-probe is blindness on that candidate, not absence — keep trying the next one)
+                continue
+        return canonical_session_name(config.name)
+    return resolve_live_session(config.name, sessions)
 
 
 def state_dir_for_config(config: AgentConfig) -> Path:
@@ -187,6 +240,7 @@ class TuiSessionRuntime(
         # (None → resolve the real launcher lazily to avoid an import cycle).
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
+        self._production_command_builder = command_builder is None
         self._command_builder = command_builder or self._default_argv
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
@@ -239,6 +293,29 @@ class TuiSessionRuntime(
 
         stop(config)
 
+    def _live_session_name(self, config: AgentConfig) -> str | None:
+        """The LIVE session to address, or ``None`` when neither is up.
+
+        Bare canonical preferred, legacy ``tui-`` recognised. ``None`` lets
+        callers skip the read without a second existence probe — resolution
+        already proved absence.
+        """
+        for candidate in candidate_session_names_for(config):
+            try:
+                if self._mux.exists(candidate):
+                    return candidate
+            except Exception:  # stx-allow: fallback (a failed exists-probe is blindness on that candidate, not absence — keep trying the next one)
+                continue
+        return None
+
+    def _session_name_or_canonical(self, config: AgentConfig) -> str:
+        """Live session when one is up, else the canonical bare name.
+
+        The minting default for paths that must hand a name downstream even
+        when nothing is live (the downstream read then reports the miss).
+        """
+        return self._live_session_name(config) or session_name_for(config)
+
     def send_key(self, config: AgentConfig, key: str) -> bool:
         """Deliver one bounded, explicit control key to the owned TUI pane."""
         normalized = {
@@ -250,8 +327,8 @@ class TuiSessionRuntime(
         }.get(key)
         if normalized is None:
             raise ValueError(f"unsupported TUI control key: {key!r}")
-        name = self.session_name(config)
-        if not name or not self._mux.exists(name):
+        name = self._live_session_name(config)
+        if not name:
             return False
         self._mux.send_keys(name, normalized)
         return True
@@ -275,6 +352,10 @@ class TuiSessionRuntime(
             from ._hermes_profile import validate_hermes_tui_profile
 
             validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
+        if getattr(config, "harness", "") == "opencode":
+            from ._opencode_profile import validate_opencode_profile
+
+            validate_opencode_profile(config, state_dir=state_dir, launch_argv=argv)
         return argv
 
     def resolved_image_identity(self) -> dict[str, str] | None:
@@ -341,32 +422,40 @@ class TuiSessionRuntime(
         """
         del no_preflight, foreground, one_shot
         name = session_name_for(config)
+        live_now = [c for c in candidate_session_names_for(config) if self._mux.exists(c)]
         # Duplicate-session guard: no-op idempotently (outside --force/--dry-run)
         # instead of relaunching over a live session, and say so LOUDLY.
-        if self._mux.exists(name) and not force:
+        # BOTH names are checked: a legacy ``tui-<name>`` session from before
+        # the cutover is just as much "already running" as a bare one, and
+        # launching a bare session over it would leave two live TUIs for one
+        # agent with the router talking to only one of them.
+        if live_now and not force:
             from ..cli_pkg._helpers._console import system_msg
 
             system_msg(
-                f"duplicate session '{name}' — agent already running. "
+                f"duplicate session '{live_now[0]}' — agent already running. "
                 f"Attach: `sac agents attach {config.name}` "
-                f"(or `tmux attach -t {name}`). "
+                f"(or `tmux attach -t {live_now[0]}`). "
                 # NOT `sac agents restart` — when this guard fires DURING a
                 # restart (the old session survived SIGTERM), that is the very
                 # command that just failed, so recommending it loops the
                 # operator back into the failure. Give the remedy that
                 # actually works: kill the stale session, then start fresh.
-                f"Force-relaunch: `tmux kill-session -t {name}` then "
+                f"Force-relaunch: `tmux kill-session -t {live_now[0]}` then "
                 f"`sac agents start {config.name} -y --fresh`.",
                 style="red",
             )
             if not dry_run:
                 return True
-        if not dry_run and self._owns_external_cct_poller(config):
-            from ._apptainer_codex_env import preflight_subscription
+        if not dry_run:
+            from ._native_tui_admission import preflight_native_tui
 
-            preflight_subscription(config, state_dir_for_config(config))
-        if force and self._mux.exists(name):
-            self._mux.stop(name)
+            preflight_native_tui(
+                config, production=self._production_command_builder
+            )
+        if force:
+            for stale in live_now:
+                self._mux.stop(stale)
         self.materialize_workspace(config)
 
         from .._lifecycle._runtime_select import (
@@ -530,10 +619,13 @@ class TuiSessionRuntime(
         return started
 
     def stop(self, config: AgentConfig) -> bool:
-        """Kill the tmux session sac owns for this agent.
+        """Kill the tmux session(s) sac owns for this agent.
 
-        Returns True iff a session existed AND was terminated (no-op on absent
-        session, so the supervisor's ``stop()->start()`` cycle stays idempotent).
+        Stops EVERY live candidate — bare canonical AND legacy ``tui-`` — so
+        a cutover-straddling agent can never be left half-running under its
+        old name. Returns True iff a session existed AND was terminated
+        (no-op on absent sessions, so the supervisor's ``stop()->start()``
+        cycle stays idempotent).
         """
         # Stop inbound owners before the A2A sink and pane disappear.
         if self._owns_external_cct_poller(config):
@@ -541,25 +633,34 @@ class TuiSessionRuntime(
         if str(getattr(config, "harness", "") or "").lower() != "hermes":
             self._stop_inbox(config)
         self._maybe_stop_turn_bridge(config)
-        name = session_name_for(config)
-        if not self._mux.exists(name):
-            return False
-        if not self._mux.stop(name):
-            raise TuiStopVerificationError(
-                f"TUI stop for {config.name!r} could not verify that both "
-                f"tmux session {name!r} and its owned process cgroup are gone"
-            )
-        return True
+        stopped_any = False
+        for name in candidate_session_names_for(config):
+            if not self._mux.exists(name):
+                continue
+            if not self._mux.stop(name):
+                raise TuiStopVerificationError(
+                    f"TUI stop for {config.name!r} could not verify that both "
+                    f"tmux session {name!r} and its owned process cgroup are gone"
+                )
+            stopped_any = True
+        return stopped_any
 
     def is_running(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
     ) -> bool:
-        """LIVENESS: ``tui-<name>`` exists AND its pane process is alive
-        (``os.kill(pane_pid, 0)``; NO activity gate — an idle agent is
-        still running). ``max_idle_s`` ignored. See :mod:`_tui_liveness`."""
+        """LIVENESS: the live session exists AND its pane process is alive.
+
+        Reads the LIVE session — bare canonical first, legacy ``tui-<name>``
+        second — so a pre-cutover session still counts as running until it is
+        restarted under the new name. ``os.kill(pane_pid, 0)``; NO activity
+        gate — an idle agent is still running. ``max_idle_s`` ignored. See
+        :mod:`_tui_liveness`."""
         del max_idle_s
+        live = self._live_session_name(config)
+        if live is None:
+            return False
         return pane_process_alive(
-            session_name_for(config),
+            live,
             exists_fn=self._mux.exists,
             pane_dead_fn=getattr(self._mux, "pane_dead", None),
             pane_pid_fn=getattr(self._mux, "pane_pid", None),
@@ -579,16 +680,18 @@ class TuiSessionRuntime(
         long-lived container process. See :func:`_tui_liveness.pane_pid_of`.
         """
         return pane_pid_of(
-            session_name_for(config),
+            self._session_name_or_canonical(config),
             pane_pid_fn=getattr(self._mux, "pane_pid", None),
         )
 
     def session_name(self, config: AgentConfig) -> str | None:
-        """The ``tui-<name>`` session — the seam ``instances.screen`` reads.
+        """The LIVE session for this agent — the seam ``instances.screen`` reads.
 
-        THE SAME call :meth:`start` passes to ``tmux new-session -s``.
+        Bare canonical when live, else legacy ``tui-<name>`` when THAT is the
+        live one, else the canonical bare name (the minting default). THE SAME
+        bare name :meth:`start` passes to ``tmux new-session -s``.
         """
-        return session_name_for(config)
+        return self._session_name_or_canonical(config)
 
     def is_responsive(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
@@ -596,8 +699,8 @@ class TuiSessionRuntime(
         """RESPONSIVENESS: alive AND pane activity within ``max_idle_s``
         (the OLD is_running rule, for hang-detection). See
         :mod:`_tui_liveness`."""
-        name = session_name_for(config)
-        if not self._mux.exists(name):
+        name = self._live_session_name(config)
+        if name is None:
             return False
         return is_responsive_from_activity(
             self._mux.session_activity(name), time.time(), max_idle_s
@@ -621,7 +724,7 @@ class TuiSessionRuntime(
         """
         return _tui_delivery.send_turn_to_pane(
             self._mux,
-            session_name_for(config),
+            self._session_name_or_canonical(config),
             text,
             wait_ready=wait_ready,
             ensure_ready=lambda: self.wait_until_input_ready(config),
@@ -632,7 +735,7 @@ class TuiSessionRuntime(
         session does not exist (distinguish via ``is_running`` first).
         """
         return _tui_delivery.capture_pane_logs(
-            self._mux, session_name_for(config), lines
+            self._mux, self._session_name_or_canonical(config), lines
         )
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
@@ -640,4 +743,4 @@ class TuiSessionRuntime(
 
         So a caller's error can name the ACTUAL cause instead of guessing one.
         """
-        return _tui_delivery.why_not_deliverable(self._mux, session_name_for(config))
+        return _tui_delivery.why_not_deliverable(self._mux, self._session_name_or_canonical(config))

@@ -93,6 +93,8 @@ __all__ = [
     "plan_handoff",
     "push_spec_dir",
     "read_remote_manifest",
+    "refuse_if_peer_behind",
+    "remote_dir_present",
     "ssh_runner",
 ]
 
@@ -307,6 +309,47 @@ def read_remote_manifest(remote_dir: str, shell: PeerShell) -> dict[str, str]:
             f"stderr:\n{result.stderr.decode('utf-8', 'replace')}"
         )
     return parse_manifest(result.stdout.decode("utf-8", "replace"))
+
+
+def remote_dir_present(remote_dir: str, shell: PeerShell) -> bool:
+    """Whether the peer's spec dir exists at all (present vs first launch).
+
+    The manifest call cannot tell an ABSENT dir from a PRESENT-but-empty
+    one — both read as empty. That distinction decides the dispatch: an
+    absent dir is a first launch (shipping is allowed); a present dir
+    whose contents differ from the lead's is drift/behind (refuse loud,
+    never silently push). One cheap ``[ -d ]`` probe, only ever run when
+    the manifest already showed missing-or-differing files.
+    """
+    result = shell(f'd="{remote_dir}"; [ -d "$d" ]', None)
+    return result.returncode == 0
+
+
+def refuse_if_peer_behind(
+    plan: HandoffPlan, *, dir_present: bool, name: str, peer: str
+) -> None:
+    """Fail fast when the peer holds a different-or-partial spec copy.
+
+    Operator rule 2026-10-24: identical file contents or no launch. A peer
+    dir that EXISTS but lacks lead files (behind) or holds different ones
+    (drift) refuses with the file list and the sync direction — the fix is
+    syncing the shared checkout, never a silent push. Only a wholly ABSENT
+    peer dir (first launch) may receive the lead's spec. ``--force`` stays
+    the explicit escape; it is never silent.
+    """
+    if not plan.new and not plan.changed:
+        return
+    if not dir_present:
+        return
+    stale = sorted(set(plan.new) | set(plan.changed))
+    raise RuntimeError(
+        f"Spec parity between lead and {peer!r} for agent {name!r} FAILED — "
+        f"the peer's spec dir exists but is not identical:\n"
+        + "\n".join(f"  {rel}" for rel in stale)
+        + "\n\nSync the shared checkout on both hosts (git pull), then retry "
+        + "the start. --force ships the lead's copy, but that overwrites the "
+        + "peer's divergence instead of reconciling it."
+    )
 
 
 def push_spec_dir(

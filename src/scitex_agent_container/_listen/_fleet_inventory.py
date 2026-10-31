@@ -29,6 +29,36 @@ def _argv(request: Request) -> list[str]:
     return argv
 
 
+def _response_from_cli(data: dict[str, Any]) -> FleetInventoryResponse:
+    """Adapt CLI host metadata to the v1 report list without losing outages."""
+    hosts = data.get("hosts")
+    if isinstance(hosts, dict):
+        # The fleet CLI wraps its rows with summary/filter metadata. The wire
+        # contract carries the rows, including failed and unqueried hosts.
+        # Missing or malformed reports must still fail strict validation.
+        hosts = hosts.get("reports")
+    candidate = {
+        "schema_version": FLEET_INVENTORY_SCHEMA,
+        "inventory_kind": "fleet",
+        "authority": {
+            "kind": "sac-host-listener",
+            "host": socket.gethostname(),
+            "sac_version": __version__,
+        },
+        "semantics": {
+            "agent_status_axis": "definition-and-process-liveness",
+            # ``running`` proves process liveness, not whether the model is in
+            # a turn.  The fleet CLI has no authoritative cross-host activity
+            # signal, so saying unknown is safer than guessing from heartbeat
+            # age or transcript movement.
+            "activity_axis": "not-reported-do-not-infer",
+        },
+        "agents": data.get("agents"),
+        "hosts": hosts,
+    }
+    return FleetInventoryResponse.model_validate(candidate)
+
+
 async def fleet_inventory(request: Request) -> JSONResponse:
     """Return the host CLI's fleet view with versioned authority provenance.
 
@@ -64,27 +94,8 @@ async def fleet_inventory(request: Request) -> JSONResponse:
             },
             status_code=502,
         )
-    candidate = {
-        "schema_version": FLEET_INVENTORY_SCHEMA,
-        "inventory_kind": "fleet",
-        "authority": {
-            "kind": "sac-host-listener",
-            "host": socket.gethostname(),
-            "sac_version": __version__,
-        },
-        "semantics": {
-            "agent_status_axis": "definition-and-process-liveness",
-            # ``running`` proves process liveness, not whether the model is in
-            # a turn.  The fleet CLI has no authoritative cross-host activity
-            # signal, so saying unknown is safer than guessing from heartbeat
-            # age or transcript movement.
-            "activity_axis": "not-reported-do-not-infer",
-        },
-        "agents": data.get("agents"),
-        "hosts": data.get("hosts"),
-    }
     try:
-        payload = FleetInventoryResponse.model_validate(candidate)
+        payload = _response_from_cli(data)
     except ValidationError as exc:
         return JSONResponse(
             {

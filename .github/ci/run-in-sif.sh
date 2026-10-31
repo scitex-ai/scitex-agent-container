@@ -452,7 +452,10 @@ fi
 # available CPUs, with priority handling". exec replaces the shell with nice,
 # which execs ionice, which execs python (still PID-traceable, signals/exit
 # code propagate to the runner step).
+# Match pyproject's 300s faulthandler diagnostic with an actual per-test
+# timeout: a stack dump alone leaves a wedged xdist worker occupying the job.
 exec nice -n 19 ionice -c 3 \
     python -m pytest tests/ -n "$WORKERS" --dist load -q -rfEs \
+    --timeout=300 \
     --cov=src/scitex_agent_container --cov-report=xml --cov-report=term \
     -p no:cacheprovider

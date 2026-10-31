@@ -69,6 +69,7 @@ __all__ = [
     "CODEX_SDK",
     "CODEX_TUI",
     "HERMES_TUI",
+    "OPENCODE_TUI",
     "HARNESS_DESCRIPTORS",
     "HarnessDescriptor",
     "OPENAI_AGENTS",
@@ -124,6 +125,12 @@ CODEX_TUI = "codex-tui"
 #: outside this registration until that separate rollout is approved.
 HERMES_TUI = "hermes-tui"
 
+#: Opencode's ``serve`` gateway with a TUI attached as a second client —
+#: the same server+TUI shape as Hermes. Launched through the owner
+#: module (``runtimes/_opencode_tui_owner``); the pilot scope is stated
+#: on the runtime adapter (``runtimes/opencode_tui``).
+OPENCODE_TUI = "opencode-tui"
+
 
 class UnmappableHarnessError(ValueError):
     """``spec.harness`` + ``spec.runtime`` select no registered harness.
@@ -173,6 +180,8 @@ from ._harness_callables import (  # noqa: E402,F401 (re-export)
     _noop_prepare_home,
     _openai_agents_inner_argv,
     _openai_env_and_binds,
+    _opencode_env_and_binds,
+    _opencode_tui_inner_argv,
 )
 
 
@@ -380,6 +389,19 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             beat_writer="host-probe",
             can_resume=True,
             env_and_binds=_hermes_env_and_binds,
+        ),
+        HarnessDescriptor(
+            key=OPENCODE_TUI,
+            spec_harness="opencode",
+            spec_runtimes=frozenset({"tui"}),
+            runner_module=None,  # inner process is `opencode serve`
+            inner_argv=_opencode_tui_inner_argv,
+            hosted="external",
+            beat_writer="host-probe",
+            # TRUE by API: serve keeps sessions; `--session`/`--continue`
+            # and `POST /session/:id/fork` resume them.
+            can_resume=True,
+            env_and_binds=_opencode_env_and_binds,
         ),
     )
 }

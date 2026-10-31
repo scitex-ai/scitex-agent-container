@@ -60,7 +60,7 @@ def _parse_ttl(raw: str) -> int:
 
 
 def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
-    """Schedule a detached host-side ``sac agents stop <fork> --force`` after TTL.
+    """Schedule a detached host-side ``sac agents stop <fork>`` after TTL.
 
     Best-effort soft cap (a detached timer, not a durable scheduler — it
     does not survive a host reboot). Runs on the HOST where the fork lives:
@@ -72,7 +72,7 @@ def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
 
     from ..._lifecycle._in_sif_broker import is_in_sif
 
-    inner = f"sleep {ttl_seconds}; sac agents stop {shlex.quote(fork_name)} --force"
+    inner = f"sleep {ttl_seconds}; sac agents stop {shlex.quote(fork_name)}"
     if is_in_sif():
         # Broker to the host: background + setsid so the daemon call returns
         # immediately instead of blocking for the whole TTL.
@@ -149,6 +149,20 @@ def _schedule_ttl_stop(fork_name: str, ttl_seconds: int) -> str:
     "Defaults to SAC_NAME (the parent when an agent spawns its own fork).",
 )
 @click.option(
+    "--fresh",
+    is_flag=True,
+    default=False,
+    help="Start a clean session (0 inherited exchanges) instead of "
+    "continuing the parent's session.",
+)
+@click.option(
+    "--handover",
+    type=str,
+    default=None,
+    help="Handover note (伝言) prepended to the fork's boot-kick — the "
+    "parent's direct message, newest context first.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -163,6 +177,8 @@ def fork(
     ttl: str | None,
     role: str | None,
     caller: str | None,
+    fresh: bool,
+    handover: str | None,
     as_json: bool,
 ) -> None:
     """Spawn a context-inheriting FORK of PARENT.
@@ -208,7 +224,13 @@ def fork(
     # unknown parent or a taken explicit --name.
     try:
         resolved_name, doc = prepare_fork_spawn(
-            parent, fork_name=fork_name, task=task, persist=persist, role=role
+            parent,
+            fork_name=fork_name,
+            task=task,
+            persist=persist,
+            role=role,
+            fresh=fresh,
+            handover=handover,
         )
     except ForkSeedError as exc:
         _fail(str(exc))

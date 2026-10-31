@@ -163,3 +163,31 @@ def test_completed_owned_card_marks_fresh_next_task_after_delivery(tmp_path):
         ["done-1"],
         True,
     )
+
+
+def test_redelivered_message_id_kicks_exactly_once(tmp_path):
+    # Arrange
+    delivered = []
+
+    async def consume_sse(_url, _bearer, on_event, **_kwargs):
+        await on_event({"msg_id": "dup-1", "content": "wake up"})
+        await on_event({"msg_id": "dup-1", "content": "wake up"})
+
+    async def dispatch(event):
+        delivered.append(event["msg_id"])
+
+    # Act
+    asyncio.run(
+        bridge.consume(
+            name="scholar",
+            listen_url="http://127.0.0.1:7878",
+            turn_url="direct://resident-session",
+            bearer="secret",
+            channels=("server:sac",),
+            consume_sse=consume_sse,
+            dispatch_event=dispatch,
+            state_dir=tmp_path,
+        )
+    )
+    # Assert
+    assert delivered == ["dup-1"]

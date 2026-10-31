@@ -73,6 +73,18 @@ LIMIT_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Billing-exhaustion rendering (operator order 2026-10-16): a prepaid
+#: key with zero balance stops the agent with NO published reset. A
+#: separate anchor — this rendering never carries "you've hit your X
+#: limit", so LIMIT_RE cannot see it — firing with an empty window and
+#: no reset. The rule treats a reset-less wall as already-lifted (there
+#: is nothing to wait for): resume fires immediately and the resume is
+#: what rotates the agent onto a headroom key.
+BILLING_EXHAUSTED_RE = re.compile(
+    r"billing or credits exhausted|insufficient credits|insufficient balance|purchase more credits",
+    re.IGNORECASE,
+)
+
 #: The reset clause. ``resets 8am (UTC)`` / ``resets 7:10pm`` /
 #: ``resets 23:00 (Asia/Tokyo)`` / ``resets at 2026-06-18T05:00Z``. The
 #: timezone is OPTIONAL in the rendering and therefore optional here; when it
@@ -99,6 +111,14 @@ SPECIMEN_PANES: tuple[str, ...] = (
     "You've hit your weekly limit · resets 11pm (UTC)",
     "You've hit your weekly limit · resets 8am (Asia/Tokyo)",
     "You’ve hit your session limit · resets 7:10pm",
+    # Billing-exhaustion rendering (operator order 2026-10-16): a
+    # prepaid key with zero balance stops the agent with NO published
+    # reset — there is nothing to wait for, so the wall-lifted path
+    # (RESUME) must fire, not the wall-still-up path (WAITING). The
+    # resume is what rotates the agent onto a headroom key.
+    "Billing or credits exhausted: HTTP 400: You have insufficient credits "
+    "to make this request. Please purchase more credits to continue using "
+    "the service.",
 )
 
 
@@ -262,7 +282,22 @@ def observe_pane(
         stripped = _strip_markers(lines[index])
         found = LIMIT_RE.search(stripped)
         if found is None:
-            continue
+            if BILLING_EXHAUSTED_RE.search(stripped) is None:
+                continue
+            return LimitObservation(
+                readable=True,
+                limited=True,
+                window="billing",
+                reset_at=None,
+                reset_text="",
+                line_index=index,
+                detail=(
+                    "a billing-exhaustion wall is rendered at pane line "
+                    f"{index}: the key's allowance is empty and no reset is "
+                    "published, so there is nothing to wait out — the wall "
+                    "reads as already lifted"
+                ),
+            )
         reset_at, raw = parse_reset_at(stripped, now=now, default_tz=default_tz)
         window = found.group("window").lower()
         if reset_at is None:

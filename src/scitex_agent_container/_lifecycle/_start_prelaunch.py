@@ -4,9 +4,9 @@
 Extracted from ``_start.agent_start`` under the project's 512-line
 per-file cap (same split as the sibling ``_start_preflight`` /
 ``_start_supervision`` / ``_start_failure_diag`` modules). ONE contiguous
-region of ``agent_start`` moved verbatim: the two spec-sanity gates, the
-board-identity check, the credential rotation, the START-TIME OVERRIDES
-(session / resume id / ENGINE), the one-shot requirement, the spawn ACL
+region of ``agent_start``: the two spec-sanity gates, the board-identity
+check, START-TIME ENGINE selection, credential rotation, session / resume
+overrides, the one-shot requirement, the spawn ACL
 gate + lineage record, the ACL policy publish, the a2a port resolution,
 and the telegrammer wake-wiring check.
 
@@ -80,15 +80,6 @@ def run_prelaunch(
     # that owned it for over an hour. See :mod:`._identity_drift`.
     check_board_identity_at_launch(config)
 
-    # CREDS-PHASE1 — auto-rotate ``spec.claude.account`` to a healthy
-    # stored account when the pinned one's snapshot is EXPIRED/ABSENT.
-    # Runs before forced_stop / runtime build so a "no healthy account"
-    # error never tears down a running agent we cannot restart. Unpinned
-    # agents (account="") are untouched: they continue to use the host
-    # live ``.credentials.json`` via the existing bind. See
-    # :func:`_rotate_to_healthy_account` for the contract.
-    _rotate_to_healthy_account(config)
-
     # START-TIME ENGINE SELECTION (operator answer Q2: start time only).
     # Runs BEFORE the session overrides so that a refusal costs nothing
     # already mutated, and before the spawn gate / a2a port / forced stop
@@ -100,6 +91,12 @@ def run_prelaunch(
     select_engine_at_start(
         config, engine_override, probe=probe_engine
     )
+
+    # Rotate only the SELECTED engine's Claude OAuth pool. Applying an
+    # explicit provider engine first clears its unused default-engine pin;
+    # checking that old pin would refuse a launch with unrelated auth.
+    # This remains before forced stop and runtime build.
+    _rotate_to_healthy_account(config)
 
     if session_override:
         config.claude.session = session_override

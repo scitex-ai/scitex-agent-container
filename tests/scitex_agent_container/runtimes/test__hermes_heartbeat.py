@@ -1164,7 +1164,9 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text(encoding="utf-8"))
     resident = heartbeat["authoritative_heartbeat"]
 
-    # Assert
+    # Assert: identity plus byte-delta work evidence reach the resident
+    # projection. progress_seq is forbidden and absent; the first beat
+    # has no prior baseline so the delta reads 0.
     assert (
         written,
         heartbeat["writer"],
@@ -1174,7 +1176,8 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         resident["agent_id"],
         resident["session_id"],
         resident["boot_id"],
-        resident["progress_seq"],
+        "progress_seq" in resident,
+        resident["session_jsonl_delta_bytes"],
         resident["state"],
     ) == (
         True,
@@ -1185,7 +1188,8 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         "scholar",
         "session-1",
         "generation-1:epoch-1:session-1",
-        2,
+        False,
+        0,
         "idle",
     )
 

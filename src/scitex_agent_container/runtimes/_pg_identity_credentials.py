@@ -24,7 +24,7 @@ _POSTGRES_DSN_KEYS = (
     "SCITEX_STORE_DSN",
 )
 PG_PASSFILE_ENV = "PGPASSFILE"
-DEFAULT_CONTAINER_PGPASSFILE = "/home/agent/.sac-pgpass"
+DEFAULT_CONTAINER_PGPASSFILE = "/home/agent/.scitex/agent-container/runtime/pgpass"
 
 
 def _matches(declared: str, actual: str) -> bool:
@@ -135,7 +135,9 @@ def materialize_project_pgpass(
 ) -> list[Path]:
     """Write role-filtered credentials when SAC supplies its passfile path."""
     backings = list(dict.fromkeys(Path(path) for path in home_backings))
-    destinations = [path / Path(DEFAULT_CONTAINER_PGPASSFILE).name for path in backings]
+    relative = Path(DEFAULT_CONTAINER_PGPASSFILE).relative_to("/home/agent")
+    destinations = [path / relative for path in backings]
+    legacy_destinations = [path / ".sac-pgpass" for path in backings]
     apptainer = getattr(config, "apptainer", None)
     raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
     raw_env = raw_args_env(raw_args)
@@ -155,7 +157,7 @@ def materialize_project_pgpass(
         )
     )
     if explicitly_declared or not dsns:
-        for destination in destinations:
+        for destination in [*destinations, *legacy_destinations]:
             _remove_owned_file(destination)
         return []
 
@@ -166,7 +168,7 @@ def materialize_project_pgpass(
     source = Path(environment.get(PG_PASSFILE_ENV) or "~/.pgpass").expanduser()
     rows = _selected_rows(source, role=role, dsns=dsns) if role else []
     if not rows:
-        for destination in destinations:
+        for destination in [*destinations, *legacy_destinations]:
             _remove_owned_file(destination)
         raise PgIdentityCredentialError(
             f"PostgreSQL identity {role!r} has no complete credential for the "
@@ -175,6 +177,10 @@ def materialize_project_pgpass(
         )
     for destination in destinations:
         _write_private(destination, rows)
+    # Publish the successor first. Retire only old files whose SAC ownership
+    # marker still matches, so a replaced operator passfile is preserved.
+    for legacy in legacy_destinations:
+        _remove_owned_file(legacy)
     return destinations
 
 

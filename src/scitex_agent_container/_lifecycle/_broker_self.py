@@ -77,15 +77,18 @@ __all__ = [
 # outlived the ``node_tokens`` table (deleted 2026-08-28).
 _TOKEN_BYTES = 32
 
-# Default health-poll cap PER ATTEMPT. 15s is generous enough for a
-# cold-import + uvicorn bind on a SLURM node under sibling-task CPU
-# contention OR a CI box running pytest-xdist with N workers each
-# spawning subprocesses simultaneously. Shorter (5s) flaked CI under
-# 16-way parallel load (``-n auto`` on a 16-core runner). Longer would
-# mask a real bind failure with a stalled CLI. Combined with the
-# 3-attempt retry in :func:`self_broker_listen_context`, total
-# worst-case wait is 45s.
-_DEFAULT_HEALTH_TIMEOUT_S = 15.0
+# Default health-poll cap PER ATTEMPT. 20s covers a cold-import +
+# uvicorn bind on a SLURM node under sibling-task CPU contention OR a
+# CI box running pytest-xdist with N workers each spawning subprocesses
+# simultaneously (15s flaked CI under 96-way parallel load with
+# `nice -n 10` on shared org runners, 2026-10-17). Longer would mask a
+# real bind failure with a stalled CLI — instead, attempts fail FAST
+# when the subprocess has already exited (port collision at bind):
+# _wait_for_health watches the proc handle and only spends the full
+# cap while the process is alive-but-slow. Combined with the 3-attempt
+# retry in :func:`self_broker_listen_context`, total worst-case wait
+# is 60s.
+_DEFAULT_HEALTH_TIMEOUT_S = 20.0
 
 
 class BrokerSelfError(RuntimeError):
@@ -127,12 +130,19 @@ def _wait_for_health(
     bearer: str,
     *,
     timeout_s: float,
+    proc: subprocess.Popen | None = None,
 ) -> None:
     """Poll ``GET <base_url>/v1/health`` until 200 or timeout.
 
     The health endpoint is unauthenticated on the canonical sac
     listen, but pass the bearer anyway so a future auth-tightening
     cannot break this caller silently.
+
+    When ``proc`` (the listen subprocess) is given, an already-exited
+    process fails the attempt IMMEDIATELY instead of burning the full
+    cap polling a dead port: a bind-time death (port collision in a
+    crowded network namespace) retries with a fresh port in ~0s,
+    while an alive-but-slow startup still gets the whole cap.
     """
     deadline = time.monotonic() + timeout_s
     url = f"{base_url.rstrip('/')}/v1/health"
@@ -141,6 +151,13 @@ def _wait_for_health(
         req.add_header("Authorization", f"Bearer {bearer}")
     last_err: Exception | None = None
     while time.monotonic() < deadline:
+        if proc is not None and proc.poll() is not None:
+            raise BrokerSelfError(
+                f"--broker-self: local `sac listen` at {base_url} died "
+                f"during startup (rc={proc.returncode}); likely a bind "
+                "collision in this network namespace — retrying with a "
+                "fresh port. Check its stderr for the bind error."
+            )
         try:
             with urllib.request.urlopen(req, timeout=1.0) as resp:
                 if 200 <= resp.status < 300:
@@ -261,7 +278,7 @@ def self_broker_listen_context(
                 tmp_dir.rmdir()
             raise
         try:
-            _wait_for_health(base_url, token, timeout_s=timeout_s)
+            _wait_for_health(base_url, token, timeout_s=timeout_s, proc=proc)
             break  # success — exit the retry loop with proc still alive
         except BaseException as exc:
             last_err = exc

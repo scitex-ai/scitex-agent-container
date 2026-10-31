@@ -1,5 +1,8 @@
 """The Codex pane counts as ready after its boot banner has scrolled away."""
 
+import pytest
+
+from scitex_agent_container._runners._tmux.prompts import is_ready as dispatch_ready
 from scitex_agent_container.runtimes._pane_acceptance import is_accepting
 from scitex_agent_container.runtimes.prompts import is_ready
 
@@ -65,3 +68,30 @@ def test_the_boot_banner_shape_still_counts_as_ready() -> None:
 
     # Assert
     assert ready is True
+
+
+@pytest.mark.parametrize("effort", ["max", "ultra", "ultra fast", "xhigh fast"])
+@pytest.mark.parametrize("ready", [is_ready, dispatch_ready])
+@pytest.mark.parametrize("marker", ["›", "»"])
+def test_current_codex_reasoning_and_processing_footer_is_ready(
+    effort, ready, marker
+) -> None:
+    # Arrange
+    pane = f"{marker} Inspect this project\n\n  GPT-6.1-Sol {effort} · /home/ywatanabe/proj/lead\n"
+    # Act
+    state = (ready(pane), is_accepting(pane))
+    # Assert
+    assert state == (True, True)
+
+
+def test_working_ultra_fast_codex_is_ready_but_not_accepting() -> None:
+    # Arrange
+    pane = """
+• Working (28s • esc to interrupt)
+› Inspect this project
+  GPT-6.1-Sol ultra fast · /home/ywatanabe/proj/lead
+"""
+    # Act
+    state = (is_ready(pane), is_accepting(pane))
+    # Assert
+    assert state == (True, False)

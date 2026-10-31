@@ -8,6 +8,7 @@ separate result that must be polled before delivery can be claimed.
 
 from __future__ import annotations
 
+import http.client
 import json
 import time
 import urllib.error
@@ -97,7 +98,7 @@ def _poll_exchange(
     accepted_body: dict[str, Any] | None = None,
 ) -> str:
     """Poll one accepted exchange to a terminal status within one deadline."""
-    from ._peer_timeout import PeerTimeoutPending
+    from ._peer_timeout import PeerTimeoutPending, _ProbeTransportError
     from .peer import PeerError
 
     status_url = _exchange_url(url, exchange_id)
@@ -125,7 +126,16 @@ def _poll_exchange(
                 poll_hint=hint,
             )
 
-        status_code, body = _get_exchange(status_url, timeout_s=remaining)
+        try:
+            status_code, body = _get_exchange(status_url, timeout_s=remaining)
+        except _ProbeTransportError:
+            # One probe stalled at the transport layer (descheduled
+            # loopback server, thrashed ssh spawn) while the accepted
+            # exchange may still resolve: keep polling until the
+            # deadline instead of aborting the whole poll. Anything the
+            # peer actually answered still raises immediately below.
+            time.sleep(min(POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
+            continue
         if status_code != 200:
             raise PeerError(
                 f"peer exchange probe returned HTTP {status_code}: {body!r}; "
@@ -172,6 +182,7 @@ def _poll_hint(status_url: str) -> str:
 
 def _get_exchange(status_url: str, *, timeout_s: float) -> tuple[int, dict[str, Any]]:
     """GET an exchange over the same local/ssh transport as its turn."""
+    from ._peer_timeout import _ProbeTransportError
     from .peer import PeerError
 
     parts = urllib.parse.urlsplit(status_url)
@@ -188,7 +199,7 @@ def _get_exchange(status_url: str, *, timeout_s: float) -> tuple[int, dict[str, 
         )
         if rc != 0:
             detail = stderr.decode("utf-8", "replace").strip()
-            raise PeerError(f"ssh+curl exchange probe failed (rc={rc}): {detail[:300]}")
+            raise _ProbeTransportError(f"ssh+curl exchange probe failed (rc={rc}): {detail[:300]}")
         http_status, body_text = split_status_line(stdout)
         if http_status is None:
             raise PeerError("ssh+curl exchange probe returned no HTTP status")
@@ -203,8 +214,11 @@ def _get_exchange(status_url: str, *, timeout_s: float) -> tuple[int, dict[str, 
         raise PeerError(
             f"peer exchange probe returned HTTP {exc.code}: {detail or exc.reason}"
         ) from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise PeerError(
+    except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected) as exc:
+        # RemoteDisconnected escapes urlopen raw (it is an OSError, not
+        # a URLError): a reset/stall mid-poll is transport, not an
+        # answer, so it joins the retried class.
+        raise _ProbeTransportError(
             f"peer exchange probe unreachable at {status_url}: {exc}"
         ) from exc
 

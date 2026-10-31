@@ -42,8 +42,9 @@ from scitex_agent_container.runtimes._tui_turn_bridge_port import port_is_free
 
 PINNED_ACTIVITY_TS = 1_750_000_000
 
-# The supervisor looks an agent up under its ``tui-<name>`` session key, the
-# same convention the heartbeat writer uses.
+# The supervisor looks an agent up under its live session key — bare
+# canonical first, legacy ``tui-`` second (this fixture uses legacy keys,
+# so the suite pins that pre-cutover sessions still supervise).
 LIVE_SNAPSHOT = {"tui-ag1": PINNED_ACTIVITY_TS, "tui-ag2": PINNED_ACTIVITY_TS}
 EMPTY_SNAPSHOT: dict = {}
 

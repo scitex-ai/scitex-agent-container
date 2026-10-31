@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -55,20 +56,24 @@ async def _capturing_consumer(inbox: "asyncio.Queue", *, captured: list) -> None
             env.response.set_result("ok")
 
 
-def _post(url: str, body: dict) -> None:
-    """POST a JSON body to ``url`` (fire-and-forget; success is implicit)."""
+def _post(url: str, body: dict) -> int:
+    """POST a JSON body to ``url`` and return its actual HTTP status."""
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=5.0) as resp:
-        resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            resp.read()
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
 
 
-async def _run_and_capture(body: dict) -> TurnEnvelope:
-    """Spin the real sidecar, POST ``body`` to /v1/turn, return the envelope."""
+async def _run_request(body: dict) -> tuple[int, list[TurnEnvelope]]:
+    """Return the native receiver status and every envelope it enqueued."""
     port = _free_port()
     inbox = make_inbox()
     stop = asyncio.Event()
@@ -79,12 +84,20 @@ async def _run_and_capture(body: dict) -> TurnEnvelope:
     )
     try:
         await _wait_bound(port)
-        await asyncio.to_thread(_post, f"http://127.0.0.1:{port}/v1/turn", body)
+        status = await asyncio.to_thread(
+            _post, f"http://127.0.0.1:{port}/v1/turn", body
+        )
     finally:
         stop.set()
         await inbox.put(ShutdownEnvelope())
         await asyncio.wait_for(consumer, timeout=5.0)
         await asyncio.wait_for(server, timeout=5.0)
+    return status, captured
+
+
+async def _run_and_capture(body: dict) -> TurnEnvelope:
+    """Spin the real sidecar, POST ``body`` to /v1/turn, return the envelope."""
+    _, captured = await _run_request(body)
     return captured[0]
 
 
@@ -120,3 +133,48 @@ class TestRequesterThreading:
         env = asyncio.run(_run_and_capture(body))
         # Assert
         assert env.from_agent is None
+
+    def test_marker_bound_send_preserves_text_and_requester(self) -> None:
+        # Arrange
+        body = {
+            "text": "hi\n<!-- delivery:d-1 -->",
+            "visible_delivery_id": "d-1",
+            "dispatch_id": "d-1",
+            "from_agent": "lead",
+        }
+        # Act
+        status, captured = asyncio.run(_run_request(body))
+        # Assert
+        assert (
+            status,
+            [(env.text, env.dispatch_id, env.from_agent) for env in captured],
+        ) == (200, [(body["text"], "d-1", "lead")])
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"visible_delivery_id": "missing"},
+            {"visible_delivery_id": "d-10"},
+            {"visible_delivery_id": 1},
+            {"visible_delivery_id": "d-1", "untrusted": "must not pass"},
+            {"visible_delivery_id": "d-1", "dispatch_id": 1},
+            {"visible_delivery_id": "d-1", "from_agent": 1},
+            {"visible_delivery_id": "d-1", "exit_after": "false"},
+        ],
+        ids=[
+            "missing-marker",
+            "prefix-marker",
+            "invalid-id",
+            "unknown-field",
+            "invalid-dispatch",
+            "invalid-requester",
+            "invalid-exit",
+        ],
+    )
+    def test_invalid_visible_send_is_rejected_before_enqueue(self, extra) -> None:
+        # Arrange
+        body = {"text": "hi\n<!-- delivery:d-1 -->", **extra}
+        # Act
+        result = asyncio.run(_run_request(body))
+        # Assert
+        assert result == (400, [])

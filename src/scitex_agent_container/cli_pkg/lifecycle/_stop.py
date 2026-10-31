@@ -40,9 +40,8 @@ from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.state_store import now_iso, record_instance_stop
-from ..._state.state_store_comms_nodes import unregister_comms_node
 from ...config import load_config
-from ...config._resolve import resolve_with_prefix
+from ...config._resolve import AmbiguousAgent, resolve_with_prefix
 from .._helpers import agent_name_complete
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
@@ -54,68 +53,13 @@ from ._selection import (
     resolve_selection,
 )
 
-# Stable exit_reason marker for the release-on-unreachable path so a
-# follow-up audit can grep state.db for stale-binding releases and
-# distinguish them from clean stops.
-_FORCE_RELEASED_EXIT_REASON = "peer-unreachable-force-released"
-
 
 class _PeerUnreachableError(RuntimeError):
-    """Raised when ``_dispatch_remote_stop`` cannot reach the bound peer
-    via ssh — distinct from generic ``RuntimeError`` so the caller can
-    decide to release the stale binding locally (with ``--force``) rather
-    than aborting the whole stop loop on a transport failure.
-
-    Carries the full message that would have been raised (so the caller
-    can still echo it to the operator when force-release fires), plus a
-    flag indicating whether the failure was at the ssh transport layer
-    (rc != 0 with no parseable JSON envelope, or no stdout at all) — i.e.
-    the peer is genuinely unreachable, not "the remote sac returned an
-    error envelope we should respect".
-    """
+    """A transport failure leaves the remote binding intact for reconciliation."""
 
     def __init__(self, message: str, *, peer: str) -> None:
         super().__init__(message)
         self.peer = peer
-
-
-def _force_release_binding(name: str, row: dict, peer: str) -> dict:
-    """Tombstone the lead-side instances row + remove the comms_nodes
-    pin so a subsequent start can re-bind the singleton to its current
-    spec.host.
-
-    Called from the stop loop when ``_dispatch_remote_stop`` raises
-    :class:`_PeerUnreachableError` AND the operator passed ``--force``.
-    The release MUST clear BOTH stores — the user's bm025 repro hung on
-    the unreachable peer precisely because the singleton's instance row
-    AND comms_nodes binding both still pointed there, so any subsequent
-    routing (``stop``, ``send``, ``--on``-propagated ``start``) re-tried
-    the dead host. Without comms_nodes also being cleared, future a2a
-    routing would still try bm025 even after the instance row was
-    closed.
-
-    Returns the envelope the caller would otherwise have parsed from the
-    peer, so the per-target JSON shape stays stable.
-    """
-    instance_id = row.get("id")
-    if instance_id:
-        record_instance_stop(instance_id, exit_reason=_FORCE_RELEASED_EXIT_REASON)
-    # stx-allow: fallback (reason: a missing comms_nodes row is a
-    # legitimate state — the singleton may never have been pinned via
-    # the federated graph — and must not block the release)
-    try:
-        unregister_comms_node(name=name)
-    except Exception:
-        pass
-    return {
-        "name": name,
-        "stopped": True,
-        "force_released": True,
-        "host": peer,
-        "exit_reason": _FORCE_RELEASED_EXIT_REASON,
-        "ended_at": now_iso(),
-        "dispatched": False,
-    }
 
 
 def remote_stop_argv(
@@ -126,7 +70,7 @@ def remote_stop_argv(
     if drain_timeout_s > 0:
         argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
     if force:
-        argv.append("--force")
+        raise ValueError("stop cannot bypass teardown checks")
     return argv
 
 
@@ -145,8 +89,7 @@ def _dispatch_remote_stop(
     on success. Raises :class:`_PeerUnreachableError` when the ssh
     transport itself fails (rc != 0; covers
     ``Connection refused`` / ``pam_slurm_adopt denied`` / hostname
-    resolution failure / etc.) so the caller can fall through to
-    :func:`_force_release_binding` under ``--force``. Raises plain
+    resolution failure / etc.). The remote binding remains intact. Raises plain
     ``RuntimeError`` for ``--json`` parse failures (peer sac responded
     but spoke a different shape — operator must reconcile, not
     auto-release).
@@ -165,9 +108,27 @@ def _dispatch_remote_stop(
         check=False,
     )
     if result.returncode != 0:
+        # A peer-side REFUSAL (e.g. the agent is actively working, so
+        # the peer's own guard refused and its CLI exited 1 with a
+        # `{"name", "error"}` envelope on stdout) is not a transport
+        # failure — say so, quoting the peer's own words, instead of
+        # filing it as an unreachable peer.
+        refusal_note = ""
+        try:
+            peer_envelope = _json.loads(result.stdout)
+        except _json.JSONDecodeError:
+            peer_envelope = None
+        if isinstance(peer_envelope, dict) and peer_envelope.get("error"):
+            refusal_note = (
+                f"Peer refused the stop (NOT a transport failure): "
+                f"{peer_envelope.get('error')}\n"
+            )
+            if peer_envelope.get("reason"):
+                refusal_note += f"Peer reason: {peer_envelope.get('reason')}\n"
         raise _PeerUnreachableError(
             f"Remote `sac agents stop {name}` failed on {peer!r} "
             f"(rc={result.returncode}):\n"
+            f"{refusal_note}"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
@@ -204,16 +165,6 @@ def _dispatch_remote_stop(
     shell_complete=agent_name_complete,
 )
 @bulk_selection_options("stop", noun="TARGET")
-@click.option(
-    "--force",
-    "force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Tolerate stale state and kill even during an active Hermes turn. "
-        "This may lose the response and SGLang prefix cache."
-    ),
-)
 @click.option(
     "--drain-timeout",
     "drain_timeout_s",
@@ -256,7 +207,6 @@ def stop(
     all_running: bool,
     all_registry: bool,
     all_alias: bool,
-    force: bool,
     drain_timeout_s: float,
     dry_run: bool,
     yes: bool,
@@ -287,7 +237,7 @@ def stop(
       $ sac agents stop ~/.scitex/agent-container/agents/   # whole dir = bulk
       $ sac agents stop --all-running --dry-run   # preview the blast radius
       $ sac agents stop --all-running -y          # down the live fleet
-      $ sac agents stop --all-registry -y --force # + tolerate stale state
+      $ sac agents stop --all-registry -y
       $ sac agents stop foo --json
     """
     # Selection semantics (flag names, mutual exclusion, enumeration) are
@@ -362,13 +312,6 @@ def stop(
         )
         raise SystemExit(2)
 
-    if force:
-        click.echo(
-            "WARNING: --force bypasses Hermes live-turn draining; an active "
-            "response and its SGLang prefix cache may be lost.",
-            err=True,
-        )
-
     # Resolve all targets to (name, raw) pairs for a unified loop.
     pairs: list[tuple[str, str]] = []
     any_error = False
@@ -381,7 +324,11 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": yaml_path, "error": str(exc)}))
             else:
-                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__)
+                # level="error": colour is not severity — the default
+                # "info" level is filtered when SCITEX_LOGGING_LEVEL >
+                # INFO, which made this failure line vanish entirely
+                # (silent non-zero exit).
+                render_rich(f"[red]Error ({yaml_path}): {exc}[/red]", __name__, level="error")
     for raw_target in single_targets:
         try:
             name: str = raw_target
@@ -395,50 +342,22 @@ def stop(
             if as_json:
                 click.echo(_json.dumps({"target": raw_target, "error": str(exc)}))
             else:
-                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
+                # level="error": see the bulk-yaml branch above.
+                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__, level="error")
 
     # Dispatch loop — try remote first, fall back to local agent_stop.
     peers = _load_host_config().peers
     for name, raw_target in pairs:
         try:
             envelope_holder: dict = {}
-            release_holder: dict = {}
 
-            def _handler(
-                peer,
-                row,
-                ps,
-                _name=name,
-                _holder=envelope_holder,
-                _release=release_holder,
-                _force=force,
-            ):
-                try:
-                    _holder.update(
-                        _dispatch_remote_stop(
-                            peer,
-                            row,
-                            ps,
-                            _name,
-                            force=_force,
-                            drain_timeout_s=drain_timeout_s,
-                        )
+            def _handler(peer, row, ps, _name=name, _holder=envelope_holder):
+                _holder.update(
+                    _dispatch_remote_stop(
+                        peer, row, ps, _name, drain_timeout_s=drain_timeout_s
                     )
-                    _holder["_peer"] = peer
-                except _PeerUnreachableError as exc:
-                    if not _force:
-                        # No force → surface the ssh failure unchanged.
-                        # The outer try/except records it as an error.
-                        raise
-                    # --force on an unreachable peer: release the stale
-                    # binding locally so the operator isn't blocked by
-                    # an unreachable prior host (the lead's bm025
-                    # repro). The release writes BOTH the instances
-                    # tombstone AND the comms_nodes pin removal so
-                    # subsequent routing re-binds to the current
-                    # spec.host.
-                    _release.update(_force_release_binding(_name, row, peer))
-                    _release["_underlying_error"] = str(exc)
+                )
+                _holder["_peer"] = peer
 
             dispatched = try_dispatch_remote(name, "stop", peers, handler=_handler)
             if not dispatched:
@@ -452,16 +371,6 @@ def stop(
                     _handler(spec_peer, {}, peers)
                     dispatched = True
             if dispatched:
-                if release_holder:
-                    # Force-released path.
-                    if as_json:
-                        click.echo(_json.dumps(release_holder))
-                    else:
-                        render_rich(f"[yellow]Agent '{name}' force-released on "
-                            f"'{release_holder.get('host')}' "
-                            f"(peer unreachable; "
-                            f"{_FORCE_RELEASED_EXIT_REASON})[/yellow]", __name__)
-                    continue
                 if as_json:
                     click.echo(
                         _json.dumps(
@@ -478,8 +387,11 @@ def stop(
                         )
                     )
                 else:
-                    render_rich(f"[green]Agent '{name}' stopped on "
-                        f"'{envelope_holder.get('_peer')}'[/green]", __name__)
+                    render_rich(
+                        f"[green]Agent '{name}' stopped on "
+                        f"'{envelope_holder.get('_peer')}'[/green]",
+                        __name__,
+                    )
                 continue
             # Terminal operator stop: opt into the inode-hygiene prune.
             # The gate inside agent_stop restricts it to opted-in
@@ -488,11 +400,8 @@ def stop(
             stop_kwargs = {"prune_runtime": True}
             if drain_timeout_s > 0:
                 stop_kwargs["drain_timeout_s"] = drain_timeout_s
-            # agent_stop's compatibility contract derives destructive consent
-            # from ``force`` when allow_active_turn_kill is omitted.  Keeping
-            # the default call shape also avoids needlessly breaking wrappers
-            # that implement the long-standing stop seam.
-            agent_stop(name, force=force, **stop_kwargs)
+            # Normal operator stop preserves the active-turn guard.
+            agent_stop(name, force=False, **stop_kwargs)
             if as_json:
                 click.echo(
                     _json.dumps(
@@ -509,10 +418,86 @@ def stop(
                 render_rich(f"[green]Agent '{name}' stopped[/green]", __name__)
         except Exception as exc:  # stx-allow: fallback (reason: one stop failure must not abort the remaining targets; surfaces via the per-target JSON envelope or red console line)
             any_error = True
-            if as_json:
-                click.echo(_json.dumps({"name": name, "error": str(exc)}))
+            # A refused stop is the LOUD case, not the quiet one: the
+            # agent is actively working, NOTHING was torn down (the
+            # guard fires before handover snapshots, hooks, or runtime
+            # teardown), and the operator must hear both the refusal
+            # and the remedy. Matched BEFORE the generic branch; the
+            # lazy import keeps this CLI module clear of the lifecycle
+            # import graph at startup.
+            from ..._lifecycle._managed_turn_drain import (
+                ManagedTurnDrainRefusal,
+            )
+
+            if isinstance(exc, ManagedTurnDrainRefusal):
+                if as_json:
+                    click.echo(
+                        _json.dumps(
+                            {
+                                "name": name,
+                                "stopped": False,
+                                "reason": "stop-refused-active-turn",
+                                "error": str(exc),
+                            }
+                        )
+                    )
+                else:
+                    render_rich(
+                        f"[red]NOT stopped: agent '{name}' is actively "
+                        f"working — {exc}[/red]\n"
+                        f"[yellow]Nothing was torn down: the session, "
+                        f"runtime and registry row are intact. Wait for "
+                        f"the turn to finish, or retry with "
+                        f"`sac agents stop {name} --drain-timeout "
+                        f"SECONDS`.[/yellow]",
+                        __name__,
+                        level="error",
+                    )
+            elif as_json:
+                message = str(exc)
+                if isinstance(exc, (FileNotFoundError, AmbiguousAgent)):
+                    # Operator order (card
+                    # sac-attach-agent-name-hints-20260919): a miss
+                    # suggests, never auto-stops. Same helper as
+                    # attach/start/restart.
+                    try:
+                        from ...config._name_hints import suggest_agent_names
+                        from ...config._resolve import enumerate_agent_names
+
+                        message += suggest_agent_names(
+                            name, enumerate_agent_names(), verb="stop"
+                        )
+                    except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                        pass
+                click.echo(
+                    _json.dumps(
+                        {"name": name, "stopped": False, "error": message}
+                    )
+                )
             else:
-                render_rich(f"[red]Error ({raw_target}): {exc}[/red]", __name__)
+                message = str(exc)
+                if isinstance(exc, (FileNotFoundError, AmbiguousAgent)):
+                    # Operator order (card
+                    # sac-attach-agent-name-hints-20260919): a miss
+                    # suggests, never auto-stops. Same helper as
+                    # attach/start/restart.
+                    try:
+                        from ...config._name_hints import suggest_agent_names
+                        from ...config._resolve import enumerate_agent_names
+
+                        message += suggest_agent_names(
+                            raw_target, enumerate_agent_names(), verb="stop"
+                        )
+                    except Exception:  # stx-allow: fallback (reason: hint enrichment must never break the fail-loud refusal)
+                        pass
+                # level="error": a red line at the default info level
+                # is filtered when SCITEX_LOGGING_LEVEL > INFO — the
+                # silent-exit-1 the operator reported.
+                render_rich(
+                    f"[red]Error ({raw_target}): {message}[/red]",
+                    __name__,
+                    level="error",
+                )
 
     if any_error:
         sys.exit(1)

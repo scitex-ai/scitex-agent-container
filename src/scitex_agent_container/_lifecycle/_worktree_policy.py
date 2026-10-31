@@ -1,8 +1,9 @@
-"""Provision and gate agent-owned worktrees through the neutral policy CLI.
+"""Provision and gate agent-owned worktrees through the in-process policy engine.
 
-SAC owns lifecycle mechanics only. Every allow/deny decision is delegated to
-the operator-owned ``scitex-worktree-policy`` executable; no policy rule is
-implemented here.
+SAC owns lifecycle mechanics and the worktree policy itself: every
+allow/deny decision is computed by :mod:`._worktree_policy_engine` from the
+bundled manifest plus real Git inspection. An explicit external CLI path
+remains supported for operators who keep their own policy executable.
 """
 
 from __future__ import annotations
@@ -12,11 +13,14 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from .._runtime_paths import runtime_base_dir
+from ._worktree_policy_engine import WorktreePolicyError
+from ._worktree_policy_engine import invoke as _engine_invoke
 
 __all__ = [
     "DEFAULT_WORKTREE_POLICY_CLI",
@@ -29,15 +33,19 @@ __all__ = [
     "worktree_policy_artifact",
 ]
 
+PolicyCLI = Path | str | tuple[str, ...]
+# Legacy external-CLI location, kept as an explicit opt-in for operators who
+# maintain their own policy executable. The default path is the in-process
+# engine; nothing resolves this constant unless a caller passes it as
+# ``cli_path``.
 DEFAULT_WORKTREE_POLICY_CLI = (
-    Path.home() / ".dotfiles" / "src" / ".bin" / "scitex-worktree-policy"
+    sys.executable,
+    str(
+        Path(__file__).resolve().parent.parent / "_worktree_policy_cli" / "__main__.py"
+    ),
 )
 _SHA256_LENGTH = 64
 _OWNER_FILE = "worktree-owner.json"
-
-
-class WorktreePolicyError(RuntimeError):
-    """A write-capable task has no valid external policy approval."""
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,8 @@ class WorktreePlan:
     branch: str
     action: str
     owner_file: str
+    primary_repo_root: str = ""
+    owner_repo_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,10 +81,11 @@ def _diagnostic(stderr: str) -> str:
     return stderr.strip() or "no diagnostic on stderr"
 
 
-def _invoke(cli: Path, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+def _invoke(cli: PolicyCLI, args: list[str], *, timeout_s: float) -> dict[str, Any]:
+    command = list(cli) if isinstance(cli, tuple) else [str(Path(cli).expanduser())]
     try:
         result = subprocess.run(
-            [str(cli), *args],
+            [*command, *args],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -105,6 +116,54 @@ def _invoke(cli: Path, args: list[str], *, timeout_s: float) -> dict[str, Any]:
             "worktree policy CLI exited successfully without an explicit allow"
         )
     return payload
+
+
+def _dispatch(
+    cli: Path | None,
+    args: list[str],
+    *,
+    timeout_s: float,
+    authority_branch: str | None = None,
+) -> dict[str, Any]:
+    """Run one policy verb: in-process engine by default, external CLI if given.
+
+    ``authority_branch`` carries the per-project ``spec.worktree``
+    override (``None`` = manifest default). It is only attached to the
+    verbs that decide against the authority branch (``assert-context``,
+    ``check-shell``); other verbs do not read it. An external CLI cannot
+    honor the override, so combining the two fails loud instead of
+    silently enforcing the wrong branch.
+    """
+    if cli is None:
+        if authority_branch and args and args[0] in ("assert-context", "check-shell"):
+            args = [*args, "--authority-branch", authority_branch]
+        return _engine_invoke(args)
+    if authority_branch:
+        raise WorktreePolicyError(
+            "spec.worktree.authority_branch "
+            f"{authority_branch!r} requires the in-process policy engine; "
+            f"an external policy CLI ({cli}) cannot honor it"
+        )
+    return _invoke(cli, args, timeout_s=timeout_s)
+
+
+def _config_authority_branch(config: Any) -> str | None:
+    """Per-project authority-branch override, or ``None`` for the default.
+
+    Reads ``config.worktree.authority_branch`` (``spec.worktree``); blank
+    or absent means "no opinion" and the manifest default applies, so the
+    operator workflow does not change unless a spec opts in.
+    """
+    spec = getattr(config, "worktree", None)
+    value = getattr(spec, "authority_branch", "") if spec is not None else ""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise WorktreePolicyError(
+            "spec.worktree.authority_branch must be a string, "
+            f"got {type(value).__name__}"
+        )
+    return value.strip() or None
 
 
 def _git(
@@ -165,7 +224,7 @@ def _owner_record(config: Any, plan: WorktreePlan) -> dict[str, str]:
     return {
         "agent": str(config.name),
         "spec": str(getattr(config, "config_path", "") or ""),
-        "repo_root": plan.repo_root,
+        "repo_root": plan.owner_repo_root or plan.repo_root,
         "worktree": plan.resolved_workdir,
         "branch": plan.branch,
         "session": str(getattr(claude, "session", "") or ""),
@@ -237,7 +296,124 @@ def _planned_from_authority(config: Any, info: Mapping[str, Any]) -> WorktreePla
         branch=f"feature/sac-{name}",
         action="reuse" if target.exists() else "create",
         owner_file=str(_owner_path(config)),
+        primary_repo_root=str(repo_root),
     )
+
+
+def _adoptable_agent_worktree(
+    config: Any, repo_root: Path, *, timeout_s: float = 10.0
+) -> WorktreePlan | None:
+    """Find a live ``sac-<slug>*`` worktree the plan can adopt.
+
+    Older naming suffixed the directory/branch (``sac-<slug>-<suffix>``);
+    the canonical plan only names ``sac-<slug>``. An existing checkout from
+    the older naming is the agent's live directory — refusing the start
+    strands it. Adoption requires: directory under ``repo/.worktrees/``
+    starting with ``sac-<slug>``, a real linked worktree of this repo, and
+    a branch starting with ``feature/sac-<slug>``.
+    """
+    name = _slug(str(config.name))
+    prefix = f"sac-{name}"
+    branch_prefix = f"feature/sac-{name}"
+    worktrees_dir = repo_root / ".worktrees"
+    if not worktrees_dir.is_dir():
+        return None
+    try:
+        entries = sorted(worktrees_dir.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.name == prefix or not entry.name.startswith(prefix + "-"):
+            continue
+        try:
+            branch = _run_engine_git(entry, "branch")
+        except WorktreePolicyError:
+            continue
+        if not branch.startswith(branch_prefix):
+            continue
+        try:
+            common = _run_engine_git(entry, "common_dir")
+            toplevel = _run_engine_git(entry, "toplevel")
+        except WorktreePolicyError:
+            continue
+        if Path(toplevel).resolve() != entry.resolve():
+            continue
+        try:
+            primary_common_raw = _run_engine_git(repo_root, "common_dir")
+            primary_toplevel = _run_engine_git(repo_root, "toplevel")
+        except WorktreePolicyError:
+            continue
+        primary_common = (Path(primary_toplevel) / primary_common_raw).resolve()
+        if Path(common).resolve() != primary_common:
+            continue
+        try:
+            surface = _run_engine_git(entry, "surface")
+        except WorktreePolicyError:
+            continue
+        if surface != "linked-worktree":
+            continue
+        return WorktreePlan(
+            authored_workdir=str(
+                Path(str(config.expanded_workdir)).expanduser().resolve()
+            ),
+            resolved_workdir=str(entry.resolve()),
+            repo_root=str(repo_root),
+            branch=branch,
+            action="reuse-adopted",
+            owner_file=str(_owner_path(config)),
+            primary_repo_root=str(repo_root),
+        )
+    return None
+
+
+def _run_engine_git(directory: Path, what: str) -> str:
+    """Minimal git inspection for adoption without a policy CLI."""
+    mapping = {
+        "branch": ("rev-parse", "--abbrev-ref", "HEAD"),
+        "common_dir": ("rev-parse", "--git-common-dir"),
+        "toplevel": ("rev-parse", "--show-toplevel"),
+    }
+    if what == "surface":
+        git_dir = _git(directory, "rev-parse", "--git-dir").stdout.strip()
+        common_dir = _git(directory, "rev-parse", "--git-common-dir").stdout.strip()
+        resolved_git = (directory / git_dir).resolve()
+        resolved_common = (directory / common_dir).resolve()
+        return "linked-worktree" if resolved_git != resolved_common else "authority"
+    args = mapping[what]
+    return _git(directory, *args).stdout.strip()
+
+
+def _primary_root_from_linked_context(info: Mapping[str, Any], authored: Path) -> str:
+    """Map neutral common-dir metadata only after verifying both Git contexts."""
+    common = Path(_text(info, "git_common_dir"))
+    if not common.is_absolute():
+        return ""
+    common = common.resolve()
+    checkout_root = Path(_text(info, "repo_root")).resolve()
+    metadata = _git(
+        authored, "rev-parse", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    if len(metadata) != 2 or (
+        Path(metadata[0]).resolve() != checkout_root
+        or (authored / metadata[1]).resolve() != common
+    ):
+        raise WorktreePolicyError(
+            "neutral linked-worktree metadata does not match its Git checkout"
+        )
+    if common.name != ".git":
+        return ""
+    primary = common.parent
+    metadata = _git(
+        primary, "rev-parse", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    if len(metadata) != 2 or (
+        Path(metadata[0]).resolve() != primary
+        or (primary / metadata[1]).resolve() != common
+    ):
+        raise WorktreePolicyError(
+            "neutral common-dir metadata does not match its primary Git root"
+        )
+    return str(primary)
 
 
 def _branch_exists(plan: WorktreePlan) -> bool:
@@ -261,13 +437,19 @@ def _worktree_add_argv(plan: WorktreePlan, *, branch_exists: bool) -> list[str]:
 
 
 def _authorize_create(
-    cli: Path, plan: WorktreePlan, *, branch_exists: bool, timeout_s: float
+    cli: Path | None,
+    plan: WorktreePlan,
+    *,
+    branch_exists: bool,
+    timeout_s: float,
+    authority_branch: str | None = None,
 ) -> None:
     command = shlex.join(_worktree_add_argv(plan, branch_exists=branch_exists))
-    result = _invoke(
+    result = _dispatch(
         cli,
         ["check-shell", "--cwd", plan.repo_root, "--command", command],
         timeout_s=timeout_s,
+        authority_branch=authority_branch,
     )
     if result.get("decision") != "allow":
         raise WorktreePolicyError("worktree policy did not authorize provisioning")
@@ -282,26 +464,50 @@ def plan_task_worktree(
     config: Any,
     *,
     provision: bool,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: Path | str | None = None,
     timeout_s: float = 10.0,
 ) -> WorktreePlan | None:
-    """Resolve, optionally provision, and select the task's linked worktree."""
+    """Resolve, optionally provision, and select the task's linked worktree.
+
+    ``cli_path=None`` (default) decides in-process; pass an executable path
+    to keep using an external policy CLI.
+    """
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
+    cli = Path(cli_path).expanduser() if cli_path is not None else None
+    authority_branch = _config_authority_branch(config)
     authored = Path(str(config.expanded_workdir)).expanduser().resolve()
-    info = _invoke(cli, ["inspect", "--repo", str(authored)], timeout_s=timeout_s)
+    info = _dispatch(
+        cli,
+        ["inspect", "--repo", str(authored)],
+        timeout_s=timeout_s,
+        authority_branch=authority_branch,
+    )
     surface = _text(info, "surface")
     if surface == "linked-worktree":
+        primary_repo_root = _primary_root_from_linked_context(info, authored)
+        owner_file = _owner_path(config)
+        owner = _read_owner(owner_file)
+        # Primary provisioning and explicit adoption name the same checkout
+        # differently. Retain an existing primary-root owner only when the
+        # neutral common-dir and both real Git contexts proved that identity.
+        owner_repo_root = (
+            primary_repo_root
+            if primary_repo_root
+            and owner is not None
+            and owner.get("repo_root") == primary_repo_root
+            else ""
+        )
         plan = WorktreePlan(
             authored_workdir=str(authored),
             resolved_workdir=str(authored),
             repo_root=_text(info, "repo_root"),
             branch=_text(info, "branch"),
             action="reuse-explicit",
-            owner_file=str(_owner_path(config)),
+            owner_file=str(owner_file),
+            primary_repo_root=primary_repo_root,
+            owner_repo_root=owner_repo_root,
         )
-        owner = _read_owner(Path(plan.owner_file))
         if owner is None and _dirty(authored):
             raise WorktreePolicyError(
                 f"unowned linked worktree {authored} is dirty; refusing adoption"
@@ -312,10 +518,11 @@ def plan_task_worktree(
         _apply_runtime_workdir(config, plan)
         return plan
 
-    _invoke(
+    _dispatch(
         cli,
         ["assert-context", "--repo", str(authored), "--intent", "read"],
         timeout_s=timeout_s,
+        authority_branch=authority_branch,
     )
     changed = _dirty(authored)
     if changed:
@@ -326,6 +533,13 @@ def plan_task_worktree(
         )
     plan = _planned_from_authority(config, info)
     target = Path(plan.resolved_workdir)
+    if not target.exists():
+        adopted = _adoptable_agent_worktree(
+            config, Path(plan.repo_root), timeout_s=timeout_s
+        )
+        if adopted is not None:
+            plan = adopted
+            target = Path(plan.resolved_workdir)
     owner_path = Path(plan.owner_file)
     owner = _read_owner(owner_path)
     branch_exists = _branch_exists(plan)
@@ -339,9 +553,15 @@ def plan_task_worktree(
             f"worktree ownership conflict for {target}: {detail}; refusing recovery"
         )
     if target.exists():
-        _assert_owner(config, plan, allow_missing=False)
-        target_info = _invoke(
-            cli, ["inspect", "--repo", str(target)], timeout_s=timeout_s
+        if plan.action == "reuse-adopted":
+            _assert_owner(config, plan, allow_missing=True)
+        else:
+            _assert_owner(config, plan, allow_missing=False)
+        target_info = _dispatch(
+            cli,
+            ["inspect", "--repo", str(target)],
+            timeout_s=timeout_s,
+            authority_branch=authority_branch,
         )
         if (
             _text(target_info, "git_common_dir") != _text(info, "git_common_dir")
@@ -354,7 +574,13 @@ def plan_task_worktree(
         if provision:
             _write_owner(owner_path, _owner_record(config, plan))
     else:
-        _authorize_create(cli, plan, branch_exists=branch_exists, timeout_s=timeout_s)
+        _authorize_create(
+            cli,
+            plan,
+            branch_exists=branch_exists,
+            timeout_s=timeout_s,
+            authority_branch=authority_branch,
+        )
     if not target.exists() and provision:
         if owner is not None:
             _assert_owner(config, plan, allow_missing=False)
@@ -369,14 +595,24 @@ def enforce_task_worktree_policy(
     config: Any,
     *,
     provision: bool = True,
-    cli_path: Path | str = DEFAULT_WORKTREE_POLICY_CLI,
+    cli_path: Path | str | None = None,
     timeout_s: float = 10.0,
 ) -> WorktreePolicyProof | None:
-    """Provision/reuse and approve a write-capable agent task."""
+    """Provision/reuse and approve a write-capable agent task.
+
+    ``cli_path=None`` (default) decides in-process; pass an executable path
+    to keep using an external policy CLI.
+    """
     if str(getattr(config, "kind", "Agent")) == "AgentProxy":
         return None
-    cli = Path(cli_path).expanduser()
-    projection = _invoke(cli, ["check-projections"], timeout_s=timeout_s)
+    cli = Path(cli_path).expanduser() if cli_path is not None else None
+    authority_branch = _config_authority_branch(config)
+    projection = _dispatch(
+        cli,
+        ["check-projections"],
+        timeout_s=timeout_s,
+        authority_branch=authority_branch,
+    )
     if projection.get("decision") != "current":
         raise WorktreePolicyError("worktree policy projections were not current")
     policy_sha = _sha256(projection, "policy_sha256")
@@ -387,17 +623,19 @@ def enforce_task_worktree_policy(
     assert plan is not None
     target = Path(plan.resolved_workdir)
     if target.exists():
-        context = _invoke(
+        context = _dispatch(
             cli,
             ["assert-context", "--repo", str(target), "--intent", "edit"],
             timeout_s=timeout_s,
+            authority_branch=authority_branch,
         )
     else:
         context = {
-            **_invoke(
+            **_dispatch(
                 cli,
                 ["inspect", "--repo", plan.repo_root],
                 timeout_s=timeout_s,
+                authority_branch=authority_branch,
             ),
             "repo_root": plan.resolved_workdir,
             "branch": plan.branch,

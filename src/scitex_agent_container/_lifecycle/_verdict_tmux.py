@@ -28,7 +28,7 @@ NOT A SENSOR. It must return UNKNOWN, in both directions.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 __all__ = [
     "in_sif",
@@ -191,6 +191,7 @@ def tmux_session_observation(
     session_name: str,
     *,
     socket_name: str | None = None,
+    aliases: Sequence[str] = (),
     snapshot_fn: Callable[..., dict | None] | None = None,
     in_sif_fn: Callable[[], bool] | None = None,
 ) -> tuple[bool | None, bool | None]:
@@ -210,16 +211,25 @@ def tmux_session_observation(
     exactly the bug: one syscall, two hats, and a destruction authorised on it.
     So the caller needs to know WHICH of the two spoke, and this is what tells it.
 
+    ``aliases`` names further sessions that count as present — the legacy
+    ``tui-`` name for a bare ``session_name`` (see
+    :mod:`..runtimes._tui_session_names.session_aliases`), so pre-cutover sessions
+    still read as live. Preferred (canonical) first, legacy second; callers
+    pass them rather than this module re-deriving names, so the grammar stays
+    in one place.
+
     ``(None, None)`` — we could not look at all.
     """
     snapshot = _observed_snapshot(socket_name, snapshot_fn, in_sif_fn)
     if snapshot is None:
         return None, None
-    return True, session_name in snapshot
+    if session_name in snapshot:
+        return True, True
+    return True, any(alias in snapshot for alias in aliases)
 
 
 def session_name_for_config(config: Any) -> str:
-    """The tmux session name sac owns for this agent (``tui-<name>``).
+    """The tmux session name sac mints for this agent: the bare agent name.
 
     Goes through the runtime's own canonical helper so the probe and the runtime
     can never drift apart about which session belongs to whom.
@@ -229,4 +239,4 @@ def session_name_for_config(config: Any) -> str:
 
         return str(session_name_for(config))
     except Exception:  # stx-allow: fallback (an unresolvable session name must not crash a liveness read; the caller degrades to the ambiguous-instrument branch, which COLLAPSES rather than inventing a witness)
-        return f"tui-{getattr(config, 'name', '')}"
+        return str(getattr(config, "name", ""))

@@ -7,6 +7,7 @@ process/JSON/exit-code boundary while test-selected modes emulate outcomes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -58,6 +59,61 @@ if operation == "check-shell":
         }
     )
 
+if operation == "check-owned-restore":
+    # Contract-only receipt producer. Neutral policy's independent real-Git
+    # suite tests authorization; this fixture exercises SAC receipt mechanics.
+    repo = Path(sys.argv[sys.argv.index("--repo") + 1]).resolve()
+    owner_file = Path(sys.argv[sys.argv.index("--owner-file") + 1])
+    raw = owner_file.read_bytes()
+    owner = json.loads(raw)
+    target, branch = owner["worktree"], owner["branch"]
+    if mode == "deny" or Path(target).exists():
+        emit({"allowed": False, "reason": "fixture denied owned restore"}, 2)
+
+    def read_git(*args):
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    status_argv = [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        ".",
+        ":(exclude).worktrees",
+    ]
+    emit(
+        {
+            "allowed": True,
+            "decision": "allow",
+            "operation": "restore-owned-worktree",
+            "policy_id": "scitex.worktree.fixture",
+            "schema_version": 1,
+            "policy_sha256": POLICY_SHA,
+            "projection_sha256": PROJECTION_SHA,
+            "repo_root": str(repo),
+            "git_common_dir": str(repo / ".git"),
+            "branch": read_git("branch", "--show-current"),
+            "surface": "authority",
+            "agent": owner["agent"],
+            "owner_file": str(owner_file),
+            "owner_sha256": hashlib.sha256(raw).hexdigest(),
+            "worktree": target,
+            "restore_branch": branch,
+            "expected_tip": read_git("rev-parse", branch),
+            "primary_head": read_git("rev-parse", "HEAD"),
+            "primary_status_argv": status_argv,
+            "primary_status_sha256": hashlib.sha256(
+                read_git(*status_argv).encode()
+            ).hexdigest(),
+            "worktree_registry_sha256": hashlib.sha256(
+                read_git("worktree", "list", "--porcelain").encode()
+            ).hexdigest(),
+            "command": ["git", "-C", str(repo), "worktree", "add", target, branch],
+        }
+    )
+
 if operation not in {"inspect", "assert-context"}:
     emit({"allowed": False, "decision": "error", "error": "bad operation"}, 3)
 
@@ -76,11 +132,15 @@ def git(*args: str) -> str:
 root = Path(git("rev-parse", "--show-toplevel")).resolve()
 git_dir_raw = Path(git("rev-parse", "--git-dir"))
 common_raw = Path(git("rev-parse", "--git-common-dir"))
-git_dir = (repo / git_dir_raw).resolve() if not git_dir_raw.is_absolute() else git_dir_raw
+git_dir = (
+    (repo / git_dir_raw).resolve() if not git_dir_raw.is_absolute() else git_dir_raw
+)
 common = (repo / common_raw).resolve() if not common_raw.is_absolute() else common_raw
 surface = "authority" if git_dir == common else "linked-worktree"
 intent = sys.argv[sys.argv.index("--intent") + 1] if "--intent" in sys.argv else ""
-if mode == "deny" or (operation == "assert-context" and surface == "authority" and intent != "read"):
+if mode == "deny" or (
+    operation == "assert-context" and surface == "authority" and intent != "read"
+):
     emit(
         {
             "allowed": False,

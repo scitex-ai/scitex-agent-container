@@ -82,6 +82,28 @@ def cfg_path(tmp_path: Path, env_save_restore) -> Path:
     return p
 
 
+@pytest.fixture(autouse=True)
+def _empty_homes_root(tmp_path: Path):
+    """Pin the shadowing scan to an empty tmp tree.
+
+    ``sac host validate`` warns when another home holds a config.yaml —
+    and ``find_shadowing_configs`` scans the REAL ``/home`` whenever the
+    resolved config sits under it, which is exactly where pytest's
+    ``tmp_path`` lands on runners whose TMPDIR is under ``/home``. Same
+    save/restore shape as ``test_host_config_shadow.py``; the positive
+    shadowing behaviour stays covered there.
+    """
+    from scitex_agent_container._state import host_config_diagnose as diag
+
+    homes = tmp_path / "homes"
+    homes.mkdir(exist_ok=True)
+    saved, diag.HOMES_ROOT = diag.HOMES_ROOT, homes
+    try:
+        yield
+    finally:
+        diag.HOMES_ROOT = saved
+
+
 @pytest.fixture
 def empty_registry(tmp_path: Path, env_save_restore) -> Path:
     """A real, EMPTY scitex-dev host registry at $SCITEX_DIR/dev/hosts.yaml.

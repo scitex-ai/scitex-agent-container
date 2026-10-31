@@ -12,9 +12,13 @@ STX-NM002). AAA markers, one assert each, ``test__<module>.py`` name.
 
 from __future__ import annotations
 
+import pytest
+
+from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
 from scitex_agent_container.runtimes._tui_drain import (
     drain_modals_until_ready,
     wait_for_settle,
+    wait_until_input_ready,
 )
 
 # ---------------------------------------------------------------------------
@@ -179,3 +183,99 @@ def test_drain_returns_true_when_already_ready() -> None:
     )
     # Assert
     assert result is True
+
+
+_HOOKS = (
+    "Hooks need review\n"
+    + "\n".join(f"  public-hook-{index}" for index in range(51))
+    + "\n› Review enabled hooks\n? for shortcuts\n"
+)
+
+
+@pytest.mark.parametrize("frames", [[_HOOKS], ["still booting", _HOOKS]])
+def test_native_hooks_dialog_refuses_before_shortcut_or_settle_readiness(frames):
+    # Arrange
+    pane = _ScriptedPane(frames)
+    # Act
+    result = drain_modals_until_ready(
+        "s",
+        capture_fn=pane.capture,
+        send_keys_fn=pane.send,
+        exists_fn=pane.exists,
+        timeout_s=100,
+        poll_s=0,
+        settle_quiet_s=0,
+        settle_max_s=0,
+        sleep_fn=_noop_sleep,
+        time_fn=iter(range(200)).__next__,
+    )
+    # Assert
+    assert result is False
+
+
+@pytest.mark.parametrize("frames", [[_HOOKS], ["still booting", _HOOKS]])
+def test_native_hooks_dialog_receives_no_drain_keys(frames):
+    # Arrange
+    pane = _ScriptedPane(frames)
+    # Act
+    drain_modals_until_ready(
+        "s",
+        capture_fn=pane.capture,
+        send_keys_fn=pane.send,
+        exists_fn=pane.exists,
+        timeout_s=100,
+        poll_s=0,
+        settle_quiet_s=0,
+        settle_max_s=0,
+        sleep_fn=_noop_sleep,
+        time_fn=iter(range(200)).__next__,
+    )
+    # Assert
+    assert pane.sent == []
+
+
+@pytest.mark.parametrize("frames", [[_HOOKS], [_DEVCHAN, _HOOKS]])
+def test_input_wait_refuses_native_review(frames):
+    # Arrange
+    pane = _ScriptedPane(frames)
+    # Act
+    # Assert
+    with pytest.raises(TuiInputNotReadyError, match="no keys sent"):
+        wait_until_input_ready(
+            "s",
+            capture_fn=pane.capture,
+            send_keys_fn=pane.send,
+            exists_fn=pane.exists,
+            timeout_s=100,
+            poll_s=0,
+            settle_quiet_s=0,
+            settle_max_s=0,
+            sleep_fn=_noop_sleep,
+            time_fn=iter(range(200)).__next__,
+        )
+
+
+def _refused_input_wait(pane):
+    with pytest.raises(TuiInputNotReadyError):
+        wait_until_input_ready(
+            "s",
+            capture_fn=pane.capture,
+            send_keys_fn=pane.send,
+            exists_fn=pane.exists,
+            timeout_s=100,
+            poll_s=0,
+            settle_quiet_s=0,
+            settle_max_s=0,
+            sleep_fn=_noop_sleep,
+            time_fn=iter(range(200)).__next__,
+        )
+
+
+@pytest.mark.parametrize("frames", [[_HOOKS], [_DEVCHAN, _HOOKS]])
+def test_input_wait_sends_no_key_when_native_review_blocks(frames):
+    # Arrange
+    pane = _ScriptedPane(frames)
+    # Act
+    _refused_input_wait(pane)
+    # Assert
+    assert pane.sent == []

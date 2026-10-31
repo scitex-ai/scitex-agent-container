@@ -82,7 +82,9 @@ _MAX_PARALLEL_HOSTS = 16
 _BATCH_MARGIN_S = 2.0
 
 
-def _default_local_lister(registry, *, capability, machine, group, running_only):
+def _default_local_lister(
+    registry, *, capability, machine, group, running_only, detail_level
+):
     from ._agent_list import get_agent_list_data
 
     def lister() -> list[dict]:
@@ -92,6 +94,7 @@ def _default_local_lister(registry, *, capability, machine, group, running_only)
             machine=machine,
             group=group,
             running_only=running_only,
+            detail_level=detail_level,
         )
 
     return lister
@@ -111,6 +114,7 @@ def collect_fleet(
     targets: Sequence[HostTarget] | None = None,
     local_lister: Callable[[], list[dict]] | None = None,
     peer_probe: Callable[..., tuple[HostReport, list[dict]]] | None = None,
+    detail_level: int | None = None,
 ) -> FleetListing:
     """Query every permitted host and return the merged rows + per-host reports.
 
@@ -133,6 +137,7 @@ def collect_fleet(
             machine=machine,
             group=group,
             running_only=running_only,
+            detail_level=detail_level,
         )
 
     local_host = _resolve_display_host()
@@ -178,7 +183,10 @@ def collect_fleet(
     remote_targets = [t for t in selected if not t.local]
     if remote_targets:
         probe = peer_probe or _default_peer_probe(
-            capability=capability, machine=machine, group=group
+            capability=capability,
+            machine=machine,
+            group=group,
+            detail_level=detail_level,
         )
         report_rows = _fan_out(
             remote_targets,
@@ -199,7 +207,7 @@ def collect_fleet(
     )
 
 
-def _default_peer_probe(*, capability, machine, group):
+def _default_peer_probe(*, capability, machine, group, detail_level):
     def probe(target: HostTarget, timeout_s: float):
         return ssh_peer_probe(
             target,
@@ -207,6 +215,7 @@ def _default_peer_probe(*, capability, machine, group):
             capability=capability,
             machine=machine,
             group=group,
+            detail_level=detail_level,
         )
 
     return probe

@@ -74,22 +74,34 @@ def _manifest(
 
 
 def test_build_sorts_packages_and_marks_present() -> None:
+    # Arrange
+    # Act
     got = _manifest("h1", {"b-pkg": _rec(), "a-pkg": _rec()})
+    # Assert
     assert list(got["checkouts"].keys()) == ["a-pkg", "b-pkg"]
 
 
 def test_build_coerces_dirty_ahead_behind_types() -> None:
+    # Arrange
+    # Act
     got = _manifest("h1", {"p": {"branch": "develop", "sha": "a" * 40, "dirty": 1, "ahead": "2", "behind": "0"}})
+    # Assert
     assert got["checkouts"]["p"]["ahead"] == 2
 
 
 def test_build_records_missing_keys_as_errors() -> None:
+    # Arrange
+    # Act
     got = _manifest("h1", {"p": {"branch": "develop", "sha": "a" * 40}})
+    # Assert
     assert "p" not in got["checkouts"]
 
 
 def test_build_absent_dotfiles_marks_not_present() -> None:
+    # Arrange
+    # Act
     got = _manifest("h1", {}, dotfiles=None)
+    # Assert
     assert got["dotfiles"] == {"present": False, "sha": None}
 
 
@@ -99,7 +111,10 @@ def test_build_absent_dotfiles_marks_not_present() -> None:
 
 
 def test_single_host_is_trivially_ok() -> None:
+    # Arrange
+    # Act
     got = diff_checkout_manifests({"h1": _manifest("h1", {"p": _rec()})})
+    # Assert
     assert got["ok"] is True
 
 
@@ -109,11 +124,14 @@ def test_single_host_is_trivially_ok() -> None:
 
 
 def test_identical_fleet_is_ok() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec()}),
         "h2": _manifest("h2", {"p": _rec()}),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["ok"] is True
 
 
@@ -123,20 +141,26 @@ def test_identical_fleet_is_ok() -> None:
 
 
 def test_dotfiles_sha_mismatch_is_not_ok() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {}, dotfiles="d" * 40),
         "h2": _manifest("h2", {}, dotfiles="e" * 40),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["dotfiles"]["ok"] is False
 
 
 def test_dotfiles_agreement_is_ok() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {}, dotfiles="d" * 40),
         "h2": _manifest("h2", {}, dotfiles="d" * 40),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["dotfiles"]["ok"] is True
 
 
@@ -146,11 +170,14 @@ def test_dotfiles_agreement_is_ok() -> None:
 
 
 def test_sac_version_mismatch_is_not_ok() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {}, sac="0.28.2"),
         "h2": _manifest("h2", {}, sac="0.28.1"),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["sac_version"]["ok"] is False
 
 
@@ -160,60 +187,78 @@ def test_sac_version_mismatch_is_not_ok() -> None:
 
 
 def test_missing_package_on_one_host_conflicts() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec()}),
         "h2": _manifest("h2", {}),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["packages"]["p"]["conflicts"][0]["kind"] == "missing_on_host"
 
 
 def test_dirty_tree_is_reported_with_diverged_host() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec(dirty=True)}),
         "h2": _manifest("h2", {"p": _rec()}),
     }
     got = diff_checkout_manifests(per)
+    # Act
     kinds = [c["kind"] for c in got["packages"]["p"]["conflicts"]]
+    # Assert
     assert "dirty_on_host" in kinds
 
 
 def test_ahead_and_dirty_both_reported_neither_hides_other() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec(dirty=True, ahead=2)}),
         "h2": _manifest("h2", {"p": _rec()}),
     }
     got = diff_checkout_manifests(per)
+    # Act
     kinds = [c["kind"] for c in got["packages"]["p"]["conflicts"]]
+    # Assert
     assert "dirty_on_host" in kinds and "ahead_of_origin" in kinds
 
 
 def test_branch_mismatch_conflicts() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec(branch="develop")}),
         "h2": _manifest("h2", {"p": _rec(branch="main")}),
     }
     got = diff_checkout_manifests(per)
+    # Act
     kinds = [c["kind"] for c in got["packages"]["p"]["conflicts"]]
+    # Assert
     assert "branch_mismatch" in kinds
 
 
 def test_behind_only_is_plain_lag() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec(behind=3)}),
         "h2": _manifest("h2", {"p": _rec()}),
     }
     got = diff_checkout_manifests(per)
+    # Act
     kinds = [c["kind"] for c in got["packages"]["p"]["conflicts"]]
+    # Assert
     assert "behind_origin" in kinds
 
 
 def test_overall_ok_false_when_any_package_conflicts() -> None:
+    # Arrange
     per = {
         "h1": _manifest("h1", {"p": _rec(behind=1)}),
         "h2": _manifest("h2", {"p": _rec()}),
     }
+    # Act
     got = diff_checkout_manifests(per)
+    # Assert
     assert got["ok"] is False
 
 

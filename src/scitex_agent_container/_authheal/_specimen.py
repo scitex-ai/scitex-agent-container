@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .._runners._tmux._target import exact_target
+from ..runtimes._tui_session_names import resolve_live_session
 
 __all__ = [
     "Specimen",
@@ -55,8 +56,6 @@ _SCROLLBACK_LINES = 60
 #: Per-command wall clock. Generous: a specimen is worth waiting for, and a slow
 #: tmux is not a reason to restart an agent with no reproduction on disk.
 _TIMEOUT_S = 60.0
-
-_TUI_PREFIX = "tui-"
 
 
 def specimen_dir() -> Path:
@@ -107,13 +106,42 @@ def _run(argv: list[str]) -> str:
     return body
 
 
+def _list_sessions() -> list[str] | None:
+    """Every live tmux session, or ``None`` when the probe could not look."""
+    # stx-allow: fallback (reason: a probe that fails is RECORDED downstream
+    # as a missing reading — the specimen says which section is missing and
+    # why, instead of aborting the capture)
+    try:
+        out = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_S,
+        )
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        return None
+    if out.returncode != 0:
+        return None
+    return sorted(s for s in out.stdout.split() if s)
+
+
+def _resolve_session(agent: str) -> str:
+    """The session to read for ``agent``: live bare, else live legacy.
+
+    A ``None`` listing (blind) resolves to the canonical bare name — the
+    capture then records its own failure verbatim, which is exactly what a
+    specimen section is for.
+    """
+    return resolve_live_session(agent, _list_sessions())
+
+
 def _pane_pid(agent: str) -> str:
     return _run(
         [
             "tmux",
             "list-panes",
             "-t",
-            exact_target(f"{_TUI_PREFIX}{agent}"),
+            exact_target(_resolve_session(agent)),
             "-F",
             "#{pane_pid}",
         ]
@@ -194,7 +222,7 @@ def capture_specimen(
         f"--- auth-status (full) ---\n{_auth_status_table(sac_bin)}\n"
         f"--- pane pid ---\n{pid}\n{_ps_line(pid)}\n"
         f"--- pane capture (full scrollback tail {_SCROLLBACK_LINES}) ---\n"
-        f"{_run(['tmux', 'capture-pane', '-t', exact_target(f'{_TUI_PREFIX}{agent}'), '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
+        f"{_run(['tmux', 'capture-pane', '-t', exact_target(_resolve_session(agent)), '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
         f"--- shared-store row ---\n{_state_store_row(agent)}\n"
     )
     target = specimen_path(agent, now=now, root=root)

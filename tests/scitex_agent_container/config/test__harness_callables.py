@@ -55,12 +55,19 @@ def test_resolved_backend_reaches_every_hermes_session_mode(
     config = _config(session=session, resume_id=resume_id)
     # Act
     argv = _hermes_tui_inner_argv(config)
-    # Assert — no explicit model/provider override: the generated hermes
-    # config.yaml carries the default, and the override path trips the
-    # data-training-tier guard in non-interactive runs.
-    assert "--model" not in argv
-    assert "--provider" not in argv
+    # Assert
     assert _session_tail(argv) == expected_tail
+
+
+@pytest.mark.parametrize("session", ["fresh", "continue", "resume"])
+@pytest.mark.parametrize("flag", ["--model", "--provider"])
+def test_hermes_session_uses_generated_backend_config(session, flag):
+    # Arrange — the generated config owns backend selection in every mode.
+    config = _config(session=session, resume_id="session-20260910")
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert flag not in argv
 
 
 def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():
@@ -127,6 +134,17 @@ def test_resume_without_an_id_refuses_instead_of_starting_fresh():
 def test_hermes_resume_id_bypasses_claude_transcript_preflight():
     # Arrange
     config = _config(session="resume", resume_id="20260910_072303_526792")
+    # Act
+    should_preflight = should_preflight_claude_resume(config, config.claude.resume_id)
+    # Assert
+    assert should_preflight is False
+
+
+@pytest.mark.parametrize("harness", ["codex", "opencode", "openai"])
+def test_native_resume_bypasses_claude_projects_store(harness):
+    # Arrange
+    config = _config(session="resume", resume_id="01a0fdf5-a004-75a3-ae59-86f9a7eac19a")
+    config.harness = harness
     # Act
     should_preflight = should_preflight_claude_resume(config, config.claude.resume_id)
     # Assert

@@ -94,3 +94,81 @@ def test_requested_receipt_is_written_as_structured_json(tmp_path):
     observed = json.loads(receipt.read_text())
     # Assert
     assert observed == payload
+
+
+def test_registry_host_resolves_without_config_entry(tmp_path):
+    # Arrange — measured 2026-10-15: distribute refused registry-known
+    # computes on a fresh container with no config.yaml peers.
+    from scitex_agent_container._state import _peer_resolve
+
+    source = tmp_path / "x.sif"
+    source.write_bytes(b"x")
+    old_load = cmd._load_config
+    old_hosts = _peer_resolve.registry_hosts
+
+    class Config:
+        peers = {}
+        source_path = tmp_path / "config.yaml"
+
+    cmd._load_config = lambda: Config()
+    _peer_resolve.registry_hosts = lambda: []
+    # Act: empty peers AND empty registry -> still rejected.
+    try:
+        result = CliRunner().invoke(
+            image_group,
+            ["distribute", str(source), "--layer", "base", "--host", "ghost"],
+        )
+    finally:
+        cmd._load_config = old_load
+        _peer_resolve.registry_hosts = old_hosts
+    # Assert
+    assert (result.exit_code, "not configured" in result.output) == (2, True)
+
+
+def test_registry_host_accepted_without_config_entry(tmp_path):
+    # Arrange — the SSOT direction: a registry-known host needs no
+    # config.yaml entry.
+    from scitex_agent_container._state import _peer_resolve
+    from scitex_agent_container._state.host_registry import HostView
+
+    source = tmp_path / "x.sif"
+    source.write_bytes(b"x")
+    old_load = cmd._load_config
+    old_hosts = _peer_resolve.registry_hosts
+
+    class Config:
+        peers = {}
+        source_path = tmp_path / "config.yaml"
+
+    cmd._load_config = lambda: Config()
+    _peer_resolve.registry_hosts = lambda: [
+        HostView(
+            name="ship-01",
+            kind="compute",
+            ssh_alias="ship-01",
+            scitex_root="~/.scitex",
+        )
+    ]
+    # Act
+    try:
+        result = CliRunner().invoke(
+            image_group,
+            [
+                "distribute",
+                str(source),
+                "--layer",
+                "base",
+                "--host",
+                "ship-01",
+                "--dry-run",
+                "--json",
+            ],
+        )
+    finally:
+        cmd._load_config = old_load
+        _peer_resolve.registry_hosts = old_hosts
+    # Assert
+    assert (result.exit_code, '"status": "planned"' in result.output) == (
+        0,
+        True,
+    ), result.output

@@ -82,6 +82,11 @@ class StartupPromptInjectorMixin:
         # read-back instruction LEADS -- see _boot_recovery for the lost
         # operator message this rule was written from.
         prompts = with_missed_input_recovery(spec_prompts)
+        if str(getattr(config, "harness", "") or "").lower() == "codex":
+            # Codex starts work on the first submitted turn. Deliver the
+            # complete mandate with the recovery instruction so bootstrap
+            # never waits for that work to finish before arming CCT.
+            prompts = ["\n\n".join(prompts)]
         name = session_name_for(config)
         # Short pre-clear drain: the boot-drain already spent the long window;
         # this only needs to CONFIRM no cancelable modal remains before the
@@ -89,7 +94,7 @@ class StartupPromptInjectorMixin:
         # doubling the wait (the per-prompt gate below owns the real patience).
         try:
             self.wait_until_input_ready(config, timeout_s=5.0)
-        except Exception as exc:  # stx-allow: fallback (reason: a drain timeout here must not skip prompt injection outright — the compose-clear Esc-guard + per-prompt wait_until_input_ready are the downstream nets; logged LOUD)
+        except Exception as exc:  # stx-allow: fallback (reason: a drain timeout here must not skip prompt injection outright — the compose-clear Esc-guard + per-prompt wait_until_input_ready are the downstream nets; scitex_logging warning goes to stderr)
             log.warning(
                 "TuiSessionRuntime: pre-clear modal drain for %s did not reach "
                 "input-ready (%s); proceeding — the compose-clear Esc-guard and "
@@ -97,17 +102,39 @@ class StartupPromptInjectorMixin:
                 name,
                 exc,
             )
+            if str(getattr(config, "harness", "") or "").lower() == "codex":
+                raise
         self._clear_compose_buffer(name)
         for index, prompt in enumerate(prompts, start=1):
             if not prompt:
                 continue
             try:
                 self.wait_until_input_ready(config)
+                codex = str(getattr(config, "harness", "") or "").lower() == "codex"
+                native_proof = None
+                if codex and getattr(self, "_production_command_builder", False):
+                    from ._codex_startup_admission import capture_startup_admission
+
+                    native_proof = capture_startup_admission(
+                        config, pane_pid=self._mux.pane_pid(name), mission=prompt
+                    )
                 # (a) paste LITERALLY (-l) — no submit here.
                 self._mux.send_text_literal(name, prompt)
                 # (b)+(c) submit ONLY when idle, verify advancement, retry
                 # bounded, then fail LOUD. No blind/defensive Enter.
-                submitted = self._verify_submitted(name, pasted=prompt)
+                submitted = self._verify_submitted(
+                    name, pasted=prompt, require_submission_proof=codex
+                )
+                if submitted and native_proof is not None:
+                    from ._codex_startup_admission import wait_for_startup_admission
+
+                    submitted = wait_for_startup_admission(
+                        native_proof, capture_fn=lambda: self._mux.capture_content(name)
+                    )
+                if codex and not submitted:
+                    raise RuntimeError(
+                        f"Codex startup mission was not admitted by {name}"
+                    )
                 log.info(
                     "TuiSessionRuntime: injected startup_prompt %d/%d "
                     "(%d chars) into %s — idle-gated submit %s",
@@ -125,6 +152,8 @@ class StartupPromptInjectorMixin:
                     name,
                     exc,
                 )
+                if str(getattr(config, "harness", "") or "").lower() == "codex":
+                    raise
 
     def _clear_compose_buffer(
         self,
@@ -156,6 +185,7 @@ class StartupPromptInjectorMixin:
         poll_s: float = 0.6,
         appear_timeout_s: float = 5.0,
         idle_wait_s: float = 30.0,
+        require_submission_proof: bool = False,
     ) -> bool:
         """Verify a just-pasted turn was SUBMITTED; resend Enter once idle.
 
@@ -172,4 +202,5 @@ class StartupPromptInjectorMixin:
             poll_s=poll_s,
             appear_timeout_s=appear_timeout_s,
             idle_wait_s=idle_wait_s,
+            require_submission_proof=require_submission_proof,
         )

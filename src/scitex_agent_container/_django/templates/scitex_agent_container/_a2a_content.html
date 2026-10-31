@@ -1,9 +1,8 @@
 {% comment %}
-Shared Agents A2A content. Included by:
-  * a2a.html        (standalone: inside scitex_ui/standalone_shell.html)
-  * a2a_hub.html    (Hub: inside global_base.html — no second header)
-`url_base` is the app's mount prefix ("" at root, "/apps/agents" when
-mounted) so links and form actions are correct in both modes.
+Shared Agents A2A content. Included by a2a.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
+`url_base` is the app's mount prefix ("" at root, "/apps/agent-container" when
+mounted) so links and form actions are correct at any mount.
 
 Two halves, both projections of state the console already reads:
 
@@ -17,13 +16,7 @@ Two halves, both projections of state the console already reads:
    with the operator gate + audit trail.
 {% endcomment %}
 <div class="agents-app" data-page="a2a">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      <h1><i class="fas fa-share-nodes"></i> A2A peers</h1>
-      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    </div>
-  </header>
+  {% include "scitex_agent_container/_app_header.html" %}
 
   {% if notice %}
   <div class="agents-bannor {% if notice.state == 'completed' %}ok{% elif notice.state == 'replay' %}{% else %}err{% endif %}" role="status">

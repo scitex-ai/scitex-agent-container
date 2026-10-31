@@ -35,6 +35,10 @@ import time
 from typing import Callable, Sequence
 
 from .._runners._tmux._target import exact_target
+from ..runtimes._tui_session_names import (
+    candidate_session_names,
+    resolve_live_session,
+)
 from ._state import AgentState
 
 __all__ = [
@@ -47,8 +51,6 @@ __all__ = [
 
 #: Seconds between the two pane captures. Same default as ``auth-status``.
 DEFAULT_INTERVAL = 4.0
-
-_TUI_PREFIX = "tui-"
 
 
 def _in_sif() -> bool:
@@ -114,7 +116,12 @@ def ps_line_for(pid: int) -> tuple[str | None, str]:
 
 
 def _list_tui_sessions() -> list[str] | None:
-    """Live ``tui-*`` sessions, or ``None`` when the probe was not a sensor.
+    """Live tmux sessions on the default server, or ``None`` when blind.
+
+    Returns EVERY session now, not just ``tui-*``: new sessions are minted
+    bare (indistinguishable by prefix), so the caller matches by candidate
+    names instead. Membership is what judges liveness — the list is only a
+    reading of it. Kept the historic name so existing seams keep resolving.
 
     ``None`` covers BOTH ways this fails to see the fleet, and the second is the
     trap: from inside a container the probe does not error, it SUCCEEDS and
@@ -135,7 +142,7 @@ def _list_tui_sessions() -> list[str] | None:
         return None
     if out.returncode != 0:
         return None
-    return sorted(s for s in out.stdout.split() if s.startswith(_TUI_PREFIX))
+    return sorted(s for s in out.stdout.split() if s)
 
 
 def _capture(session: str) -> str | None:
@@ -241,10 +248,11 @@ def observe_agent(
         observed_at=now if now is not None else time.time(),
         observer=observer,
     )
-    session = f"{_TUI_PREFIX}{name}"
+    bare, legacy = candidate_session_names(name)
 
     # --- is_tmux_live --------------------------------------------------------
     listed = sessions if sessions is not None else (sessions_fn or _list_tui_sessions)()
+    live: str | None = None
     if listed is None:
         state = state.with_signal(
             "is_tmux_live",
@@ -256,19 +264,25 @@ def observe_agent(
             tmux_sessions="",
         )
     else:
+        live = bare if bare in listed else (legacy if legacy in listed else None)
         state = state.with_signal(
             "is_tmux_live",
-            session in listed,
+            live is not None,
             (
-                f"the tmux server lists {session}"
-                if session in listed
+                f"the tmux server lists {live}"
+                if live is not None
                 else f"the tmux server was read successfully and has NO "
-                f"{session} session among its {len(listed)} tui- session(s)"
+                f"{bare} (or legacy {legacy}) session among its {len(listed)} "
+                f"session(s)"
             ),
             tmux_sessions="\n".join(listed),
         )
 
     # --- is_process_alive (DECISIVE — so every non-observation must be None) --
+    # Address the LIVE session: bare when it is up, else the legacy name when
+    # THAT is the live one, else the bare default (downstream reads of a
+    # missing session yield None, never a false conviction).
+    session = live if live is not None else resolve_live_session(name, listed)
     state = _process_signal(state, session, pane_pid_fn, ps_fn)
 
     # --- the pane, captured TWICE --------------------------------------------

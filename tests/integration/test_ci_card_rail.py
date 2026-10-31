@@ -9,11 +9,12 @@ status a red gate produces.
 **Shape tests** assert facts about the WORKFLOW, in the spirit of
 ``test_ci_python_matrix_shape.py``. They exist because every failure this
 rail prevents is a silent one, and the ways to re-open that hole are all
-single-line YAML edits: unpin ``runs-on`` (the verdict then runs where
-loopback is a different host's daemon and a different postgres), drop
-``if: always()`` (the rail then only congratulates), or drop the explicit
-DSN (the store silently becomes a local file). None would fail a test
-that only exercised Python, and none would look wrong in review.
+single-line YAML edits on the one caller ``ci.yml``: re-point a ``uses:``
+pin (every gate then runs unreviewed org code), rename a caller job (the
+left half of a branch-protection context — protection silently detaches),
+or add caller-local ``runs-on``/``steps`` (execution policy forks back into
+this repo). None would fail a test that only exercised Python, and none
+would look wrong in review.
 """
 
 from __future__ import annotations
@@ -28,13 +29,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CI_DIR = REPO_ROOT / ".github" / "ci"
-GATE_WORKFLOW = (
-    REPO_ROOT / ".github" / "workflows" / "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
-)
-
-# Carried by exactly one runner in the org pool: the machine that runs
-# `sac listen` and the card store.
-CONTROL_PLANE_LABEL = "sac-control-plane"
+GATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 LONG_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -68,21 +63,6 @@ def rail_cards():
 @pytest.fixture(scope="module")
 def gate_workflow() -> dict:
     return yaml.safe_load(GATE_WORKFLOW.read_text(encoding="utf-8"))
-
-
-@pytest.fixture(scope="module")
-def verdict_job(gate_workflow) -> dict:
-    return gate_workflow["jobs"]["verdict"]
-
-
-@pytest.fixture(scope="module")
-def verdict_run_script(verdict_job) -> str:
-    return " ".join(step.get("run", "") for step in verdict_job["steps"])
-
-
-@pytest.fixture(scope="module")
-def verdict_env(verdict_job) -> dict:
-    return next(step["env"] for step in verdict_job["steps"] if "env" in step)
 
 
 @pytest.fixture
@@ -305,7 +285,9 @@ def test_superseding_never_closes_the_current_card(rail_cards) -> None:
     current_id = rail_cards.card_id_for("o/sac", "b" * 40)
     store = _FakeStore([_pending(current_id, scope)])
     # Act
-    closed = rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    closed = rail_cards.supersede_older(
+        store, repo="o/sac", branch="feat/x", sha="b" * 40
+    )
     # Assert
     assert closed == []
 
@@ -613,147 +595,34 @@ def test_a_red_verdict_names_what_broke(rail) -> None:
     assert "assert 2 == 4" in text
 
 
-# ---------------------------------------------------------------------------
-# WORKFLOW SHAPE -- the single-line edits that would silently re-break it
-# ---------------------------------------------------------------------------
-def test_verdict_job_is_pinned_to_the_control_plane_host(verdict_job) -> None:
-    """ADR-0024 assumed "the self-hosted runners execute on this host".
-
-    They do not. ``vars.CI_RUNS_ON`` is ``scitex-org-cpu``: four runners
-    on four machines, and only scitex-04-org-cpu-01 sits on the box
-    running ``sac listen`` and the card store. Unpinned, this job would
-    75% of the time POST to another machine's loopback and write to
-    another postgres -- delivered to nobody, recorded nowhere, silent.
-    """
+# Workflow invariants for the verdict rail now live beside the shared
+# reusable workflow in scitex-ai/.github. This leaf suite keeps its rail
+# behavior tests; its only workflow contract is the one org-reusable caller.
+def test_leaf_workflow_calls_the_central_sif_matrix(gate_workflow) -> None:
     # Arrange
-    runs_on = verdict_job["runs-on"]
-    # Act
-    labels = set(runs_on) if isinstance(runs_on, list) else set()
+    jobs = gate_workflow["jobs"]
+    # Act: four caller jobs, each a bare `uses:` at the pinned org SHA.
+    # A caller-local `runs-on` or `steps` would fork execution policy back
+    # into this repo, which is exactly what ci.yml exists to end.
+    pin = "@8c646081e9f1352077d3d8674052cce7ec75a1b7"
+    central = "scitex-ai/.github/.github/workflows/"
+    expected_uses = {
+        "pytest-matrix": f"{central}pytest-matrix.yml{pin}",
+        "import-smoke": f"{central}import-smoke.yml{pin}",
+        "quality-audit": f"{central}quality-audit.yml{pin}",
+        "rtd-sphinx-build": f"{central}rtd-sphinx-build.yml{pin}",
+    }
+    caller_is_central = set(jobs) == set(expected_uses) and all(
+        job.get("uses") == expected_uses[job_id]
+        and "runs-on" not in job
+        and "steps" not in job
+        for job_id, job in jobs.items()
+    )
     # Assert
-    assert CONTROL_PLANE_LABEL in labels
-
-
-def test_verdict_job_does_not_inherit_the_shared_runner_pool(verdict_job) -> None:
-    """A literal label list, never ``vars.CI_RUNS_ON``."""
-    # Arrange
-    runs_on = verdict_job["runs-on"]
-    # Act
-    is_literal_list = isinstance(runs_on, list)
-    # Assert
-    assert is_literal_list
-
-
-def test_verdict_job_reports_red(verdict_job) -> None:
-    """Without ``always()`` a failed gate SKIPS this job.
-
-    The rail would then deliver green verdicts and stay silent on red --
-    a congratulations service, not a feedback rail.
-    """
-    # Arrange
-    condition = str(verdict_job.get("if", ""))
-    # Act
-    fires_unconditionally = "always()" in condition
-    # Assert
-    assert fires_unconditionally
-
-
-def test_verdict_job_waits_for_the_gate(verdict_job) -> None:
-    # Arrange
-    needs = verdict_job["needs"]
-    # Act
-    waits_on_test = "test" in needs
-    # Assert
-    assert waits_on_test
-
-
-def test_verdict_job_passes_the_card_store_explicitly(verdict_env) -> None:
-    """A noninteractive runner must name the shared-store authority itself.
-
-    A ``run:`` step gets a non-interactive shell sourcing no profile, so
-    the DSN must come from the workflow. Cards-specific SQLite-era variables
-    are intentionally no longer part of ambient store resolution.
-    """
-    # Arrange
-    keys = set(verdict_env)
-    # Act
-    declares_store = "SCITEX_STORE_DSN" in keys
-    # Assert
-    assert declares_store
-
-
-def test_verdict_job_points_at_a_postgres_store(verdict_env) -> None:
-    # Arrange
-    dsn = verdict_env["SCITEX_STORE_DSN"]
-    # Act
-    is_postgres = "postgres" in dsn
-    # Assert
-    assert is_postgres
-
-
-def test_verdict_job_uses_project_scoped_canonical_store_role(
-    verdict_env, rail_cards
-) -> None:
-    # Arrange
-    dsn = verdict_env["SCITEX_STORE_DSN"]
-    # Act
-    authority_is_exact = dsn == rail_cards.CANONICAL_CI_STORE_DSN
-    # Assert
-    assert authority_is_exact
-
-
-def test_verdict_job_does_not_export_sqlite_era_cards_variable(verdict_env) -> None:
-    # Arrange
-    keys = set(verdict_env)
-    # Act
-    exports_old_name = "SCITEX_CARDS_DB" in keys
-    # Assert
-    assert not exports_old_name
-
-
-def test_verdict_job_can_read_failed_job_logs(gate_workflow) -> None:
-    """Naming the failure needs ``actions: read``.
-
-    A workflow that withholds a permission its own job needs is one of
-    the inert-but-configured shapes this fleet keeps rediscovering.
-    """
-    # Arrange
-    permissions = gate_workflow["permissions"]
-    # Act
-    granted = permissions.get("actions")
-    # Assert
-    assert granted == "read"
-
-
-def test_verdict_step_invokes_the_rail(verdict_run_script) -> None:
-    # Arrange
-    script = verdict_run_script
-    # Act
-    invokes = "ci_card_rail.py verdict" in script
-    # Assert
-    assert invokes
-
-
-def test_verdict_step_passes_the_gate_result(verdict_run_script) -> None:
-    # Arrange
-    script = verdict_run_script
-    # Act
-    passes_conclusion = "--conclusion" in script
-    # Assert
-    assert passes_conclusion
-
-
-def test_verdict_step_resolves_uv_by_absolute_path(verdict_run_script) -> None:
-    """The runner service's PATH is the system default.
-
-    It does not include ~/.local/bin, so a bare ``uv`` is not found here
-    even though it is on the operator's interactive PATH.
-    """
-    # Arrange
-    script = verdict_run_script
-    # Act
-    has_absolute_fallback = ".local/bin/uv" in script
-    # Assert
-    assert has_absolute_fallback
+    assert caller_is_central, (
+        f"{GATE_WORKFLOW.name} drifted: "
+        f"{ {job_id: job.get('uses') for job_id, job in jobs.items()} }"
+    )
 
 
 # EOF

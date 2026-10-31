@@ -1,23 +1,18 @@
 {% comment %}
-Shared Agents create content. Included by create.html (standalone shell) and
-create_hub.html (Hub global_base). `url_base` is the app mount prefix so the
-back link and the form action are correct in both modes.
+Shared Agents create content. Included by create.html, which extends the SDK
+adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
+`url_base` is the app mount prefix so the
+back link and the form action are correct at any mount.
 
 CREATE in the authoring sense: scaffold a fresh v3 spec.yaml + to_home/
 skeleton through the SAME backend as `sac agents create`. The template
 select is live-scanned from the agents root on every GET (inline
 `minimal`/`full` plus any `_template_*` dir-templates), so the list cannot
 go stale. The GUI never overwrites: an existing spec fails loud (409) and
-the operator re-runs with `sac agents create --force` on the leaf.
+the operator edits that spec directly or chooses another agent name.
 {% endcomment %}
 <div class="agents-app" data-page="create">
-  <header class="agents-head">
-    <div class="agents-title">
-      <a class="back" href="{{ url_base }}/"><i class="fas fa-arrow-left"></i> Fleet</a>
-      <h1><i class="fas fa-plus"></i> Create agent</h1>
-      <span class="agents-sub">acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
-    </div>
-  </header>
+  {% include "scitex_agent_container/_app_header.html" %}
 
   {% if can_create %}
   <div class="detail-card">

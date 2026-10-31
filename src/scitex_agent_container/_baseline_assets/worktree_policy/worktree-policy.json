@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "policy_id": "scitex.worktree.v1",
+  "authority_branch": "develop",
+  "topic_branch_prefixes": [
+    "feature/",
+    "fix/",
+    "chore/",
+    "docs/",
+    "refactor/",
+    "test/"
+  ],
+  "worktree_directory": ".worktrees",
+  "owned_restore": {
+    "enabled": true,
+    "owner_file": "worktree-owner.json",
+    "directory_prefix": "sac-",
+    "branch_prefix": "feature/sac-"
+  },
+  "exit_codes": {
+    "allow": 0,
+    "deny": 2,
+    "invalid": 3,
+    "inspection_error": 4
+  },
+  "examples": [
+    {
+      "name": "authority-is-read-only",
+      "command": "assert-context --repo /path/to/repo --intent edit",
+      "outcome": "deny"
+    },
+    {
+      "name": "topic-worktree-is-editable",
+      "command": "assert-context --repo /path/to/repo/.worktrees/fix-x --intent edit",
+      "outcome": "allow"
+    },
+    {
+      "name": "inspect-before-work",
+      "command": "inspect --repo .",
+      "outcome": "resolved JSON policy record"
+    }
+  ]
+}

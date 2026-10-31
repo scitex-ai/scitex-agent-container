@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -47,10 +48,34 @@ def _one_sdk_agent(state_dir: Path):
     return _lister
 
 
-async def _run_one_tick(**kwargs) -> None:
-    """Start the loop, let exactly one tick run, then cancel cleanly."""
+async def _settle(predicate, timeout_s: float = 5.0) -> None:
+    """Wait until ``predicate()`` holds (or the deadline passes).
+
+    The tick body runs in an EXECUTOR THREAD, so a fixed sleep is a race: on
+    a loaded host the thread has not finished writing when the assertion
+    runs. Poll for the expected end-state instead of guessing a duration.
+    Mirrors ``_settle`` in test__tui_heartbeat_loop.py.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.02)
+
+
+async def _run_one_tick(settle_for=None, **kwargs) -> None:
+    """Start the loop, let one tick complete, then cancel cleanly.
+
+    ``settle_for`` is a predicate describing the tick's expected end-state
+    (e.g. "the heartbeat file exists"). When omitted — the cases that assert
+    NOTHING was written — a short fixed wait is correct, since there is no
+    positive end-state to poll for. Mirrors test__tui_heartbeat_loop.py.
+    """
     task = asyncio.create_task(sdk_heartbeat_loop(interval_s=0.05, **kwargs))
-    await asyncio.sleep(0.12)
+    if settle_for is None:
+        await asyncio.sleep(0.25)
+    else:
+        await _settle(settle_for)
     task.cancel()
     try:
         await task
@@ -70,6 +95,7 @@ async def test_loop_writes_heartbeat_json_for_live_sdk_agent(tmp_path: Path):
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=(state_dir / "heartbeat.json").is_file,
         agent_lister=_one_sdk_agent(state_dir),
         is_running_fn=lambda cfg: True,
         write_fn=write_heartbeat,
@@ -85,6 +111,7 @@ async def test_heartbeat_state_is_running(tmp_path: Path):
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=(state_dir / "heartbeat.json").is_file,
         agent_lister=_one_sdk_agent(state_dir),
         is_running_fn=lambda cfg: True,
         write_fn=write_heartbeat,
@@ -106,6 +133,7 @@ async def test_heartbeat_ts_is_fresh_wall_clock(tmp_path: Path):
     before = _time.time()
     # Act
     await _run_one_tick(
+        settle_for=(state_dir / "heartbeat.json").is_file,
         agent_lister=_one_sdk_agent(state_dir),
         is_running_fn=lambda cfg: True,
         write_fn=write_heartbeat,
@@ -122,6 +150,7 @@ async def test_heartbeat_at_renders_as_iso_8601_for_the_read_side(tmp_path: Path
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=(state_dir / "heartbeat.json").is_file,
         agent_lister=_one_sdk_agent(state_dir),
         is_running_fn=lambda cfg: True,
         write_fn=write_heartbeat,
@@ -191,6 +220,7 @@ async def test_one_agent_failure_does_not_block_a_second_agent(tmp_path: Path):
 
     # Act
     await _run_one_tick(
+        settle_for=(good_dir / "heartbeat.json").is_file,
         agent_lister=_lister,
         is_running_fn=lambda cfg: True,
         write_fn=_write,

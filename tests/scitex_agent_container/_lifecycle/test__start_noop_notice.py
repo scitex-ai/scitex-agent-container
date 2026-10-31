@@ -79,13 +79,13 @@ def test_offers_the_stop_then_start_sequence(notice):
     assert expected in actual
 
 
-def test_offers_the_force_escape_hatch(notice):
+def test_offers_guarded_restart_for_a_new_session(notice):
     # Arrange
-    expected = "sac agents start dotfiles --force"
+    expected = "sac agents restart dotfiles --fresh -y"
     # Act
     actual = notice
     # Assert
-    assert expected in actual
+    assert expected in actual and "--force" not in actual
 
 
 # ---------------------------------------------------------------------------
@@ -160,4 +160,4 @@ def test_render_start_noop_notice_names_the_agents_tui_session():
     # Act
     actual = render_start_noop_notice(_Cfg(), _Verdict())
     # Assert — the session sac owns for this agent is named on the first line.
-    assert "(tmux session tui-zz-noop-notice-zz)" in actual
+    assert "(tmux session zz-noop-notice-zz)" in actual

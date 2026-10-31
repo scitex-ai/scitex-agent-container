@@ -6,7 +6,13 @@ no closures, so it has no business living inside ``register_tools``.
 
 from __future__ import annotations
 
-from mcp.types import Tool
+try:
+    from mcp.types import Tool
+except ImportError as exc:
+    raise ImportError(
+        "SAC MCP dependencies are unavailable; install "
+        "scitex-agent-container[mcp]."
+    ) from exc
 
 __all__ = ["build_tool_list"]
 
@@ -73,7 +79,10 @@ def build_tool_list() -> list[Tool]:
                 "After understanding an inbound request, intentionally acknowledge "
                 "its exact dispatch_id nonce with a bounded summary, owner, and "
                 "concrete next checkpoint. Mechanical delivery/ACK/reaction does "
-                "not call this tool and does not prove understanding."
+                "not call this tool and does not prove understanding. A listen-issued "
+                "agentic_challenge also requires handshake_proof with its exact "
+                "runtime/session IDs and a tool-computed SHA256 answer; acceptance "
+                "remains provisional until listen independently observes native work."
             ),
             inputSchema={
                 "type": "object",
@@ -86,6 +95,29 @@ def build_tool_list() -> list[Tool]:
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 500,
+                    },
+                    "handshake_proof": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "exchange_id",
+                            "nonce",
+                            "instance_id",
+                            "boot_id",
+                            "session_id",
+                            "answer",
+                        ],
+                        "properties": {
+                            key: {"type": "string", "minLength": 1, "maxLength": 200}
+                            for key in (
+                                "exchange_id",
+                                "nonce",
+                                "instance_id",
+                                "boot_id",
+                                "session_id",
+                                "answer",
+                            )
+                        },
                     },
                 },
             },

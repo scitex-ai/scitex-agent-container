@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 
 import click
+from rich.cells import cell_len
+from rich.text import Text
 
 from .._hostsync import (
     DEFAULT_REPO,
@@ -51,7 +53,10 @@ def _evidence(text: str) -> None:
     and every line here exists to be read back later. ``soft_wrap`` keeps
     long checkout paths and symbol signatures on one line.
     """
-    render_rich(text, __name__)
+    # Evidence paths and signatures must remain one searchable record even
+    # when the receiving terminal is narrower than the observed value.
+    width = max(80, cell_len(Text.from_markup(text).plain))
+    render_rich(text, __name__, width=width)
 
 
 def _print_evidence(result: SyncResult) -> None:
@@ -118,15 +123,6 @@ def _print_result(result: SyncResult) -> None:
     default="",
     help="Git ref to reconcile to. Default: the peer's own @{upstream}.",
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help=(
-        "Override the CI-idle guard ONLY, printing what it overrides. It does "
-        "NOT unlock ahead/diverged/dirty — sac never discards remote work."
-    ),
-)
 @click.option("--repo", default=DEFAULT_REPO, help="owner/name for the CI guard.")
 @click.option("--timeout", type=int, default=120, help="Per-ssh wall-clock cap (s).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
@@ -161,7 +157,6 @@ def host_sync(
     check_only: bool,
     all_peers: bool,
     ref: str,
-    force: bool,
     repo: str,
     timeout: int,
     as_json: bool,
@@ -205,6 +200,7 @@ def host_sync(
     is decided they should ride this same one-way, precondition-guarded
     channel rather than growing a second path to the same hosts.
     """
+    force = False
     if bool(peer) == all_peers:
         raise click.UsageError(
             "give exactly one of PEER or --all  "
@@ -286,20 +282,28 @@ def host_sync(
         raise SystemExit(status)
 
     mode = "check (read-only)" if check_only else "sync"
-    render_rich(f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n", __name__)
+    render_rich(
+        f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n", __name__
+    )
     for result in results:
         _print_result(result)
 
     # Never silent: say what the verdict MEANS, not just what it was.
     drifted = [r.peer for r in results if r.outcome is Outcome.DRIFTED]
     if check_only and drifted:
-        render_rich(f"[yellow]drift detected on {len(drifted)} peer(s):[/yellow] "
+        render_rich(
+            f"[yellow]drift detected on {len(drifted)} peer(s):[/yellow] "
             f"{', '.join(drifted)}\n"
             "  These peers are NOT running the centre's code. Reconcile with:\n"
-            f"    sac host sync {drifted[0]}", __name__)
+            f"    sac host sync {drifted[0]}",
+            __name__,
+        )
     elif code == 0:
-        render_rich("[green]all peers match the centre[/green] "
-            "[dim](verified by loaded-module path + symbol, not by version string)[/dim]", __name__)
+        render_rich(
+            "[green]all peers match the centre[/green] "
+            "[dim](verified by loaded-module path + symbol, not by version string)[/dim]",
+            __name__,
+        )
     if alarm_outcome is not None:
         render_rich(f"[dim]{alarm_outcome.summary_line()}[/dim]", __name__)
     raise SystemExit(status)

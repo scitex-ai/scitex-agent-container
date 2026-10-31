@@ -25,14 +25,14 @@ def test_attach_no_session_exits_nonzero() -> None:
     assert result.exit_code != 0
 
 
-def test_session_for_falls_back_to_tui_prefix_for_unknown_name() -> None:
+def test_session_for_falls_back_to_bare_name_for_unknown_name() -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.lifecycle._attach import _session_for
 
     # Act
     _, session = _session_for("zzz-not-a-real-spec-zzz")
     # Assert
-    assert session == "tui-zzz-not-a-real-spec-zzz"
+    assert session == "zzz-not-a-real-spec-zzz"
 
 
 # --------------------------------------------------------------------------

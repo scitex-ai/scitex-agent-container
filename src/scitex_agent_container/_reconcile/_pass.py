@@ -282,9 +282,12 @@ def _observe(config: Any, snapshot_fn, in_sif_fn) -> tuple[bool | None, bool | N
         session_name_for_config,
         tmux_session_observation,
     )
+    from ..runtimes._tui_session_names import session_aliases
 
+    session = session_name_for_config(config)
     return tmux_session_observation(
-        session_name_for_config(config),
+        session,
+        aliases=session_aliases(session),
         snapshot_fn=snapshot_fn,
         in_sif_fn=in_sif_fn,
     )

@@ -69,6 +69,28 @@ from scitex_agent_container.cli_pkg._dev_jobs_apply import (  # noqa: E402
 from scitex_agent_container.cli_pkg.installation_group import boot  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_job_catalog(tmp_path):
+    """Keep operator recovery pauses out of installation catalog expectations."""
+    import os
+
+    previous_dir = os.environ.get("SCITEX_DIR")
+    previous_enabled = os.environ.get("SAC_JOBS_ENABLED")
+    os.environ["SCITEX_DIR"] = str(tmp_path / "ecosystem-root")
+    os.environ.pop("SAC_JOBS_ENABLED", None)
+    try:
+        yield
+    finally:
+        if previous_dir is None:
+            os.environ.pop("SCITEX_DIR", None)
+        else:
+            os.environ["SCITEX_DIR"] = previous_dir
+        if previous_enabled is None:
+            os.environ.pop("SAC_JOBS_ENABLED", None)
+        else:
+            os.environ["SAC_JOBS_ENABLED"] = previous_enabled
+
+
 def _declared_timers() -> list[str]:
     """Canonical names of every kind='timer' job sac really declares.
 
@@ -487,17 +509,17 @@ def test_every_rendered_service_has_an_execstart(rendered_units) -> None:
     assert without == []
 
 
-def test_install_forwards_force_to_the_delegation_seam() -> None:
+def test_install_rejects_force_before_delegation() -> None:
     """The end-to-end shape of the defect: install's refusal names --force."""
     # Arrange
     recorder = _Recorder()
     # Act
     with _delegating_to(recorder):
-        CliRunner().invoke(
+        result = CliRunner().invoke(
             dj._make_group("timer"), ["install", "host-sync-check", "--yes", "--force"]
         )
     # Assert
-    assert recorder.passed and recorder.passed[0].get("force") is True
+    assert (result.exit_code, recorder.passed) == (2, [])
 
 
 def test_uninstall_rejects_force_because_upstream_has_no_such_option() -> None:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the suite on a GitHub-HOSTED runner. $1 = python version.
 #
-# The nightly-only sibling of run-in-sif.sh. Same suite, different hardware and
+# The hosted sibling of run-in-sif.sh, for nightly and unadmitted matrix requests. Same suite, different hardware and
 # therefore a different install path: there is no ci-cpu.sif here and no baked
 # /opt/venv-<ver>, so uv fetches its OWN managed CPython and builds a venv.
 #
@@ -26,6 +26,18 @@
 set -euo pipefail
 
 V="${1:?python version arg required (e.g. 3.12)}"
+SUITE="${2:-nightly}"
+case "$V" in 3.11|3.12|3.13) ;; *) echo "unsupported CI Python: $V" >&2; exit 2 ;; esac
+case "$SUITE" in matrix|nightly) ;; *) echo "unsupported CI suite: $SUITE" >&2; exit 2 ;; esac
+
+# An exclusive hosted job directory owns its interpreter/cache; it never writes
+# a repository-local agent environment or uses company HOME credentials.
+HOSTED_ROOT="$(mktemp -d "${RUNNER_TEMP:?hosted RUNNER_TEMP required}/sac-hosted-$V.XXXXXXXX")"
+# The hosted VM owns final scratch reclamation; this shell never removes a
+# directory while a cancelled foreground test process might still be using it.
+export UV_CACHE_DIR="$HOSTED_ROOT/uvcache"
+export XDG_CACHE_HOME="$HOSTED_ROOT/cache"
+unset CODEX_HOME CLAUDE_CONFIG_DIR HERMES_HOME SCITEX_STORE_DSN PGUSER PGPASSWORD PGPASSFILE
 
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
@@ -43,20 +55,17 @@ export GIT_CONFIG_VALUE_1=false
 export TZ="Asia/Tokyo"
 
 export MPLBACKEND=Agg
-export MPLCONFIGDIR="${RUNNER_TEMP:-/tmp}/mpl-$V"
+export MPLCONFIGDIR="$HOSTED_ROOT/mpl"
 mkdir -p "$MPLCONFIGDIR"
 
 # uv's own managed CPython — actions/setup-python is not used anywhere in this
 # repo (it fails on the self-hosted nodes) and there is no reason to diverge.
-uv venv --python "$V" ".venv-$V"
-PY="$PWD/.venv-$V/bin/python"
+uv venv --python "$V" "$HOSTED_ROOT/venv"
+PY="$HOSTED_ROOT/venv/bin/python"
 
-# Same fallback chain as the SIF path: [all,dev] -> [dev] -> bare, so one
-# unbuildable optional extra degrades the nightly instead of stranding it.
-uv pip install --python "$PY" -e ".[all,dev]" ||
-    uv pip install --python "$PY" -e ".[dev]" ||
-    uv pip install --python "$PY" -e "."
-uv pip install --python "$PY" tzdata || true
+# The full declared all/dev dependency install is the test contract. An install
+# error fails this leg before pytest; a reduced extra set cannot give green CI.
+uv pip install --python "$PY" -e ".[all,dev]" tzdata
 
 # THE VENV'S bin/ MUST BE ON PATH, because several tests exec the `sac` CONSOLE
 # SCRIPT as a subprocess (the shell-completion install tests, the SDK channel
@@ -69,12 +78,13 @@ uv pip install --python "$PY" tzdata || true
 # run-in-sif.sh has the same requirement and solves it by hand-writing shims,
 # because `pip install --target` does not materialise entry points at all. A
 # venv install DOES create them — they just have to be reachable.
-export PATH="$PWD/.venv-$V/bin:$PATH"
+export PATH="$HOSTED_ROOT/venv/bin:$PATH"
 
 # ASSERT THE PLUGIN SET BEFORE TRUSTING A SINGLE PASS/FAIL COUNT.
 # NOT `-q`: quiet suppresses the `plugins:` header this reads, and the first
 # version of this check shipped that way and failed every job it was added to.
-_PLUGCHECK="$(mktemp -d)"
+_PLUGCHECK="$HOSTED_ROOT/plugcheck"
+mkdir -p "$_PLUGCHECK"
 _PLUGINS="$("$PY" -m pytest --collect-only -p no:cacheprovider "$_PLUGCHECK" 2>&1 |
     grep -m1 '^plugins:' || true)"
 echo "preflight ${_PLUGINS:-plugins: <no header emitted>}"
@@ -100,8 +110,15 @@ else
 fi
 
 NPROC="$(nproc 2>/dev/null || echo 2)"
-echo "python=$("$PY" -V) xdist workers=$NPROC"
+WORKERS="${CI_XDIST_WORKERS:-$NPROC}"
+case "$WORKERS" in ''|*[!0-9]*|0) echo "invalid CI worker count: $WORKERS" >&2; exit 2 ;; esac
 
-# No --cov here: coverage is uploaded from the PR/branch gate, and the extra
-# ~15% runtime buys a hosted runner nothing but wall clock.
-exec "$PY" -m pytest tests/ -n "$NPROC" --dist load -q -p no:cacheprovider
+echo "python=$("$PY" -V) xdist workers=$WORKERS"
+
+# Both paths run every test with xdist. Only the matrix publishes coverage;
+# the scheduled nightly keeps its existing no-coverage behavior.
+PYTEST_ARGS=(tests/ -n "$WORKERS" --dist load -q -rfEs -p no:cacheprovider)
+if [ "$SUITE" = matrix ]; then
+    PYTEST_ARGS+=(--cov=src/scitex_agent_container --cov-report=xml --cov-report=term)
+fi
+"$PY" -m pytest "${PYTEST_ARGS[@]}"

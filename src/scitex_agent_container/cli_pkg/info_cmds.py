@@ -179,6 +179,8 @@ def _tail_one(
 
     # state-dir layout: ~/.scitex/agent-container/runtime/<name>/session.jsonl
     state_root = Path.home() / ".scitex" / "agent-container" / "runtime" / name
+    if (state_root / "opencode-serve.json").is_file():
+        return _tail_one_opencode(name, state_root, lines, show_tools, as_json, prefix)
     transcript = state_root / "session.jsonl"
     if not transcript.is_file():
         render_rich(f"[red]No transcript at {transcript}. Agent may not have started a "
@@ -225,6 +227,63 @@ def _tail_one(
             )
         elif kind == "error":
             out.append(f"{tag}[error] {str(r)[:300]}")
+    for line in out[-lines:]:
+        _console_out.info(line)
+    return True
+
+
+def _tail_one_opencode(
+    name: str,
+    state_root: Path,
+    lines: int,
+    show_tools: bool,
+    as_json: bool,
+    prefix: bool,
+) -> bool:
+    """Render one opencode agent's transcript from its owned serve gateway.
+
+    Reads the stable session via ``GET /session/:id/message`` (the same
+    HTTP surface the turn bridge uses) — never the sqlite store. Falls
+    loud when the agent never submitted or the gateway is unreachable.
+    """
+    import json as _json
+
+    from ..runtimes._gateway_harness import GatewayHarnessError
+    from ..runtimes._gateway_opencode import OPENCODE_GATEWAY
+
+    try:
+        records = OPENCODE_GATEWAY.list_messages(
+            state_root, name, limit=max(lines * 6, 20)
+        )
+    except GatewayHarnessError as exc:
+        render_rich(f"[red]{exc}[/red]", __name__)
+        return False
+
+    if as_json:
+        click.echo(_json.dumps(records[-lines:], default=str, indent=2))
+        return True
+
+    tag = f"[{name}] " if prefix else ""
+    out: list[str] = []
+    for record in records:
+        info = record.get("info") if isinstance(record, dict) else None
+        role = info.get("role", "?") if isinstance(info, dict) else "?"
+        parts = record.get("parts") if isinstance(record, dict) else None
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            kind = part.get("type", "?")
+            if kind == "text":
+                text = str(part.get("text") or "")
+                if text.strip():
+                    out.append(f"{tag}[{role}] {text[:300]}")
+            elif kind == "step-finish":
+                reason = part.get("reason", "?")
+                out.append(f"{tag}[result] finish={reason}")
+            elif show_tools:
+                out.append(f"{tag}[{kind}] {str(part)[:200]}")
     for line in out[-lines:]:
         _console_out.info(line)
     return True

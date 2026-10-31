@@ -38,6 +38,7 @@ from ._atomic import atomic_write_text
 # Heartbeat surface — extracted to ``_session_beat`` (v4 step 5, line
 # cap); re-exported with explicit ``as`` aliases marking the intentional
 # re-export so every existing importer keeps resolving.
+from ._session_beat import STATE_BLOCKED as STATE_BLOCKED
 from ._session_beat import STATE_BUSY as STATE_BUSY
 from ._session_beat import STATE_IDLE as STATE_IDLE
 from ._session_beat import STATE_READY as STATE_READY

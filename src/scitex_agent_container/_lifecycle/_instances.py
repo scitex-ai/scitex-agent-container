@@ -191,6 +191,22 @@ def record_local_instance(
     )
 
     host = _resolve_host(None)
+    # Immutable spec identity (card sac-identity-spec-uuid-20261026):
+    # first-seen-stable backfill. A spec without ``uuid`` gets one
+    # stamped into its spec.yaml here, on the host that starts it.
+    # Best-effort ON PURPOSE: a stamp failure (read-only spec dir,
+    # unmappable block) must never break a start — the row simply
+    # stays unstamped and the resolver treats it as unknown.
+    spec_uuid = str(getattr(config, "uuid", "") or "")
+    if not spec_uuid:
+        config_path = str(getattr(config, "config_path", "") or "")
+        if config_path:
+            try:
+                from ..config._spec_uuid import ensure_spec_uuid
+
+                spec_uuid = ensure_spec_uuid(config_path)
+            except Exception:  # stx-allow: fallback (reason: the uuid stamp is bookkeeping about a start that must proceed; an unstamped row resolves by name exactly as before)
+                spec_uuid = ""
     # End stale active rows for this name+host (e.g. a previous crash
     # that never reached agent_stop) so the unique index stays clear.
     for row in list_active_instances(host=host):
@@ -235,6 +251,7 @@ def record_local_instance(
     instance_id = record_instance_start(
         name=config.name,
         host=host,
+        spec_uuid=spec_uuid or None,
         pid=runtime_pid,
         process_start_time=ownership.get("process_start_time"),
         process_uid=ownership.get("process_uid"),

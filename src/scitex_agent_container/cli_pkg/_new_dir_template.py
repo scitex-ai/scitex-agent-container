@@ -122,9 +122,7 @@ def parse_set_pairs(pairs: tuple[str, ...]) -> Dict[str, str]:
     out: Dict[str, str] = {}
     for pair in pairs:
         if "=" not in pair:
-            raise DirTemplateError(
-                f"--set expects KEY=VALUE, got {pair!r} (no '=')."
-            )
+            raise DirTemplateError(f"--set expects KEY=VALUE, got {pair!r} (no '=').")
         key, value = pair.split("=", 1)
         key = key.strip().upper()
         if not key:
@@ -178,9 +176,7 @@ def _format_remaining_error(remaining: List[_Remaining]) -> str:
         "refusing to leave a half-written agent.",
     ]
     for token in sorted(by_token):
-        locations = ", ".join(
-            f"{r.rel_path}:{r.lineno}" for r in by_token[token]
-        )
+        locations = ", ".join(f"{r.rel_path}:{r.lineno}" for r in by_token[token])
         lines.append(f"  {token}")
         lines.append(f"    at: {locations}")
         lines.append(f"    fill with: {_flag_hint(token)}")
@@ -219,20 +215,18 @@ def instantiate_dir_template(
     left behind) and :class:`DirTemplateError` is raised with a message
     naming each unfilled token, its location(s), and the fill flag.
 
-    ``force`` controls whether an existing ``agent_dir`` is replaced.
+    ``force`` is retained for compatibility and a true value is refused.
     """
+    if force:
+        raise DirTemplateError(
+            "force is unsupported; edit an existing directory explicitly"
+        )
     spec_path = agent_dir / "spec.yaml"
-    if spec_path.exists() and not force:
+    if spec_path.exists():
         raise DirTemplateError(
             f"Refusing to overwrite existing spec at {spec_path}. "
-            "Re-run with --force to replace, or pick a different name."
+            "Choose a different name or edit the existing directory explicitly."
         )
-
-    # Track whether we created the dir so cleanup only removes our own
-    # output (never a pre-existing dir the operator passed via --force).
-    pre_existing = agent_dir.exists()
-    if pre_existing and force:
-        shutil.rmtree(agent_dir)
 
     shutil.copytree(template_dir, agent_dir)
 

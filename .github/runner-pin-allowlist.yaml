@@ -60,22 +60,3 @@ allow:
       not be answered. Do NOT "fix" this one by giving it the variable — if
       you need to canary a DIFFERENT pool, copy the file and change the label,
       so each canary keeps saying which pool its result is about.
-
-  - workflow: pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
-    jobs:
-      - verdict
-    approved_on: 2026-08-12
-    reason: >-
-      ONE MACHINE, NOT A POOL. This job writes the CI verdict to the card
-      store and pokes `sac listen` over LOOPBACK, and exactly one host runs
-      both. vars.CI_RUNS_ON resolves to four runners on four different
-      machines, so on 75% of them 127.0.0.1:7878 and 127.0.0.1:55432 would
-      reach a different daemon and a different postgres — writing the verdict
-      somewhere nobody reads and delivering it to nobody, with nothing raising
-      an error. The `sac-control-plane` label is carried by that one runner and
-      by no other, and no other workflow names it, so this widens nothing. The
-      cost is stated in the workflow itself and is deliberate: the rail is
-      exactly as available as that host. IF THAT HOST DIES, the fix is to move
-      the control plane (or add the label to its replacement) — NOT to relax
-      this to a pool, which would restore delivery-to-nobody while looking
-      green. The verdict job never gates a merge, so a stall here blocks no PR.

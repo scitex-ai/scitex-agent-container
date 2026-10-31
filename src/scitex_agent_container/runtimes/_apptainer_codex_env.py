@@ -49,6 +49,7 @@ this harness special.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -242,6 +243,22 @@ def preflight_subscription(
         raise ProviderEnvError(
             "native Codex subscription preflight requires `codex` on the host PATH"
         )
+    from ._apptainer_inner_argv_codex import codex_config_overrides
+
+    # --ignore-user-config must not erase the selected engine's admission
+    # settings. Reuse launch validation/routing, retaining the read-only
+    # probe sandbox rather than its production full-access override.
+    launch_flags = codex_config_overrides(config)
+    admission_keys = {
+        "model_provider", "service_tier",
+        "model_reasoning_effort", "model_context_window",
+    }
+    admission_flags = [
+        item
+        for index in range(0, len(launch_flags), 2)
+        if launch_flags[index + 1].partition("=")[0] in admission_keys
+        for item in launch_flags[index:index + 2]
+    ]
     codex_home = resolve_codex_home(state_dir)
     codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
     sync_subscription_auth(config, codex_home)
@@ -261,8 +278,7 @@ def preflight_subscription(
             "read-only",
             "-m",
             model,
-            "-c",
-            'model_provider="openai"',
+            *admission_flags,
             "Reply with exactly OK. Do not call tools.",
         ],
         stdin=subprocess.DEVNULL,
@@ -357,6 +373,13 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
     if resolve_harness_key(config) != CODEX_SDK:
         return argv
 
+    return argv + _codex_sdk_routing_flags(config)
+
+
+def _codex_sdk_routing_flags(config: AgentConfig) -> list[str]:
+    """Carry the selected engine's config into the headless Codex runner."""
+    argv: list[str] = []
+
     # The headless SDK cannot consume the TUI's argv ``-c`` flags directly.
     # Carry the exact same resolved spec values through a typed JSON env that
     # ``_runners._codex_options`` validates before constructing CodexConfig.
@@ -369,7 +392,9 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
     argv += ["--env", f"SAC_CODEX_MODEL={model}"]
     argv += ["--env", "SAC_CODEX_SANDBOX=full-access"]
 
-    if provider_active(config):
+    if provider_active(config) or str(
+        getattr(config, "subscription_provider", "") or ""
+    ).strip() == "openai":
         from ._apptainer_inner_argv_codex import codex_config_overrides
 
         flattened = codex_config_overrides(config)
@@ -378,11 +403,16 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
             for index, value in enumerate(flattened[:-1])
             if value == "-c"
         ]
-        argv += ["--env", "SAC_CODEX_MODEL_PROVIDER=sac"]
+        model_provider = "openai" if config.subscription_provider == "openai" else "sac"
+        argv += ["--env", f"SAC_CODEX_MODEL_PROVIDER={model_provider}"]
         argv += [
             "--env",
-            "SAC_CODEX_CONFIG_OVERRIDES_JSON="
-            + json.dumps(overrides, separators=(",", ":")),
+            # Apptainer parses --env values as CSV. Raw JSON quotes and
+            # commas are rejected before the container can start.
+            "SAC_CODEX_CONFIG_OVERRIDES_B64="
+            + base64.b64encode(
+                json.dumps(overrides, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii"),
         ]
 
     return argv

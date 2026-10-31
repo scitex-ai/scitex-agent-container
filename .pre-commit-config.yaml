@@ -11,8 +11,10 @@
 # mechanically by audit rule PS-HOOK-001 (severity E): no `language: system`
 # hook may invoke a bare `python`/`pytest`/`mypy`/... — a bare command name is a
 # $PATH lookup, so it resolves to whichever virtualenv happens to be active at
-# commit time, which differs per machine. Every hook below is `language: python`
-# (an isolated venv pre-commit builds itself) or a pinned remote hook.
+# commit time, which differs per machine. The local workflow guards instead
+# require an explicit existing SAC_HOOK_PYTHON and run through existing UV,
+# without project synchronization, dependency installation or a new environment.
+# The other hooks are pinned remote hooks in pre-commit's retained cache.
 #
 # THESE HOOKS NOW ACTUALLY RUN. Until this change they did not: the framework's
 # shim was never installed into .git/hooks, and `core.hooksPath` pointed at the
@@ -63,30 +65,24 @@ repos:
     hooks:
       - id: no-hosted-runners
         name: "no GitHub-hosted runners in .github/workflows/"
-        # Invoked BY PATH, not `-m`: the module is self-contained (stdlib +
-        # pyyaml, no intra-package imports), so the hook works in a bare
-        # checkout without sac installed. `language: system` + `-m` would
-        # false-RED for any contributor whose PATH python cannot import
-        # scitex_agent_container — and a guard that cries wolf gets disabled.
-        entry: python src/scitex_agent_container/_hosted_runner_guard.py
-        language: python
-        additional_dependencies: [pyyaml]
+        # Both guards import PyYAML and scitex-logging. Use their declared
+        # dependencies in an explicit existing environment, never a PATH Python.
+        # For example: SAC_HOOK_PYTHON=/absolute/path/to/environment/bin/python.
+        entry: bash .githooks/run-workflow-guard.sh hosted
+        language: system
         pass_filenames: false
         files: ^\.github/(workflows/.*\.ya?ml|hosted-runner-allowlist\.yaml)$
         description: >
           Operator directive 2026-07-14 (mandatory, no exceptions): every job
-          runs on the self-hosted pool. The ONE approved exception (cla.yml)
-          lives in .github/hosted-runner-allowlist.yaml WITH its security
+          runs on the self-hosted pool. Approved hosted security boundaries
+          live in .github/hosted-runner-allowlist.yaml WITH their security
           argument — an entry without a real `reason:` fails the guard.
 
       - id: no-hardcoded-runner-pool
         name: "no hardcoded runner pool in .github/workflows/"
-        # Same by-path invocation, same reason. This module imports the
-        # sibling guard's `runs-on` parser and carries an explicit fallback
-        # for the no-package-context case that by-path execution creates.
-        entry: python src/scitex_agent_container/_runner_pool_guard.py
-        language: python
-        additional_dependencies: [pyyaml]
+        # Fixed by-path invocation preserves this module's sibling import.
+        entry: bash .githooks/run-workflow-guard.sh pool
+        language: system
         pass_filenames: false
         files: ^\.github/(workflows/.*\.ya?ml|runner-pin-allowlist\.yaml)$
         description: >

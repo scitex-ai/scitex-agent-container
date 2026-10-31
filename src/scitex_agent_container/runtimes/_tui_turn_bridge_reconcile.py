@@ -12,7 +12,7 @@ from typing import Any, Callable
 from .._runners._tmux._target import exact_target
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import resolved_a2a_host, start_turn_bridge
-from .tui_session import session_name_for
+from .tui_session import candidate_session_names_for, session_name_for
 
 
 @dataclass(frozen=True)
@@ -130,11 +130,18 @@ def reconcile_turn_bridge(
             "only reconciles a live TUI turn bridge"
         )
     session = session_name_for(config)
-    if not session_alive_fn(session):
+    # Bare canonical first, legacy second: a pre-cutover session is still the
+    # live TUI, and bridge-only reconcile must preserve it, not refuse it.
+    live_session = next(
+        (c for c in candidate_session_names_for(config) if session_alive_fn(c)),
+        None,
+    )
+    if live_session is None:
         raise RuntimeError(
             f"tmux session {session!r} is not live; bridge-only reconcile will "
             "not start or restart the agent"
         )
+    session = live_session
     port, source = live_port_fn(config, current_host=current_host)
     prior_pid = bridge_pid_read_fn(config)
     prior_alive = pid_alive_fn(prior_pid)

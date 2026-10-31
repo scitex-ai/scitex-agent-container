@@ -483,3 +483,39 @@ def test_an_alive_no_op_announces_agent_and_session_loudly(
     # believed in ("(tmux session tui-alpha" — the pane-pid clause follows
     # only when a live local pane resolves, so it is not pinned here).
     assert "alpha is already running (tmux session tui-alpha" in caplog.text
+
+
+def test_worktree_refusal_precedes_prelaunch_side_effects(tmp_path, registry):
+    # Arrange
+    from scitex_agent_container._lifecycle import _start as start_mod
+    from scitex_agent_container._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+    )
+
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    calls: list[str] = []
+
+    def refuse(_config, **_kwargs) -> None:
+        calls.append("worktree")
+        raise WorktreePolicyError("fixture refusal")
+
+    def prelaunch_spy(*_args, **_kwargs) -> None:
+        calls.append("prelaunch")
+
+    # Act
+    error = ""
+    with _replace_attribute(start_mod, "_get_runtime", lambda _config: _Runtime(running=False)):
+        with _replace_attribute(start_mod, "enforce_task_worktree_policy", refuse):
+            with _replace_attribute(start_mod, "run_prelaunch", prelaunch_spy):
+                try:
+                    start_mod.agent_start(
+                        str(spec),
+                        registry=registry,
+                        handover_mod=_Handover(),
+                        sleep_fn=_no_sleep,
+                    )
+                except WorktreePolicyError as exc:
+                    error = str(exc)
+    # Assert
+    assert (error, calls) == ("fixture refusal", ["worktree"])

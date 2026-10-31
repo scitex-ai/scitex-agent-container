@@ -1,0 +1,394 @@
+"""Real spawned worker/cache tests: hard deadline, failure isolation and aliases."""
+
+import json
+import multiprocessing
+import os
+import time
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from scitex_agent_container._account.provider_usage_inventory import (
+    UsageTarget,
+    collect,
+    discover,
+)
+from scitex_agent_container._account.provider_usage_projection import project
+from tests.scitex_agent_container.spawn_probes import (
+    blocked_fifo_writer,
+    deadline_probe_fetch,
+    known_fetch,
+    mixed_fetch,
+    parallel_fetch,
+    recording_fetch,
+    refusing_fetch,
+    slow_fetch,
+)
+
+# Hermetic quota-cache clock: passive cache reads are seeded from this fixed
+# instant and replayed with collect(now=FIXED_NOW), so snapshot age and window
+# reset arithmetic never consult wall-clock or shared runner state.
+FIXED_NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _fixed_snapshot():
+    """A recorded quota payload replayed deterministically, not re-fetched."""
+    return project("opencode-go", {"quota": {"usage": {"rolling": {
+        "percent": 10, "resetsAt": (FIXED_NOW + timedelta(hours=5)).isoformat(),
+    }}}}, FIXED_NOW)
+
+
+def _seed_known_cache(path):
+    """Write a fixture-seeded cache file bound to FIXED_NOW."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_fixed_snapshot()))
+
+
+def _new_owned_pids(before, timeout=5.0):
+    """Poll for owned-worker exit; immediate reads flake under xdist load."""
+    deadline = time.monotonic() + timeout
+    current = {process.pid for process in multiprocessing.active_children()} - before
+    while current and time.monotonic() < deadline:
+        time.sleep(0.05)
+        current = {process.pid for process in multiprocessing.active_children()} - before
+    return current
+
+
+@pytest.fixture(autouse=True)
+def _no_coverage_in_spawned_workers():
+    """Spawn children must not start coverage tracing.
+
+    Under ``pytest --cov`` the subprocess-coverage shim starts a tracer in
+    every fresh interpreter — including each owned worker — multiplying
+    child startup past the collection deadlines on loaded CI runners. The
+    parent keeps measuring; only owned workers opt out. Restored on
+    teardown (same real-env save/restore shape as the budget tests).
+    """
+    keys = ("COVERAGE_PROCESS_START", "COVERAGE_FILE")
+    saved = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
+    yield
+    for key, original in saved.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
+
+
+def cache_path(home, account):
+    return home / ".scitex/cache/account-usage" / (account.provider + "-" + account.name + ".json")
+
+
+def targets():
+    return [
+        UsageTarget("opencode-go", "OPENCODE_GO_API_KEY_hung", ["OPENCODE_GO_API_KEY_hung"], secret="fixture-one"),
+        UsageTarget("opencode-go", "OPENCODE_GO_API_KEY_good", ["OPENCODE_GO_API_KEY_good"], secret="fixture-two"),
+    ]
+
+
+def test_same_credential_aliases_do_not_duplicate_rows():
+    # Arrange
+    env = {"COMMANDCODE_API_KEY_01": "synthetic-same", "COMMANDCODE_API_KEY_ywatanabe": "synthetic-same"}
+    # Act
+    result = discover([], env=env)
+    # Assert
+    assert len(result) == 1
+
+
+def test_shared_credential_retains_both_configured_alias_names():
+    # Arrange
+    env = {"COMMANDCODE_API_KEY_01": "synthetic-same", "COMMANDCODE_API_KEY_ywatanabe": "synthetic-same"}
+    # Act
+    result = discover([], env=env)
+    # Assert
+    assert result[0].aliases == ["COMMANDCODE_API_KEY_01", "COMMANDCODE_API_KEY_ywatanabe"]
+
+
+def test_unrelated_env_is_not_a_configured_provider():
+    # Arrange
+    env = {"SECRET": "private", "OPENAI_API_KEY": "private", "COMMANDCODE_API_KEY_bad/path": "private"}
+    # Act
+    result = discover([], env=env)
+    # Assert
+    assert result == []
+
+
+def test_target_representation_excludes_credential_value():
+    # Arrange
+    target = UsageTarget("commandcode", "fixture", ["fixture"], secret="synthetic-private")
+    # Act
+    text = repr(target)
+    # Assert
+    assert "synthetic-private" not in text
+
+
+def test_passive_inventory_never_starts_a_probe(tmp_path):
+    # Arrange
+    accounts = targets()
+    # Act
+    rows = collect(accounts, home=tmp_path, passive=True, fetcher=mixed_fetch)
+    # Assert
+    assert [row["error"] for row in rows] == ["metadata-not-observed"] * 2
+
+
+def test_one_hung_alias_does_not_hide_successful_other_alias(tmp_path):
+    # Arrange
+    accounts = targets()
+    # Act
+    rows = collect(accounts, home=tmp_path, budget=8.0, fetcher=mixed_fetch)
+    # Assert
+    assert rows[1]["usage_state"] == "known"
+
+
+def test_hung_worker_is_stopped_within_overall_budget(tmp_path):
+    # Arrange
+    accounts = targets()
+    started = time.monotonic()
+    # Act
+    collect(accounts, home=tmp_path, budget=1, fetcher=mixed_fetch)
+    elapsed = time.monotonic() - started
+    # Assert
+    assert elapsed < 10
+
+
+def test_timed_out_collection_leaves_no_owned_worker(tmp_path):
+    # Arrange
+    before = {process.pid for process in multiprocessing.active_children()}
+    # Act
+    collect(targets(), home=tmp_path, budget=1, fetcher=mixed_fetch)
+    new_pids = _new_owned_pids(before)
+    # Assert
+    assert new_pids == set()
+
+
+def test_actual_workers_overlap_instead_of_serial_wait(tmp_path):
+    # Arrange
+    witnesses = tmp_path / "witnesses"
+    witnesses.mkdir()
+    accounts = [UsageTarget("opencode-go", name, [name], secret="synthetic", auth_path=witnesses)
+                for name in ("OPENCODE_GO_API_KEY_1", "OPENCODE_GO_API_KEY_2")]
+    # Act
+    rows = collect(accounts, home=tmp_path, budget=8.0, fetcher=parallel_fetch)
+    # Assert
+    assert [row["usage_state"] for row in rows] == ["known", "known"]
+
+
+def test_success_cache_contains_metrics_and_not_credentials(tmp_path):
+    # Arrange
+    account = targets()[1]
+    # Act
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
+    text = next((tmp_path / ".scitex/cache/account-usage").glob("*.json")).read_text()
+    # Assert
+    assert "fixture-two" not in text
+
+
+def test_usage_cache_is_private(tmp_path):
+    # Arrange
+    account = targets()[1]
+    # Act
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
+    path = next((tmp_path / ".scitex/cache/account-usage").glob("*.json"))
+    # Assert
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_refresh_keeps_old_measurement_explicitly_stale(tmp_path):
+    # Arrange
+    account = targets()[1]
+    collect([account], home=tmp_path, budget=4.0, fetcher=known_fetch)
+    # Act
+    rows = collect([account], home=tmp_path, refresh=True, budget=4.0, fetcher=refusing_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "stale"
+
+
+def test_unavailable_alias_stays_represented(tmp_path):
+    # Arrange
+    account = targets()[1]
+    # Act
+    rows = collect([account], home=tmp_path, budget=4.0, fetcher=refusing_fetch)
+    # Assert
+    assert rows[0]["qualified_id"] == "opencode-go:OPENCODE_GO_API_KEY_good"
+
+
+def test_cache_reader_whitelists_private_injected_fields(tmp_path):
+    # Arrange
+    account = targets()[1]
+    cache = tmp_path / ".scitex/cache/account-usage/opencode-go-OPENCODE_GO_API_KEY_good.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"fetchedAt": FIXED_NOW.isoformat(), "secret": "private"}))
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, now=FIXED_NOW, fetcher=refusing_fetch)
+    # Assert
+    assert "private" not in json.dumps(rows)
+
+
+def test_passive_fifo_cache_is_bounded(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    started = time.monotonic()
+    # Act
+    collect([account], home=tmp_path, passive=True, budget=1, fetcher=refusing_fetch)
+    elapsed = time.monotonic() - started
+    # Assert
+    assert elapsed < 10
+
+
+def test_passive_fifo_cache_retains_its_alias(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, fetcher=refusing_fetch)
+    # Assert
+    assert rows[0]["aliases"] == account.aliases
+
+
+def test_passive_fifo_cache_performs_no_provider_request(tmp_path):
+    # Arrange
+    account = targets()[1]
+    account.auth_path = tmp_path / "provider-invocation"
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    collect([account], home=tmp_path, passive=True, budget=2, fetcher=recording_fetch)
+    # Assert
+    assert not account.auth_path.exists()
+
+
+def test_fifo_does_not_hide_another_current_cache(tmp_path):
+    # Arrange
+    accounts = targets()
+    path = cache_path(tmp_path, accounts[0])
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    _seed_known_cache(cache_path(tmp_path, accounts[1]))
+    # Act
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
+    # Assert
+    assert rows[1]["usage_state"] == "known"
+
+
+def test_valid_oversized_cache_is_not_trusted(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_fixed_snapshot()) + " " * 65536)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "unknown"
+
+
+def test_malformed_oversized_cache_stays_row_local(tmp_path):
+    # Arrange
+    accounts = targets()
+    path = cache_path(tmp_path, accounts[0])
+    path.parent.mkdir(parents=True)
+    path.write_text("{" + "x" * 131072)
+    _seed_known_cache(cache_path(tmp_path, accounts[1]))
+    # Act
+    rows = collect(accounts, home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
+    # Assert
+    assert rows[1]["usage_state"] == "known"
+
+
+def test_cache_symlink_is_not_followed(tmp_path):
+    # Arrange
+    account = targets()[1]
+    sentinel = tmp_path / "outside-cache"
+    sentinel.write_text(json.dumps(_fixed_snapshot()))
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    path.symlink_to(sentinel)
+    # Act
+    rows = collect([account], home=tmp_path, passive=True, budget=4.0, now=FIXED_NOW, fetcher=refusing_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "unknown"
+
+
+def test_zero_budget_retains_every_unstarted_account(tmp_path):
+    # Arrange
+    accounts = targets()
+    # Act
+    rows = collect(accounts, home=tmp_path, budget=0, fetcher=refusing_fetch)
+    # Assert
+    assert [row["qualified_id"] for row in rows] == ["opencode-go:" + account.name for account in accounts]
+
+
+def test_blocking_cache_write_is_bounded(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    started = time.monotonic()
+    # Act
+    collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    elapsed = time.monotonic() - started
+    # Assert
+    assert elapsed < 10
+
+
+def test_blocking_cache_write_does_not_hide_observed_metrics(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    # Act
+    rows = collect([account], home=tmp_path, budget=4, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    # Assert
+    assert rows[0]["usage_state"] == "known"
+
+
+def test_blocking_cache_write_leaves_no_owned_child(tmp_path):
+    # Arrange
+    account = targets()[1]
+    path = cache_path(tmp_path, account)
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path, 0o600)
+    before = {process.pid for process in multiprocessing.active_children()}
+    # Act
+    collect([account], home=tmp_path, budget=1, fetcher=known_fetch, cache_writer=blocked_fifo_writer)
+    new_pids = _new_owned_pids(before)
+    # Assert
+    assert new_pids == set()
+
+
+def test_slow_starting_fetch_accepted_within_grace(tmp_path):
+    # Arrange — a fetch worker that delivers just past the collection
+    # deadline on a loaded runner must still count, not read as unknown.
+    account = targets()[1]
+
+    # Act
+    rows = collect([account], home=tmp_path, budget=1, fetcher=slow_fetch)
+    # Assert
+    assert rows[0]["usage_state"] == "known"
+
+
+def test_slow_starting_worker_receives_grace_extended_fetch_bound(tmp_path):
+    # Arrange — the fetch bound handed to workers must cover the
+    # collection deadline PLUS the grace window: with budget=4 the
+    # collection deadline leaves at most 3.75s remaining at fetch time,
+    # so a remaining bound above that proves the worker got the
+    # extended fetch deadline (pins the grace-window wiring: without
+    # it, a worker starting past the collection deadline self-censors
+    # to metadata-deadline/unknown without ever fetching).
+    witnesses = tmp_path / "witnesses"
+    witnesses.mkdir()
+    account = UsageTarget("opencode-go", "OPENCODE_GO_API_KEY_1", ["OPENCODE_GO_API_KEY_1"], secret="synthetic", auth_path=witnesses)
+    # Act
+    rows = collect([account], home=tmp_path, budget=4.0, fetcher=deadline_probe_fetch)
+    remaining = float((witnesses / "OPENCODE_GO_API_KEY_1.deadline").read_text())
+    # Assert
+    assert (rows[0]["usage_state"], remaining > 3.75) == ("known", True)

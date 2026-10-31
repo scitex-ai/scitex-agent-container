@@ -40,6 +40,7 @@ the provider import is lazy, so an old scitex-dev must not fail CI here.
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
@@ -451,3 +452,223 @@ def test_the_cron_line_that_lands_on_the_host_carries_the_bound() -> None:
 # JobSpec added tomorrow rather than any named above — lives in
 # `test__specs_payload.py`. It needs the `executable` seam to resolve
 # deterministically, which is a different setup from every test here.
+
+
+# Persistent host selection (operator `jobs-enabled.txt`) — moved here from
+# the orphan `test__provider_selection.py` so the mirror rule (one test
+# module per source module) holds; the provider under test is still
+# `provide_jobs` above.
+
+SELECTION_RECOVERY = {
+    "scitex-agent-container-fleet-reconcile",
+    "scitex-agent-container-restart-login-expired-agents",
+    "scitex-agent-container-resume-rate-limited-agents",
+}
+
+
+def _sel_jobs(root, *, env=None):
+    return provide_jobs(root=root, env={} if env is None else env)
+
+
+def _sel_write(root, content):
+    root.mkdir(exist_ok=True)
+    path = root / "jobs-enabled.txt"
+    path.write_text(content)
+    return path
+
+
+def test_absent_selection_keeps_recovery_payload(tmp_path):
+    # Arrange
+    # Act
+    names = {j.name for j in _sel_jobs(tmp_path)}
+    # Assert
+    assert SELECTION_RECOVERY <= names
+
+
+def test_absent_selection_keeps_accounts_refresh(tmp_path):
+    # Arrange
+    # Act
+    names = {j.name for j in _sel_jobs(tmp_path)}
+    # Assert
+    assert "scitex-agent-container-accounts-refresh" in names
+
+
+def test_empty_selection_intentionally_disarms_only_sac_provider(tmp_path):
+    # Arrange
+    _sel_write(tmp_path, "# operator selected no SAC periodic jobs\n")
+    # Act
+    observed = _sel_jobs(tmp_path)
+    # Assert
+    assert observed == []
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "fleet-reconcile",
+        "scitex-agent-container-fleet-reconcile",
+        "sac.fleet-reconcile",
+    ],
+)
+def test_short_canonical_and_historical_alias_select_one_actual_job(tmp_path, token):
+    # Arrange
+    _sel_write(tmp_path, token + "\n")
+    # Act
+    observed = [j.name for j in _sel_jobs(tmp_path)]
+    # Assert
+    assert observed == ["scitex-agent-container-fleet-reconcile"]
+
+
+def test_wildcard_preserves_every_declared_job(tmp_path):
+    # Arrange
+    baseline = {j.name for j in _sel_jobs(tmp_path)}
+    _sel_write(tmp_path, "*\n")
+    # Act
+    observed = {j.name for j in _sel_jobs(tmp_path)}
+    # Assert
+    assert observed == baseline
+
+
+def test_env_selection_precedence_retains_existing_contract(tmp_path):
+    # Arrange
+    _sel_write(tmp_path, "*\n")
+    # Act
+    names = [
+        j.name for j in _sel_jobs(tmp_path, env={"SAC_JOBS_ENABLED": "worktree-gc"})
+    ]
+    # Assert
+    assert names == ["scitex-agent-container-worktree-gc"]
+
+
+def test_blank_env_keeps_persistent_pause(tmp_path):
+    # Arrange
+    _sel_write(tmp_path, "")
+    # Act
+    observed = _sel_jobs(tmp_path, env={"SAC_JOBS_ENABLED": " "})
+    # Assert
+    assert observed == []
+
+
+@pytest.mark.parametrize("content", ["unknown-job\n", "*\nunknown-job\n"])
+def test_unknown_selection_is_visible_refusal_even_with_wildcard(tmp_path, content):
+    # Arrange
+    _sel_write(tmp_path, content)
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="unknown job names"):
+        _sel_jobs(tmp_path)
+
+    # Assert
+
+
+def test_unreadable_selection_does_not_rearm_jobs(tmp_path):
+    # Arrange
+    (tmp_path / "jobs-enabled.txt").mkdir()
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="refusing job discovery"):
+        _sel_jobs(tmp_path)
+
+    # Assert
+
+
+def test_broken_authored_selection_symlink_does_not_rearm_jobs(tmp_path):
+    # Arrange
+    (tmp_path / "jobs-enabled.txt").symlink_to(tmp_path / "missing-pause-config")
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="broken symlink"):
+        _sel_jobs(tmp_path)
+
+    # Assert
+
+
+def test_invalid_utf8_selection_is_not_treated_as_absent(tmp_path):
+    # Arrange
+    (tmp_path / "jobs-enabled.txt").write_bytes(b"\xff\xfe")
+    # Act
+    # Assert
+    with pytest.raises(UnicodeError):
+        _sel_jobs(tmp_path)
+
+    # Assert
+
+
+def _selection_supervisor(tmp_path):
+    from scitex_dev._supervisor._runtime import Supervisor
+
+    return Supervisor(
+        discover=lambda: _sel_jobs(tmp_path),
+        discover_placement_fn=lambda: [],
+        state_path=tmp_path / "state.json",
+        log_dir=tmp_path / "logs",
+    )
+    # Assert
+
+
+def test_changed_file_keeps_recovery_on_each_discovery(tmp_path):
+    # Arrange
+    supervisor = _selection_supervisor(tmp_path)
+    # Act
+    before = {j.name for j in supervisor.discover_periodic_jobs()}
+    # Assert
+    assert SELECTION_RECOVERY <= before
+
+
+def test_changed_file_applies_selection_on_each_discovery(tmp_path):
+    # Arrange
+    supervisor = _selection_supervisor(tmp_path)
+    before = {j.name for j in supervisor.discover_periodic_jobs()}
+    keep = before - SELECTION_RECOVERY
+    _sel_write(tmp_path, "\n".join(sorted(keep)) + "\n")
+    # Act
+    observed = {j.name for j in supervisor.discover_periodic_jobs()}
+    # Assert
+    assert observed == keep
+
+
+def test_changed_file_restores_full_set_on_wildcard(tmp_path):
+    # Arrange
+    supervisor = _selection_supervisor(tmp_path)
+    before = {j.name for j in supervisor.discover_periodic_jobs()}
+    path = _sel_write(tmp_path, "*\n")
+    # Act
+    path.write_text("*\n")
+    observed = {j.name for j in supervisor.discover_periodic_jobs()}
+    # Assert
+    assert observed == before
+
+
+def test_documented_operator_pause_ignores_commented_recovery_names(tmp_path):
+    # Arrange
+    keep = {j.name for j in _sel_jobs(tmp_path)} - SELECTION_RECOVERY
+    _sel_write(
+        tmp_path,
+        "# SAC-owned periodic jobs. Agent recovery is paused by operator request.\n"
+        "# Omitted: fleet-reconcile, restart-login-expired-agents, "
+        "resume-rate-limited-agents.\n" + "\n".join(sorted(keep)) + "\n",
+    )
+    # Act
+    observed = {j.name for j in _sel_jobs(tmp_path)}
+    # Assert
+    assert observed == keep
+
+
+def test_canonical_scitex_dir_override_controls_provider_path(tmp_path):
+    # Arrange
+    ecosystem_root = tmp_path / "ecosystem"
+    own_root = ecosystem_root / "agent-container"
+    own_root.mkdir(parents=True)
+    _sel_write(own_root, "worktree-gc\n")
+    previous = os.environ.get("SCITEX_DIR")
+    os.environ["SCITEX_DIR"] = str(ecosystem_root)
+    try:
+        # Act
+        observed = [j.name for j in provide_jobs(env={})]
+    finally:
+        if previous is None:
+            del os.environ["SCITEX_DIR"]
+        else:
+            os.environ["SCITEX_DIR"] = previous
+    # Assert
+    assert observed == ["scitex-agent-container-worktree-gc"]

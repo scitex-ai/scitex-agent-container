@@ -115,7 +115,7 @@ def test_check_reports_the_loaded_module_path(cfg_path, subprocess_shim):
     # Act
     result = CliRunner().invoke(host_sync, ["--check", "spartan"])
     # Assert
-    assert "scitex_agent_container/__init__.py" in result.output
+    assert _MODULE in result.output
 
 
 def test_json_output_carries_the_exit_code(cfg_path, subprocess_shim):
@@ -185,3 +185,18 @@ def test_alarm_is_read_only_and_runs_no_merge(
     calls = subprocess_shim.invocations("ssh")
     # Assert — --alarm rides the read-only detector; it never mutates a peer.
     assert not any("merge --ff-only" in " ".join(argv) for argv in calls)
+
+
+def test_narrow_terminal_keeps_the_complete_observed_module_path(
+    cfg_path, subprocess_shim
+):
+    # Arrange
+    subprocess_shim.install(
+        "ssh", stdout=_marker_block(head="aaa111", target_sha="aaa111")
+    )
+    # Act
+    result = CliRunner().invoke(
+        host_sync, ["--check", "spartan"], env={"COLUMNS": "20"}
+    )
+    # Assert
+    assert _MODULE in result.output

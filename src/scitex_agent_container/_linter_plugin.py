@@ -130,10 +130,18 @@ def get_plugin():
 
 
 def _get_rule(rule_id: str):
-    """Resolve a rule by ID via scitex-dev's lookup (works across versions)."""
-    from scitex_dev.linter._rules._lookup import lookup
+    """Resolve a rule by ID via scitex-dev's lookup (works across versions).
 
-    return lookup(rule_id)
+    Loads THIS plugin's declared rules directly instead of the merged
+    lookup: the merged cache loads every installed plugin, and during
+    the SDK-declared-UI transition two installed packages declare
+    STX-UI101 — making any merged-lookup call raise LinterPluginError
+    for reasons unrelated to this checker.
+    """
+    for rule in get_plugin()["rules"]:
+        if rule.id == rule_id:
+            return rule
+    return None
 
 
 def _make_issue(rule, line: int, col: int, source_line: str):

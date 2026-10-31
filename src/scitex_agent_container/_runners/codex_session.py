@@ -60,6 +60,7 @@ once the turn completes, carrying ``final_response``, the thread id as
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 import scitex_logging as slogging
@@ -76,6 +77,14 @@ __all__ = [
     "_parse_argv",
     "main",
 ]
+
+
+def _protocol_field(value: Any, snake_name: str, camel_name: str) -> Any:
+    """Read SDK model attributes or the app-server's JSON field spelling."""
+    if isinstance(value, dict):
+        return value.get(snake_name, value.get(camel_name))
+    result = getattr(value, snake_name, None)
+    return result if result is not None else getattr(value, camel_name, None)
 
 _INSTALL_HINT = (
     "codex_session requires `openai-codex` "
@@ -154,7 +163,17 @@ def normalize_thread_item(item: Any) -> NormalizedEvent | None:
     attribute exercise every branch. See the module docstring for the
     full vocabulary mapping.
     """
+    # The app-server SDK wraps its camelCase item models in ThreadItem,
+    # a Pydantic RootModel. Keep the older unwrapped exec vocabulary too.
+    item = getattr(item, "root", item)
     itype = str(getattr(item, "type", "") or "")
+    itype = {
+        "agentMessage": "agent_message",
+        "commandExecution": "command_execution",
+        "fileChange": "file_change",
+        "mcpToolCall": "mcp_tool_call",
+        "webSearch": "web_search",
+    }.get(itype, itype)
 
     if itype == "agent_message":
         return NormalizedEvent(kind="text_delta", text=_item_text(item), raw=item)
@@ -182,6 +201,13 @@ def usage_as_dict(usage: Any) -> dict[str, Any]:
     """
     if usage is None:
         return {}
+    # ThreadTokenUsage.total is cumulative across the resident thread;
+    # use its latest breakdown rather than counting that total every turn.
+    latest = (
+        usage.get("last") if isinstance(usage, Mapping) else getattr(usage, "last", None)
+    )
+    if latest is not None:
+        usage = latest
     if isinstance(usage, Mapping):
         source: Mapping[str, Any] = usage
         return {k: v for k, v in source.items() if isinstance(v, int)}
@@ -197,6 +223,23 @@ def usage_as_dict(usage: Any) -> dict[str, Any]:
         if isinstance(value, int):
             out[key] = value
     return out
+
+
+def _final_response_from_items(items: Sequence[Any]) -> str:
+    """Select the same assistant item the SDK convenience runner returns."""
+    fallback = ""
+    for item in reversed(items):
+        item = getattr(item, "root", item)
+        if str(getattr(item, "type", "") or "") != "agent_message":
+            continue
+        text = _item_text(item)
+        phase = getattr(item, "phase", None)
+        phase = getattr(phase, "value", phase)
+        if phase == "final_answer":
+            return text
+        if phase is None and not fallback:
+            fallback = text
+    return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +389,60 @@ class CodexSession:
             # mid-turn ``turn/steer`` and ``turn/interrupt`` requests.
             turn = await self._thread.turn(message.content)
             self._active_turn = turn
-            result = await turn.run()
+            stream = turn.stream()
+            items: list[Any] = []
+            usage: Any = None
+            completed: Any = None
+            terminal_errors: list[Any] = []
+            async for notification in stream:
+                method = str(_protocol_field(notification, "method", "method") or "")
+                # The installed native app-server schema declares
+                # ServerNotification as {method, params}; SDK versions may
+                # expose the same decoded body as ``payload``. Read both
+                # spellings while preserving the typed notification body.
+                payload = _protocol_field(notification, "params", "params")
+                if payload is None:
+                    payload = _protocol_field(notification, "payload", "payload")
+                if method == "error" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
+                    terminal_errors.append(payload)
+                if method == "item/completed" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
+                    items.append(_protocol_field(payload, "item", "item"))
+                elif method == "thread/tokenUsage/updated" and _protocol_field(payload, "turn_id", "turnId") == turn.id:
+                    usage = _protocol_field(payload, "token_usage", "tokenUsage")
+                elif method == "turn/completed":
+                    candidate = _protocol_field(payload, "turn", "turn")
+                    if candidate is not None and _protocol_field(candidate, "id", "id") == turn.id:
+                        completed = candidate
+            if completed is None:
+                raise RuntimeError("Codex app-server ended the turn stream without turn/completed")
+            failed_error = _protocol_field(completed, "error", "error")
+            if failed_error is None:
+                # ErrorNotification is a real app-server notification and
+                # carries the same TurnError shape. Use only a matching turn's
+                # error when its terminal turn/completed record failed.
+                failed_error = next(
+                    (
+                        _protocol_field(event, "error", "error")
+                        for event in reversed(terminal_errors)
+                        if _protocol_field(event, "error", "error") is not None
+                    ),
+                    None,
+                )
+            status = _protocol_field(completed, "status", "status") or ""
+            status = getattr(status, "value", status)
+            if failed_error is not None or status == "failed":
+                message = str(_protocol_field(failed_error, "message", "message") or "")
+                if not message:
+                    message = f"Codex turn failed with status {status or 'unknown'}"
+                yield NormalizedEvent(kind="error", error=message, raw=failed_error or completed)
+                return
+            result = SimpleNamespace(
+                items=items,
+                error=None,
+                final_response=_final_response_from_items(items),
+                usage=usage,
+                status=status,
+            )
         except asyncio.CancelledError:  # cooperative cancellation stays loud
             raise
         except Exception as exc:  # stx-allow: fallback (reason: SDK/subprocess/network surface is broad; the Protocol contract is a turn-ending kind="error" event, not an exception mid-iteration)

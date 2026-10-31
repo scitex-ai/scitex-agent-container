@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from django.template.loader import render_to_string
 
 from scitex_agent_container import __path__ as _package_paths
@@ -158,7 +159,7 @@ def test_detail_names_unpublished_activity_as_unknown(client, loopback, env_save
     # Act
     html = client.get("/beta/").content.decode()
     # Assert
-    assert "Runtime activity" in html and html.count(">Unknown</span>") >= 1
+    assert "Runtime Activity" in html and html.count(">Unknown</span>") >= 1
 
 
 def test_fleet_inventory_shows_published_operation_and_phase(client, loopback, env_save_restore):
@@ -191,23 +192,77 @@ def _render_fleet_inventory(client) -> str:
     )
 
 
-def test_fleet_shows_billing_auth_harness_engine_and_model(client, loopback, env_save_restore):
-    # Arrange
+def test_fleet_table_is_slim_details_carry_the_facts(client, loopback, env_save_restore):
+    # Arrange — operator 2026-10-26: the fleet table shows ONE column
+    # (LED + name); status text lives in the tooltip, runtime/billing/
+    # identity/harness/engine facts live in the Details pane (?partial=1
+    # fragment). Same seed as before.
     env_save_restore.set(IDENTITY_ENV, "alice")
 
     # Act
     html = _render_fleet_inventory(client)
 
-    # Assert
+    # Assert — Agent header only; actions + facts live in the row menu / Details.
     assert (
-        "Billing" in html
-        and "Auth identity" in html
-        and "Harness" in html
-        and "Engine / Model" in html
-        and "subscription" in html
-        and "anthropic/team-max" in html
-        and "sonnet" in html
+        "Agent" in html
+        and ">State<" not in html
+        and "Actions" not in html
+        and "Engine / Model" not in html
+        and "Auth identity" not in html
     )
+
+
+def test_fleet_renders_three_column_dm_layout(client, loopback, env_save_restore):
+    # Arrange — operator 2026-10-23: left roster + center DM chat + right
+    # shared Details column (Cards DM idiom, leaf-side).
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    html = _render_fleet_inventory(client)
+
+    # Assert — three panes with the right labels, narrow roster columns.
+    assert (
+        'data-stx-pane="fleet"' in html
+        and 'data-stx-pane="chat"' in html
+        and 'data-stx-pane="detail"' in html
+        and 'data-stx-label="Details"' in html
+        and "agents-3col" in html
+        and 'data-role="fleet-chat"' in html
+        and ">DM<" in html
+    )
+
+
+def _seeded_details_partial(client, env_save_restore) -> str:
+    # Shared arrange — operator 2026-10-26: Details are tabbed (Identity
+    # first, active); operator 2026-10-22: 5 tabs, no <details> shells.
+    from scitex_agent_container._django._inventory_cache import CACHE
+
+    CACHE.put("alice", [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
+                         "runtime": "apptainer", "harness": "x", "role": "worker",
+                         "engine": "e", "model": "m", "project": "p",
+                         "host": "h", "scope": "own", "cross_host": False,
+                         "a2a_port": 19000, "pid": 1, "activity": {}}])
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    try:
+        return client.get("/alpha/?partial=1").content.decode()
+    finally:
+        CACHE.clear()
+
+
+def test_detail_fragment_renders_five_tabs(client, loopback, env_save_restore):
+    # Arrange — seeded tabbed Details fragment (helper).
+    # Act
+    html = _seeded_details_partial(client, env_save_restore)
+    # Assert — operator 2026-10-22: 5 tabs, no <details> shells.
+    assert html.count('role="tab"') == 5 and "<details" not in html
+
+
+def test_detail_fragment_pairs_every_tab_with_panel(client, loopback, env_save_restore):
+    # Arrange — seeded tabbed Details fragment (helper).
+    # Act
+    html = _seeded_details_partial(client, env_save_restore)
+    # Assert — every tab owns exactly one panel.
+    assert html.count('role="tab"') == html.count('role="tabpanel"') and html.count('role="tab"') == 5
 
 
 def test_compact_fleet_visibly_qualifies_runtime_identity_source(
@@ -216,11 +271,28 @@ def test_compact_fleet_visibly_qualifies_runtime_identity_source(
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
 
-    # Act
+    # Act — operator 2026-10-23: the inline span moved with the engine
+    # column into the Details fragment; the fleet row keeps the fact as a
+    # data attribute for the dynamic pane.
     html = _render_fleet_inventory(client)
 
+    # Assert — the fleet row keeps the fact as a data attribute; the
+    # full identity-source line lives in the Details fragment template.
+    assert 'data-agent-auth=' in html
+
+
+def test_detail_fragment_names_identity_source() -> None:
+    # Arrange — the full identity-source line lives in the Details
+    # fragment template (operator 2026-10-23).
+    from pathlib import Path
+
+    fragment = (
+        Path(__file__).parents[3]
+        / "src/scitex_agent_container/_django/templates/scitex_agent_container/_detail_content.html"
+    ).read_text()
+    # Act — (template text is the act; no request needed.)
     # Assert
-    assert '<span class="identity-source">birth_certificate</span>' in html
+    assert "Identity source" in fragment
 
 
 def test_fleet_template_escapes_all_runtime_identity_cells() -> None:
@@ -290,11 +362,11 @@ def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_rest
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
     html = client.get("/gamma/").content.decode()
-    # Assert
-    assert "not in scope" in html
+    # Assert (pagehead h1 dropped 2026-10-22: banner copy is the signal)
+    assert "is not visible to" in html
 
 
-def test_detail_cross_agent_visible_to_crosshost_operator(client, loopback, env_save_restore):
+def test_detail_cross_agent_visible_to_crosshost_operator(client, loopback, env_save_restore, audit_log):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "op1")
     env_save_restore.set(CROSS_ENV, "op1")
@@ -360,10 +432,10 @@ def test_detail_operate_gate_for_operator(client, loopback, env_save_restore):
 
 
 # ── polish: accessible action column + real tokens ───────────────────────────
-def test_fleet_labels_action_column(client, loopback, env_save_restore):
-    # Arrange: seed a last-known snapshot so the table renders. P0 made the
-    # first paint deliberately empty on a cold cache, so a populated render is
-    # now something a test must set up rather than assume.
+def _seeded_fleet_table_html(client, env_save_restore) -> str:
+    # Shared arrange: seed a last-known snapshot so the table renders. P0
+    # made the first paint deliberately empty on a cold cache, so a
+    # populated render is something a test must set up rather than assume.
     from scitex_agent_container._django._inventory_cache import CACHE
 
     env_save_restore.set(IDENTITY_ENV, "alice")
@@ -372,21 +444,45 @@ def test_fleet_labels_action_column(client, loopback, env_save_restore):
                          "engine": "anthropic", "model": "sonnet", "project": "p",
                          "host": "this node", "scope": "own", "cross_host": False,
                          "a2a_port": 19000, "pid": 1, "activity": {}}])
+    try:
+        return client.get("/").content.decode()
+    finally:
+        CACHE.clear()
+
+
+def test_fleet_labels_action_column(client, loopback, env_save_restore):
+    # Arrange: seeded last-known snapshot (helper).
     # Act
-    html = client.get("/").content.decode()
-    # Assert: the action column keeps its accessible label.
-    assert '<th class="row-actions">Actions</th>' in html
-    CACHE.clear()
+    html = _seeded_fleet_table_html(client, env_save_restore)
+    # Assert: no Actions column header; the gated forms stay in the DOM for the row menu.
+    assert '<th class="row-actions">Actions</th>' not in html
 
 
-# ── dual-mode: mounted in the Hub shell (global_base) not the standalone shell ─
+def test_fleet_row_menu_marks_menu_only(client, loopback, env_save_restore):
+    # Arrange: seed a last-known snapshot so the table renders (helper).
+    # Act
+    html = _seeded_fleet_table_html(client, env_save_restore)
+    # Assert: the row menu carries the menu-only marker class.
+    assert 'row-actions--menu-only' in html
+
+
+# ── host mount: the host shadows the SDK adapter, the leaf serves content only ─
 def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/").content.decode()
+    html = hub_client.get("/apps/agent-container/").content.decode()
     # Assert
-    assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
+    assert 'id="hub-global-header"' in html and "workspace-three-col" not in html and "agents-app" in html and "agents.css" in html
+
+
+def test_mounted_timeline_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = hub_client.get("/apps/agent-container/timeline/").content.decode()
+    # Assert
+    assert 'id="hub-global-header"' in html and "timeline.js" in html and html.index("timeline.js") > html.index('data-page="timeline"')
 
 
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):
@@ -395,18 +491,18 @@ def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):
     # Warm the last-known snapshot via a live read: the shell renders the table
     # from cache on the next paint; a cold first paint is legitimately `loading`
     # (B6: this test must not rely on another test's leaked cache state).
-    hub_client.get("/apps/agents/api/fleet")
+    hub_client.get("/apps/agent-container/api/fleet")
     # Act
-    html = hub_client.get("/apps/agents/").content.decode()
+    html = hub_client.get("/apps/agent-container/").content.decode()
     # Assert
-    assert 'href="/apps/agents/alpha/"' in html
+    assert 'href="/apps/agent-container/alpha/"' in html
 
 
 def test_mounted_detail_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/alpha/").content.decode()
+    html = hub_client.get("/apps/agent-container/alpha/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
 
@@ -421,7 +517,7 @@ def test_standalone_uses_standalone_shell(client, loopback, env_save_restore):
 
 
 # ── polish: real scitex-ui tokens + action-column styling (file-based) ─────────
-def test_css_uses_real_scitex_ui_tokens():
+def test_css_uses_real_scitex_sdk_tokens():
     # Arrange
     css = (Path(__file__).resolve().parents[3] / "src" / "scitex_agent_container" / "_django" / "static" / "scitex_agent_container" / "agents.css").read_text(encoding="utf-8")
     # Act
@@ -434,9 +530,9 @@ def test_css_action_header_right_aligned():
     # Arrange
     css = (Path(__file__).resolve().parents[3] / "src" / "scitex_agent_container" / "_django" / "static" / "scitex_agent_container" / "agents.css").read_text(encoding="utf-8")
     # Act
-    aligned = ".row-actions { text-align: right" in css.replace("  ", " ")
+    hidden = ".row-actions--menu-only" in css
     # Assert
-    assert aligned
+    assert hidden
 
 
 # ── B1: cold-shell transition + B3 scope + B2 redaction (six-blocker regressions) ──
@@ -455,13 +551,64 @@ def test_cold_shell_loading_does_not_claim_empty(client, unreachable_listener, e
     assert 'data-fleet-state="loading"' in html and "No agents visible" not in html
 
 
-def test_cold_shell_renders_a_readonly_inventory_poll(client, unreachable_listener, env_save_restore):
+def test_cold_shell_leaf_templates_carry_no_inline_scripts() -> None:
+    # Arrange: the external warm poll lives in fleet-details.js
+    # (no inline scripts in LEAF templates — the shell chrome carries
+    # its own hook-bypass critical inlines).
+    import re
+    from pathlib import Path
+
+    leaf = Path(__file__).resolve().parents[3] / "src/scitex_agent_container/_django/templates/scitex_agent_container"
+    # Act
+    inlines = [
+        f.name
+        for f in (leaf.glob("*.html"))
+        if re.search(r"<script(?![^>]*[\s]src=)[^>]*>", f.read_text())
+    ]
+    # Assert
+    assert not inlines, inlines
+
+
+def test_warm_poll_lives_in_fleet_details_js() -> None:
+    # Arrange: the poll GETs the inventory endpoint to leave the loading
+    # state via a single reload (operator 2026-10-26: extracted from the
+    # fleet template, no inline scripts in HTML).
+    from pathlib import Path
+
+    # Act
+    js = (
+        Path(__file__).resolve().parents[3]
+        / "src/scitex_agent_container/_django/static/scitex_agent_container/js/fleet-details.js"
+    ).read_text()
+    # Assert
+    assert "warmColdShell" in js and "/api/fleet" in js and "window.location.reload" in js
+
+
+def test_cold_shell_points_poll_at_leaf_api(client, unreachable_listener, env_save_restore):
     # Arrange: cold cache, unreachable control plane.
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act: the shell first paint carries the client-side transition.
     html = client.get("/").content.decode()
-    # Assert: it polls the inventory endpoint (a GET) to leave the loading state.
-    assert "fetch" in html and "/api/fleet" in html and "window.location.reload" in html
+    # Assert: the loading request uses the actual leaf API.
+    assert "/api/fleet" in html
+
+
+def test_leaf_assets_carry_version_buster(client, unreachable_listener, env_save_restore):
+    # Arrange — operator 2026-10-26 (laptop prompt): the fleet stuck on
+    # "Reading the fleet…" until Ctrl+Shift+R. Two causes, both fixed
+    # here: (a) unversioned {% static %} URLs let browsers run stale
+    # JS/CSS across rebakes — every leaf asset URL carries
+    # ?v=<leaf version> so each release re-fetches; (b) the warm-poll
+    # module lived inside {% if agents %}, so cold shells loaded no
+    # poller at all — it now loads unconditionally (null-guarded).
+    from importlib.metadata import version
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act: cold cache, unreachable control plane — the loading shell.
+    html = client.get("/").content.decode()
+    # Assert
+    assert ("fleet-details.js?v=" + version("scitex-agent-container")) in html and ("agents.css?v=" + version("scitex-agent-container")) in html and 'data-fleet-state="loading"' in html
+
 
 
 def test_completed_failure_transitions_to_unavailable_with_retry(client, unreachable_listener, env_save_restore):
@@ -699,8 +846,8 @@ def test_launch_form_shown_to_operator(client, loopback, env_save_restore):
     env_save_restore.set(OPS_ENV, "op1")
     # Act
     html = client.get("/launch/").content.decode()
-    # Assert
-    assert 'name="name"' in html and "Launch agent" in html
+    # Assert (pagehead h1 dropped 2026-10-22: form + card title are the signal)
+    assert 'name="name"' in html and "Start a registered agent" in html
 
 
 def test_launch_form_readonly_for_non_operator(client, loopback, env_save_restore):
@@ -749,6 +896,203 @@ def test_mounted_launch_uses_hub_shell(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
-    html = hub_client.get("/apps/agents/launch/").content.decode()
+    html = hub_client.get("/apps/agent-container/launch/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html
+
+
+# ── SDK app-shell seam: one template per page, no host branch ────────────────
+# Every leaf page extends scitex_sdk/app/app_shell.html and fills
+# scitex_app_content; a host re-chromes by shadowing the adapter.
+
+_SEAM_TEMPLATES = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "scitex_agent_container"
+    / "_django"
+    / "templates"
+    / "scitex_agent_container"
+)
+_SEAM_PAGES = ["fleet", "timeline", "detail", "launch", "create", "a2a"]
+_SEAM_ADAPTER = "scitex_sdk/app/app_shell.html"
+_SEAM_BRIDGE = _SEAM_TEMPLATES.parent / "scitex_sdk" / "app" / "app_shell.html"
+_SEAM_HOST_SHELL = "scitex_app/app_shell.html"
+
+
+def test_no_template_names_a_host_shell():
+    # Arrange
+    bodies = [p.read_text(encoding="utf-8") for p in _SEAM_TEMPLATES.glob("*.html")]
+    # Act
+    offenders = [b for b in bodies if "global_base" in b]
+    # Assert
+    assert offenders == []
+
+
+def test_no_hub_templates_remain():
+    # Arrange
+    leftovers = list(_SEAM_TEMPLATES.glob("*_hub.html"))
+    # Act
+    pass
+    # Assert
+    assert leftovers == []
+
+
+@pytest.mark.parametrize("page", _SEAM_PAGES)
+def test_page_extends_the_sdk_adapter_and_fills_its_content_block(page):
+    # Arrange
+    body = (_SEAM_TEMPLATES / f"{page}.html").read_text(encoding="utf-8")
+    # Act
+    pass
+    # Assert
+    assert f'{{% extends "{_SEAM_ADAPTER}" %}}' in body and "{% block scitex_app_content %}" in body
+
+
+def test_sdk_adapter_bridge_extends_the_host_shell():
+    # Mounted hosts do not install scitex_sdk.app, so the adapter path is
+    # unresolvable there (authenticated 500 while anonymous traffic still
+    # 302s at the login boundary). The leaf-side bridge re-parents the
+    # adapter onto the host shell the generic plugin mount provides
+    # (scitex_app/app_shell.html — hub DIRS shadow when mounted, scitex-app
+    # wheel fallback standalone). Standalone is unaffected: scitex_sdk.app
+    # precedes this app in INSTALLED_APPS, so the SDK-owned adapter wins.
+    # Arrange
+    bridge_path = _SEAM_BRIDGE
+    # Act
+    body = bridge_path.read_text(encoding="utf-8")
+    # Assert
+    assert body.startswith(f'{{% extends "{_SEAM_HOST_SHELL}" %}}')
+
+
+def test_sdk_adapter_bridge_defines_no_blocks():
+    # Pure passthrough: page blocks override through to the host shell.
+    # Arrange
+    bridge_path = _SEAM_BRIDGE
+    # Act
+    body = bridge_path.read_text(encoding="utf-8")
+    # Assert
+    assert "{% block" not in body
+
+
+def test_app_config_uses_the_public_sdk_contract():
+    # Arrange
+    apps_py = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "scitex_agent_container"
+        / "_django"
+        / "apps.py"
+    ).read_text(encoding="utf-8")
+    # Act
+    pass
+    # Assert
+    assert "from scitex_sdk.app.embed import ScitexAppConfig" in apps_py and "scitex_app" not in apps_py
+
+
+def test_fleet_renders_through_the_sdk_shell(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert
+    assert 'name="stx-mount"' in html and "agents-app" in html and "agents.css" in html
+
+
+def test_host_shadow_maps_the_content_block_into_host_chrome(client, loopback, env_save_restore, tmp_path):
+    # Arrange
+    from django.test import override_settings
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    shadow_dir = tmp_path / "host_templates" / "scitex_sdk" / "app"
+    shadow_dir.mkdir(parents=True)
+    (shadow_dir / "app_shell.html").write_text(
+        "<html><head>{% block extra_css %}{% endblock %}</head>"
+        "<body data-host-chrome='1'>"
+        "{% block scitex_app_content %}{% endblock %}"
+        "{% block extra_js %}{% endblock %}"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    base_templates = list(__import__("django").conf.settings.TEMPLATES)
+    shadowed = [dict(base_templates[0], DIRS=[str(tmp_path / "host_templates")])]
+    # Act
+    with override_settings(TEMPLATES=shadowed):
+        html = client.get("/").content.decode()
+    # Assert
+    assert "data-host-chrome='1'" in html and "agents-app" in html and "agents.css" in html and 'name="stx-mount"' not in html
+
+
+# ── fleet shell: full-bleed, dock clearance, live polling ─────────────────────
+def test_fleet_shell_is_full_bleed_not_a_centered_column():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+    # Assert: the shell owns the width (SDK SSoT); no narrow centered column.
+    assert "max-width: 1240px" not in css and "margin: 0 auto" not in css
+
+
+def test_fleet_shell_clears_the_floating_site_dock():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+    # Assert: bottom padding follows the hub's measured dock height SSoT.
+    assert "--site-dock-scroll-clearance" in css
+
+
+def test_fleet_page_loads_the_fleet_poller(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    client.get("/api/fleet")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert
+    assert "fleet.js" in html and html.index("fleet.js") > html.index('data-page="fleet"')
+
+
+def test_mounted_fleet_extra_js_survives_host_shadow(hub_client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    hub_client.get("/apps/agent-container/api/fleet")
+    # Act
+    html = hub_client.get("/apps/agent-container/").content.decode()
+    # Assert
+    assert 'id="hub-global-header"' in html and "fleet.js" in html and html.index("fleet.js") > html.index('data-page="fleet"')
+
+
+def test_fleet_shell_exposes_the_poll_contract(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    client.get("/api/fleet")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert: the poller gets its endpoint, TTL and snapshot age from the DOM.
+    assert 'data-fleet-api="/api/fleet"' in html and 'data-cache-ttl="45' in html and "data-observed-age" in html
+
+
+def test_cached_fleet_marks_the_banner_for_retry(client):
+    # Arrange
+    context = {
+        "agents": [], "summary": {}, "identity": "alice",
+        "crosshost_authorized": False, "can_launch": False,
+        "can_control_crosshost": False, "comm_error": "",
+        "observed_age": 178, "cache_ttl": 45, "page": "fleet",
+        "fleet_state": "cached", "diagnostic_reason": "",
+        "url_base": "",
+    }
+    # Act
+    html = render_to_string("scitex_agent_container/_fleet_content.html", context)
+    # Assert: the poller can find the banner, tick the age and offer a Retry.
+    assert 'data-role="fleet-banner"' in html and 'data-role="fleet-age-short"' in html

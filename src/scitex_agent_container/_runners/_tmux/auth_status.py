@@ -30,7 +30,7 @@ WHY THIS EXISTS
     ``prompts.py`` rather than re-deriving the prompt glyph. Everything here
     is a pure function of pane text + a small state dict — no tmux, no I/O —
     so it is unit-testable against captured panes without mocks. Live capture
-    + ``tui-`` session enumeration live in the ``sac agents auth-status`` CLI
+    + session enumeration live in the ``sac agents auth-status`` CLI
     command (``cli_pkg/_auth_status``).
 
 MAINTENANCE

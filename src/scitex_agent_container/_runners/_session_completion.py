@@ -181,7 +181,7 @@ async def push_completion(
     status_code = resp.status_code
     try:
         body: Any = resp.json()
-    except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated; surfaced verbatim in the loud error)
+    except Exception:  # stx-allow: fallback (reason: non-JSON body tolerated; surfaced verbatim in the raised CompletionPushError, warning to stderr via scitex-logging)
         body = resp.text
     if status_code < 200 or status_code >= 300:
         log.warning(

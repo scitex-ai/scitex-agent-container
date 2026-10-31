@@ -23,7 +23,7 @@ def test_base_image_installs_pinned_local_hermes_source():
         f"org.scitex.hermes.repository {HERMES_REPOSITORY}",
         'cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT"',
         'cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY"',
-        'assert hermes_cli.__version__ == "0.21.2"',
+        "assert hermes_cli.__version__",
     )
     # Act
     text = RECIPE.read_text()

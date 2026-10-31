@@ -140,6 +140,7 @@ def broker_start_to_host(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    session: str | None = None,
 ) -> dict:
     """POST a spawn request to the host-side ``sac listen``; FAIL LOUD on error.
 
@@ -262,6 +263,7 @@ def broker_start_to_host(
             one_shot=one_shot,
             assume_yes=assume_yes,
             force=force,
+            session=session,
         )
     except SpawnRequestError as exc:
         # Re-throw under the broker's own error type so the integration
@@ -287,6 +289,7 @@ def maybe_broker_in_sif_spawn(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    session: str | None = None,
 ) -> bool:
     """Single-call broker chokepoint for the in-SIF redirect in agent_start.
 
@@ -339,24 +342,8 @@ def maybe_broker_in_sif_spawn(
     still-alive Popen pid, returning SUCC while the capsule dies
     silently later.
 
-    ``force``: propagate the caller's own ``--force`` across the broker
-    boundary so the host's ``/agents`` handler appends ``--force`` to its
-    inner ``sac agents start`` argv.
-
-    THIS FIELD IS LOAD-BEARING FOR RESTART CORRECTNESS (incident
-    2026-07-12, scitex-storage). ``agent_restart`` calls
-    ``agent_start(force=True)`` precisely because a restart must REPLACE
-    the process; but this broker fires BEFORE that force is ever consulted
-    locally, so before this parameter existed the flag was silently
-    dropped here. The host then ran a plain, unforced ``sac agents start
-    <name>``, hit the idempotent "already running → no-op" branch
-    (``_start.py``), printed ``SUCC: <name> started`` and exited 0. The
-    restart reported success over an agent that never cycled — same
-    process, same pid, same stale credentials — which is the precise class
-    of lie ``_stop.py``'s force/gate comments already fight on the LOCAL
-    path. It also explains the ``post_ack_no_apptainer_pid`` that followed:
-    no new container was launched, so no ``apptainer_pid`` was ever
-    written.
+    ``force`` is obsolete and refused by the spawn client. Restarts use the
+    dedicated host restart endpoint instead of replacing a process via start.
 
     ``assume_yes``: propagate the caller's own ``-y``/``--yes`` consent
     through to the host's ``/agents`` handler (bug fix 2026-07-05,
@@ -380,6 +367,7 @@ def maybe_broker_in_sif_spawn(
         one_shot=one_shot,
         assume_yes=assume_yes,
         force=force,
+        session=session,
     )
     if not isinstance(result, dict):
         raise RuntimeError(

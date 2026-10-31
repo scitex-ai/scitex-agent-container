@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.24.19</title>
+  <title>YAML Spec Reference (v3) &mdash; scitex-agent-container v0.29.5</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=e0b4eee3"></script>
+      <script src="_static/documentation_options.js?v=a4b8ebc0"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -74,7 +74,7 @@
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#spec-yaml-ssot"><code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (SSoT)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#to-home-optional"><code class="docutils literal notranslate"><span class="pre">to_home/</span></code> (optional)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#apptainer-instance">Apptainer instance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#claude-sdk-session">Claude SDK session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#harness-session">Harness session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#a2a-inbound-spec-a2a-port">A2A inbound (<code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code>)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="how-sac-works.html#sac-listen-control-plane"><code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> (control plane)</a></li>
 </ul>
@@ -90,7 +90,12 @@
 <li class="toctree-l3"><a class="reference internal" href="#metadata-labels-agentcard-fields"><code class="docutils literal notranslate"><span class="pre">metadata.labels</span></code> → AgentCard fields</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-top-level"><code class="docutils literal notranslate"><span class="pre">spec</span></code> — top-level</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spec-apptainer-engine-knobs"><code class="docutils literal notranslate"><span class="pre">spec.apptainer</span></code> — engine knobs</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#spec-available-harnesses-claude-code-account"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-available-harnesses-key-compression-hermes-only"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-available-harnesses-hermes-background-review"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-available-harnesses-hermes-run-budget-seconds"><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-claude-sdk-knobs"><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spec-comms-harness-neutral-communication"><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#available-models-spec-claude-model">Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)</a></li>
 </ul>
 </li>
@@ -174,6 +179,7 @@
 <li class="toctree-l2"><a class="reference internal" href="images.html#builtin-layers">Builtin layers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="images.html#build">Build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="images.html#sandbox-freeze-workflow">Sandbox / freeze workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="images.html#distributing-one-verified-artifact-to-a-fleet">Distributing one verified artifact to a fleet</a></li>
 <li class="toctree-l2"><a class="reference internal" href="images.html#pinning-a-custom-image">Pinning a custom image</a></li>
 </ul>
 </li>
@@ -185,7 +191,18 @@
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engines"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engines</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.engine_key"><code class="docutils literal notranslate"><span class="pre">AgentConfig.engine_key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">AgentConfig.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.service_tier"><code class="docutils literal notranslate"><span class="pre">AgentConfig.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">AgentConfig.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -200,12 +217,19 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.watchdog"><code class="docutils literal notranslate"><span class="pre">AgentConfig.watchdog</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.apptainer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.apptainer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hooks</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.listen"><code class="docutils literal notranslate"><span class="pre">AgentConfig.listen</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.extensions"><code class="docutils literal notranslate"><span class="pre">AgentConfig.extensions</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
@@ -220,9 +244,11 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.a2a"><code class="docutils literal notranslate"><span class="pre">AgentConfig.a2a</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.comms"><code class="docutils literal notranslate"><span class="pre">AgentConfig.comms</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.lineage"><code class="docutils literal notranslate"><span class="pre">AgentConfig.lineage</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.delegation"><code class="docutils literal notranslate"><span class="pre">AgentConfig.delegation</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.kind"><code class="docutils literal notranslate"><span class="pre">AgentConfig.kind</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home_layers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home_layers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
@@ -244,7 +270,6 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec"><code class="docutils literal notranslate"><span class="pre">ContainerSpec</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.runtime"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.image"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.volumes"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.volumes</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.network"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.network</span></code></a></li>
@@ -252,14 +277,30 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ContainerSpec.__init__()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.trigger_at_percent"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.trigger_at_percent</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.strategy"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.strategy</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.warn_before_n_checks"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.warn_before_n_checks</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.check_interval_seconds"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.check_interval_seconds</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.state_file"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.state_file</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.enabled"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.enabled</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ContextManagementConfig.__init__"><code class="docutils literal notranslate"><span class="pre">ContextManagementConfig.__init__()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec"><code class="docutils literal notranslate"><span class="pre">DelegationSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.max_concurrent_children"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.max_concurrent_children</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.worktree_isolation"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.worktree_isolation</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.DelegationSpec.__init__"><code class="docutils literal notranslate"><span class="pre">DelegationSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineDefaultError"><code class="docutils literal notranslate"><span class="pre">EngineDefaultError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineError"><code class="docutils literal notranslate"><span class="pre">EngineError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec"><code class="docutils literal notranslate"><span class="pre">EngineSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.key"><code class="docutils literal notranslate"><span class="pre">EngineSpec.key</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.harness"><code class="docutils literal notranslate"><span class="pre">EngineSpec.harness</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.model"><code class="docutils literal notranslate"><span class="pre">EngineSpec.model</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.provider_declared"><code class="docutils literal notranslate"><span class="pre">EngineSpec.provider_declared</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_provider"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_provider</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.subscription_account"><code class="docutils literal notranslate"><span class="pre">EngineSpec.subscription_account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.reasoning_effort"><code class="docutils literal notranslate"><span class="pre">EngineSpec.reasoning_effort</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.service_tier"><code class="docutils literal notranslate"><span class="pre">EngineSpec.service_tier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.max_context_tokens"><code class="docutils literal notranslate"><span class="pre">EngineSpec.max_context_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.upstream_deadline_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.upstream_deadline_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.client_abandonment_seconds"><code class="docutils literal notranslate"><span class="pre">EngineSpec.client_abandonment_seconds</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.env"><code class="docutils literal notranslate"><span class="pre">EngineSpec.env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.is_default"><code class="docutils literal notranslate"><span class="pre">EngineSpec.is_default</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.EngineSpec.__init__"><code class="docutils literal notranslate"><span class="pre">EngineSpec.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HealthSpec"><code class="docutils literal notranslate"><span class="pre">HealthSpec</span></code></a><ul>
@@ -282,6 +323,24 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HookSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HookSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.target_ratio"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.target_ratio</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.tail_mode"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.tail_mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.in_place"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.in_place</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesCompressionSpec.__init__"><code class="docutils literal notranslate"><span class="pre">HermesCompressionSpec.__init__()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetBudgetError"><code class="docutils literal notranslate"><span class="pre">HermesFleetBudgetError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.threshold_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.threshold_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.usable_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.usable_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.reserved_capacity_tokens"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.reserved_capacity_tokens</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.agent_count"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.agent_count</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HermesFleetContextBudget.__init__"><code class="docutils literal notranslate"><span class="pre">HermesFleetContextBudget.__init__()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec"><code class="docutils literal notranslate"><span class="pre">HostsSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.host"><code class="docutils literal notranslate"><span class="pre">HostsSpec.host</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.HostsSpec.hosts"><code class="docutils literal notranslate"><span class="pre">HostsSpec.hosts</span></code></a></li>
@@ -299,9 +358,11 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec"><code class="docutils literal notranslate"><span class="pre">ProviderSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.base_url"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.base_url</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.auth_token_env"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.auth_token_env</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.allowed_tools"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.allowed_tools</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.extra_headers"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.extra_headers</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProviderSpec.hermes_provider"><code class="docutils literal notranslate"><span class="pre">ProviderSpec.hermes_provider</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.ProxySpec"><code class="docutils literal notranslate"><span class="pre">ProxySpec</span></code></a><ul>
@@ -344,6 +405,7 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.StartupCommand.__init__"><code class="docutils literal notranslate"><span class="pre">StartupCommand.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.UnknownEngineError"><code class="docutils literal notranslate"><span class="pre">UnknownEngineError</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.enabled"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.enabled</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.interval"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.interval</span></code></a></li>
@@ -353,10 +415,13 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.load_config"><code class="docutils literal notranslate"><span class="pre">load_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_config"><code class="docutils literal notranslate"><span class="pre">resolve_config()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.resolve_hostname"><code class="docutils literal notranslate"><span class="pre">resolve_hostname()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.select_engine"><code class="docutils literal notranslate"><span class="pre">select_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.substitute_hostnames"><code class="docutils literal notranslate"><span class="pre">substitute_hostnames()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.validate_config"><code class="docutils literal notranslate"><span class="pre">validate_config()</span></code></a></li>
 </ul>
@@ -384,6 +449,13 @@
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_dir_trust"><code class="docutils literal notranslate"><span class="pre">_detect_codex_dir_trust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_hooks_review"><code class="docutils literal notranslate"><span class="pre">_detect_codex_hooks_review()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._CODEX_COMPOSER_MARKERS"><code class="docutils literal notranslate"><span class="pre">_CODEX_COMPOSER_MARKERS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._codex_usage_limit_pane"><code class="docutils literal notranslate"><span class="pre">_codex_usage_limit_pane()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.codex_blocking_modal"><code class="docutils literal notranslate"><span class="pre">codex_blocking_modal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_codex_done"><code class="docutils literal notranslate"><span class="pre">_detect_codex_done()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_hermes_contributor_tier"><code class="docutils literal notranslate"><span class="pre">_detect_hermes_contributor_tier()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
@@ -429,14 +501,23 @@
 a2a, health, restart, autonomous, listen, skills, telegram, hooks)
 stay at the top level. Every curated block has a <code class="docutils literal notranslate"><span class="pre">raw_*</span></code> escape hatch
 — the full underlying surface is always reachable.</p>
+<blockquote>
+<div><p><strong>On the name <code class="docutils literal notranslate"><span class="pre">spec.claude</span></code>.</strong> It is a legacy key name, not a scope
+claim: the block carries the SDK-harness session/model knobs
+generally, and its <code class="docutils literal notranslate"><span class="pre">provider</span></code> sub-key demonstrably configures
+non-Anthropic endpoints. Do not read <code class="docutils literal notranslate"><span class="pre">spec.claude.*</span></code> as “the Claude
+harness only” — and do not confuse <code class="docutils literal notranslate"><span class="pre">spec.claude.provider</span></code> (which
+<em>inference endpoint</em> answers) with the top-level <code class="docutils literal notranslate"><span class="pre">spec.harness</span></code>
+(which <em>agent program</em> drives the turn). The two axes compose.</p>
+</div></blockquote>
 <p>The agent name is the parent directory of <code class="docutils literal notranslate"><span class="pre">spec.yaml</span></code> (dir-as-SSoT —
 no <code class="docutils literal notranslate"><span class="pre">metadata.name</span></code> field).</p>
 <section id="quick-links">
 <h2>Quick links<a class="headerlink" href="#quick-links" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p>Annotated full example: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/full-agent/spec.yaml</span></code></a> — every supported field with inline comments</p></li>
-<li><p>Minimal example: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/minimal-agent/spec.yaml</span></code></a></p></li>
-<li><p>Quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code>: <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/hello-agent/spec.yaml</span></code></a></p></li>
+<li><p>Annotated full example: <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/full-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/full-agent/spec.yaml</span></code></a> — every supported field with inline comments</p></li>
+<li><p>Minimal example: <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/minimal-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/minimal-agent/spec.yaml</span></code></a></p></li>
+<li><p>Quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code>: <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/hello-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/hello-agent/spec.yaml</span></code></a></p></li>
 </ul>
 </section>
 <section id="top-level-shape">
@@ -458,7 +539,7 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apptainer</span><span class="w">                     </span><span class="c1"># optional; only `apptainer` accepted; empty defaults to `apptainer` (since 2026-05-13)</span>
 <span class="w">  </span><span class="nt">workdir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/proj</span><span class="w">                        </span><span class="c1"># mounted rw at /work</span>
-<span class="w">  </span><span class="nt">to_home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./to_home</span><span class="w">                     </span><span class="c1"># mirrored into the agent $HOME at start (auto-discovers ./to_home; default &quot;./to_home&quot;)</span>
+<span class="w">  </span><span class="nt">to_home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./to_home</span><span class="w">                     </span><span class="c1"># mirrored into the agent $HOME at start (auto-discovers ./to_home; default "./to_home")</span>
 <span class="w">  </span><span class="nt">python-venv</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">                      </span><span class="c1"># string or list — fallback chain</span>
 <span class="w">  </span><span class="nt">env-file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.env</span><span class="w">                         </span><span class="c1"># string or list of dotenv paths   (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
 <span class="w">  </span><span class="nt">multiplexer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tmux</span><span class="w">                      </span><span class="c1"># tmux | screen                    (VERIFY: validator currently rejects — must be added to _KNOWN_SPEC_KEYS)</span>
@@ -479,23 +560,34 @@ no <code class="docutils literal notranslate"><span class="pre">metadata.name</s
 <span class="w">  </span><span class="c1"># NOT in agent spec.yaml.</span>
 <span class="w">  </span><span class="nt">startup</span><span class="p">:</span><span class="w">                               </span><span class="c1"># (optional) ready-pattern gating block (todo#291)</span>
 <span class="w">    </span><span class="nt">commands</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                      </span><span class="c1"># shadows top-level startup_commands when set</span>
-<span class="w">    </span><span class="nt">ready_patterns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># regex strings (or { regex: &quot;...&quot; } dicts)</span>
+<span class="w">    </span><span class="nt">ready_patterns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># regex strings (or { regex: "..." } dicts)</span>
 <span class="w">    </span><span class="nt">ready_idle_ticks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
 <span class="w">    </span><span class="nt">ready_poll_interval_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
 <span class="w">    </span><span class="nt">ready_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60</span>
 <span class="w">    </span><span class="nt">on_timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">capture_and_proceed</span><span class="w">      </span><span class="c1"># capture_and_proceed | capture_and_fail</span>
-<span class="w">  </span><span class="nt">context_management</span><span class="p">:</span><span class="w">                    </span><span class="c1"># context auto-management (compact/restart/noop)</span>
-<span class="w">    </span><span class="nt">trigger_at_percent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">70</span>
-<span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">noop</span><span class="w">                       </span><span class="c1"># compact | restart | noop</span>
-<span class="w">    </span><span class="nt">warn_before_n_checks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
-<span class="w">    </span><span class="nt">check_interval_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<span class="w">  </span><span class="nt">available_harnesses</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">hermes</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> mode</span><span class="p">:</span><span class="w"> </span><span class="nv">continue</span><span class="p p-Indicator">,</span><span class="nt"> max_age_minutes</span><span class="p">:</span><span class="w"> </span><span class="nv">4320</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">      </span><span class="nt">background_review</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">      </span><span class="c1"># run_budget_seconds: 900  # optional; one-shot/eval jobs only</span>
+<span class="w">      </span><span class="nt">compression</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.80</span>
+<span class="w">        </span><span class="nt">threshold_tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">           </span><span class="c1"># optional absolute trigger cap</span>
+<span class="w">        </span><span class="nt">target_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.20</span>
+<span class="w">        </span><span class="nt">tail_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lean</span>
+<span class="w">        </span><span class="nt">in_place</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">comms</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">channels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">server</span><span class="p p-Indicator">:</span><span class="nv">sac</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">server</span><span class="p p-Indicator">:</span><span class="nv">scitex-cards</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">outbound</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> siblings</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="p p-Indicator">,</span><span class="nt"> parent</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">inbound</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> siblings</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="p p-Indicator">,</span><span class="nt"> parent</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">a2a</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> listen</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">telegram</span><span class="p">:</span><span class="w">     </span><span class="p p-Indicator">{</span><span class="nt"> bot_token_env</span><span class="p">:</span><span class="w"> </span><span class="nv">...</span><span class="p p-Indicator">,</span><span class="nt"> allowed_users</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> auto_connect</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">,</span><span class="nt"> greeting</span><span class="p">:</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">hooks</span><span class="p">:</span><span class="w">        </span><span class="p p-Indicator">{</span><span class="nt"> pre_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> post_start</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> pre_stop</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">],</span><span class="nt"> post_stop</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="p p-Indicator">}</span>
 <span class="w">  </span><span class="nt">extensions</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">                  </span><span class="c1"># opaque per-deployment dict</span>
 
 <span class="w">  </span><span class="nt">startup_commands</span><span class="p">:</span><span class="w">                      </span><span class="c1"># SHELL before claude starts (list of {delay, command} dicts)</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> delay</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> command</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;echo</span><span class="nv"> </span><span class="s">hi&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">startup_prompts</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># TEXT fed to claude as first user msg</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> delay</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> command</span><span class="p">:</span><span class="w"> </span><span class="s">"echo</span><span class="nv"> </span><span class="s">hi"</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">startup_prompts</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="nv">...</span><span class="p p-Indicator">]</span><span class="w">                </span><span class="c1"># TEXT fed to the selected harness as first user msg</span>
 <span class="w">  </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">continue</span><span class="w">                      </span><span class="c1"># top-level shortcut overriding spec.claude.session</span>
 
 <span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">gpu-box</span><span class="w">                         </span><span class="c1"># mutually exclusive: singleton on one peer</span>
@@ -606,9 +698,17 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">harness</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">anthropic</span></code> (default) | <code class="docutils literal notranslate"><span class="pre">openai</span></code> | <code class="docutils literal notranslate"><span class="pre">codex</span></code></p></td>
+<td><p><strong>Which agent program drives the turn</strong> — NOT <code class="docutils literal notranslate"><span class="pre">spec.claude.provider</span></code>, which points the SDK session at an Anthropic-compatible <em>inference</em> endpoint. The two axes compose, and <code class="docutils literal notranslate"><span class="pre">codex</span></code> is a legal value of BOTH: as a HARNESS the Codex agent program runs the loop, as a PROVIDER Claude Code still drives and Codex only answers. <strong>Launch caveat today — read before choosing:</strong> the registry has four entries (<code class="docutils literal notranslate"><span class="pre">claude-code-tui</span></code>, <code class="docutils literal notranslate"><span class="pre">claude-agent-sdk</span></code>, <code class="docutils literal notranslate"><span class="pre">openai-agents</span></code>, <code class="docutils literal notranslate"><span class="pre">codex-sdk</span></code>), but only <code class="docutils literal notranslate"><span class="pre">anthropic</span></code> can be STARTED. <code class="docutils literal notranslate"><span class="pre">openai</span></code> and <code class="docutils literal notranslate"><span class="pre">codex</span></code> load, validate and resolve to their registry entries, then every lifecycle launch path REFUSES them — loudly, rather than silently launching a Claude runner under a spec that asked for something else. The working path for the OpenAI SDK meanwhile is the <code class="docutils literal notranslate"><span class="pre">openai_session</span></code> A2A executor (<code class="docutils literal notranslate"><span class="pre">spec.a2a.handler</span></code>); there is no equivalent executor for <code class="docutils literal notranslate"><span class="pre">codex</span></code> yet.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">provider</span></code></p></td>
+<td><p><em>(deprecated alias of <code class="docutils literal notranslate"><span class="pre">harness</span></code>)</em></p></td>
+<td><p>The spelling this field had before it was renamed. Still honoured: a spec carrying <code class="docutils literal notranslate"><span class="pre">provider:</span></code> loads unchanged; starting it logs a one-line deprecation. Both keys with the SAME value is fine; both with DIFFERENT values is a hard load error naming both.</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">runtime</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">apptainer</span></code> (optional)</p></td>
-<td><p>Empty/unset defaults to <code class="docutils literal notranslate"><span class="pre">apptainer</span></code>; any other value is rejected. docker/podman were dropped 2026-05-13</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tui</span></code> (default) | <code class="docutils literal notranslate"><span class="pre">claude-agent-sdk</span></code> | <code class="docutils literal notranslate"><span class="pre">apptainer</span></code></p></td>
+<td><p><strong>Launch mode within the Anthropic harness family.</strong> Empty/unset = <code class="docutils literal notranslate"><span class="pre">tui</span></code> (the interactive Claude Code TUI in a PTY); <code class="docutils literal notranslate"><span class="pre">claude-agent-sdk</span></code> = the headless SDK runner; <code class="docutils literal notranslate"><span class="pre">apptainer</span></code> is the back-compat spelling of the pre-2026-06-13 container-engine field and maps to <code class="docutils literal notranslate"><span class="pre">claude-agent-sdk</span></code>. docker/podman were dropped 2026-05-13.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">workdir</span></code></p></td>
 <td><p>path</p></td>
@@ -648,11 +748,11 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">startup_commands[]</span></code></p></td>
 <td><p>list of <code class="docutils literal notranslate"><span class="pre">{delay,</span> <span class="pre">command}</span></code></p></td>
-<td><p>Run <strong>before</strong> Claude starts. Each item is a dict with optional <code class="docutils literal notranslate"><span class="pre">delay</span></code> (int seconds, default 0) and required <code class="docutils literal notranslate"><span class="pre">command</span></code> (string); bare strings are not accepted.</p></td>
+<td><p>Run <strong>before</strong> the harness process starts. Each item is a dict with optional <code class="docutils literal notranslate"><span class="pre">delay</span></code> (int seconds, default 0) and required <code class="docutils literal notranslate"><span class="pre">command</span></code> (string); bare strings are not accepted.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">startup_prompts[]</span></code></p></td>
 <td><p>list of strings</p></td>
-<td><p>Fed to Claude as first user message(s)</p></td>
+<td><p>Required explicitly; <code class="docutils literal notranslate"><span class="pre">[]</span></code> means no startup turn; no implicit prompt fallback</p></td>
 </tr>
 </tbody>
 </table>
@@ -718,6 +818,96 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tbody>
 </table>
 </section>
+<section id="spec-available-harnesses-claude-code-account">
+<h3><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.claude-code.account</span></code><a class="headerlink" href="#spec-available-harnesses-claude-code-account" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">account</span></code> pins a Claude Code harness to one saved Anthropic OAuth account by
+its <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">account</span> <span class="pre">list</span></code> slug. It belongs to the harness that consumes the
+credential, not to the legacy <code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> compatibility block:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">harness</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-code</span>
+<span class="w">  </span><span class="nt">available_harnesses</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">claude-code</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scitex-01-scitex-ai</span>
+<span class="w">      </span><span class="nt">session</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="nv">continue</span><span class="p p-Indicator">,</span><span class="nt"> max_age_minutes</span><span class="p">:</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">}</span>
+<span class="w">      </span><span class="nt">approval_policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">never</span>
+<span class="w">      </span><span class="nt">watchdog</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">        </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
+<span class="w">        </span><span class="nt">responses</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">y_n</span><span class="p">:</span><span class="w"> </span><span class="s">"1"</span><span class="p p-Indicator">,</span><span class="nt"> y_y_n</span><span class="p">:</span><span class="w"> </span><span class="s">"2"</span><span class="p p-Indicator">,</span><span class="nt"> waiting</span><span class="p">:</span><span class="w"> </span><span class="nv">/speak-and-call</span><span class="p p-Indicator">}</span>
+</pre></div>
+</div>
+<p>The slug must be a non-empty string with no surrounding whitespace. At the
+parser boundary SAC folds it into the typed Claude runtime configuration, so
+the existing start preflight checks that exact stored-account preference and
+the auth bind resolves its snapshot. <code class="docutils literal notranslate"><span class="pre">account</span></code> is rejected on other harness
+entries because Codex and Hermes do not consume Claude Code OAuth snapshots.</p>
+</section>
+<section id="spec-available-harnesses-key-compression-hermes-only">
+<h3><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.&lt;key&gt;.compression</span></code> — Hermes only<a class="headerlink" href="#spec-available-harnesses-key-compression-hermes-only" title="Link to this heading"></a></h3>
+<p>Hermes context compaction is configured beside the Hermes harness that owns
+the behavior. The block is optional; omitting it preserves SAC’s current
+Hermes defaults: <code class="docutils literal notranslate"><span class="pre">threshold:</span> <span class="pre">0.80</span></code>, <code class="docutils literal notranslate"><span class="pre">threshold_tokens:</span> <span class="pre">null</span></code>,
+<code class="docutils literal notranslate"><span class="pre">target_ratio:</span> <span class="pre">0.20</span></code>, <code class="docutils literal notranslate"><span class="pre">tail_mode:</span> <span class="pre">lean</span></code>, and <code class="docutils literal notranslate"><span class="pre">in_place:</span> <span class="pre">true</span></code>.
+<code class="docutils literal notranslate"><span class="pre">threshold_tokens</span></code>, when set, is a positive integer absolute cap: Hermes
+compacts at the lower of the ratio-derived trigger and this value while the
+model’s truthful <code class="docutils literal notranslate"><span class="pre">context_length</span></code> remains unchanged. The ratios must satisfy
+<code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">&lt;</span> <span class="pre">target_ratio</span> <span class="pre">&lt;</span> <span class="pre">threshold</span> <span class="pre">&lt;</span> <span class="pre">1</span></code>; <code class="docutils literal notranslate"><span class="pre">tail_mode</span></code> is <code class="docutils literal notranslate"><span class="pre">lean</span></code> or <code class="docutils literal notranslate"><span class="pre">legacy</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">in_place</span></code> is a boolean.</p>
+<p>For agents sharing one engine, derive the absolute trigger from fresh engine
+KV capacity rather than adding their independent model windows. SAC’s
+fail-closed helper reserves 25%, divides the remainder by the sharing agents,
+and rounds down to a binary token boundary. Six agents sharing an observed
+<code class="docutils literal notranslate"><span class="pre">max_total_num_tokens:</span> <span class="pre">2180096</span></code> therefore use <code class="docutils literal notranslate"><span class="pre">threshold_tokens:</span> <span class="pre">262144</span></code>:
+their six triggers total 1,572,864 tokens and leave 607,232 tokens of reserve.
+A missing or stale capacity observation is an error. A 524,288-token trigger
+is suitable only for a controlled single-agent canary; six such triggers total
+3,145,728 and are not a safe fleet steady state.
+The derivation helper is intentionally pure and does not rewrite running
+agents. An operator or deployment planner must put its <code class="docutils literal notranslate"><span class="pre">threshold_tokens</span></code>
+result in each selected Hermes harness block; normal spec loading then carries
+that value into the compiled Hermes profile on the next authorized restart.
+The same block under Claude Code, Codex, or another harness is rejected rather
+than silently ignored. The former top-level <code class="docutils literal notranslate"><span class="pre">spec.context_management</span></code> example
+was removed because that tolerated legacy key has no runtime consumer.</p>
+</section>
+<section id="spec-available-harnesses-hermes-background-review">
+<h3><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.background_review</span></code><a class="headerlink" href="#spec-available-harnesses-hermes-background-review" title="Link to this heading"></a></h3>
+<p>This boolean controls Hermes’ automatic post-turn review. It defaults to
+<code class="docutils literal notranslate"><span class="pre">false</span></code>, so SAC-managed Hermes agents do not silently issue a second request
+over the full conversation after completing foreground work. Set it to <code class="docutils literal notranslate"><span class="pre">true</span></code>
+only when that extra review traffic is intentional. SAC compiles the value to
+Hermes’ internal <code class="docutils literal notranslate"><span class="pre">auxiliary.background_review.enabled</span></code> setting.</p>
+<p>On 2026-09-12, aligned Hermes and inference-server logs showed an automatic
+review replaying about 691,000 tokens while the next foreground turn began on
+the same conversation. After the gateway restarted and cancelled the review,
+the foreground turn performed a cold prefill and took about 276 seconds. This
+field makes that high-cost behavior declared and testable rather than implicit.</p>
+</section>
+<section id="spec-available-harnesses-hermes-run-budget-seconds">
+<h3><code class="docutils literal notranslate"><span class="pre">spec.available_harnesses.hermes.run_budget_seconds</span></code><a class="headerlink" href="#spec-available-harnesses-hermes-run-budget-seconds" title="Link to this heading"></a></h3>
+<p>This optional positive integer gives one Hermes run a wall-clock checkpoint for
+one-shot/eval jobs that already have an external deadline. It is unset by
+default for agentic SAC sessions, so Hermes runs to completion and does not
+receive the 80%-elapsed wrap-up instruction. When explicitly set, SAC compiles
+the value to Hermes’ internal <code class="docutils literal notranslate"><span class="pre">agent.run_budget_seconds</span></code> setting. This is not a
+hard kill and does not trigger context compression; it injects a one-time
+wrap-up notice and tightens implicit stale-call timeouts.</p>
+<p>SAC separately emits Hermes’ <code class="docutils literal notranslate"><span class="pre">agent.max_turns:</span> <span class="pre">none</span></code> sentinel for agentic
+sessions. This keeps Hermes’ own tool loop unbounded while leaving
+<code class="docutils literal notranslate"><span class="pre">spec.autonomous.max_turns</span></code> as the independent safety cap for SAC’s outer
+drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.</p>
+<p>Telegram is an edge transport, not a per-agent dependency. Select the CCT
+Telegram channel only on the human-facing gateway agent (normally
+<code class="docutils literal notranslate"><span class="pre">scitex-lead</span></code>); application agents communicate through Cards, SAC, or A2A.
+For each spec that explicitly selects CCT, SAC owns one poller using that
+spec’s declared token. SAC neither creates nor requires a separate BotFather
+token for every agent. Selecting the same Telegram bot in several agent specs
+would create competing pollers and is not a supported topology.</p>
+<p>A CCT turn is acknowledged only after Hermes proves the exact delivery marker
+visible in its native session. The receipt identifies <code class="docutils literal notranslate"><span class="pre">agent</span></code>, <code class="docutils literal notranslate"><span class="pre">delivery_id</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">exchange_id</span></code>, so a gateway or web client can report and retry the turn
+without an operator watching or attaching to the TUI.</p>
+</section>
 <section id="spec-claude-sdk-knobs">
 <h3><code class="docutils literal notranslate"><span class="pre">spec.claude</span></code> — SDK knobs<a class="headerlink" href="#spec-claude-sdk-knobs" title="Link to this heading"></a></h3>
 <table class="docutils align-default">
@@ -730,7 +920,7 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">model</span></code></p></td>
 <td><p>alias or full ID (default <code class="docutils literal notranslate"><span class="pre">sonnet</span></code>)</p></td>
-<td><p>Claude model — see <strong>Available models</strong> below</p></td>
+<td><p>The model this agent’s turns run on. Without a <code class="docutils literal notranslate"><span class="pre">provider</span></code> override it is a Claude model — see <strong>Available models</strong> below. WITH one it is the override endpoint’s own id (e.g. <code class="docutils literal notranslate"><span class="pre">deepseek-chat</span></code>, <code class="docutils literal notranslate"><span class="pre">gpt-5.6-sol</span></code>) and the <code class="docutils literal notranslate"><span class="pre">claude-*</span></code> alias check relaxes. <strong>The <code class="docutils literal notranslate"><span class="pre">sonnet</span></code> default is applied to every agent regardless of harness</strong> — an Anthropic-shaped default the harness/runtime/inference layering work has not yet unwound.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">account</span></code></p></td>
 <td><p>string</p></td>
@@ -750,26 +940,43 @@ when <code class="docutils literal notranslate"><span class="pre">spec.a2a.port<
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">continue_max_age_minutes</span></code></p></td>
 <td><p>int</p></td>
-<td><p>Only resume if session.jsonl is newer than N minutes</p></td>
+<td><p>Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days).</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">flags[]</span></code></p></td>
 <td><p>list of strings</p></td>
 <td><p>Extra flags appended to <code class="docutils literal notranslate"><span class="pre">claude</span></code> invocation</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">channels[]</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">server:&lt;name&gt;</span></code> / <code class="docutils literal notranslate"><span class="pre">plugin:&lt;id&gt;&#64;&lt;v&gt;</span></code></p></td>
-<td><p>MCP push channels (passed as <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">--channels</span></code>)</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto_accept</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">auto_accept</span></code></p></td>
 <td><p>bool (default <code class="docutils literal notranslate"><span class="pre">True</span></code>)</p></td>
 <td><p>Auto-confirm permission prompts in the TUI</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">raw_options</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">raw_options</span></code></p></td>
 <td><p>dict</p></td>
 <td><p><strong>Escape hatch</strong> — splatted into <code class="docutils literal notranslate"><span class="pre">ClaudeAgentOptions(**raw_options)</span></code></p></td>
 </tr>
 </tbody>
 </table>
+</section>
+<section id="spec-comms-harness-neutral-communication">
+<h3><code class="docutils literal notranslate"><span class="pre">spec.comms</span></code> — harness-neutral communication<a class="headerlink" href="#spec-comms-harness-neutral-communication" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">spec.comms.channels</span></code> declares inbound communication adapters once for the
+agent. The selected harness does not own this list. SAC adapts the same
+declaration to Claude Code, Hermes, or Codex while preserving the same durable
+SAC/Cards identity and exchange ledger.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">comms</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">channels</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:sac</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">server:scitex-cards</span>
+<span class="w">    </span><span class="nt">outbound</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> siblings</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="p p-Indicator">,</span><span class="nt"> parent</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">inbound</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> siblings</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="p p-Indicator">,</span><span class="nt"> parent</span><span class="p">:</span><span class="w"> </span><span class="nv">allow</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">a2a</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> listen</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</pre></div>
+</div>
+<p>With <code class="docutils literal notranslate"><span class="pre">available_harnesses</span></code>, a <code class="docutils literal notranslate"><span class="pre">channels</span></code> key inside a harness entry is rejected
+with a relocation hint. Older direct <code class="docutils literal notranslate"><span class="pre">spec.claude.channels</span></code> specs remain
+readable only for the fleet migration window; new specs must use
+<code class="docutils literal notranslate"><span class="pre">spec.comms.channels</span></code>.</p>
 <section id="available-models-spec-claude-model">
 <h4>Available models (<code class="docutils literal notranslate"><span class="pre">spec.claude.model</span></code>)<a class="headerlink" href="#available-models-spec-claude-model" title="Link to this heading"></a></h4>
 <p>sac validates <code class="docutils literal notranslate"><span class="pre">model</span></code> at YAML-load time, then hands it to the Claude Code
@@ -839,7 +1046,7 @@ is relaxed — use the provider’s own model names instead.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">sdk-alive</span></code> (only value accepted by the validator). NOTE: the parser default is the legacy string <code class="docutils literal notranslate"><span class="pre">multiplexer-alive</span></code>; with the validator pin in place, any explicit value other than <code class="docutils literal notranslate"><span class="pre">sdk-alive</span></code> is rejected at load time.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.idle_kick_after_s</span></code></p></td>
-<td><p>int seconds — nudge cadence when no tool activity (default 120)</p></td>
+<td><p>int seconds — minimum nudge cadence when no tool activity (default 120). A Hermes TUI applies its 60-second anti-busy-loop floor, then adds a deterministic per-agent 0–59 second cadence offset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">restart.policy</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">never</span></code> | <code class="docutils literal notranslate"><span class="pre">on-failure</span></code> | <code class="docutils literal notranslate"><span class="pre">always</span></code></p></td>
@@ -863,16 +1070,33 @@ is relaxed — use the provider’s own model names instead.</p>
 <td><p>drive turns until <code class="docutils literal notranslate"><span class="pre">drive_until</span></code> token or <code class="docutils literal notranslate"><span class="pre">max_turns</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.drive_until</span></code></p></td>
-<td><p>string token Claude prints when done (default <code class="docutils literal notranslate"><span class="pre">DONE</span></code>)</p></td>
+<td><p>string token the agent prints when done (default <code class="docutils literal notranslate"><span class="pre">DONE</span></code>)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.max_turns</span></code></p></td>
 <td><p>int</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">autonomous.kick_text</span></code></p></td>
-<td><p>nudge sent when Claude pauses</p></td>
+<td><p>nudge sent when the agent pauses</p></td>
 </tr>
 </tbody>
 </table>
+<p>For an owning Hermes TUI, enabling this block arms Hermes’ native session
+heartbeat at launch. The heartbeat fires only while the run is idle and the
+native input queue is empty, so queued human guidance/steering takes priority.
+Each wake asks the agent to re-read Cards, verify assignment and ownership,
+and reject overlap before editing. SAC does not poll Cards or issue model
+turns on a timer itself. Hermes cron remains the right mechanism for a
+wall-clock job; the session heartbeat is the right mechanism for an idle
+worker that should look for another durable Card.
+When an external CI/review status is merely pending, the wake contract records
+that evidence and returns idle for a later heartbeat rather than holding an
+active turn open with polling sleeps. A real running test, build, or useful
+process is not a polling sleep and may still be monitored normally.
+The exact Hermes stagger interprets the first eight SHA-256 digest bytes of the
+agent name as an unsigned big-endian integer, takes
+<code class="docutils literal notranslate"><span class="pre">integer</span> <span class="pre">mod</span> <span class="pre">min(60,</span> <span class="pre">configured_interval)</span></code> seconds, and adds that to the
+configured/floored interval. It is stable across restarts and hosts, and the
+configured value remains the minimum idle backoff.</p>
 </section>
 <section id="spec-a2a-spec-listen-network-endpoints">
 <h3><code class="docutils literal notranslate"><span class="pre">spec.a2a</span></code> / <code class="docutils literal notranslate"><span class="pre">spec.listen</span></code> — network endpoints<a class="headerlink" href="#spec-a2a-spec-listen-network-endpoints" title="Link to this heading"></a></h3>
@@ -887,7 +1111,7 @@ is relaxed — use the provider’s own model names instead.</p>
 <td><p>Bind interface for the per-agent A2A sidecar (default <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code>).</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">a2a.port</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> (default) — sac claims a free port from <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>’s <code class="docutils literal notranslate"><span class="pre">a2a.port_range</span></code> (default 19000-19999), persists in <code class="docutils literal notranslate"><span class="pre">state.db</span></code>, surfaces via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span></code>. Set an explicit int (e.g. <code class="docutils literal notranslate"><span class="pre">7901</span></code>) to pin for a stable external URL. Set <code class="docutils literal notranslate"><span class="pre">null</span></code> to disable the sidecar entirely. <strong>Most operators never touch this</strong> — auto is the right default.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> (default) — sac claims a free port from <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code>’s <code class="docutils literal notranslate"><span class="pre">a2a.port_range</span></code> (default 19000-19999), persists it in the shared PostgreSQL store, and surfaces it via <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">agents</span> <span class="pre">list</span></code>. Set an explicit int (e.g. <code class="docutils literal notranslate"><span class="pre">7901</span></code>) to pin for a stable external URL. Set <code class="docutils literal notranslate"><span class="pre">null</span></code> to disable the sidecar entirely. <strong>Most operators never touch this</strong> — auto is the right default.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">listen[]</span></code></p></td>
 <td><p>LIST of side-port DECLARATIONS (NOT a single port override). Each item: <code class="docutils literal notranslate"><span class="pre">{port,</span> <span class="pre">proto,</span> <span class="pre">path,</span> <span class="pre">name,</span> <span class="pre">owner}</span></code>. <code class="docutils literal notranslate"><span class="pre">proto</span></code>: <code class="docutils literal notranslate"><span class="pre">tcp</span></code> (default) / <code class="docutils literal notranslate"><span class="pre">udp</span></code> / <code class="docutils literal notranslate"><span class="pre">unix</span></code>. Entries that fail validation (<code class="docutils literal notranslate"><span class="pre">tcp</span></code>/<code class="docutils literal notranslate"><span class="pre">udp</span></code> needs <code class="docutils literal notranslate"><span class="pre">port&gt;0</span></code>; <code class="docutils literal notranslate"><span class="pre">unix</span></code> needs <code class="docutils literal notranslate"><span class="pre">path</span></code>) are silently dropped. <strong>The container does NOT bind these — declarations only</strong>, surfaced on the AgentCard for peers. The host-level <code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">listen</span></code> server port (default 7878) is configured in <code class="docutils literal notranslate"><span class="pre">~/.scitex/agent-container/config.yaml</span></code> under <code class="docutils literal notranslate"><span class="pre">listen.port</span></code>, NOT here.</p></td>
@@ -989,7 +1213,7 @@ per-invocation tweak doesn’t mutate the persistent default.</p>
 <section id="kind-agentproxy-http-forwarder-agents">
 <h2><code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> — HTTP forwarder agents<a class="headerlink" href="#kind-agentproxy-http-forwarder-agents" title="Link to this heading"></a></h2>
 <p>A proxy agent forwards <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/v1/turn</span></code> to an <strong>external A2A
-endpoint</strong> instead of running a Claude SDK conversation in-process.
+endpoint</strong> instead of running an agent session in-process.
 There is no SDK in the container; the runner is a thin Starlette
 forwarder (image: <code class="docutils literal notranslate"><span class="pre">sac-proxy.sif</span></code>, lighter than <code class="docutils literal notranslate"><span class="pre">sac-scitex.sif</span></code> —
 no Python ML stack).</p>
@@ -1047,18 +1271,18 @@ to a <em>different</em> host is rejected with HTTP 502. The MVP does
 not enforce an apptainer <code class="docutils literal notranslate"><span class="pre">--net</span></code> policy.</p></li>
 <li><p>Runs in <code class="docutils literal notranslate"><span class="pre">sac-proxy.sif</span></code> — see <code class="docutils literal notranslate"><span class="pre">containers/sac-proxy.def</span></code>.</p></li>
 </ul>
-<p>See <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/spec.yaml</span></code></a>
+<p>See <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/blob/develop/examples/agents/proxy-agent/spec.yaml"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/spec.yaml</span></code></a>
 for a complete minimal example.</p>
 </section>
 </section>
 <section id="examples">
 <h2>Examples<a class="headerlink" href="#examples" title="Link to this heading"></a></h2>
-<p>Copy from <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents"><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code></a>:</p>
+<p>Copy from <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents"><code class="docutils literal notranslate"><span class="pre">examples/agents/</span></code></a>:</p>
 <ul class="simple">
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/full-agent"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> layout)</p></li>
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/minimal-agent"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">to_home</span></code></p></li>
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/hello-agent"><code class="docutils literal notranslate"><span class="pre">hello-agent/</span></code></a> — quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code></p></li>
-<li><p><a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">proxy-agent/</span></code></a> — <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> forwarder example</p></li>
+<li><p><a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/full-agent"><code class="docutils literal notranslate"><span class="pre">full-agent/</span></code></a> — annotated spec exercising every supported field (plus <code class="docutils literal notranslate"><span class="pre">to_home/</span></code> layout)</p></li>
+<li><p><a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/minimal-agent"><code class="docutils literal notranslate"><span class="pre">minimal-agent/</span></code></a> — bare minimum, no <code class="docutils literal notranslate"><span class="pre">to_home</span></code></p></li>
+<li><p><a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/hello-agent"><code class="docutils literal notranslate"><span class="pre">hello-agent/</span></code></a> — quickstart with <code class="docutils literal notranslate"><span class="pre">startup_prompts</span></code></p></li>
+<li><p><a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">proxy-agent/</span></code></a> — <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code> forwarder example</p></li>
 </ul>
 </section>
 </section>
