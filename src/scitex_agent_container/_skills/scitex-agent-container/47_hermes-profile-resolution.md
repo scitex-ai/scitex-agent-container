@@ -101,6 +101,13 @@ point. Respect `scitex-dev` enable/disable settings and SAC `exclude_skills`;
 verify exposure inside the active Hermes home. Availability is different from
 loading every full skill into the system prompt.
 
+At launch, `runtimes/_hermes_skills.py` discovers installed packages through
+scitex-dev, applies those opt-outs, copies their authoritative skill trees into
+each generated profile's `scitex-skills/`, and audits the projection manifest.
+`_hermes_profile.py` then registers that relative directory in Hermes'
+`skills.external_dirs`. This makes installed skills available inside Apptainer
+without requiring the host package source path to be mounted into the image.
+
 Load the owning package's leaf on demand:
 
 ```bash
