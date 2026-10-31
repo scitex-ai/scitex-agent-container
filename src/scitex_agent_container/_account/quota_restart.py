@@ -55,6 +55,9 @@ def restart_capped_agents(document, *, state_path: Path, running_names, restart,
                 continue
             budget.record(name, stamp)
             persist()  # A crashed callback must not lose its restart budget.
+            from .._lifecycle._hermes_restart_preflight import reset_probe_cache
+
+            reset_probe_cache()  # A new authoritative cap supersedes recent successes.
             try:
                 completed = restart(name, session_override="fresh", drain_timeout_s=30) is not False
             except Exception as exc:
