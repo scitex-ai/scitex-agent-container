@@ -18,7 +18,8 @@ def test_projection_copies_enabled_skills_and_respects_sac_opt_out(tmp_path):
     (source / "24_host-registry.md").write_text("Hosts registry reference\n")
 
     def pages(*, package):
-        assert package == "scitex-dev"
+        if package != "scitex-dev":
+            raise ValueError("Disabled package reached discovery")
         return {package: [{"name": "SKILL", "path": str(source / "SKILL.md")}]}
 
     records = installed_skill_records(config, packages=packages, list_pages=pages)
@@ -26,12 +27,13 @@ def test_projection_copies_enabled_skills_and_respects_sac_opt_out(tmp_path):
     # Act
     dirs = materialize_installed_skills(config, homes, records=records)
     # Assert: source-independent copies, same contents and audited manifest.
-    assert dirs == ["scitex-skills"]
+    observations = []
     for home in homes:
         copied = home / "scitex-skills/scitex-dev/24_host-registry.md"
-        assert copied.read_text() == (source / copied.name).read_text()
-        assert not copied.is_symlink()
-        assert audit_projection(RegistryReport(records, ()), home / "scitex-skills").ok
+        observations.append((copied.read_text() == (source / copied.name).read_text(),
+                             copied.is_symlink(),
+                             audit_projection(RegistryReport(records, ()), home / "scitex-skills").ok))
+    assert (dirs, observations) == (["scitex-skills"], [(True, False, True)] * 2)
 
 
 def test_projection_audit_detects_source_drift(tmp_path):

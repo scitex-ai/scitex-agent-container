@@ -33,7 +33,7 @@ def _examples():
 
 
 @pytest.mark.parametrize("source", _examples())
-def test_documented_example(source, tmp_path):
+def test_documented_example_executes_successfully(source, tmp_path):
     # Arrange: imports come from this checkout; execution and HOME are isolated.
     env = dict(os.environ, HOME=str(tmp_path), HERMES_HOME=str(tmp_path / ".hermes"))
     env["PYTHONPATH"] = str(ROOT / "src")

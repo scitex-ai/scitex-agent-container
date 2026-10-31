@@ -97,13 +97,18 @@ def test_main_success_does_not_hide_unavailable_judge(tmp_path):
             return {"last_status": "exhausted", "last_error_code": 503}
         return {"last_status": "ok"}
 
-    # Act / Assert
-    with pytest.raises(RestartPreflightAbort, match="No declared Hermes credential"):
+    # Act
+    error = None
+    try:
         prepare_hermes_successor(
             value, probe=probe, resolver=_resolver({"FIRST": _LIVE}),
             profiles=[profile_dir], now=lambda: _NOW,
         )
-    assert (profile_dir / "config.yaml").read_text() == original
+    except RestartPreflightAbort as exc:
+        error = str(exc)
+    # Assert
+    assert (error is not None and "No declared Hermes credential" in error,
+            (profile_dir / "config.yaml").read_text()) == (True, original)
 
 
 @pytest.fixture(autouse=True)
