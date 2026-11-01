@@ -34,16 +34,13 @@ _JOBS_MIN_VERSION = "0.16.0"
 
 #: ``sac dev <group>`` -> the ``JobSpec.kind`` values that group lists.
 #:
-#: Every entry except the deprecated alias maps a group to EXACTLY the
+#: Every entry maps a group to EXACTLY the
 #: kind of the same name. That identity is the invariant; it is checked
 #: by ``_jobs_audit`` (``Form.GROUP_IS_NOT_ITS_KIND``), not trusted.
 GROUP_KINDS: dict[str, frozenset[str]] = {
     "service": frozenset({"service"}),
     "timer": frozenset({"timer"}),
     "cron": frozenset({"cron"}),
-    # Deprecated alias — see DEPRECATED_GROUPS. Covers both unit kinds,
-    # which is what `scitex-dev ecosystem systemd` has always selected.
-    "systemd": frozenset({"service", "timer"}),
 }
 
 _YYYY_MM = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -110,13 +107,7 @@ class Deprecation:
 #: data. "当面" becomes permanent unless a date is written down, and a
 #: date nobody enforces is the same thing — so ``test__dev_jobs.py``
 #: fails the build once ``remove_after`` passes.
-DEPRECATED_GROUPS: dict[str, Deprecation] = {
-    "systemd": Deprecation(
-        since="2026-08",
-        remove_after="2026-10",
-        replacement="`sac dev service` / `sac dev timer`",
-    ),
-}
+DEPRECATED_GROUPS: dict[str, Deprecation] = {}
 
 #: Verbs that take a job NAME and act on ONE job.
 #:
@@ -199,10 +190,6 @@ _BULK_VERBS: frozenset[str] = frozenset({"install", "uninstall", "enable"})
 #: * ``cron``    — a crontab line is present or commented out. There is
 #:   no runtime object to start, stop or ask for status, so those verbs
 #:   do not exist here instead of existing and erroring.
-#: * ``systemd`` — the deprecated alias keeps EXACTLY its historical
-#:   surface. New verbs are reachable only through the kind groups, so
-#:   nothing new can be built on the alias. In particular it does NOT
-#:   gain the bulk ``enable``.
 GROUP_VERBS: dict[str, tuple[str, ...]] = {
     "service": (
         "list",
@@ -215,7 +202,6 @@ GROUP_VERBS: dict[str, tuple[str, ...]] = {
     ),
     "timer": ("list", "status", "enable", "disable", "install", "uninstall"),
     "cron": ("list", "enable", "disable", "install", "uninstall"),
-    "systemd": ("list", "install", "uninstall"),
 }
 
 

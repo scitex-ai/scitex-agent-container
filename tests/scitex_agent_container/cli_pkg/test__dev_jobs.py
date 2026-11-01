@@ -264,23 +264,26 @@ def test_service_list_empty_is_consistent_with_what_sac_declares() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_json_stdout_carries_no_deprecation_note() -> None:
-    # Arrange — THE stdout-purity case: the deprecated alias prints its
-    # notice on every invocation, including this one.
+def test_timer_json_stdout_stays_machine_readable() -> None:
+    # Arrange — the supported replacement keeps the JSON stream contract.
     runner = CliRunner()
     # Act
-    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
+    result = runner.invoke(dev_group, ["timer", "list", "--json"])
     # Assert — stdout ALONE parses; the note is not in it.
     assert isinstance(json.loads(result.stdout), list)
 
 
-def test_deprecation_note_goes_to_stderr() -> None:
+def test_retired_systemd_command_is_rejected() -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(dev_group, ["systemd", "list", "--json"])
     # Assert
-    assert "DEPRECATED" in result.stderr
+    assert (
+        result.exit_code,
+        result.stdout,
+        "No such command 'systemd'" in result.stderr,
+    ) == (2, "", True)
 
 
 def _subprocess_timer_list_json() -> subprocess.CompletedProcess:
@@ -341,24 +344,6 @@ def test_the_real_subprocess_exits_zero() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_systemd_is_the_only_deprecated_group() -> None:
-    # Arrange
-    expected = {"systemd"}
-    # Act
-    present = set(DEPRECATED_GROUPS)
-    # Assert
-    assert present == expected
-
-
-def test_systemd_deprecation_carries_the_decided_dates() -> None:
-    # Arrange — real values in code, not a vague "for now".
-    dep = DEPRECATED_GROUPS["systemd"]
-    # Act
-    stamped = (dep.since, dep.remove_after)
-    # Assert
-    assert stamped == ("2026-08", "2026-10")
-
-
 def test_the_deprecation_deadline_has_not_passed() -> None:
     # Arrange — THE ENFORCEMENT. A written date nobody checks is the same
     # as no date: this test turns the build red once the removal window
@@ -411,16 +396,6 @@ def test_deprecation_requires_a_replacement() -> None:
     # Assert
     with pytest.raises(ValueError):
         _build()
-
-
-def test_the_alias_gains_no_new_verbs() -> None:
-    # Arrange — the alias keeps EXACTLY its historical surface so nothing
-    # new gets built on something with a removal date.
-    frozen = {"list", "install", "uninstall"}
-    # Act
-    verbs = set(GROUP_VERBS["systemd"])
-    # Assert
-    assert verbs == frozen
 
 
 # ---------------------------------------------------------------------------
@@ -549,14 +524,14 @@ def test_install_delegates_with_the_kind_not_the_group_name() -> None:
     assert captured and all(a[:2] == ("timer", "install") for a in captured)
 
 
-def test_the_alias_delegates_on_a_kind_too_never_on_systemd() -> None:
-    # Arrange — the deprecated group name must not reach the kind axis.
+def test_retired_systemd_install_has_no_delegation_side_effect() -> None:
+    # Arrange
     with _captured_delegations() as captured:
         runner = CliRunner()
         # Act
         runner.invoke(dev_group, ["systemd", "install", "-y"])
     # Assert
-    assert captured and all(a[0] in jobs_mod.ALLOWED_KINDS for a in captured)
+    assert captured == []
 
 
 def test_install_accepts_the_short_local_name() -> None:
@@ -758,7 +733,8 @@ def test_a_refusal_offers_the_manual_command() -> None:
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
     assert (
-        f"systemctl --user status {'scitex-agent-container-accounts-refresh'}.timer" in result.stderr
+        f"systemctl --user status {'scitex-agent-container-accounts-refresh'}.timer"
+        in result.stderr
     ) is (not delegation.supported), (
         f"probe says supported={delegation.supported}. When sac refuses it "
         "must hand the operator the manual command; when it delegates it "
