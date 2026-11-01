@@ -136,11 +136,32 @@ function agentNameFromUrl(url) {
   }
 }
 
+function rowIsCrossHost(name) {
+  if (!name || typeof CSS === "undefined" || !CSS.escape) return false;
+  const row = document.querySelector(
+    'tr.agent-row[data-agent-name="' + CSS.escape(name) + '"]'
+  );
+  return !!(row && row.classList.contains("cross"));
+}
+
 function retargetFleetComposer(name, href) {
   const host = chatHost();
   if (!host || !name) return;
   const form = host.querySelector('form[data-composer="fleet-dm"]');
   if (!form) return;
+  if (rowIsCrossHost(name)) {
+    /* Operator 2026-11-01: cross-host messaging is not supported in this
+       console — leave the composer parked (disabled) and point at
+       scitex-cards instead of enabling a send that cannot complete. */
+    const area = form.querySelector("textarea[name='message']");
+    if (area) {
+      area.setAttribute(
+        "placeholder",
+        "Cross-host messaging isn't supported — reach " + name + " through scitex-cards."
+      );
+    }
+    return;
+  }
   const path = String(href || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
   if (path) form.setAttribute("action", path + "/message");
   const area = form.querySelector("textarea[name='message']");

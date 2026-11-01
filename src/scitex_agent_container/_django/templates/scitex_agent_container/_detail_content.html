@@ -120,7 +120,12 @@ back link and the lifecycle form action are correct at any mount.
       agent's OWN bridge endpoint (its published turn_url) — the GUI never
       constructs a host/port and never drives tmux. Each submit carries a
       dispatch id so a double-click cannot inject the text twice.
+      Operator 2026-11-01: cross-host messaging is not supported in this
+      console — the composer is replaced with a cards pointer so the page
+      never offers a path that cannot complete. Lifecycle control above
+      is unaffected (separate cross-host allowlist).
       {% endcomment %}
+      {% if not cross_host %}
       {# Message thread (operator 2026-10-23): chat-style, Cards DM idiom #}
       {# ported leaf-side (no cross-app dependency, different ports). Same #}
       {# POST endpoint + gate; operator sends render right, session lines #}
@@ -170,6 +175,13 @@ back link and the lifecycle form action are correct at any mount.
           {% endfor %}
         </div>
       </form>
+      {% else %}
+      <h3 class="control-sub" id="message">Messages</h3>
+      <p class="dim"><i class="fas fa-globe"></i> Cross-host messaging isn't
+      supported in this console — reach {{ agent.name }} through
+      scitex-cards. Lifecycle control above remains available to
+      cross-host operators.</p>
+      {% endif %}
       {% else %}
       <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
