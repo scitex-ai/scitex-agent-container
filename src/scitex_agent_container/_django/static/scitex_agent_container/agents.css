@@ -372,7 +372,15 @@
 .agents-filterbox { display: flex; align-items: center; gap: 8px; width: min(560px, 100%); box-sizing: border-box; font: inherit; font-size: 15px; padding: 4px 4px 4px 14px; border-radius: 2px; background: var(--agents-bg, transparent); color: var(--agents-text); border: 1px solid var(--agents-border); }
 .agents-filterbox:focus-within { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
 .agents-filterbox input[type="search"] { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: inherit; padding: 6px 0; outline: none; }
-.agents-filter-hint { flex-shrink: 0; }
+/* Match the shared header search shortcut's secondary, subdued treatment. */
+.agents-filter-hint {
+  flex-shrink: 0;
+  color: var(--agents-dim);
+  opacity: 0.6;
+  font-size: 12px;
+  pointer-events: none;
+}
+.agents-filter-hint kbd { color: inherit; background: transparent; font: inherit; padding: 0; }
 tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-title { font-size: 17px; font-weight: 650; margin: 0; }
 .agents-pagehead .agents-summary { gap: 8px; }

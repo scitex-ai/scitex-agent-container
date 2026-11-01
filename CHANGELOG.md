@@ -34,6 +34,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+- Match the fleet filter shortcut hint to the shared search field’s muted semantic text style; content-version dashboard CSS to refresh cached styles.
+
 ## [0.38.2] - 2026-10-31
 
 The unpublished 0.38.1 candidate was superseded before deployment.
