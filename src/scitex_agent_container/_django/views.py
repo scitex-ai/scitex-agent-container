@@ -547,10 +547,10 @@ def lifecycle_action(request: HttpRequest, name: str):
 def message_action(request: HttpRequest, name: str):
     """Send a message/steer or a UI-control key to an agent's own bridge.
 
-    Delegates to the agent's published ``turn_url`` — the SAME endpoint the
-    fleet's A2A send uses. The GUI never constructs a host/port, never touches
-    tmux, and holds no queue: a delivery is either reported delivered or
-    reported failed.
+    Messages delegate to the authenticated listener's canonical prompt proxy,
+    which owns local/cross-host routing to the agent's turn bridge. Control
+    keys retain their existing bridge path. The GUI never touches tmux and
+    holds no message queue; acceptance is pending completion, never delivery.
 
     Authorization is identical to :func:`lifecycle_action`: the caller must see
     the agent AND be allowed to control it. A refusal is audited.
@@ -619,7 +619,7 @@ def message_action(request: HttpRequest, name: str):
     if control_key.strip():
         result = send_control_key(turn_url, key=control_key.strip(), dispatch_id=dispatch_id)
     else:
-        result = send_message(turn_url, text=message, dispatch_id=dispatch_id)
+        result = send_message(turn_url, text=message, dispatch_id=dispatch_id, fleet=fleet, agent_name=name)
 
     record_audit(
         {
@@ -645,10 +645,11 @@ def message_action(request: HttpRequest, name: str):
     if wants_json:
         return JsonResponse(
             {
-                "ok": result.state in ("delivered", "replay"),
+                "ok": result.state in ("accepted", "delivered", "replay"),
                 "state": result.state,
                 "message": result.message[:240],
                 "dispatch_id": result.dispatch_id,
+                **({"exchange_id": result.exchange_id} if result.exchange_id else {}),
             }
         )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")

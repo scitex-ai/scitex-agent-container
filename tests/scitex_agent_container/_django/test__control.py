@@ -353,17 +353,15 @@ def test_message_route_refuses_a_made_up_control_key(
 def test_message_route_audits_an_authorized_delivery(
     client, loopback, env_save_restore, audit_log
 ):
-    # Arrange: the loopback listener does not serve a turn bridge, so the
-    # delivery legitimately FAILS — what matters is that it was attempted,
-    # authorized, and audited, not silently dropped.
+    # Arrange: the authenticated loopback listener returns a canonical
+    # acceptance receipt; the authorized attempt must also be audited.
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
     env_save_restore.set(IDENTITY_ENV, "alice")
     env_save_restore.set(OPERATORS_ENV, "alice")
     # Act
     response = client.post("/alpha/message", {"message": "please continue"})
-    # Assert: authorized and redirected (the delivery itself fails against a
-    # listener with no turn bridge, which is not what this test is about).
+    # Assert: the authorized acceptance is redirected back to the operator.
     assert response.status_code == 302
 
 
