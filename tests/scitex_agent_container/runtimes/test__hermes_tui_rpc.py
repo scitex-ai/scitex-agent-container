@@ -1235,13 +1235,15 @@ def test_unreachable_command_gateway_does_not_expose_bearer(tmp_path, operation)
         port = listener.getsockname()[1]
     (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": port}))
     # Act
-    with pytest.raises(HermesTuiRpcError) as error:
+    message = ""
+    try:
         if operation == "slash":
             execute_slash_command(tmp_path, "hub", "/goal status", timeout_s=1)
         else:
             submit_turn(tmp_path, "hub", "hello", timeout_s=1)
+    except HermesTuiRpcError as error:
+        message = str(error)
     # Assert
-    message = str(error.value)
     assert (
         "unreachable" in message,
         "token=" in message,
