@@ -1,16 +1,15 @@
 ---
 description: |
   [TOPIC] Hermes profile resolution in SAC
-  [DETAILS] Trace generated profiles from spec and to_home through host runtime or overlay backing into Apptainer. Diagnose goal_judge credential rotation, distinguish project context from provider configuration, and discover fleet hosts and installed skills through scitex-dev.
+  [DETAILS] Trace spec/to_home profiles into Apptainer, diagnose goal_judge rotation, distinguish project context from runtime settings, and discover hosts and skills through scitex-dev.
 tags: [scitex-agent-container-hermes-profile-resolution]
 ---
 
 # Hermes profile resolution in SAC
 
-Use when an SAC Hermes agent reads unexpected settings, loses skills, or pauses
-its goal after judge errors. Resolve the running instance's host, spec, workdir,
-image, HOME, HERMES_HOME, and bind destination before choosing files to repair.
-The authority checkout and the agent's linked worktree can be different roots.
+For unexpected settings, missing skills, or judge errors, resolve the live
+host, spec, workdir, image, HOME, HERMES_HOME and binds before repairs.
+Authority checkouts and agent worktrees can differ.
 
 ## Resolution and source evidence
 
@@ -147,21 +146,17 @@ secret decryption may yield the same value. Never print credential values to
 resolve this distinction. These classifications are covered by the envrc and
 operator-secret regression tests.
 
-## CCT code and state are separate readiness boundaries
+## CCT readiness
 
-A provider/judge probe does not prove Telegram ingress. Inspect the effective
-CCT MCP command's asset path as well as its external-poller flag: an older
-development checkout can contain an additional poller start despite the flag.
-Use qualified installed CCT assets for a managed deployment and keep development
-checkouts separate. The owning CCT package defines its MCP and poller behavior.
+Main/judge access does not prove Telegram ingress. Inspect the effective CCT
+MCP asset path and external-poller flag; explicit spec entries override shared
+MCP settings. Use qualified published assets: development code may start an
+extra poller despite that flag. CCT owns its MCP and poller behavior.
 
-SAC sets `CCT_AGENT_STATE_DIR` for its managed child. `_preflight_cct` rejects a
-dangling symlink in that path before executing health or spawning the child;
-a missing ordinary directory can still be created by CCT. Repair the configured
-host state target and preserve existing state. Verify the resulting host PID's
-ownership and continued liveness, rather than treating the initial startup log
-as durable ingress proof. Never signal a PID from another namespace merely
-because its number appears in a shared pidfile.
+SAC's `_preflight_cct` rejects dangling links in `CCT_AGENT_STATE_DIR` before
+health or spawn; ordinary missing directories remain valid. Restore the
+configured state target without erasing state. Verify host PID ownership and
+continued liveness. Never signal another namespace's PID from a shared pidfile.
 
 ## Judge failures and verification
 
