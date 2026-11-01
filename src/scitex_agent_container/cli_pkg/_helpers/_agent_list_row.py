@@ -92,6 +92,7 @@ def build_agent_row(
     runtime_identity_source: str = "unknown",
     probe_runtime: str | None = None,
     probe_error: str | None = None,
+    spec_uuid: str = "",
 ) -> dict:
     """Build one row dict.
 
@@ -141,6 +142,10 @@ def build_agent_row(
         row["probe_runtime"] = probe_runtime
     if probe_error:
         row["probe_error"] = probe_error
+    # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+    # ALWAYS present so consumers never key-check — "" means unstamped
+    # (dormant spec) or unknown (heartbeat-only row), never "no identity".
+    row["spec_uuid"] = spec_uuid or ""
     if labels:
         row["labels"] = labels
     # THE CALLER'S OWN ROW — one boolean that hands every consumer a free

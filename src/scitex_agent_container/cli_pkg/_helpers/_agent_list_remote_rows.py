@@ -235,6 +235,10 @@ def remote_instance_rows(
                 "spec_path": spec_path,
                 "labels": labels,
                 "cfg": cfg,
+                # Authoritative placement identity from the instances row
+                # (card sac-identity-spec-uuid-20261026); the on-disk spec
+                # on the master is only the fallback — it may be stale.
+                "spec_uuid": entry.get("spec_uuid"),
             }
         )
 
@@ -300,6 +304,9 @@ def remote_instance_rows(
             **identity,
             "remote": True,
             "liveness_unknown": status == "unknown",
+            # Instances row wins (authoritative placement); on-disk spec is
+            # the fallback and may be stale; "" marks unstamped either way.
+            "spec_uuid": (cand.get("spec_uuid") or getattr(cfg, "uuid", "") or ""),
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))
         row.update(verdict_for(None))
