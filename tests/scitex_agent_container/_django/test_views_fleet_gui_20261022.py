@@ -204,15 +204,13 @@ def test_warm_poll_is_bounded_without_reload_loops():
 
 def test_css_pagehead_has_top_and_bottom_margins_with_group_gap():
     # Arrange — file content only.
-    # Act
     css = CSS
+    # Act
+    rule = re.search(r"\.agents-pagehead\s*\{([^}]*)\}", css)
     # Assert — operator 2026-10-31: the pagehead band carries top + bottom
     # margins, and the stats group stands apart from the buttons via a wider
     # column gap (single-row flex, left-aligned).
-    m = re.search(r"\.agents-pagehead\s*\{([^}]*)\}", css)
-    assert m is not None
-    rule = m.group(1)
-    assert "margin: 12px 0 10px" in rule and "gap: 6px 24px" in rule
+    assert rule is not None and "margin: 12px 0 10px" in rule.group(1) and "gap: 6px 24px" in rule.group(1)
 
 
 def test_fleet_html_has_no_multiline_hash_comment(client, env_save_restore):
@@ -222,7 +220,7 @@ def test_fleet_html_has_no_multiline_hash_comment(client, env_save_restore):
     # notes must use {% comment %}.
     env_save_restore.set(IDENTITY_ENV, "probe-noleak")
     env_save_restore.set(OPERATORS_ENV, "probe-noleak")
-    # Act + Assert — full page and fragment both.
-    for qs in ("", "?partial=1"):
-        body = client.get("/" + qs).content.decode()
-        assert "{#" not in body and "#}" not in body
+    # Act — full page and fragment both.
+    bodies = [client.get("/" + qs).content.decode() for qs in ("", "?partial=1")]
+    # Assert — neither render may leak template comment syntax.
+    assert all("{#" not in body and "#}" not in body for body in bodies)
