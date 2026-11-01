@@ -3,7 +3,8 @@
 Locks the daemon-runner half of the sac-node-comms fix: ``run`` must
 hand ``channels`` and ``a2a_port`` to the inbox-driven conversation task
 so the SDK session can register the ``sac mcp channel`` adapter.
-Real injected conversation/serve seams — no mocks.
+Injected conversation/serve/channel seams keep this forwarding contract
+independent of live channel transports.
 """
 
 from __future__ import annotations
@@ -15,15 +16,25 @@ from pathlib import Path
 from typing import Any
 
 import scitex_agent_container._runners.claude_session as runner
+import scitex_agent_container.runtimes._channel_inbox_dispatcher as dispatcher
 
 
-def _run_capturing_conversation(name: str, tmp_path: Path) -> dict[str, Any]:
+def _run_capturing_conversation(
+    name: str, tmp_path: Path, monkeypatch
+) -> dict[str, Any]:
     """Run ``run`` once with capturing conversation/serve seams.
 
     Returns the kwargs the conversation fn observed so each assertion
     test can check a single field.
     """
     captured: dict[str, Any] = {}
+
+    async def _fake_channel_transport(**_kwargs):
+        # Forwarding channels must not subscribe to an operator's live SSE
+        # stream. Cancellation remains real and deterministic during teardown.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(dispatcher, "consume", _fake_channel_transport)
 
     async def _fake_serve(inbox, *, host, port, stop, **kw):
         await stop.wait()
@@ -53,19 +64,19 @@ def _run_capturing_conversation(name: str, tmp_path: Path) -> dict[str, Any]:
     return captured
 
 
-def test_run_forwards_channels_to_conversation(tmp_path: Path) -> None:
+def test_run_forwards_channels_to_conversation(tmp_path: Path, monkeypatch) -> None:
     # Arrange
     name = "ag-chan-c"
     # Act
-    captured = _run_capturing_conversation(name, tmp_path)
+    captured = _run_capturing_conversation(name, tmp_path, monkeypatch)
     # Assert
     assert captured["channels"] == ["server:sac"]
 
 
-def test_run_forwards_a2a_port_to_conversation(tmp_path: Path) -> None:
+def test_run_forwards_a2a_port_to_conversation(tmp_path: Path, monkeypatch) -> None:
     # Arrange
     name = "ag-chan-p"
     # Act
-    captured = _run_capturing_conversation(name, tmp_path)
+    captured = _run_capturing_conversation(name, tmp_path, monkeypatch)
     # Assert
     assert captured["a2a_port"] == 12_345
