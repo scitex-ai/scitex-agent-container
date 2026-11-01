@@ -355,7 +355,9 @@ def test_pool_defined_names_lists_exported_names_sorted_and_deduped(
     first = tmp_path / "a.src"
     first.write_text("export SAC_TEST_ONE=1\nexport SAC_TEST_TWO=2\n", encoding="utf-8")
     second = tmp_path / "b.src"
-    second.write_text("export SAC_TEST_TWO=2\nexport SAC_TEST_THREE=3\n", encoding="utf-8")
+    second.write_text(
+        "export SAC_TEST_TWO=2\nexport SAC_TEST_THREE=3\n", encoding="utf-8"
+    )
     # Act
     names = pool_defined_names([first, second])
     # Assert — sorted, deduplicated, no warning-worthy shadow.
@@ -392,3 +394,23 @@ def test_pool_defined_names_ignores_same_file_repeated(
     assert names == ["SAC_TEST_SOLO"] and not [
         r for r in caplog.records if "SAC_TEST_SOLO" in r.getMessage()
     ]
+
+
+@pytest.mark.parametrize(
+    "definitions", [("'same'", '"same"'), ('"$SAC_TEST_SOURCE"', '"$(printf same)"')]
+)
+def test_pool_definitions_do_not_claim_unproven_secret_conflicts(
+    tmp_path, caplog, definitions
+):
+    # Arrange: equivalent literals, or dynamic expressions requiring evaluation.
+    files = [tmp_path / "a.src", tmp_path / "b.src"]
+    for path, value in zip(files, definitions):
+        path.write_text("export SAC_TEST_DUP=" + value + "\n")
+    # Act
+    with caplog.at_level(logging.WARNING):
+        names = pool_defined_names(files)
+    # Assert
+    assert (names, [r for r in caplog.records if r.levelno >= logging.WARNING]) == (
+        ["SAC_TEST_DUP"],
+        [],
+    )

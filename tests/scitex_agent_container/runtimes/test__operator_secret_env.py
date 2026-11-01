@@ -90,7 +90,10 @@ def test_full_scope_passes_every_file_defined_name(
         # Act
         out = operator_secret_env(full=True)
         # Assert — file-defined names pass (values resolve), ambient junk does not.
-        assert out.get("SAC_TEST_EXTRA_KEY") == "eee" and "SAC_TEST_AMBIENT_JUNK" not in out
+        assert (
+            out.get("SAC_TEST_EXTRA_KEY") == "eee"
+            and "SAC_TEST_AMBIENT_JUNK" not in out
+        )
     finally:
         os.environ.pop("SAC_TEST_AMBIENT_JUNK", None)
 
@@ -125,3 +128,26 @@ def test_scope_mapping_rejects_unknown_values():
     # Assert
     with pytest.raises(ValueError):
         scope_allows_full("everything")
+
+
+def test_default_optional_slots_are_not_missing_credential_warnings(
+    tmp_path, secrets_envrc, caplog
+):
+    # Arrange: a trusted pool need not configure every supported provider.
+    from scitex_agent_container.runtimes._operator_secret_env import (
+        OPERATOR_SECRET_ENV_NAMES,
+    )
+
+    _real_pool_file(
+        tmp_path,
+        "".join(f"export {name}=\n" for name in OPERATOR_SECRET_ENV_NAMES)
+        + "export SAC_TEST_EXTRA_KEY=present\n",
+    )
+    # Act
+    with caplog.at_level(logging.DEBUG):
+        operator_secret_env(full=True)
+    # Assert: absent optional names remain inspectable without warning fatigue.
+    assert any(
+        r.levelno == logging.DEBUG and "missing from the pool" in r.getMessage()
+        for r in caplog.records
+    ) and not any(r.levelno >= logging.WARNING for r in caplog.records)

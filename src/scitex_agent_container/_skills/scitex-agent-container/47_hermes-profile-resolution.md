@@ -125,6 +125,22 @@ path. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
 registry SSH routes with configured peers, with explicit SAC peers winning.
 Do not reproduce host inventories in this skill.
 
+## Restart diagnostics
+
+MCP helper imports must not configure another stderr handler: lifecycle records
+use scitex-logging's configured level and format once. The regression lives in
+`tests/scitex_agent_container/_logging/test__streams.py`.
+
+The supported-provider secret catalog is optional. Absent default slots and
+intentionally empty full-pool slots are debug details, not evidence that the
+selected agent lacks credentials. Explicitly requested missing names and an
+untrusted pool still warn; required main/judge access is checked by preflight.
+Conflicting literal definitions across files warn by name and source path.
+Unevaluated shell expressions only produce debug evidence: an alias and a
+secret decryption may yield the same value. Never print credential values to
+resolve this distinction. These classifications are covered by the envrc and
+operator-secret regression tests.
+
 ## Judge failures and verification
 
 Read `logs/agent.log` as well as `errors.log`: goal evaluation logs API failures

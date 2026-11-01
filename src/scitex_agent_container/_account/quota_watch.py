@@ -11,7 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import time
@@ -381,9 +380,7 @@ def run_loop(
         _log = log_path or _DEFAULT_LOG_PATH
         _daemonize(_log)
         # After fork we continue here in the daemon child
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s"
-    )
+    slogging.set_level("info")
     logger.info(
         "quota-watch started: threshold=%.0f%% interval=%ds", threshold, interval
     )

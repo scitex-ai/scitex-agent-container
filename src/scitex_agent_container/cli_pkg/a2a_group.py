@@ -38,7 +38,6 @@ Examples::
 from __future__ import annotations
 
 import json
-import logging
 import sys
 import time
 import urllib.error
@@ -46,6 +45,7 @@ import urllib.request
 from pathlib import Path
 
 import click
+import scitex_logging as slogging
 import yaml
 
 from scitex_agent_container.a2a import HANDLERS, serve
@@ -108,9 +108,7 @@ def a2a_serve(
       $ sac a2a serve foo.yaml bar.yaml --port 8001
     """
     if verbose:
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-        )
+        slogging.set_level("info")
     serve(list(agent_yamls), host=host, port=port, handler=handler)
 
 
