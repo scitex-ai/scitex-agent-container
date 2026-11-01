@@ -147,6 +147,22 @@ secret decryption may yield the same value. Never print credential values to
 resolve this distinction. These classifications are covered by the envrc and
 operator-secret regression tests.
 
+## CCT code and state are separate readiness boundaries
+
+A provider/judge probe does not prove Telegram ingress. Inspect the effective
+CCT MCP command's asset path as well as its external-poller flag: an older
+development checkout can contain an additional poller start despite the flag.
+Use qualified installed CCT assets for a managed deployment and keep development
+checkouts separate. The owning CCT package defines its MCP and poller behavior.
+
+SAC sets `CCT_AGENT_STATE_DIR` for its managed child. `_preflight_cct` rejects a
+dangling symlink in that path before executing health or spawning the child;
+a missing ordinary directory can still be created by CCT. Repair the configured
+host state target and preserve existing state. Verify the resulting host PID's
+ownership and continued liveness, rather than treating the initial startup log
+as durable ingress proof. Never signal a PID from another namespace merely
+because its number appears in a shared pidfile.
+
 ## Judge failures and verification
 
 Read `logs/agent.log` as well as `errors.log`: goal evaluation logs API failures

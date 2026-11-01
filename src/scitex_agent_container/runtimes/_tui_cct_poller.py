@@ -131,6 +131,15 @@ def _preflight_cct(
     run: Callable[..., Any] = subprocess.run,
 ) -> None:
     """Refuse a poller whose token, Store identity, or turn URL is unusable."""
+    configured_state = env.get("CCT_AGENT_STATE_DIR")
+    if configured_state:
+        state = Path(configured_state).expanduser()
+        for component in (state, *state.parents):
+            if component.is_symlink() and not component.exists():
+                raise TuiCctPollerError(
+                    f"managed CCT state directory has a dangling symlink: {component}; "
+                    "restore its configured target before starting the poller"
+                )
     result = run(
         _health_argv(entry),
         stdin=subprocess.DEVNULL,
@@ -196,9 +205,7 @@ def _poller_env(
         raise TuiCctPollerError("managed CCT poller has no resolved CCT_BOT_TOKEN")
     port = resolved_a2a_port(config)
     if port is None:
-        raise TuiCctPollerError(
-            "managed CCT poller requires a resolved spec.a2a.port"
-        )
+        raise TuiCctPollerError("managed CCT poller requires a resolved spec.a2a.port")
     turn_url = f"http://127.0.0.1:{port}/v1/turn"
     env["CCT_TURN_URL"] = turn_url
     env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] = turn_url

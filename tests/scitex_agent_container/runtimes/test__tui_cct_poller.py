@@ -147,9 +147,9 @@ def test_poller_env_preserves_current_cct_names_and_scrubs_retired_names(
     _materialize_cct(tmp_path)
     env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN", "retired")
     env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS", "old")
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     # Act
     env = _poller_env(config, home=tmp_path / "home", entry=entry)
     # Assert
@@ -187,9 +187,9 @@ def test_start_refuses_before_spawn_when_cct_preflight_fails(tmp_path):
 def test_preflight_fails_loud_on_unusable_store_identity(tmp_path):
     # Arrange
     bun, _poller = _materialize_cct(tmp_path)
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     report = {
         "checks": [
             {"name": "bot_token_valid", "ok": True},
@@ -225,9 +225,9 @@ def test_preflight_fails_loud_on_unusable_store_identity(tmp_path):
 def test_preflight_accepts_healthy_dependencies_before_poller_exists(tmp_path):
     # Arrange
     _bun, _poller = _materialize_cct(tmp_path)
-    entry = json.loads(
-        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
-    )["mcpServers"]["claude-code-telegrammer"]
+    entry = json.loads((tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8"))[
+        "mcpServers"
+    ]["claude-code-telegrammer"]
     checks = [
         {"name": name, "ok": True}
         for name in (
@@ -244,13 +244,37 @@ def test_preflight_accepts_healthy_dependencies_before_poller_exists(tmp_path):
     # Act
     result = _preflight_cct(
         entry,
-        {"PGUSER": "operator__lead"},
+        {
+            "PGUSER": "operator__lead",
+            "CCT_AGENT_STATE_DIR": str(tmp_path / "new-state/runtime/lead"),
+        },
         run=lambda *_args, **_kwargs: type(
             "Result", (), {"stdout": json.dumps({"checks": checks})}
         )(),
     )
     # Assert
     assert result is None
+
+
+def test_preflight_rejects_dangling_state_root_before_health_or_spawn(tmp_path):
+    # Arrange — mkdir cannot traverse a dangling package-state alias.
+    alias = tmp_path / "package-state"
+    alias.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+    state = alias / "runtime" / "lead"
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("health must not run through a broken state alias")
+
+    # Act
+    error = ""
+    try:
+        _preflight_cct({}, {"CCT_AGENT_STATE_DIR": str(state)}, run=run)
+    except TuiCctPollerError as exc:
+        error = str(exc)
+    # Assert
+    assert ("dangling symlink" in error, calls) == (True, [])
 
 
 def test_stop_signals_only_owned_poller_and_removes_managed_pidfile(tmp_path):

@@ -156,9 +156,9 @@ a dead kind (`jobs_of_kind("systemd")`) and report "No sac systemd-kind
 jobs to install." forever, so this page told you to route around it. Both
 forms below are equivalent; the wrapper just filters `sac.*` for you.
 
-The group name is now the JobSpec **kind** (`sac dev {service,timer,cron}`)
-— `sac dev systemd` still works but is deprecated since 2026-08 and is
-removed after 2026-10.
+The group name is the JobSpec **kind** (`sac dev {service,timer,cron}`).
+The former `systemd` alias was removed after its October 2026 deprecation
+window; use `timer` for the scheduled worktree-GC job.
 
 ```bash
 sac dev timer install worktree-gc --yes       # or, equivalently:
