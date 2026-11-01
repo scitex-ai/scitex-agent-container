@@ -239,3 +239,12 @@ def test_fleet_html_has_no_multiline_hash_comment(client, env_save_restore):
     bodies = [client.get("/" + qs).content.decode() for qs in ("", "?partial=1")]
     # Assert — neither render may leak template comment syntax.
     assert all("{#" not in body and "#}" not in body for body in bodies)
+
+
+def test_fleet_composer_stays_parked_for_cross_host_rows():
+    # Arrange — static JS only, no browser needed.
+    # Act
+    js = FLEET_JS
+    # Assert — operator 2026-11-01: selecting a cross-host row must not
+    # enable the DM composer; the placeholder points at scitex-cards.
+    assert "rowIsCrossHost" in js and "through scitex-cards" in js
