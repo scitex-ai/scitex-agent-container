@@ -9,6 +9,7 @@ versioning follows [SemVer](https://semver.org/).
 - Keep restart diagnostics on the canonical scitex-logging format: importing MCP helpers no longer attaches a second timestamped console handler.
 - Use the shared stderr diagnostic channel for rotation audits and canonical logging configuration for foreground commands.
 - Distinguish optional missing secret slots and unverified shell-expression differences from actionable explicit missing names and conflicting literals.
+- Preserve explicitly configured native Hermes hooks when regenerating model profiles.
 - Require scitex-logging 0.2.4 and document/test restart output and warning classification.
 
 ## [Unreleased]

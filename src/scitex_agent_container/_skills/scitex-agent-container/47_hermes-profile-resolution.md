@@ -125,6 +125,12 @@ path. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
 registry SSH routes with configured peers, with explicit SAC peers winning.
 Do not reproduce host inventories in this skill.
 
+Configured native `hooks` are retained when SAC regenerates model and credential
+settings (`runtimes/_hermes_hook_config.py`). Hook discovery/installation belongs
+to scitex-dev and leaf packages; this pass-through neither selects a policy nor
+grants Hermes command consent. Install trusted bindings through the native writer,
+and verify the effective profile after the next generation.
+
 ## Restart diagnostics
 
 MCP helper imports must not configure another stderr handler: lifecycle records
