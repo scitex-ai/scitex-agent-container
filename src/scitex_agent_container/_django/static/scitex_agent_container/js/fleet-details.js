@@ -358,25 +358,11 @@ function initFleet() {
   /* Buzz filter (operator 2026-10-23): free-substring match across the
      row's name + carried facts (state text + data-agent-* attributes).
      Vanilla, no bundler; fails open (no match hiding when JS is off). */
-  const box = document.querySelector("[data-role='agents-filter']");
-  if (box) {
-    box.addEventListener("input", () => applyFilter(box.value, table));
-    /* Ctrl/⌘+K focuses the filter (global-header palette idiom). */
-    document.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        box.focus();
-        box.select();
-      }
-    });
-    box.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        box.value = "";
-        applyFilter("", table);
-        box.blur();
-      }
-    });
-  }
+  const filterMount = document.querySelector('[data-stx-filter][data-filter-id="agents-filter"]');
+  filterMount?.addEventListener("input", (event) => {
+    if (event.target instanceof HTMLInputElement) applyFilter(event.target.value, table);
+  });
+
 }
 
 /* Pinned agents (operator 2026-10-26): favorites float above the state
@@ -604,7 +590,7 @@ document.addEventListener("keydown", (e) => {
   if (!composer) return;
   e.preventDefault();
   if (typeof composer.requestSubmit === "function") composer.requestSubmit();
-  else composer.submit();
+  else composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 });
 
 /* Fleet composer send-in-place (operator 2026-10-26): the fleet composer
@@ -613,7 +599,7 @@ document.addEventListener("keydown", (e) => {
  * clears the input and refreshes the DM thread through the existing
  * fragment path. A refusal stays inline with the draft and dispatch id;
  * retrying as a native POST would navigate away and may submit twice. */
-function composerError(form, message) {
+function composerError(form, message, pending = false) {
   let notice = form.querySelector("[data-composer-error]");
   if (!notice) {
     notice = document.createElement("div");
@@ -622,6 +608,7 @@ function composerError(form, message) {
     notice.className = "agents-bannor err";
     form.appendChild(notice);
   }
+  notice.className = pending ? "agents-bannor warn" : "agents-bannor err";
   notice.textContent = message;
   notice.hidden = !message;
 }
@@ -635,15 +622,24 @@ function renewComposerDispatch(form) {
 }
 
 document.addEventListener("submit", (e) => {
-  const form = e.target instanceof Element ? e.target.closest('form[data-composer="fleet-dm"]') : null;
+  const form = e.target instanceof Element ? e.target.closest('form[data-composer]') : null;
   if (!form) return;
-  const action = String(form.getAttribute("action") || "");
-  if (!/\/message\/?$/.test(action)) return;
+  if (!form.closest('.agents-app[data-page="fleet"]')) return;
+  // Even a missing/invalid target must stay on the dashboard with its draft.
   e.preventDefault();
+  const action = String(form.getAttribute("action") || "");
+  if (!/\/message\/?$/.test(action)) {
+    composerError(form, "Select an agent before sending a message.");
+    return;
+  }
   if (form.dataset.sending === "true") return;
   const area = form.querySelector("textarea[name='message']");
   const sentText = area ? area.value : "";
   const payload = JSON.stringify([action, sentText]);
+  if (form.dataset.uncertainPayload === payload) {
+    composerError(form, "Delivery is unconfirmed. Check the agent before starting a new draft; this message will not be sent again.");
+    return;
+  }
   if (form.dataset.dispatchPayload && form.dataset.dispatchPayload !== payload) {
     renewComposerDispatch(form);
   }
@@ -668,13 +664,16 @@ document.addEventListener("submit", (e) => {
         if (form.getAttribute("action") === action) {
           if (area) { if (area.value === sentText) area.value = ""; area.focus(); }
           loadIntoPanel(action.replace(/\/message\/?$/, "") + "?partial=1");
+          if (result.state === "accepted") composerError(form, result.message, true);
         }
         return;
       }
+      if (result.state === "unknown") form.dataset.uncertainPayload = payload;
       composerError(form, String((result && (result.message || result.error)) || "Message delivery was not confirmed."));
     })
     .catch(() => {
-      composerError(form, "Message delivery was not confirmed. Your draft is kept; retry when the connection is available.");
+      form.dataset.uncertainPayload = payload;
+      composerError(form, "Message delivery was not confirmed. Your draft is kept; check the agent before starting a new draft.");
     })
     .finally(() => {
       form.dataset.sending = "false";

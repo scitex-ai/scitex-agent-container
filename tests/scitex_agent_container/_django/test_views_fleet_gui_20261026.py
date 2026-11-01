@@ -106,17 +106,17 @@ def test_message_refusal_returns_json_when_accepted(client, loopback, env_save_r
     }
 
 
-def test_fleet_composer_posts_via_fetch_with_json_fallback():
+def test_fleet_composer_posts_via_fetch_without_native_fallback():
     # Arrange — static JS only, no browser needed.
     # Act
     js = FLEET_JS
     # Assert — a delegated submit listener POSTs the fleet composer via fetch
-    # (asking for JSON); any non-ok outcome falls back to the native submit
-    # so the server notice banner still reports it.
+    # (asking for JSON); an unconfirmed outcome keeps the draft inline.
     assert (
         'addEventListener("submit"' in js
         and "new FormData(form)" in js
-        and js.count("form.submit()") >= 2
+        and "composerError(form" in js
+        and "else composer.submit()" not in js
     )
 
 
