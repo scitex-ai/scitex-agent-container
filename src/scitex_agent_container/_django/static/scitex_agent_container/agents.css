@@ -401,7 +401,8 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 /* Operator 2026-10-26: breathing room around the composer. The pane
    content now reliably pads 12-14px; add separation above the input so
    the thread never butts into it. */
-.chat-composer { display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; margin-top: auto; padding-top: 10px; }
+.chat-composer { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; flex-shrink: 0; margin-top: auto; padding-top: 10px; }
+.chat-composer [data-composer-error] { flex: 0 0 100%; grid-column: 1 / -1; margin: 0; max-width: 100%; }
 .chat-composer textarea { flex: 1; min-height: 64px; }
 /* Operator 2026-10-26: Send is the primary action — the shared brand CTA
    token (navy on light, gold on dark), matching cards DM exactly:

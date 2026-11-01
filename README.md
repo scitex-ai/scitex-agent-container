@@ -214,6 +214,12 @@ not copy policy rules into hooks, skills, prompts, or docs. See
 
 **[Talking to a Running Agent →](docs/talking-to-agents.md)** — three transports (A2A `POST /v1/turn`, `sac agents send`, host-level `sac listen`), when to use which, copy-pasteable curl examples.
 
+In the fleet dashboard, Enter or Ctrl/Command+Enter sends a message;
+Shift+Enter inserts a newline. Delivery refusals stay beside the composer with
+the draft intact. Retry preserves its dispatch id, while a successful send or
+changed message gets a fresh id. An unavailable endpoint is a refusal, not proof
+that an agent has received the message.
+
 **[Container Isolation →](docs/isolation.md)** — 10 Apptainer-default leak paths + sac's hardened-by-default countermeasures (`--containall` auto-prepended, opt-out via `spec.apptainer.relaxed: true`). The reference for reproducibility claims.
 
 ## Configuration and Runtime Directories
