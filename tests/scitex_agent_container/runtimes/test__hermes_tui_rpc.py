@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -1160,6 +1161,92 @@ def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
             "command": ("/model qwen38-27b --provider custom:sac-qwen38-27b --session"),
         },
     )
+
+
+def test_slash_receipt_does_not_download_large_retained_events(tmp_path):
+    # Arrange -- a real WebSocket transport enforces its default 1 MiB frame
+    # limit. A retained tool result is larger; only the replay head is needed.
+    from websockets.sync.server import serve
+
+    _gateway_files(tmp_path)
+    event = {"seq": 17, "text": "x" * (2 * 1024 * 1024)}
+    response_sizes = []
+
+    def handle(connection):
+        for raw in connection:
+            request = json.loads(raw)
+            method = request["method"]
+            if method == "session.active_list":
+                result = {
+                    "sessions": [
+                        {
+                            "id": "live-1",
+                            "title": "sac:hub",
+                            "message_count": 12,
+                            "last_active": 44.0,
+                            "status": "working",
+                        }
+                    ]
+                }
+            elif method == "slash.exec":
+                result = {"output": "Goal active"}
+            else:
+                result = {
+                    "events": [event] if request["params"]["last_seen"] < 17 else [],
+                    "latest_seq": 17,
+                    "epoch": "epoch-1",
+                    "truncated": False,
+                }
+            encoded = json.dumps(
+                {"jsonrpc": "2.0", "id": request["id"], "result": result}
+            )
+            response_sizes.append(len(encoded))
+            connection.send(encoded)
+
+    with serve(handle, "127.0.0.1", 0) as server:
+        (tmp_path / GATEWAY_FILE).write_text(
+            json.dumps({"port": server.socket.getsockname()[1]})
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # Act -- no connection injection or increased frame-size limit.
+            receipt = execute_slash_command(tmp_path, "hub", "/goal status")
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+    # Assert -- preserve the real watermark without downloading tool history.
+    assert (
+        receipt.output,
+        receipt.latest_seq,
+        receipt.epoch,
+        max(response_sizes) < 1024,
+    ) == ("Goal active", 17, "epoch-1", True)
+
+
+@pytest.mark.parametrize("operation", ["slash", "submit"])
+def test_unreachable_command_gateway_does_not_expose_bearer(tmp_path, operation):
+    # Arrange -- a real closed loopback port exercises the connection error.
+    import socket
+
+    _gateway_files(tmp_path)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": port}))
+    # Act
+    with pytest.raises(HermesTuiRpcError) as error:
+        if operation == "slash":
+            execute_slash_command(tmp_path, "hub", "/goal status", timeout_s=1)
+        else:
+            submit_turn(tmp_path, "hub", "hello", timeout_s=1)
+    # Assert
+    message = str(error.value)
+    assert (
+        "unreachable" in message,
+        "token=" in message,
+        "secret-token-1234" in message,
+    ) == (True, False, False)
 
 
 def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
