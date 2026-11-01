@@ -232,6 +232,10 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         role = ", ".join(str(r) for r in role)
     pid = row.get("pid", status.get("pid"))
     scope = row.get("scope", "own")
+    # L513: list rows carry no top-level ``project`` (0/46 live) — the
+    # declared project lives in spec labels. Top-level wins when present.
+    labels = row.get("labels")
+    label_project = labels.get("project") if isinstance(labels, dict) else None
     return {
         "name": name,
         "state_label": label,
@@ -245,7 +249,7 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         "billing_mode": billing_mode,
         "auth_identity": auth_identity,
         "runtime_identity_source": identity_source,
-        "project": _text(row.get("project"), "—"),
+        "project": _text(row.get("project") or label_project, "—"),
         "host": host or "this node",
         "scope": scope,
         "cross_host": scope == "cross-host",
