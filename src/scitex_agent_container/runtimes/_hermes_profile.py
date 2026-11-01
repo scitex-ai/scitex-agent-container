@@ -626,8 +626,10 @@ def materialize_hermes_profile(
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
         ensure_hermes_log_files(profile)
+        from ._hermes_hook_config import preserve_hook_config
+
         (profile / "config.yaml").write_text(
-            yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
+            yaml.safe_dump(preserve_hook_config(profile, rendered), sort_keys=False), encoding="utf-8"
         )
         _write_profile_env(profile / ".env", profile_env)
         materialize_pools(profile, credential_pools)
@@ -711,8 +713,10 @@ def materialize_hermes_tui_profile(
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
         ensure_hermes_log_files(profile)
+        from ._hermes_hook_config import preserve_hook_config
+
         (profile / "config.yaml").write_text(
-            yaml.safe_dump(rendered, sort_keys=False), encoding="utf-8"
+            yaml.safe_dump(preserve_hook_config(profile, rendered), sort_keys=False), encoding="utf-8"
         )
         _write_profile_env(profile / ".env", profile_env)
         materialize_pools(profile, credential_pools)

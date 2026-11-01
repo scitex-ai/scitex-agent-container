@@ -27,10 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import socket
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,50 +36,11 @@ from typing import Any
 
 import scitex_logging as slogging
 
-logger = slogging.getLogger(__name__)
+logger = slogging.getDiagnostic(__name__, level=slogging.INFO)
 
 #: Filename of the append-only audit log, relative to the accounts store.
 AUDIT_FILENAME = "rotation-audit.jsonl"
 
-
-class _DynamicStderrHandler(logging.StreamHandler):
-    """A ``StreamHandler`` that writes to the PROCESS stderr at EMIT time.
-
-    Resolves ``sys.__stderr__`` (the original fd-2 stream) per emit, falling
-    back to ``sys.stderr``. Targeting ``__stderr__`` keeps the audit line on
-    the true process stderr — the stream agents capture into their logs —
-    while deliberately bypassing any in-process Python-level stdout/stderr
-    swap (e.g. a test harness' output capture). This guarantees the audit
-    echo can never bleed into an unrelated command's captured stdout and
-    corrupt a ``--json`` contract, without silencing the line for agents.
-    """
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.stream = sys.__stderr__ or sys.stderr
-        super().emit(record)
-
-
-def _ensure_audit_logger() -> None:
-    """Give the audit logger its OWN dedicated stderr handler, once.
-
-    The audit line is emitted at INFO for operator/agent visibility, but it
-    is deliberately kept OFF the ancestor/root logger chain
-    (``propagate = False``): a credential rotation is frequently triggered
-    from inside a ``--json`` CLI command whose stdout is a machine-parsed
-    contract, and a stray INFO line riding an ancestor handler that happens
-    to target stdout would corrupt that JSON. Owning a single dynamic-stderr
-    handler guarantees the line lands on stderr (captured in agent logs) and
-    NEVER on any command's stdout.
-    """
-    if getattr(logger, "_sac_audit_configured", False):
-        return
-    handler = _DynamicStderrHandler()
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(logging.Formatter("[%(asctime)s] rotation-audit: %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    logger._sac_audit_configured = True  # type: ignore[attr-defined]
 
 #: The closed set of rotation events. See module docstring / task spec.
 #: ``reactive-rotate`` (task #13, op-2026-06-12-13) is the REACTIVE
@@ -217,7 +176,6 @@ def log_rotation_event(
         line = json.dumps(record, ensure_ascii=False)
         with audit_path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-        _ensure_audit_logger()
         logger.info(
             "rotation-audit: event=%s from=%s to=%s reason=%s",
             event,
