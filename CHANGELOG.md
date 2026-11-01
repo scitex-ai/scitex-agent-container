@@ -4,6 +4,11 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## 0.38.5
+
+- Align GUI/dev SDK pins with 0.3.16 so SAC installation preserves the shared project-scope capability contract and satisfies current Journal requirements.
+- Add fleet pagehead spacing and prevent multiline template-comment leakage (PR #1694).
+
 ## [0.38.4] - 2026-11-01
 
 - Remove the expired `sac dev systemd` compatibility group; use `service` or `timer` for the declared job kind. The original retirement deadline remains enforced.
