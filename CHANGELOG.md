@@ -4,6 +4,27 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.38.5] - 2026-11-01
+
+### Fixed
+- Bound the cold-shell fleet fetch with an AbortController fuse (65s, tied to
+  the 60s server exchange ceiling) so a hung first read settles into the
+  existing bounded retry/unavailable path instead of freezing the fleet page
+  on "Reading the fleet…" forever.
+- Give the fleet pagehead band top/bottom margins and separate the stats
+  group from the action buttons with a wider left-aligned column gap.
+- Fix Django template syntax shown as plain text: the multi-line cold-shell
+  note used single-line `{# #}` (unsupported across lines) and rendered
+  literally; converted to `{% comment %}`.
+- Fit the DM pane row to the viewport with a flex column + 100% height
+  chain instead of magic 100vh reserves, so the message composer and send
+  buttons are no longer truncated below the fold on mounted hosts.
+- Cross-host messaging is not offered in this console: the detail composer,
+  UI-control keys, fleet quick-message form, and DM retarget stay parked
+  for cross-host agents with a scitex-cards pointer; message POSTs to
+  cross-host agents are refused loudly (409/refused redirect, audited).
+  Lifecycle control is unchanged (separate cross-host allowlist).
+
 ## [0.38.4] - 2026-11-01
 
 - Remove the expired `sac dev systemd` compatibility group; use `service` or `timer` for the declared job kind. The original retirement deadline remains enforced.
@@ -20,7 +41,7 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.38.2] - 2026-10-31
+## [0.38.4] - 2026-11-01
 
 The unpublished 0.38.1 candidate was superseded before deployment.
 
