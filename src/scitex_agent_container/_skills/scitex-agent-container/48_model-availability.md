@@ -7,6 +7,12 @@ tags: [scitex-agent-container-model-availability]
 
 # Main-model and goal-judge availability
 
+A failed control connection is separate from a provider failure. On long
+sessions, slash-command receipts must request only the Hermes replay watermark,
+not all retained tool events: the latter can exceed the WebSocket frame limit
+while the agent remains healthy. Keep the client frame bound and use the
+bounded native control path; never expose the gateway bearer in diagnostics.
+
 Use when a key is capped, a model is unavailable, or the goal judge pauses.
 First load [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md)
 to identify the host, effective profile, image, model and account pools.
