@@ -4,6 +4,14 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.38.3] - 2026-11-01
+
+- Keep restart diagnostics on the canonical scitex-logging format: importing MCP helpers no longer attaches a second timestamped console handler.
+- Use the shared stderr diagnostic channel for rotation audits and canonical logging configuration for foreground commands.
+- Distinguish optional missing secret slots and unverified shell-expression differences from actionable explicit missing names and conflicting literals.
+- Preserve explicitly configured native Hermes hooks when regenerating model profiles.
+- Require scitex-logging 0.2.4 and document/test restart output and warning classification.
+
 ## [Unreleased]
 
 ## [0.38.2] - 2026-10-31

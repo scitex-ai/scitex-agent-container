@@ -12,9 +12,6 @@ Usage::
 
 from __future__ import annotations
 
-import logging
-import sys
-
 import scitex_logging as slogging
 
 # NOTE: ``register_all_tools`` is deliberately NOT imported at module top
@@ -29,24 +26,8 @@ import scitex_logging as slogging
 # ``docs/mcp-cold-start.md`` and the F-CS15 cold-start-race fix.
 
 
-def _ensure_stderr_logging() -> None:
-    """Attach a stderr StreamHandler so INFO-level diagnostic lines appear in
-    claude-code's MCP debug log. Idempotent."""
-    root = slogging.getLogger("scitex_agent_container")
-    if any(getattr(h, "_sac_stderr", False) for h in root.handlers):
-        return
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(
-        logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
-    )
-    handler._sac_stderr = True  # type: ignore[attr-defined]
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-
-
-_ensure_stderr_logging()
-
+# Importing an MCP helper must not install a second console handler or
+# override the caller's level/format. SciTeX owns stderr diagnostics.
 log = slogging.getLogger(__name__)
 
 _INSTRUCTIONS = """\

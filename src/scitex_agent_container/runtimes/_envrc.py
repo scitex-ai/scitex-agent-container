@@ -131,12 +131,14 @@ def pool_defined_names(
     never logged) — values resolve from :func:`_secret_pool.read_pool`
     at launch, where the shell-export overlay still applies.
 
-    A name defined in MULTIPLE files with DIFFERENT raw values is a
+    A name defined in MULTIPLE files with DIFFERENT literal values is a
     shadowing hazard (the 010-vs-000 incident: login shells resolved
     different keys than plain ssh and the Hermes proof failed). It is
     warned about BY NAME with the file list — values never appear —
     so the operator can converge the definitions instead of debugging
-    phantom auth failures. Last-writer-wins still applies at read time;
+    phantom auth failures. Different shell expressions are debug evidence only:
+    aliases and decryptions can resolve to equal values. Equivalent quoted
+    literals are not conflicts. Last-writer-wins still applies at read time;
     this warning does not change resolution.
     """
     targets = (
@@ -147,6 +149,7 @@ def pool_defined_names(
     seen: dict[str, str] = {}
     first_file: dict[str, str] = {}
     shadowed: dict[str, list[str]] = {}
+    dynamic: dict[str, list[str]] = {}
     for path in targets:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -160,7 +163,25 @@ def pool_defined_names(
             path_str = str(path)
             raw = line.split("=", 1)[1].strip() if "=" in line else ""
             if name in seen and seen[name] != raw:
-                shadowed.setdefault(name, [first_file[name]]).append(path_str)
+                # Shell expressions are not resolved credential values. In
+                # particular an alias and encrypted expansion may be equal.
+                pair = (seen[name], raw)
+                literal = []
+                for value in pair:
+                    if any(char in value for char in "$`\\"):
+                        break
+                    try:
+                        words = shlex.split(value, comments=True)
+                    except ValueError:
+                        break
+                    if len(words) != 1:
+                        break
+                    literal.append(words[0])
+                if len(literal) == 2:
+                    if literal[0] != literal[1]:
+                        shadowed.setdefault(name, [first_file[name]]).append(path_str)
+                else:
+                    dynamic.setdefault(name, [first_file[name]]).append(path_str)
             else:
                 seen.setdefault(name, raw)
                 first_file.setdefault(name, path_str)
@@ -174,9 +195,15 @@ def pool_defined_names(
     }
     if shadowed:
         logger.warning(
-            "pool secrets: %d name(s) defined differently across files: %s",
+            "pool secrets: %d name(s) have conflicting literal definitions across files: %s",
             len(shadowed),
             sorted(f"{name} ({', '.join(paths)})" for name, paths in shadowed.items()),
+        )
+    if dynamic:
+        logger.debug(
+            "pool secrets: unevaluated shell definitions differ for %s; "
+            "this does not establish a resolved credential conflict",
+            sorted(dynamic),
         )
     return sorted(seen)
 
