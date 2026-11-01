@@ -337,7 +337,8 @@ sac skills list / get                     # bundled agent-facing skills
 sac dev skills install [--dry-run]        # → ~/.scitex/dev/skills/ (canonical store) + Hermes exposure
 
 # Federated scheduled jobs (delegates to scitex-dev ecosystem)
-sac dev systemd list / install / uninstall    # kind=timer|service -> ~/.config/systemd/user/sac.*
+sac dev service list / install / uninstall   # kind=service
+sac dev timer list / install / uninstall     # kind=timer
 sac dev cron    list / install / uninstall    # kind=cron -> crontab entries
 
 # State db / registry / events
