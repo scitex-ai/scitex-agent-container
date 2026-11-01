@@ -16,7 +16,8 @@ bounded native control path; never expose the gateway bearer in diagnostics.
 Use when a key is capped, a model is unavailable, or the goal judge pauses.
 First load [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md)
 to identify the host, effective profile, image, model and account pools.
-Read scitex-dev's `24_host-registry` skill for fleet routing.
+Read scitex-dev's `24_host-registry` skill for fleet routing. For subscription
+required/expired-key distinctions, use [49_subscription-errors.md](49_subscription-errors.md).
 
 ## Preflight before replacing a process
 
@@ -28,6 +29,7 @@ provider and model, without silently substituting a hardcoded vendor.
 
 `runtimes/_availability.py` owns the wire request. Use the declared provider's
 inference endpoint and protocol; the probe sends no conversation history.
+These are real, potentially billable inference requests, not offline checks.
 HTTP 200 containing failed inference/error is not success. Timeouts and
 transport failures remain unknown. If no successor passes, leave the current
 process and generated profile intact.
@@ -76,7 +78,10 @@ It must choose a credential proving both main and judge access. Restarting
 does not replenish allowance: retain caps/cooldowns and refuse when every
 declared key is unavailable. Never erase evidence or repeatedly restart on
 the same exhausted account. The shared restart budget, event fingerprint
-and running-only selection prevent a restart storm. A busy turn may cause
+and running-only selection prevent a restart storm. Evidence older than 300s
+is refused; the cap path permits two attempts per pass, with 1,800s per-agent
+debounce and two attempts per rolling hour. Attempts are persisted before the
+callback, including failures; only successful handling marks the cap event seen. A busy turn may cause
 the lifecycle gate to defer a restart.
 
 The account-key-liveness JobSpec schedules this sweep every 15 minutes through
