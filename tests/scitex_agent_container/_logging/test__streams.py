@@ -391,3 +391,30 @@ sys.stdout.write(json.dumps({
         "piped": expected,
         "unrelated_color": True,
     }
+
+
+@pytest.mark.parametrize(
+    "level,expected",
+    [("INFO", ["INFO: one diagnostic", "SUCC: Agent test restarted"]), ("ERROR", [])],
+)
+def test_importing_mcp_keeps_one_canonical_lifecycle_record(tmp_path, level, expected):
+    # Arrange: real subprocess, real logging, isolated file-log home.
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        SCITEX_LOGGING_LEVEL=level,
+        SCITEX_LOGGING_FORMAT="default",
+        SCITEX_LOGGING_FORCE_COLOR="0",
+    )
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "src")
+    code = "from scitex_agent_container._logging import get_logger; import scitex_agent_container._mcp.server; from scitex_agent_container.cli_pkg._helpers._console import system_msg; get_logger('scitex_agent_container.test').info('one diagnostic'); system_msg('Agent test restarted', style='success')"
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert: importing MCP neither duplicates output nor resets the threshold.
+    assert (result.stdout, result.stderr.splitlines()) == ("", expected)

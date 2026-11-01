@@ -17,11 +17,10 @@ logger = scitex_logging.getLogger("scitex_agent_container")
 
 
 def system_msg(text: str, style: str = "info") -> None:
-    """Emit a sac-system lifecycle line via the project logger.
+    """Emit one lifecycle record through the canonical project logger.
 
-    The ``=== ... ===`` framing marks the sac-system boundary so it
-    doesn't get confused with the agent's own stdout (see operator
-    note about new users mistaking sac prose for Claude's reply).
+    The shared logging backend owns format, stream and filtering. Helpers
+    must not install an additional handler or render the same record again.
 
     ``style`` maps to a scitex-logging level:
 

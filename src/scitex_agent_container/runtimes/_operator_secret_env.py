@@ -76,8 +76,9 @@ def operator_secret_env(
     would break on ambient leakage — full means file-defined, not
     environment-inherited.
     Values are resolved from the trusted pool at launch (:func:`read_pool`).
-    Present slots are returned; missing slots are warned about BY NAME and
-    an untrusted pool read yields {} (a miss would be inconclusive).
+    Present slots are returned; explicitly requested missing names are warned
+    about; absent optional catalog entries are debug details BY NAME. An
+    untrusted pool read yields {} (a miss would be inconclusive).
     Values are never logged.
     """
     from ._envrc import pool_defined_names
@@ -106,13 +107,14 @@ def operator_secret_env(
         else:
             missing.append(name)
     if missing:
-        log.warning(
+        report = log.warning if names is not None else log.debug
+        report(
             "operator secrets: %d of %d slots missing from the pool: %s",
             len(missing),
             len(wanted),
             ", ".join(missing),
         )
-    log.info(
+    log.debug(
         "operator secrets: passing %d of %d slots into the profile",
         len(out),
         len(wanted),

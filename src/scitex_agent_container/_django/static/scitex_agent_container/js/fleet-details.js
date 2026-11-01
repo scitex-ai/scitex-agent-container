@@ -212,9 +212,19 @@ function initDetailTabs(root) {
  * the loading shell IN PLACE to unavailable + Retry — no full-page reload
  * loops (at most one reload per cold shell). A hard reload (Ctrl+Shift+R)
  * re-enters here with no cached snapshot and no JS state, and still ends in
- * inventory or unavailable + Retry within the same bound. */
+ * inventory or unavailable + Retry within the same bound.
+ *
+ * FETCH FUSE (operator 2026-10-31, card sac-gui-cold-fetch-timeout-20261026):
+ * every poll attempt carries an AbortController fuse at COLD_FETCH_TIMEOUT_MS,
+ * tied to the 60s server ceiling (_remote.DEFAULT_TIMEOUT_SECONDS = 60.0,
+ * measured 60.06s end-to-end). A hung first fetch previously never settled —
+ * the retry counter only advances on settled responses, so the page sat on
+ * "Reading the fleet…" forever. The fuse turns a hung fetch into a normal
+ * settled failure: the existing .catch retries within the bound, then
+ * settleUnavailable() ends the page in unavailable + Retry. */
 var COLD_POLL_MAX = 8;
 var COLD_POLL_MS = 1500;
+var COLD_FETCH_TIMEOUT_MS = 65000;
 var COLD_MAX_RELOADS = 1;
 var COLD_RELOAD_KEY = "sac-cold-reloads-v1";
 
@@ -278,9 +288,16 @@ function warmColdShell() {
   let polls = 0;
   const poll = () => {
     polls += 1;
-    fetch(base, { method: "GET", credentials: "same-origin", headers: { Accept: "application/json" } })
+    /* Fetch fuse: a hung attempt must settle so the retry counter advances.
+     * Abort lands in the .catch below (settled failure): retry within the
+     * bound, then settleUnavailable. The fuse is cleared on every settle so
+     * a late abort can never fire into the next attempt. */
+    const controller = new AbortController();
+    const fuse = setTimeout(() => controller.abort(), COLD_FETCH_TIMEOUT_MS);
+    fetch(base, { method: "GET", credentials: "same-origin", headers: { Accept: "application/json" }, signal: controller.signal })
       .then((response) => response.json().catch(() => ({ ok: false })))
       .then((data) => {
+        clearTimeout(fuse);
         if (data && data.ok === true) {
           /* Snapshot is warm: a single reload renders inventory. */
           if (coldReloads() < COLD_MAX_RELOADS) {
@@ -293,7 +310,9 @@ function warmColdShell() {
         else settleUnavailable(app);
       })
       .catch(() => {
-        /* Console unreachable: retry within the bound, then settle. */
+        /* Console unreachable (or the fetch fuse above fired on a hung
+         * attempt): retry within the bound, then settle. */
+        clearTimeout(fuse);
         if (polls < COLD_POLL_MAX) setTimeout(poll, COLD_POLL_MS);
         else settleUnavailable(app);
       });
