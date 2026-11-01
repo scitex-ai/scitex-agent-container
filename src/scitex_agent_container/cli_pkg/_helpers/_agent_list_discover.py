@@ -214,6 +214,9 @@ def defined_agent_rows(
             **identity,
         }
         row["account"] = row["stored_credential"]  # deprecated inventory alias
+        # Immutable per-spec identity (card sac-identity-spec-uuid-20261026):
+        # always present; "" marks a dormant/unstamped spec.
+        row["spec_uuid"] = (getattr(cfg, "uuid", "") or "") if cfg else ""
         movement = (
             dict(_al._MOVEMENT_DEFAULTS) if deferred else _al._movement_fields(name)
         )
