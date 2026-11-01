@@ -1,16 +1,15 @@
 ---
 description: |
   [TOPIC] Hermes profile resolution in SAC
-  [DETAILS] Trace generated profiles from spec and to_home through host runtime or overlay backing into Apptainer. Diagnose goal_judge credential rotation, distinguish project context from provider configuration, and discover fleet hosts and installed skills through scitex-dev.
+  [DETAILS] Trace spec/to_home profiles into Apptainer, diagnose goal_judge rotation, distinguish project context from runtime settings, and discover hosts and skills through scitex-dev.
 tags: [scitex-agent-container-hermes-profile-resolution]
 ---
 
 # Hermes profile resolution in SAC
 
-Use when an SAC Hermes agent reads unexpected settings, loses skills, or pauses
-its goal after judge errors. Resolve the running instance's host, spec, workdir,
-image, HOME, HERMES_HOME, and bind destination before choosing files to repair.
-The authority checkout and the agent's linked worktree can be different roots.
+For unexpected settings, missing skills, or judge errors, resolve the live
+host, spec, workdir, image, HOME, HERMES_HOME and binds before repairs.
+Authority checkouts and agent worktrees can differ.
 
 ## Resolution and source evidence
 
@@ -119,11 +118,9 @@ sac dev skills get 47_hermes-profile-resolution
 ```
 
 For fleet routing, read scitex-dev's `24_host-registry` skill; for projection
-authority and drift checks, read its `36_skill-registry` skill. Use its skill
-API/dispatcher to retrieve these leaves rather than assuming a harness cache
-path. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
+authority and drift checks, read its `36_skill-registry` skill. Retrieve them through its skill dispatcher. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
 registry SSH routes with configured peers, with explicit SAC peers winning.
-Do not reproduce host inventories in this skill.
+Do not copy host inventories.
 
 Configured native `hooks` are retained when SAC regenerates model and credential
 settings (`runtimes/_hermes_hook_config.py`). Hook discovery/installation belongs
@@ -146,6 +143,18 @@ Unevaluated shell expressions only produce debug evidence: an alias and a
 secret decryption may yield the same value. Never print credential values to
 resolve this distinction. These classifications are covered by the envrc and
 operator-secret regression tests.
+
+## CCT readiness
+
+Main/judge access does not prove Telegram ingress. Inspect the effective CCT
+MCP asset path and external-poller flag; explicit spec entries override shared
+MCP settings. Use qualified published assets: development code may start an
+extra poller despite that flag. CCT owns its MCP and poller behavior.
+
+SAC's `_preflight_cct` rejects dangling links in `CCT_AGENT_STATE_DIR` before
+health or spawn; ordinary missing directories remain valid. Restore the
+configured state target without erasing state. Verify host PID ownership and
+continued liveness. Never signal another namespace's PID from a shared pidfile.
 
 ## Judge failures and verification
 
@@ -172,7 +181,5 @@ goal command only after recovery; preserve the existing conversation and goal.
 
 Update this leaf when its cited runtime functions change. Run its marked Python
 example through `tests/develop/test_documented_examples.py`, which uses scitex-dev
-to extract examples from README, docs, and skills. The suite already has daily
-CI; confirm the test is collected by that checkout and runner. Use the scitex-dev
-skill registry to check discoverability and projection drift. Structural audits,
-working import statements, and rendered docs do not prove runtime claims.
+to extract examples from README, docs, and skills. Confirm daily CI collects the test. Use the scitex-dev
+skill registry to check discoverability and projection drift. Audits and rendered docs do not prove runtime claims.

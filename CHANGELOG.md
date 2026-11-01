@@ -4,6 +4,12 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.38.4] - 2026-11-01
+
+- Remove the expired `sac dev systemd` compatibility group; use `service` or `timer` for the declared job kind. The original retirement deadline remains enforced.
+- Refuse managed CCT startup when its configured state root contains a dangling symlink, before probing health or spawning a child.
+- Update README, worktree-GC instructions, and owning skills for the supported CLI and CCT readiness checks.
+
 ## [0.38.3] - 2026-11-01
 
 - Keep restart diagnostics on the canonical scitex-logging format: importing MCP helpers no longer attaches a second timestamped console handler.

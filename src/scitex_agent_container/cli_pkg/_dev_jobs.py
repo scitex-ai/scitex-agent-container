@@ -153,14 +153,8 @@ def _announce_deprecation(group: str) -> None:
 
 
 def _kind_of(group: str) -> str:
-    """The kind a group's VERBS act on.
-
-    Identical to the group name for every kind group. The deprecated
-    alias covers two kinds, so its verbs resolve against ``timer`` — the
-    kind every job sac declares today has, and the one whose delegation
-    target (``ecosystem systemd``) is the same for both.
-    """
-    return "timer" if group == "systemd" else group
+    """The command group is the exact JobSpec kind it delegates."""
+    return group
 
 
 def _delegate(

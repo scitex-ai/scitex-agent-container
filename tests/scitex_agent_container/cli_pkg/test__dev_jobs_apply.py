@@ -209,7 +209,9 @@ def test_each_job_is_installed_before_it_is_enabled(
     # Arrange — enabling a unit that was never written fails.
     expected = list(APPLY_SEQUENCE)
     # Act
-    out_of_order = [n for n in declared_timers if applied_timers.verbs_for(n) != expected]
+    out_of_order = [
+        n for n in declared_timers if applied_timers.verbs_for(n) != expected
+    ]
     # Assert
     assert out_of_order == []
 
@@ -383,15 +385,6 @@ def test_disable_has_no_bulk_form() -> None:
     assert result.exit_code != 0
 
 
-def test_the_deprecated_alias_does_not_gain_bulk_enable() -> None:
-    # Arrange — nothing new is ever built on the `systemd` alias.
-    group = dj._make_group("systemd")
-    # Act
-    verbs = set(group.commands)
-    # Assert
-    assert "enable" not in verbs
-
-
 # ---------------------------------------------------------------------------
 # the base case: host provisioning drives the sequence
 # ---------------------------------------------------------------------------
@@ -463,15 +456,15 @@ def rendered_units() -> dict[str, tuple[str, str]]:
     from scitex_dev.jobs import _systemd as sd
 
     jobs = dj._load_sac_jobs(dj.GROUP_KINDS["timer"])
-    return {
-        j.name: (sd.build_timer_unit(j), sd.build_service_unit(j)) for j in jobs
-    }
+    return {j.name: (sd.build_timer_unit(j), sd.build_service_unit(j)) for j in jobs}
 
 
 def test_every_declared_timer_renders_a_timer_unit(rendered_units) -> None:
     # Arrange
     # Act
-    without = [n for n, (timer, _svc) in rendered_units.items() if "[Timer]" not in timer]
+    without = [
+        n for n, (timer, _svc) in rendered_units.items() if "[Timer]" not in timer
+    ]
     # Assert
     assert without == []
 
@@ -504,7 +497,9 @@ def test_every_rendered_service_has_an_execstart(rendered_units) -> None:
     # Arrange — a unit with no ExecStart is applied and inert, which is
     # the same non-check as a declaration nobody applies.
     # Act
-    without = [n for n, (_t, service) in rendered_units.items() if "ExecStart=" not in service]
+    without = [
+        n for n, (_t, service) in rendered_units.items() if "ExecStart=" not in service
+    ]
     # Assert
     assert without == []
 
