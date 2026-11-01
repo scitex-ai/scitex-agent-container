@@ -358,7 +358,7 @@ function initFleet() {
   /* Buzz filter (operator 2026-10-23): free-substring match across the
      row's name + carried facts (state text + data-agent-* attributes).
      Vanilla, no bundler; fails open (no match hiding when JS is off). */
-  const filterMount = document.querySelector('[data-stx-filter][data-filter-id="agents-filter"]');
+  const filterMount = document.querySelector('[data-stx-filter-field][data-filter-id="agents-filter"]');
   filterMount?.addEventListener("input", (event) => {
     if (event.target instanceof HTMLInputElement) applyFilter(event.target.value, table);
   });

@@ -114,7 +114,7 @@ python -m pytest tests/integration/test_gui_composer_browser.py -m integration
 This optional test requires Playwright and Chromium. `SCITEX_TEST_CHROMIUM` can
 point to an existing executable. It sends no messages to running agents.
 
-The filter is an empty `data-stx-filter` SDK mount; the leaf owns only matching
+The filter is an empty `data-stx-filter-field` SDK mount; the leaf owns only matching
 and its outer layout width. The SDK supplies the leading icon, keyword
 placeholder, and focus-aware Ctrl+K/Esc badge. The pane row fills remaining
 workspace height with bottom breathing room. SDK phone tabs control which pane
