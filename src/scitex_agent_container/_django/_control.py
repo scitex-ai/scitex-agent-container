@@ -63,7 +63,7 @@ class DeliveryResult:
     """What the bridge said about one delivery attempt."""
 
     delivered: bool
-    state: str          # delivered | replay | failed | refused
+    state: str  # delivered | replay | failed | refused
     message: str
     dispatch_id: str
     mode: str = "turn"
@@ -153,10 +153,15 @@ def send_message(
     """
     dispatch = dispatch_id or new_dispatch_id()
     if not isinstance(text, str) or not text.strip():
-        return DeliveryResult(False, "refused", "a message needs non-empty text", dispatch)
+        return DeliveryResult(
+            False, "refused", "a message needs non-empty text", dispatch
+        )
     if len(text) > MAX_MESSAGE_CHARS:
         return DeliveryResult(
-            False, "refused", f"message exceeds {MAX_MESSAGE_CHARS} characters", dispatch
+            False,
+            "refused",
+            f"message exceeds {MAX_MESSAGE_CHARS} characters",
+            dispatch,
         )
     base = _bridge_base(turn_url)
     if not base:
@@ -182,17 +187,34 @@ def send_message(
     except HTTPError as exc:
         detail = ""
         try:
-            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get("error", "")
+            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get(
+                "error", ""
+            )
         except (ValueError, OSError):
             detail = ""
         return DeliveryResult(
             False, "failed", redact(detail or f"HTTP {exc.code}"), dispatch
         )
-    except (URLError, OSError, ValueError) as exc:
-        return DeliveryResult(False, "failed", redact(str(exc)), dispatch)
+    except (URLError, OSError):
+        return DeliveryResult(
+            False,
+            "failed",
+            "The agent's message endpoint is not reachable from this dashboard. "
+            "Use Cards for cross-host messages.",
+            dispatch,
+        )
+    except ValueError:
+        return DeliveryResult(
+            False,
+            "failed",
+            "The agent returned an invalid delivery response.",
+            dispatch,
+        )
 
     _Replay.remember(dispatch)
-    delivered = bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    delivered = (
+        bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    )
     state = "delivered" if delivered else "failed"
     if not delivered:
         _Replay.forget(dispatch)
@@ -225,11 +247,19 @@ def send_control_key(
     base = _bridge_base(turn_url)
     if not base:
         return DeliveryResult(
-            False, "refused", "this agent publishes no control endpoint", dispatch, mode="control"
+            False,
+            "refused",
+            "this agent publishes no control endpoint",
+            dispatch,
+            mode="control",
         )
     if _Replay.seen(f"{dispatch}:{key}"):
         return DeliveryResult(
-            True, "replay", "already sent (duplicate submit ignored)", dispatch, mode="control"
+            True,
+            "replay",
+            "already sent (duplicate submit ignored)",
+            dispatch,
+            mode="control",
         )
 
     body = json.dumps({"key": key}).encode("utf-8")
@@ -245,17 +275,27 @@ def send_control_key(
     except HTTPError as exc:
         detail = ""
         try:
-            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get("error", "")
+            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get(
+                "error", ""
+            )
         except (ValueError, OSError):
             detail = ""
         return DeliveryResult(
-            False, "failed", redact(detail or f"HTTP {exc.code}"), dispatch, mode="control"
+            False,
+            "failed",
+            redact(detail or f"HTTP {exc.code}"),
+            dispatch,
+            mode="control",
         )
     except (URLError, OSError, ValueError) as exc:
-        return DeliveryResult(False, "failed", redact(str(exc)), dispatch, mode="control")
+        return DeliveryResult(
+            False, "failed", redact(str(exc)), dispatch, mode="control"
+        )
 
     _Replay.remember(f"{dispatch}:{key}")
-    delivered = bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    delivered = (
+        bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    )
     return DeliveryResult(
         delivered,
         "delivered" if delivered else "failed",
