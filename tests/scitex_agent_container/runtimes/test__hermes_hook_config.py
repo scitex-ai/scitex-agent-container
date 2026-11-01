@@ -32,10 +32,12 @@ def test_invalid_profile_hook_input_refuses_regeneration_without_secret_output(
     # Arrange
     (tmp_path / "config.yaml").write_text(body)
     # Act
-    with pytest.raises(ValueError) as error:
+    # Assert: only the fixed, sanitized messages are permitted.
+    with pytest.raises(
+        ValueError,
+        match=r"^(Cannot preserve Hermes hooks from unreadable configuration|Hermes hook configuration must be a mapping)$",
+    ):
         preserve_hook_config(tmp_path, {})
-    # Assert
-    assert "fake-unparseable-key" not in str(error.value)
 
 
 def test_new_profile_does_not_invent_hooks(tmp_path):
