@@ -9,6 +9,9 @@ versioning follows [SemVer](https://semver.org/).
 - Read only the Hermes replay watermark after slash commands, avoiding a full
   retained-event download that exceeds the WebSocket frame limit on long runs.
 - Omit the gateway bearer query from command and message connection errors.
+- Keep fleet message refusals inline with the draft, accept Ctrl/Command+Enter,
+  and renew dispatch ids after success so later messages are not discarded as
+  duplicate submissions. Suppress repeated submission while delivery is pending.
 
 ## 0.38.5
 
