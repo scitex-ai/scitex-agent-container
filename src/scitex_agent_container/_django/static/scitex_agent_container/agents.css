@@ -32,6 +32,10 @@
      overlays content, so reserving clearance here only leaves dead space. */
   margin: 0;
   padding: 0;
+
+}
+
+.agents-app[data-page="fleet"] {
   /* Operator 2026-11-01: viewport-fitted app column. The pane row used to
      size itself with a magic 100vh-180px number calibrated per deployment;
      mounted chrome (hub header + app header + pagehead + filterbar) varies

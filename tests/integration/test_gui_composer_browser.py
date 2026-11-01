@@ -114,3 +114,14 @@ def test_uncertain_send_is_not_repeated_by_enter(browser_page):
     page.wait_for_function("document.querySelector('[data-composer-error]').textContent.includes('will not be sent again')")
     # Assert
     assert (len(requests), area.input_value(), page.url) == (1, "Keep uncertain draft", "https://dashboard.example/")
+
+
+def test_detail_fragment_keeps_natural_height_inside_fleet(browser_page):
+    # Arrange — live details are nested inside the viewport-fitted fleet page.
+    page = browser_page
+    css = (LEAF / "static/scitex_agent_container/agents.css").read_text()
+    page.set_content(f'<style>{css}</style><div class="agents-app" data-page="fleet" style="height:500px"><div class="agents-app agents-app--fragment" data-page="detail">Details content</div></div>')
+    # Act
+    geometry = page.locator('[data-page="detail"]').evaluate("e => ({display: getComputedStyle(e).display, height: e.getBoundingClientRect().height})")
+    # Assert — it must not inherit the outer full-height flex column contract.
+    assert geometry["display"] == "block" and geometry["height"] < 100
