@@ -1,13 +1,13 @@
 """Tests for the ``a2a_proxy`` runner — forward-only A2A bridge.
 
-Uses Starlette's TestClient against ``build_app`` with an in-process
-upstream stub mounted on httpx's ASGITransport. No live network; no
-``respx`` dependency.
+Uses Starlette's TestClient for adapters and real loopback HTTP servers for
+lifecycle checks. Native CLI shutdown runs in a ready, isolated subprocess;
+the pytest worker never receives its shutdown signal.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 import pytest
@@ -1262,7 +1262,7 @@ def test_run_final_heartbeat_state_is_stopping(
 
 
 @pytest.fixture
-def main_short_run(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
+def main_short_run(tmp_path: Any, real_upstream_server: Any) -> Iterator[dict[str, Any]]:
     # Arrange
     import signal
     import subprocess
@@ -1324,7 +1324,7 @@ def main_short_run(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
                 child.kill()
                 child.wait(timeout=2.0)
     # Assert (deferred)
-    return {"rc": rc, "state_dir": state_root / "px-main"}
+    yield {"rc": rc, "state_dir": state_root / "px-main"}
 
 
 def test_main_returns_zero_on_clean_shutdown(
