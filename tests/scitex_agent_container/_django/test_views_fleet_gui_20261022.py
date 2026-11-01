@@ -93,11 +93,26 @@ def test_css_row_height_clears_dock():
     # Arrange — file content only.
     # Act
     css = CSS
-    # Assert — the 280px reserve is gone (180px range), 300px floor kept.
+    # Assert — operator 2026-11-01: no magic viewport reserves anywhere;
+    # panes inherit the app column height instead of measuring the viewport.
     assert (
-        "calc(100vh - 180px)" in css
+        "calc(100vh - 180px)" not in css
         and "calc(100vh - 280px)" not in css
-        and "min-height: 300px" in css
+        and "min-height: 300px" not in css
+        and "height: 100%; max-height: 100%" in css
+    )
+
+
+def test_css_app_column_fits_viewport():
+    # Arrange — file content only.
+    # Act
+    css = CSS
+    # Assert — operator 2026-11-01: the app is a viewport-fitted flex column
+    # (DM composer truncated below the fold); the 3-col row takes the leftover.
+    assert (
+        "max-height: 100dvh" in css
+        and "flex: 1 1 auto" in css
+        and "flex-shrink: 0" in css
     )
 
 
