@@ -118,11 +118,9 @@ sac dev skills get 47_hermes-profile-resolution
 ```
 
 For fleet routing, read scitex-dev's `24_host-registry` skill; for projection
-authority and drift checks, read its `36_skill-registry` skill. Use its skill
-API/dispatcher to retrieve these leaves rather than assuming a harness cache
-path. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
+authority and drift checks, read its `36_skill-registry` skill. Retrieve them through its skill dispatcher. `scitex_dev.hosts.list_hosts` and `resolve` own host records; SAC combines
 registry SSH routes with configured peers, with explicit SAC peers winning.
-Do not reproduce host inventories in this skill.
+Do not copy host inventories.
 
 Configured native `hooks` are retained when SAC regenerates model and credential
 settings (`runtimes/_hermes_hook_config.py`). Hook discovery/installation belongs
@@ -183,7 +181,5 @@ goal command only after recovery; preserve the existing conversation and goal.
 
 Update this leaf when its cited runtime functions change. Run its marked Python
 example through `tests/develop/test_documented_examples.py`, which uses scitex-dev
-to extract examples from README, docs, and skills. The suite already has daily
-CI; confirm the test is collected by that checkout and runner. Use the scitex-dev
-skill registry to check discoverability and projection drift. Structural audits,
-working import statements, and rendered docs do not prove runtime claims.
+to extract examples from README, docs, and skills. Confirm daily CI collects the test. Use the scitex-dev
+skill registry to check discoverability and projection drift. Audits and rendered docs do not prove runtime claims.
