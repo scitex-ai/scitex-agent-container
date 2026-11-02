@@ -11,7 +11,8 @@ versioning follows [SemVer](https://semver.org/).
 ### Fixed
 - Install the ZIP extractor required by Puppeteer before browser downloads.
   Reject missing browser executables and require both stable browser paths to
-  launch headlessly before accepting a base image.
+  launch headlessly before accepting a base image. Keep the browser cache outside
+  the private build home so the non-root agent can use those executables.
 - Keep both dashboard message composers on the current page when Enter or
   Ctrl/Command+Enter submits. Shift+Enter inserts a newline. Preserve the draft
   and show inline errors after refusal or uncertain transport; do not blindly
