@@ -13,6 +13,10 @@ versioning follows [SemVer](https://semver.org/).
   including Hermes container/host aliases. Keep status and activity available
   with explicit unknown session evidence when proof fails. Passive status reads
   no longer activate the Hermes renderer to inspect optional clarification state.
+- Stop CI and release qualification when the full declared dependency install
+  fails, rather than retrying with reduced extras. Use the reviewed shared
+  installer with a fresh private package cache for each job, and honor the
+  repository's bounded worker setting.
 - Resolve the scientific umbrella, staged SAC and staged Cards together with
   dependency checking enabled. Refuse an image whose installed requirements
   conflict. The scientific layer requires the compatible scitex 2.30.9 cohort
