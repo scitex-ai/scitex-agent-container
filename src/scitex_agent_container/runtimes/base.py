@@ -125,6 +125,15 @@ class RuntimeBase(ABC):
         del config
         return None
 
+    def observe_control_state(self, config: AgentConfig) -> dict[str, Any] | None:
+        """Return passive status evidence without attaching to a native session.
+
+        Observation-only adapters retain their existing control-state contract.
+        An adapter whose control snapshot attaches or mutates must override this
+        seam and leave unavailable passive fields explicitly unknown.
+        """
+        return self.control_state(config)
+
     def recover_turn_admission(self, config: AgentConfig) -> bool | None:
         """Ask an adapter to recover its current session in place.
 

@@ -556,7 +556,11 @@ def observe_pending_clarification(
     timeout_s: float = 10.0,
     connect_fn: Any | None = None,
 ) -> HermesPendingClarification | None:
-    """Read a live clarify request without attaching to or mutating the TUI."""
+    """Inspect the interactive clarify projection by activating its renderer.
+
+    Native activation may rebind transport and touch last_active. Passive status
+    endpoints must use the runtime's observe_control_state seam instead.
+    """
     url, _token = _gateway_connection(state_dir)
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
