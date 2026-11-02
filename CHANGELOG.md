@@ -9,6 +9,10 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Read status session identity through the selected runtime's ownership proof,
+  including Hermes container/host aliases. Keep status and activity available
+  with explicit unknown session evidence when proof fails. Passive status reads
+  no longer activate the Hermes renderer to inspect optional clarification state.
 - Stop CI and release qualification when the full declared dependency install
   fails, rather than retrying with reduced extras. Use the reviewed shared
   installer with a fresh private package cache for each job, and honor the
