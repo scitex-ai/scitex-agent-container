@@ -58,7 +58,7 @@ concurrency:
 # workflows that between them want one optional token. Fixed on merit.
 jobs:
   pytest-matrix:
-    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
+    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@8510d06e21e8e7d24f575ee07a3fa62bc745e341
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
 
@@ -66,16 +66,16 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   import-smoke:
-    uses: scitex-ai/.github/.github/workflows/import-smoke.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
+    uses: scitex-ai/.github/.github/workflows/import-smoke.yml@8510d06e21e8e7d24f575ee07a3fa62bc745e341
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
 
   quality-audit:
-    uses: scitex-ai/.github/.github/workflows/quality-audit.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
+    uses: scitex-ai/.github/.github/workflows/quality-audit.yml@8510d06e21e8e7d24f575ee07a3fa62bc745e341
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
 
   rtd-sphinx-build:
-    uses: scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@8c646081e9f1352077d3d8674052cce7ec75a1b7
+    uses: scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml@8510d06e21e8e7d24f575ee07a3fa62bc745e341
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
