@@ -7,7 +7,7 @@ the pytest worker never receives its shutdown signal.
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
 
 import httpx
 import pytest
@@ -18,6 +18,9 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from scitex_agent_container._runners.a2a_proxy import build_app, splice_card
+from tests.scitex_agent_container._runners._a2a_proxy_main_fixture import (
+    main_short_run as main_short_run,
+)
 from tests.scitex_agent_container._helpers.loopback_server import (
     serve_in_thread,
     wait_until_serving,
@@ -1260,71 +1263,6 @@ def test_run_final_heartbeat_state_is_stopping(
 # The signal belongs to a child process, never the pytest/xdist worker.
 # ---------------------------------------------------------------------------
 
-
-@pytest.fixture
-def main_short_run(tmp_path: Any, real_upstream_server: Any) -> Iterator[dict[str, Any]]:
-    # Arrange
-    import signal
-    import subprocess
-    import sys
-    import tempfile
-    import time
-    from urllib.error import URLError
-    from urllib.request import urlopen
-
-    base, _recorder = real_upstream_server
-    state_root = tmp_path / "rt"
-    port = _free_port()
-
-    # Act
-    args = [
-        sys.executable,
-        "-m",
-        "scitex_agent_container._runners.a2a_proxy",
-        "--name",
-        "px-main",
-        "--upstream",
-        base,
-        "--redact",
-        "a, ,b",
-        "--state-root",
-        str(state_root),
-        "--tick-seconds",
-        "0.05",
-        "--a2a-port",
-        str(port),
-    ]
-    with tempfile.TemporaryFile(mode="w+") as output:
-        child = subprocess.Popen(args, stdout=output, stderr=subprocess.STDOUT)
-        try:
-            deadline = time.monotonic() + 5.0
-            while True:
-                if child.poll() is not None:
-                    output.seek(0)
-                    raise RuntimeError(
-                        f"proxy exited before readiness: {output.read()}"
-                    )
-                try:
-                    with urlopen(
-                        f"http://127.0.0.1:{port}/health", timeout=0.2
-                    ) as response:
-                        if response.status == 200:
-                            break
-                except (URLError, OSError):
-                    pass
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(
-                        "proxy did not become ready before shutdown test"
-                    )
-                time.sleep(0.01)
-            child.send_signal(signal.SIGTERM)
-            rc = child.wait(timeout=2.0)
-        finally:
-            if child.poll() is None:
-                child.kill()
-                child.wait(timeout=2.0)
-    # Assert (deferred)
-    yield {"rc": rc, "state_dir": state_root / "px-main"}
 
 
 def test_main_returns_zero_on_clean_shutdown(
