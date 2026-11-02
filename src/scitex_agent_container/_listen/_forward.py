@@ -121,7 +121,7 @@ class ForwardOutcome:
 
 
 async def post_to_live_runner(
-    url: str, port: int, prompt: str, *, timeout: float, method: str = "POST"
+    url: str, port: int, prompt: str, *, timeout: float, method: str = "POST", dispatch_id: str | None = None
 ) -> ForwardOutcome:
     """POST ``prompt`` to a runner sidecar and classify what happened.
 
@@ -129,7 +129,8 @@ async def post_to_live_runner(
     only WHAT HAPPENED and the caller decides WHAT TO DO — the two were
     entangled in the collapsed-sentinel version.
     """
-    body = _json.dumps({"text": prompt}).encode("utf-8") if method == "POST" else None
+    payload = {"text": prompt, **({"dispatch_id": dispatch_id} if dispatch_id else {})}
+    body = _json.dumps(payload).encode("utf-8") if method == "POST" else None
     req = _urlrequest.Request(
         url,
         data=body,
@@ -292,7 +293,10 @@ async def forward_to_live_runner(
     host = getattr(a2a, "host", None) or "127.0.0.1"
 
     url = f"http://{host}:{port}/v1/turn"
-    outcome = await post_to_live_runner(url, port, prompt, timeout=timeout)
+    outcome = await post_to_live_runner(
+        url, port, prompt, timeout=timeout,
+        **({"dispatch_id": options["dispatch_id"]} if options.get("dispatch_id") else {}),
+    )
 
     if outcome.kind == "refused":
         return _refused_response(name, outcome)
@@ -390,6 +394,7 @@ async def forward_to_remote_runner(
     *,
     local_host: str,
     timeout: float = 600.0,
+    dispatch_id: str | None = None,
 ) -> JSONResponse | None:
     """Push a prompt onto a REMOTE runner's sidecar over the ssh transport.
     The cross-host half of :func:`agent_send`'s send path. The local
@@ -448,7 +453,8 @@ async def forward_to_remote_runner(
         return None
     peer_host, port = target
     return await push_to_remote_runner(
-        name, prompt, peer_host=peer_host, port=port, timeout=timeout
+        name, prompt, peer_host=peer_host, port=port, timeout=timeout,
+        **({"dispatch_id": dispatch_id} if dispatch_id else {})
     )
 
 
@@ -482,6 +488,7 @@ async def push_to_remote_runner(
     peer_host: str,
     port: int,
     timeout: float = 600.0,
+    dispatch_id: str | None = None,
 ) -> JSONResponse:
     """Ssh-post one turn to a peer's loopback sidecar; proxy the receipt.
 
@@ -494,7 +501,7 @@ async def push_to_remote_runner(
     """
     from .._network._ssh_curl import _post_via_ssh_curl
 
-    body = _json.dumps({"text": prompt}).encode("utf-8")
+    body = _json.dumps({"text": prompt, **({"dispatch_id": dispatch_id} if dispatch_id else {})}).encode("utf-8")
     try:
         rc, stdout, stderr = await asyncio.to_thread(
             _post_via_ssh_curl,

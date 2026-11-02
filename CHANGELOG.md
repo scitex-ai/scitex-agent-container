@@ -4,6 +4,53 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+## [0.38.6] - 2026-11-02
+
+### Fixed
+- Install the ZIP extractor required by Puppeteer before browser downloads.
+  Reject missing browser executables and require both stable browser paths to
+  launch headlessly before accepting a base image. Keep the browser cache outside
+  the private build home so the non-root agent can use those executables.
+- Keep both dashboard message composers on the current page when Enter or
+  Ctrl/Command+Enter submits. Shift+Enter inserts a newline. Preserve the draft
+  and show inline errors after refusal or uncertain transport; do not blindly
+  resubmit an identical uncertain dispatch. Refresh dispatch IDs after confirmed
+  success, while treating IDs as correlation rather than durable deduplication.
+- Forward supported local messages through the authenticated listener proxy
+  instead of dialing host-loopback bridges from the web container. Report
+  canonical acceptance as pending completion. Retain the explicit HTTP 409
+  refusal and Cards guidance for unsupported cross-host dashboard messages.
+- Fit fleet panes and composers to the shared workspace viewport, preserve SDK
+  phone pane visibility, and honor host dock clearance. Keep injected Details
+  fragments at their natural height rather than applying full-page sizing.
+- Content-version leaf static assets so source updates invalidate cached styles
+  and scripts without requiring a package version change.
+- Preserve the fleet project-label fallback. Include pagehead spacing and the
+  correction for multiline template comments from the superseded 0.38.5 preview.
+- Read only the Hermes replay watermark after slash commands, avoiding retained
+  event downloads that exceed the WebSocket frame limit on long runs. Omit
+  gateway bearer queries from command and message connection errors.
+
+### Changed
+- Adopt the SDK keyword-filter field with its leading icon, keyword placeholder,
+  and muted Ctrl+K/Esc hint. Escape clears the field and releases focus. Pin both
+  GUI and development dependencies exactly to SDK 0.3.17 so this renderer and the
+  shared header and scope contracts resolve consistently.
+- Expand packaged Hermes skill 47 with the generalized source, host symlink,
+  to_home, overlay, generated home, Apptainer, project, and fleet checklist.
+  Skills 48 and 49 document main/judge availability preflights, subscription
+  errors, existing bounded quota-restart behavior, and safe credential handling.
+  These are troubleshooting and resolution guidance, not a new quota engine.
+
+## 0.38.5 (unpublished preview, superseded by 0.38.6)
+
+- Previewed exact GUI/dev SDK 0.3.16 pins for the shared scope capability contract;
+  the combined 0.38.6 candidate supersedes those pins with SDK 0.3.17.
+- Added fleet pagehead spacing and prevented multiline template-comment leakage
+  (PR #1694); these changes are included in 0.38.6.
+
 ## [0.38.4] - 2026-11-01
 
 - Remove the expired `sac dev systemd` compatibility group; use `service` or `timer` for the declared job kind. The original retirement deadline remains enforced.
@@ -17,8 +64,6 @@ versioning follows [SemVer](https://semver.org/).
 - Distinguish optional missing secret slots and unverified shell-expression differences from actionable explicit missing names and conflicting literals.
 - Preserve explicitly configured native Hermes hooks when regenerating model profiles.
 - Require scitex-logging 0.2.4 and document/test restart output and warning classification.
-
-## [Unreleased]
 
 ## [0.38.2] - 2026-10-31
 

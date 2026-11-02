@@ -123,6 +123,10 @@ class HermesCompressionReceipt:
 
 
 _SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
+# A control receipt needs the current replay head, never the retained events.
+# Hermes returns latest_seq independently of last_seen. A future watermark
+# therefore bounds the response even when the replay ring holds megabytes.
+_WATERMARK_ONLY_LAST_SEEN = (1 << 63) - 1
 
 
 def _detailed_health(
@@ -690,7 +694,7 @@ def submit_turn(
         raise
     except Exception as exc:
         raise HermesTuiRpcError(
-            f"Hermes TUI gateway at {url} is unreachable: {exc}"
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
         ) from exc
     return receipt
 
@@ -732,13 +736,13 @@ def execute_slash_command(
                 socket,
                 4,
                 "session.events.since",
-                {"session_id": session_id, "last_seen": 0},
+                {"session_id": session_id, "last_seen": _WATERMARK_ONLY_LAST_SEEN},
             )
     except HermesTuiRpcError:
         raise
     except Exception as exc:
         raise HermesTuiRpcError(
-            f"Hermes TUI gateway at {url} is unreachable: {exc}"
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
         ) from exc
     output = result.get("output")
     if not isinstance(output, str) or not output.strip():
