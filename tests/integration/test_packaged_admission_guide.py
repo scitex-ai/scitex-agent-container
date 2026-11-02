@@ -106,3 +106,20 @@ def test_missing_rendered_section_refuses(resources):
     refused = _refusal(wheel, _ROOT)
     # Assert
     assert "no rendered section" in refused
+
+
+def test_declared_docs_floors_cover_the_include_read_event():
+    # Arrange
+    import tomllib
+
+    project = tomllib.loads((_ROOT / "pyproject.toml").read_text())
+    requirements = (_ROOT / "docs/sphinx/requirements.txt").read_text().splitlines()
+    # Act
+    declarations = (
+        "sphinx>=7.2.5" in project["project"]["optional-dependencies"]["docs"],
+        "sphinx>=7.2.5" in requirements,
+        "myst-parser>=3.0" in project["project"]["optional-dependencies"]["docs"],
+        "myst-parser>=3.0" in requirements,
+    )
+    # Assert
+    assert declarations == (True, True, True, True)

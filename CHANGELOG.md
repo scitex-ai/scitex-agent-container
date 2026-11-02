@@ -8,7 +8,8 @@ versioning follows [SemVer](https://semver.org/).
 
 - Keep the admission-receipt guide portable in installed wheels, use one
   canonical Markdown source, and verify packaged HTML links and source
-  fingerprints before uploading release artifacts.
+  fingerprints before uploading release artifacts. Require Sphinx 7.2.5 or
+  newer and MyST 3.0 or newer for the source-capture event.
 
 ## [0.38.6] - 2026-11-02
 
