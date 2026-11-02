@@ -16,6 +16,7 @@ except ImportError as exc:
     ) from exc
 
 from . import views
+from ._exchange import exchange_status
 
 app_name = "scitex_agent_container"
 
@@ -33,6 +34,11 @@ urlpatterns = [
     path("<str:name>/", views.detail, name="detail"),
     path("<str:name>/action", views.lifecycle_action, name="lifecycle_action"),
     path("<str:name>/message", views.message_action, name="message_action"),
+    path(
+        "<str:name>/exchanges/<str:exchange_id>",
+        exchange_status,
+        name="exchange_status",
+    ),
     path("<str:name>/forget", views.forget_action, name="forget_action"),
     path("<str:name>/delete", views.delete_action, name="delete_action"),
 ]
