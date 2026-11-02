@@ -113,3 +113,15 @@ def test_base_apt_block_installs_headless_chromium_lib(
         f"apptainer-base.def — headless Chromium (Playwright / mermaid-cli / "
         f"chrome-headless-shell) will fail to launch. Block:\n{block}"
     )
+
+
+@pytest.mark.parametrize("section", ("post", "environment"))
+def test_browser_cache_is_accessible_outside_private_build_home(
+    base_def_text: str, section: str
+) -> None:
+    # Arrange
+    block = base_def_text.split(f"%{section}\n", 1)[1].split("\n%", 1)[0]
+    # Act
+    public_cache = "export PUPPETEER_CACHE_DIR=/opt/browser-cache" in block
+    # Assert
+    assert public_cache, "Browser installation and non-root runtime must share the public image cache"
