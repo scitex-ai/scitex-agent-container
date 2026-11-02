@@ -6,6 +6,7 @@ subprocess module stay untouched; the owner's local module binding is restored
 in finally. All children are actual Popen processes, not fabricated results.
 """
 
+import signal
 import socket
 
 _FAKE_OPENCODE = """#!/usr/bin/env python3
@@ -129,9 +130,14 @@ class _ListenerChildProcesses:
 
 def _run_with_listener(module, argv, port):
     original = module.subprocess
+    signals = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         module.subprocess = _ListenerChildProcesses(original, port.listener)
         return module.main(argv)
     finally:
         module.subprocess = original
-        port.listener.close()
+        try:
+            for sig, handler in signals.items():
+                signal.signal(sig, handler)
+        finally:
+            port.listener.close()
