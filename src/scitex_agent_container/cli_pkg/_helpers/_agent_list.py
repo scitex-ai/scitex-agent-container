@@ -513,6 +513,7 @@ def get_agent_list_data(
                 runtime_identity_source=identity["runtime_identity_source"],
                 probe_runtime=probe_runtime,
                 probe_error=probe_error,
+                spec_uuid=(getattr(cfg, "uuid", "") or ""),
                 labels=labels,
             )
         )
