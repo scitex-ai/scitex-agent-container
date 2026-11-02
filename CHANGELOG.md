@@ -6,6 +6,9 @@ versioning follows [SemVer](https://semver.org/).
 
 ## 0.38.6
 
+- Pin both GUI and development dependencies to SDK 0.3.17 so the canonical
+  keyword-filter renderer and shared header contracts ship with the dashboard.
+
 - Read only the Hermes replay watermark after slash commands, avoiding a full
   retained-event download that exceeds the WebSocket frame limit on long runs.
 - Omit the gateway bearer query from command and message connection errors.
