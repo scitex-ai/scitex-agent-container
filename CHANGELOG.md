@@ -9,6 +9,10 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Stop CI and release qualification when the full declared dependency install
+  fails, rather than retrying with reduced extras. Use the reviewed shared
+  installer with a fresh private package cache for each job, and honor the
+  repository's bounded worker setting.
 - Resolve the scientific umbrella, staged SAC and staged Cards together with
   dependency checking enabled. Refuse an image whose installed requirements
   conflict. The scientific layer requires the compatible scitex 2.30.9 cohort
