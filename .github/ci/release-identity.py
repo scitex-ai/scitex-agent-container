@@ -91,6 +91,12 @@ def resolve(tag, query=api):
         "status"
     ) not in {"ahead", "identical"}:
         raise ValueError("release source is not on the accepted develop history")
+    main = query(prefix + "/branches/main")
+    if (not isinstance(main, dict) or main.get("name") != "main"
+            or main.get("protected") is not True
+            or not isinstance(main.get("commit"), dict)
+            or main["commit"].get("sha") != commit):
+        raise ValueError("release tag is not the current protected main commit")
     content = query(prefix + "/contents/pyproject.toml?ref=" + commit)
     if content.get("encoding") != "base64":
         raise ValueError("unsupported metadata encoding")
@@ -1026,6 +1032,7 @@ def main(query=api):
         "mode",
         choices=[
             "resolve",
+            "check-source",
             "check-tests",
             "write-proof",
             "verify-proof",
@@ -1058,6 +1065,13 @@ def main(query=api):
         return
     if git_read(["rev-parse", "HEAD"], Path(".")).decode().strip() != args.commit:
         raise ValueError("checkout and release commit differ")
+    if args.mode == "check-source":
+        identity = resolve(args.tag, query)
+        if (identity["commit"] != args.commit
+                or os.environ.get("GITHUB_SHA") != args.commit):
+            raise ValueError("workflow event and protected main commit differ")
+        print(json.dumps(identity))
+        return
     witness = run_witness(
         args.commit or "",
         os.environ.get("GITHUB_RUN_ID", ""),

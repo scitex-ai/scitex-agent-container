@@ -92,3 +92,12 @@ Source evidence: `cli_pkg/image_group.py`, `cli_pkg/_image_source_build.py`,
 `cli_pkg/_image_repro_build.py`, `cli_pkg/_hermes_source.py`, and
 `containers/apptainer-base.def`. Pin/provenance regressions live in
 `tests/integration/test_apptainer_base_def_hermes.py` and the image-build tests.
+
+## Package release checks
+
+For a package release, follow the source-backed
+[release guard reference](../../../../docs/release-guards.md): current protected
+main/tag identity, the qualified test image/runtime bytes, and mandatory
+private PostgreSQL coverage. Preserve the existing artifact proof and OIDC
+order. Keep package-publisher evidence and runtime-image build evidence
+separately recorded.

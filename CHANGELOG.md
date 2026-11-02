@@ -9,6 +9,12 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Verify the qualified release image/runtime bytes before execution and require
+  the tag to match current protected main while retaining accepted-develop
+  ancestry. Bind the release-only PostgreSQL image to the qualified PG18.6
+  bytes and verify its newly owned writable data directory before each phase.
+  Keep all three full test legs and require private PostgreSQL coverage;
+  handle manual version input as literal data before checkout.
 - Stop CI and release qualification when the full declared dependency install
   fails, rather than retrying with reduced extras. Use the reviewed shared
   installer with a fresh private package cache for each job, and honor the
