@@ -1,5 +1,6 @@
 """Scoped signed acceptance receipts over the real isolated listener HTTP fixture."""
 
+import json
 import uuid
 
 import pytest
@@ -124,10 +125,14 @@ def test_native_messages_are_redacted_bounded_and_no_payload_is_forwarded(
 
 
 def test_post_acceptance_returns_caller_bound_lookup_receipt(
-    client, loopback, env_save_restore
+    client, loopback, env_save_restore, tmp_path
 ):
     # Arrange
+    from scitex_agent_container._django._constants import AUDIT_LOG_ENV
+
     configure(env_save_restore)
+    audit = tmp_path / "message-audit.jsonl"
+    env_save_restore.set(AUDIT_LOG_ENV, str(audit))
     # Act
     response = client.post(
         "/alpha/message",
@@ -148,7 +153,9 @@ def test_post_acceptance_returns_caller_bound_lookup_receipt(
         data["state"],
         data["exchange_id"],
         result.status_code,
-    ) == (200, "accepted", EXCHANGE, 200)
+        json.loads(audit.read_text().splitlines()[-1])["exchange_id"],
+        "private fixture only" in audit.read_text(),
+    ) == (200, "accepted", EXCHANGE, 200, EXCHANGE, False)
 
 
 @pytest.mark.parametrize(

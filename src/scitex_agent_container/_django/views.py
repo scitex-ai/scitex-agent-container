@@ -658,6 +658,7 @@ def message_action(request: HttpRequest, name: str):
             "cross_host": cross_host,
             "state": result.state,
             "dispatch_id": result.dispatch_id,
+            "exchange_id": result.exchange_id,
             "message": result.message[:240],
             "path": request.path,
         }
