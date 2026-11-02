@@ -13,8 +13,9 @@ Authority checkouts and agent worktrees can differ.
 
 ## Resolution and source evidence
 
-Hermes reads provider/judge configuration from `$HERMES_HOME/config.yaml`;
-without a profile override its default is `~/.hermes/config.yaml`. Project
+Hermes resolves its home through its installed profile/context and
+`HERMES_HOME` logic, then reads `config.yaml` there; the ordinary POSIX fallback
+is `~/.hermes/config.yaml`. Project
 `<root>/.hermes/config.yaml` is not automatically merged. Verify these rules
 in the installed image's `hermes_constants.get_hermes_home` and
 `hermes_cli.config.get_config_path`, rather than a different host installation.
@@ -33,6 +34,11 @@ filenames without a directory remain under `runtimes/`). SAC deploys `to_home`
 and then writes its generated Hermes configuration and credential pools to
 the runtime home and applicable overlay home. Editing a generated file alone
 does not update the authored source and may be overwritten at next launch.
+
+The current launch compiler declares `HERMES_HOME=/home/agent/.hermes` in
+`config/_harness_callables.py:_hermes_env_and_binds`. A custom `--home` does not
+automatically change this declaration. Verify the effective process environment
+and finalized binds before treating a custom HOME as the active Hermes profile.
 
 Directory overlays and runtime homes are alternate container-home backings,
 not layers of config precedence. Inspect the actual bind winner. In particular,
@@ -68,10 +74,13 @@ with TemporaryDirectory() as directory:
 ## Investigation checklist
 
 - [ ] SAC source: generated route, key selection, failover pools, profile writes.
-- [ ] Host operator `~/.hermes/`: resolve symlinks, including a dotfiles target.
-- [ ] Shared and agent `to_home/.hermes/`: inspect explicit sources and overrides.
+- [ ] Host operator `<operator-home>/.hermes/`: resolve the actual symlink and
+  dotfiles target; do not assume the same checkout or username across hosts.
+- [ ] `<registry-root>/agents/_shared/to_home/.hermes/` and each agent's
+  `to_home/.hermes/`: verify baseline resolution, explicit symlinks and overrides.
 - [ ] `<state_dir>/home/.hermes/`: inspect generated profile and credentials.
-- [ ] Overlay `upper/<container-home>/.hermes/`: identify the actual HOME backing.
+- [ ] `<overlay-root>/upper/<container-home>/.hermes/` (including its `upper/home/`
+  subtree): identify the actual backing, not a stale alternate tree.
 - [ ] Host `<agent-worktree>/.hermes/`: distinguish skills from runtime settings.
 - [ ] Inside Apptainer: verify HOME, HERMES_HOME, cwd and visible config path.
 - [ ] Inside Apptainer: inspect `/home/agent/.hermes/` or the explicit override.
@@ -89,6 +98,8 @@ same credential or observe a pool rotation.
 Hermes recognizes the nearest Git root, including `.git` worktree files.
 Project `.hermes/skills/` and `.agents/skills/` require project trust through
 `skills.trusted_project_dirs`; inspect the installed `agent/skill_utils.py`.
+The installed resolver may use session working directory before terminal/process
+cwd; record the effective workdir rather than guessing from an attached shell.
 Project instruction files such as `.hermes.md`, `HERMES.md`, and `AGENTS.md`
 are handled separately by `agent/prompt_builder.py`.
 
@@ -128,54 +139,20 @@ to scitex-dev and leaf packages; this pass-through neither selects a policy nor
 grants Hermes command consent. Install trusted bindings through the native writer,
 and verify the effective profile after the next generation.
 
-## Restart diagnostics
+## Recovery and adjacent diagnostics
 
-MCP helper imports must not configure another stderr handler: lifecycle records
-use scitex-logging's configured level and format once. The regression lives in
-`tests/scitex_agent_container/_logging/test__streams.py`.
+For credential, subscription, quota or judge failures, follow
+[49_subscription-errors.md](49_subscription-errors.md) and
+[48_model-availability.md](48_model-availability.md). Preserve the standing goal;
+a restart alone does not prove judge recovery. A banner's provider example is
+not necessarily the running route.
 
-The supported-provider secret catalog is optional. Absent default slots and
-intentionally empty full-pool slots are debug details, not evidence that the
-selected agent lacks credentials. Explicitly requested missing names and an
-untrusted pool still warn; required main/judge access is checked by preflight.
-Conflicting literal definitions across files warn by name and source path.
-Unevaluated shell expressions only produce debug evidence: an alias and a
-secret decryption may yield the same value. Never print credential values to
-resolve this distinction. These classifications are covered by the envrc and
-operator-secret regression tests.
-
-## CCT readiness
-
-Main/judge access does not prove Telegram ingress. Inspect the effective CCT
-MCP asset path and external-poller flag; explicit spec entries override shared
-MCP settings. Use qualified published assets: development code may start an
-extra poller despite that flag. CCT owns its MCP and poller behavior.
-
-SAC's `_preflight_cct` rejects dangling links in `CCT_AGENT_STATE_DIR` before
-health or spawn; ordinary missing directories remain valid. Restore the
-configured state target without erasing state. Verify host PID ownership and
-continued liveness. Never signal another namespace's PID from a shared pidfile.
-
-## Judge failures and verification
-
-Read `logs/agent.log` as well as `errors.log`: goal evaluation logs API failures
-at INFO. Correlate the agent session, route, HTTP status, and consecutive failures.
-A DeepSeek example in an error banner may be generic guidance, not the live route.
-
-For named custom providers, compare the durable provider slug and legacy
-`custom:<slug>` pool identities. Check whether auxiliary cache fingerprints and
-recovery select the same populated pool as client construction. Reproduce pool
-rotation in a copied temporary Hermes home before modifying live state.
-
-An OpenCode Go 403 saying an active subscription is required is a credential or
-entitlement rejection, not proof of network unreachability. A cached judge key
-may fail while the main client continues using another key. Do not switch the
-judge model or erase cooldowns to conceal the failure.
-
-After a source fix, validate rotation and error recovery, deploy the tested code
-to the relevant images/profiles, and verify a real judge verdict. A successful
-restart alone is not judge verification. Resume the paused goal through Hermes'
-goal command only after recovery; preserve the existing conversation and goal.
+CCT ingress is a separate rail: inspect effective MCP assets and external-poller
+configuration. `_preflight_cct` refuses dangling CCT state links; restore the
+configured target without deleting state or signaling another namespace's PID.
+For restart-log formatting and optional/missing pool slot classifications, inspect
+`tests/scitex_agent_container/_logging/test__streams.py`, the envrc/operator-secret
+regressions, and [40_troubleshooting.md](40_troubleshooting.md).
 
 ## Keeping this skill current
 

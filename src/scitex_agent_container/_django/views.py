@@ -547,10 +547,10 @@ def lifecycle_action(request: HttpRequest, name: str):
 def message_action(request: HttpRequest, name: str):
     """Send a message/steer or a UI-control key to an agent's own bridge.
 
-    Delegates to the agent's published ``turn_url`` — the SAME endpoint the
-    fleet's A2A send uses. The GUI never constructs a host/port, never touches
-    tmux, and holds no queue: a delivery is either reported delivered or
-    reported failed.
+    Messages delegate to the authenticated listener's canonical prompt proxy,
+    which owns local/cross-host routing to the agent's turn bridge. Control
+    keys retain their existing bridge path. The GUI never touches tmux and
+    holds no message queue; acceptance is pending completion, never delivery.
 
     Authorization is identical to :func:`lifecycle_action`: the caller must see
     the agent AND be allowed to control it. A refusal is audited.
@@ -604,6 +604,33 @@ def message_action(request: HttpRequest, name: str):
     if row is None:
         return HttpResponseForbidden("This agent is not within your scope.")
     cross_host = row.get("scope") == "cross-host"
+    if cross_host:
+        # Operator 2026-11-01: cross-host messaging is not supported in
+        # this console — use scitex-cards to reach the agent. Refuse
+        # loudly (409) rather than offering a path that cannot complete;
+        # lifecycle control below is unaffected (separate allowlist).
+        refusal = (
+            f"Cross-host messaging isn't supported here — reach {name} "
+            "through scitex-cards."
+        )
+        record_audit(
+            {
+                "event": "message_cross_host_refused",
+                "identity": identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        if wants_json:
+            return JsonResponse({"ok": False, "error": refusal}, status=409)
+        query = urlencode(
+            {
+                "operation": "message",
+                "state": "refused",
+                "message": refusal,
+            }
+        )
+        return HttpResponseRedirect(f"{base}/{name}/?{query}")
     if not can_control(identity, cross_host=cross_host, request=request, agent=name):
         record_audit(
             {
@@ -619,7 +646,7 @@ def message_action(request: HttpRequest, name: str):
     if control_key.strip():
         result = send_control_key(turn_url, key=control_key.strip(), dispatch_id=dispatch_id)
     else:
-        result = send_message(turn_url, text=message, dispatch_id=dispatch_id)
+        result = send_message(turn_url, text=message, dispatch_id=dispatch_id, fleet=fleet, agent_name=name)
 
     record_audit(
         {
@@ -645,10 +672,11 @@ def message_action(request: HttpRequest, name: str):
     if wants_json:
         return JsonResponse(
             {
-                "ok": result.state in ("delivered", "replay"),
+                "ok": result.state in ("accepted", "delivered", "replay"),
                 "state": result.state,
                 "message": result.message[:240],
                 "dispatch_id": result.dispatch_id,
+                **({"exchange_id": result.exchange_id} if result.exchange_id else {}),
             }
         )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")

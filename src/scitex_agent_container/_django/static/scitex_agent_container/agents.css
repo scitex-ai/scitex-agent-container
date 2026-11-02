@@ -32,6 +32,23 @@
      overlays content, so reserving clearance here only leaves dead space. */
   margin: 0;
   padding: 0;
+
+}
+
+.agents-app[data-page="fleet"] {
+  /* Operator 2026-11-01: viewport-fitted app column. The pane row used to
+     size itself with a magic 100vh-180px number calibrated per deployment;
+     mounted chrome (hub header + app header + pagehead + filterbar) varies
+     by host and mode, so the panes overshot the fold and the bottom-anchored
+     DM composer rendered truncated. Instead the app fills its shell pane
+     (height 100% of the SDK workspace cap) and the 3-col row takes the
+     leftover via flex — no magic numbers. max-height 100dvh is the backstop
+     for ancestors without a definite height. */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100dvh;
+  min-height: 0;
 }
 
 /* Screen-reader-only label for the (deliberately headerless) action column. */
@@ -168,7 +185,6 @@
 .session-note { margin: 8px 0 0; }
 
 @media (max-width: 768px) {
-  .agents-app { padding: 14px 12px var(--site-dock-scroll-clearance, 132px); }
   .agents-summary { width: 100%; flex-wrap: wrap; gap: 8px; }
   .sum-card { flex: 1 1 40%; min-width: 120px; }
   .agents-scope-note { gap: 6px 10px; }
@@ -341,7 +357,10 @@
    buttons + stat sum-cards) share ONE height with equal top/bottom margins
    so the row reads as a single band. The leftmost child adds no extra left
    margin — the pagehead gap already owns the gutters. */
-.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 6px; }
+/* Operator 2026-10-31: the band gets top + bottom margins (air above the
+   buttons, air below the stats), and the stats group stands apart from the
+   buttons via a wider column gap while staying left-aligned. */
+.agents-pagehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 24px; margin: 12px 0 10px; flex-shrink: 0; }
 .agents-pagehead > :first-child { margin-left: 0; }
 .agents-pagehead .agents-actions, .agents-pagehead .agents-summary { margin-top: 0; margin-bottom: 0; }
 .agents-pagehead .btn, .agents-pagehead .sum-card { min-height: 30px; box-sizing: border-box; display: inline-flex; align-items: center; margin-top: 0; margin-bottom: 0; }
@@ -365,11 +384,8 @@
 .fleet-row-menu button:hover { background: color-mix(in srgb, var(--agents-text) 10%, transparent); }
 /* Buzz filter above the fleet table: substring match across name +
    row facts (operator 2026-10-23). */
-.agents-filterbar { margin: 0 0 8px; }
-.agents-filterbox { display: flex; align-items: center; gap: 8px; width: min(560px, 100%); box-sizing: border-box; font: inherit; font-size: 15px; padding: 4px 4px 4px 14px; border-radius: 2px; background: var(--agents-bg, transparent); color: var(--agents-text); border: 1px solid var(--agents-border); }
-.agents-filterbox:focus-within { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
-.agents-filterbox input[type="search"] { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: inherit; padding: 6px 0; outline: none; }
-.agents-filter-hint { flex-shrink: 0; }
+.agents-filterbar { margin: 0 0 8px; flex-shrink: 0; }
+.agents-filterbar { width: min(560px, 100%); }
 tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-title { font-size: 17px; font-weight: 650; margin: 0; }
 .agents-pagehead .agents-summary { gap: 8px; }
@@ -398,7 +414,8 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 /* Operator 2026-10-26: breathing room around the composer. The pane
    content now reliably pads 12-14px; add separation above the input so
    the thread never butts into it. */
-.chat-composer { display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; margin-top: auto; padding-top: 10px; }
+.chat-composer { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; flex-shrink: 0; margin-top: auto; padding-top: 10px; }
+.chat-composer [data-composer-error] { flex: 0 0 100%; grid-column: 1 / -1; margin: 0; max-width: 100%; }
 .chat-composer textarea { flex: 1; min-height: 64px; }
 /* Operator 2026-10-26: Send is the primary action — the shared brand CTA
    token (navy on light, gold on dark), matching cards DM exactly:
@@ -408,25 +425,14 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
    Left roster is narrow: agent name + state LED only. Equal-height panes
    come from the SDK grid default (stretch); do NOT set align-items here —
    start collapsed the panes to content height (operator 2026-10-23). */
-.agents-3col { align-items: stretch; }
-/* Operator 2026-10-23: one shared row height for all three panes — tops
-   AND bottoms align. Each pane scrolls internally instead of driving
-   the row taller (detail cards) or capping short (chat max-height).
-   Operator 2026-10-26: row ends above the floating dock so the
-   bottom-anchored DM composer is clickable at rest, not just on
-   focus-avoid. No in-pane reserve (that was the 62px dead band).
-   Operator 2026-10-24: 370px over-cleared on desktop — screenshot shows a
-   ~240px dead band below the panes with only a ~40px floating pill dock.
-   Operator 2026-10-22: the 280px reserve still overshot (element report:
-   chat pane 587px tall at 209px top on a viewport with ~240px dead space).
-   180px keeps the pane bottoms just above the floating dock while the
-   300px floor guards short viewports. No in-pane dock reserve anywhere. */
-.agents-3col > section[data-stx-pane] { min-height: 0; height: calc(100vh - 180px); min-height: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: hidden; }
+.agents-3col { align-items: stretch; flex: 1 1 auto; min-height: 0; margin-bottom: var(--site-dock-scroll-clearance, 12px); }
+/* Panes share the remaining shell height and scroll internally. The host's
+   dock-clearance token reserves the actual overlay size; no fixed vh offset
+   or minimum pane height may push the composer below the fold. SDK phone
+   tabs, rather than a leaf display override, own active-pane visibility. */
+.agents-3col > section[data-stx-pane] { min-height: 0; height: 100%; max-height: 100%; overflow: hidden; }
+.agents-3col:not(.stx-panes--single) > section[data-stx-pane] { display: flex; flex-direction: column; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
-/* Operator 2026-10-24: NO in-pane dock reserve — the 132px clearance left a
-   dead band at the bottom of every pane (element report: 62px computed on
-   agents-chat-pane). The dock floats and overlays content; pane bottoms end
-   above it by construction of the shared row height. */
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
 .agents-roster tbody td { padding: 7px 8px; }

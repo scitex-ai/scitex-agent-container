@@ -1,8 +1,8 @@
 """Tests for the ``a2a_proxy`` runner — forward-only A2A bridge.
 
-Uses Starlette's TestClient against ``build_app`` with an in-process
-upstream stub mounted on httpx's ASGITransport. No live network; no
-``respx`` dependency.
+Uses Starlette's TestClient for adapters and real loopback HTTP servers for
+lifecycle checks. Native CLI shutdown runs in a ready, isolated subprocess;
+the pytest worker never receives its shutdown signal.
 """
 
 from __future__ import annotations
@@ -18,6 +18,9 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from scitex_agent_container._runners.a2a_proxy import build_app, splice_card
+from tests.scitex_agent_container._runners._a2a_proxy_main_fixture import (
+    main_short_run as main_short_run,
+)
 from tests.scitex_agent_container._helpers.loopback_server import (
     serve_in_thread,
     wait_until_serving,
@@ -1256,51 +1259,10 @@ def test_run_final_heartbeat_state_is_stopping(
 
 # ---------------------------------------------------------------------------
 # main() — CLI entry; drives a real (short-lived) run() against the
-# real local upstream, terminated by a self-issued SIGTERM from a
-# background thread once we know the runner is up.
+# real local upstream, terminated only after its HTTP health route is ready.
+# The signal belongs to a child process, never the pytest/xdist worker.
 # ---------------------------------------------------------------------------
 
-
-@pytest.fixture
-def main_short_run(tmp_path: Any, real_upstream_server: Any) -> dict[str, Any]:
-    # Arrange
-    import os
-    import signal
-    import threading
-    import time
-
-    from scitex_agent_container._runners.a2a_proxy import main as _main
-
-    base, _recorder = real_upstream_server
-    state_root = tmp_path / "rt"
-    target_pid = os.getpid()
-
-    def _shoot() -> None:
-        # Give run() time to install the signal handler, then SIGTERM.
-        time.sleep(0.3)
-        os.kill(target_pid, signal.SIGTERM)
-
-    killer = threading.Thread(target=_shoot, daemon=True)
-    killer.start()
-
-    # Act
-    rc = _main(
-        [
-            "--name",
-            "px-main",
-            "--upstream",
-            base,
-            "--redact",
-            "a, ,b",
-            "--state-root",
-            str(state_root),
-            "--tick-seconds",
-            "0.05",
-        ]
-    )
-    killer.join(timeout=2.0)
-    # Assert (deferred)
-    return {"rc": rc, "state_dir": state_root / "px-main"}
 
 
 def test_main_returns_zero_on_clean_shutdown(

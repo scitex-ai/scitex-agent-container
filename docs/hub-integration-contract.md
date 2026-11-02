@@ -18,7 +18,7 @@ adds a sibling, not a new mechanism.
 | Manifest (Hub app registry) | `scitex_agent_container/_django/manifest.json` |
 | Manifest slug / label | `agent-container` / `SciTeX Agent Container` |
 | Frontend type | `server-rendered` |
-| Deps (Hub must have installed) | `django`, `scitex-app>=0.11.0`, `scitex-ui>=0.13.0` |
+| Deps (Hub must have installed) | `django`, matching `scitex-sdk[gui]` source/release (shared header, filter, static tags) |
 
 ## 2. Mount it under `/apps/agent-container/`
 
@@ -36,32 +36,19 @@ Add the app to `INSTALLED_APPS`. That is the entire Hub-side change. The app's
 templates and static resolve relative to the **request path**, so it renders
 correctly under `/apps/agent-container/` with no further wiring.
 
-## 3. The no-duplicate-header rule
+## 3. One host shell, one SDK app header
 
-`scitex_app._standalone.run_standalone` (the standalone server) configures
-Django and renders the full `scitex_ui/standalone_shell.html`. **When mounted
-in the Hub, do NOT extend the standalone shell.** The Hub's `global_base`
-already renders the shell (header, nav, launcher, theme boot). Extending the
-standalone shell inside it would double the header and introduce a project
-switcher the Hub does not want.
+All leaf pages extend `scitex_sdk/app/app_shell.html` and fill
+`scitex_app_content`. A mounted host shadows that adapter through its template
+DIRS to render its own workspace shell. Standalone uses the SDK adapter.
+Do not copy the content into a second shell or maintain a separate header.
 
-Instead, the mounted views render their **content partial** into the Hub's
-block. The package ships the content as the `app_content` block of its two
-templates; to embed cleanly the Hub renders the *content only*:
-
-```python
-# Hub-side: reuse the package views, render into global_base's content block
-from scitex_agent_container._django import views as agents_views
-
-# map /apps/agent-container/ -> agents_views.index, /apps/agent-container/<name>/ -> detail, etc.
-```
-
-The templates call `shell_context()` + `mount_context(request, view_path=...)`
-in the view, which is the scitex-ui contract for a **mounted** (not standalone)
-app: `mount_context` emits the `_mount_marker.html` partial that tells
-client-side code the app is mounted at `/apps/agent-container/`, so `mountPrefix()`
-resolves instead of assuming root. That is what keeps the app from re-
-rendering a header.
+`views._shell_context()` uses `scitex_sdk.ui.branding.shell_context` and
+`scitex_sdk.ui.mount.mount_context`. The header label/version and host-provided
+scope capabilities are data; the SDK owns typography and project picker chrome.
+SAC supports identity scope and shows unsupported project choices disabled.
+Leaf static URLs use `scitex_static.app_static` so preview changes invalidate
+cached CSS/JavaScript even when package metadata has not changed.
 
 ## 4. What the Hub must supply (config, not code)
 
@@ -80,12 +67,12 @@ The app reads its data + authorization entirely from the environment of the
 **Identity resolution order:** a Django-authenticated `request.user.username`
 always wins. The app is therefore Hub-auth-aware: an ordinary Hub user sees
 only their own node's agents; a Hub superuser/operator in the cross-host list
-sees the fleet, audited. No app-local login, no added project switcher.
+sees the fleet, audited. No app-local login; the SDK selector reflects the host capability policy.
 
 ## 5. Acceptance (what "integrated" means)
 
 - `GET /apps/agent-container/` renders the fleet **inside the Hub's `global_base`** —
-  one header, no second header, no project switcher.
+  one workspace shell and one SDK app header with capability-aware selection.
 - `GET /apps/agent-container/api/fleet` returns the scoped JSON projection.
 - `GET /apps/agent-container/<name>/` renders the detail card; lifecycle controls show
   only for an authorized identity and delegate to the listener.
@@ -95,7 +82,7 @@ sees the fleet, audited. No app-local login, no added project switcher.
   listener has no authoritative runtime signal; the app does not infer current
   activity from log text.
 - Cross-host rows are hidden from a non-cross-host identity and flagged for one.
-- Static (`/static/scitex_agent_container/agents.css`) and the scitex-ui shell
+- Static (`/static/scitex_agent_container/agents.css`) and the scitex-sdk shell
   assets resolve (no 404s) — the Hub's staticfiles gather must include the
   app's `static/` dir (it does, since the app is in `INSTALLED_APPS`).
 
@@ -107,3 +94,28 @@ sees the fleet, audited. No app-local login, no added project switcher.
   lifecycle actions) — a JSONL the operator can inspect.
 - Lifecycle verbs are delegated to the authenticated listener, so the Hub adds
   no second control path and no second token.
+
+## 7. Chat and filter behavior
+
+Dashboard message forms request JSON from their own authorized Django endpoint.
+The endpoint uses the authenticated listener's `POST /agents/<name>/send`
+transport, which can reach a host-loopback bridge from a containerized dashboard.
+An accepted exchange receipt means pending completion, not proof of completion.
+An uncertain dispatch remains visible and is not retried automatically. Dispatch
+IDs are correlation; the in-process guard is not durable cross-worker deduplication.
+
+Both the chat and injected Details composers stay on the dashboard. Shift+Enter
+inserts a newline. Real browser regressions use disposable intercepted transports:
+
+```bash
+python -m pytest tests/integration/test_gui_composer_browser.py -m integration
+```
+
+This optional test requires Playwright and Chromium. `SCITEX_TEST_CHROMIUM` can
+point to an existing executable. It sends no messages to running agents.
+
+The filter is an empty `data-stx-filter-field` SDK mount; the leaf owns only matching
+and its outer layout width. The SDK supplies the leading icon, keyword
+placeholder, and focus-aware Ctrl+K/Esc badge. The pane row fills remaining
+workspace height with bottom breathing room. SDK phone tabs control which pane
+is displayed; leaf CSS must not force hidden panes visible.
