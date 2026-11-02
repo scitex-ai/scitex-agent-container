@@ -26,6 +26,8 @@ versioning follows [SemVer](https://semver.org/).
   instead of dialing host-loopback bridges from the web container. Report
   canonical acceptance as pending completion. Retain the explicit HTTP 409
   refusal and Cards guidance for unsupported cross-host dashboard messages.
+- Keep fleet tables, notices, Details panels and message content square,
+  matching the shared content style.
 - Fit fleet panes and composers to the shared workspace viewport, preserve SDK
   phone pane visibility, and honor host dock clearance. Keep injected Details
   fragments at their natural height rather than applying full-page sizing.
