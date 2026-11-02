@@ -1,18 +1,18 @@
 ---
 description: |
   [TOPIC] scitex-agent-container — CLI startup-time budget
-  [DETAILS] Why ``sac --help`` and tab-completion stay under 500 ms: the LazyGroup pattern in cli_pkg/_main.py, the LAZY_SHORT_HELPS cache, deferred shell-completion attach, and the pytest gate that prevents regressions.
+  [DETAILS] How ``sac --help`` and tab-completion keep a small import graph: the LazyGroup pattern in cli_pkg/_main.py, the LAZY_SHORT_HELPS cache, deferred shell-completion attach, and the pytest gate that prevents regressions.
 tags: [scitex-agent-container-cli-startup-budget]
 ---
 
-# CLI startup budget — 500 ms ceiling
+# CLI startup budget and command discovery
 
 `sac` is a daily-driver command. Every Tab press in a user shell
 re-runs the entry point, so a 2 s import graph is felt as visible
-lag. We hold a 500 ms ceiling on `sac --help` cold-start (Python
-boot + click + entry-point group + `--help` rendering, no
-subcommand work). A pytest test enforces it; this doc explains the
-mechanism so the rule is grokkable, not just a magic number.
+lag. The UX target is 500 ms for `sac --help` cold-start (Python boot,
+Click, entry-point group and help rendering). Tests enforce a stable
+import closure plus a coarse timing backstop; the exact checks below
+come from the current test source.
 
 ## Why this matters
 
@@ -80,20 +80,28 @@ re-run the snippet at the top of `cli_pkg/_main.py` (or just inspect
 * **Top-level `from .x import y` with `lazy_loader`.** Adds a
   dependency for a single-file refactor.
 
+## Public command discovery
+
+The console bootstrap delegates execution to the real CLI wrapper so its
+source-authority checks and remote dispatch remain intact. Its Click facade
+also delegates `list_commands` and `get_command` to the real lazy group.
+Enumerating only the lazy mapping's currently cached keys hides commands
+from public-protocol consumers such as Dev's command snapshot. Discovery
+must return the same real command objects and callbacks, and listing names
+must not import their implementations eagerly.
+
 ## Test enforcement
 
-`tests/integration/test_cli_startup_budget.py` measures cold-start
-time of `scitex-agent-container --help` and asserts it's below
-**500 ms** — a flat ceiling, same on a dev box and on CI.
+`tests/integration/test_cli_bootstrap_discovery.py` checks cold public
+name enumeration, nested introspection commands and unknown-command refusal
+in real children with network connections denied. The existing
+`tests/integration/test_cli_startup_budget.py` checks that help imports no
+new SAC modules and measures help in a lean child. Coverage instrumentation
+is removed from timing children so it does not distort the import cost.
 
-The timing loop runs in a *lean* Python child, not in the pytest
-process: it spawns `sac --help`, times it with `perf_counter`, and
-reports the floor of several runs. Measuring from the bloated pytest
-interpreter (typeguard + hypothesis + playwright + coverage tracing,
-all resident) inflated the wall clock by ~0.3 s — fork/scheduler tax
-of a large parent address space, not a CLI regression. That artifact
-was the historical CI flake. The child env is also scrubbed of
-`COVERAGE_PROCESS_START` / `COVERAGE_FILE` so the coverage `.pth`
-shim doesn't eagerly import `coverage` in the grandchild (it only
-imports inside that guard now). Set `SAC_STARTUP_BUDGET_S` to
-override the threshold (default: 0.5).
+The UX budget resolves to 0.5 seconds on a bare host or that value times
+the existing container multiplier. Without an explicit override, the
+coarse timing ceiling is the maximum of that budget, four times the measured
+Python boot floor and the existing 2-second backstop. An explicit
+`SAC_STARTUP_BUDGET_S` is honored directly. These are measured backstops;
+the deterministic import-closure check catches eager-import regressions.

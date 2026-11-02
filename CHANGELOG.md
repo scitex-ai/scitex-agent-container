@@ -9,6 +9,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Expose the real lazy command tree through the console bootstrap's public
+  Click discovery methods, preserving command ownership and cold help imports.
 - Read status session identity through the selected runtime's ownership proof,
   including Hermes container/host aliases. Keep status and activity available
   with explicit unknown session evidence when proof fails. Passive status reads
