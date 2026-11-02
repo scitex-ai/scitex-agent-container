@@ -226,6 +226,7 @@ The shared SDK filter shows its icon first, `Filter agents with keywords`, and
 `Ctrl+K` while idle or `Esc` while focused. Escape clears and leaves the filter.
 The pane row uses the remaining shell height with a bottom margin; messages and
 details scroll inside it, including the SDK's phone tab layout.
+GUI and development installs share the exact [SDK 0.3.18 cohort](docs/sdk-cohort.md).
 
 **[Container Isolation →](docs/isolation.md)** — 10 Apptainer-default leak paths + sac's hardened-by-default countermeasures (`--containall` auto-prepended, opt-out via `spec.apptainer.relaxed: true`). The reference for reproducibility claims.
 
