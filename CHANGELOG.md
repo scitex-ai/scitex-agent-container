@@ -9,6 +9,9 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Fence release-time provider/plugin imports from inherited store and libpq
+  configuration before the first Python process; retain the explicit owned
+  PostgreSQL fixture and unavailable whole-suite default.
 - Verify the qualified release image/runtime bytes before execution and require
   the tag to match current protected main while retaining accepted-develop
   ancestry. Bind the release-only PostgreSQL image to the qualified PG18.6

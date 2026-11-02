@@ -9,6 +9,24 @@ explicit release-only PG image override; its registered whole-source hash
 therefore changes and requires normal review. Ordinary discovery behavior is
 retained when the override is absent.
 
+Before any image Python or installer, the checked entry point sources
+`release-store-environment.sh`. It removes inherited libpq (`PG*`), canonical
+store and test DSNs, including Apptainer/Singularity aliases, then supplies an
+explicit unavailable store/libpq floor. Its empty 0600 password file belongs
+to a unique directory beneath the existing CI PostgreSQL scratch root; the
+existing PostgreSQL age reaper owns that directory's cleanup. Scratch aliases
+or a root owned by another UID are refused. Service selectors are removed,
+rather than exported blank: libpq treats an empty service name as a lookup.
+The qualified image has no service selector defaults.
+
+The early external-directory pytest plugin preflight does not load this
+repository's pytest configuration or conftest, so their later isolation alone
+cannot protect that import window. The release floor remains unavailable;
+this does **not** claim whole-suite default persistence coverage. Tests that
+need SQL still explicitly acquire the proven owned PostgreSQL endpoint through
+`pg_schema`, retaining the fleet-system-identifier refusal and per-test schema
+lifecycle. Ordinary PR executors and inner drivers are unchanged by this floor.
+
 The checked entry point verifies the whole qualified AA583 Python image,
 PG18.6 server image and Apptainer bytes through `verify-release-runtime.sh`.
 The fixed Python image digest is

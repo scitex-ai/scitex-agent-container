@@ -7,6 +7,11 @@ case "$INNER" in run-in-sif.sh|build-in-sif.sh|publish-in-sif.sh) ;; *) exit 1 ;
 case "$V" in 3.11|3.12|3.13) ;; *) exit 1 ;; esac
 : "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}"
 CI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$CI_DIR/tmpdir-lib.sh"
+SAC_CI_TMPDIR_ROOT="$(_ci_tmpdir_root)"
+export SAC_CI_TMPDIR_ROOT
+. "$CI_DIR/release-store-environment.sh"
+sac_release_store_floor "$SAC_CI_TMPDIR_ROOT"
 . "$CI_DIR/verify-release-runtime.sh"
 sac_release_runtime
 # Read-only source preflight runs before the old wrapper's PG/reap side effects.
