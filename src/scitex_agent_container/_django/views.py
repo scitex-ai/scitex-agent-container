@@ -604,6 +604,33 @@ def message_action(request: HttpRequest, name: str):
     if row is None:
         return HttpResponseForbidden("This agent is not within your scope.")
     cross_host = row.get("scope") == "cross-host"
+    if cross_host:
+        # Operator 2026-11-01: cross-host messaging is not supported in
+        # this console — use scitex-cards to reach the agent. Refuse
+        # loudly (409) rather than offering a path that cannot complete;
+        # lifecycle control below is unaffected (separate allowlist).
+        refusal = (
+            f"Cross-host messaging isn't supported here — reach {name} "
+            "through scitex-cards."
+        )
+        record_audit(
+            {
+                "event": "message_cross_host_refused",
+                "identity": identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        if wants_json:
+            return JsonResponse({"ok": False, "error": refusal}, status=409)
+        query = urlencode(
+            {
+                "operation": "message",
+                "state": "refused",
+                "message": refusal,
+            }
+        )
+        return HttpResponseRedirect(f"{base}/{name}/?{query}")
     if not can_control(identity, cross_host=cross_host, request=request, agent=name):
         record_audit(
             {

@@ -129,6 +129,15 @@ mounted) so the per-row links are correct at any mount.
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
               <button type="submit" class="btn qa bad" title="Delete {{ a.name }}: stop + deregister + remove dirs">Delete</button>
             </form>
+            {% comment %}
+            Operator 2026-11-01: the quick message form is own-scope
+            only — cross-host messaging is not supported in this console
+            (use scitex-cards). The server refuses cross-host message
+            POSTs loudly; the form is not rendered so the row menu never
+            offers a path that cannot complete. Lifecycle verbs above
+            keep their cross-host gate (separate allowlist).
+            {% endcomment %}
+            {% if not a.cross_host %}
             <form method="post" action="{{ url_base }}/{{ a.name }}/message" class="qa-form qa-msg">
               {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
               <label class="visually-hidden" for="qa-msg-{{ a.name }}">Message {{ a.name }}</label>
@@ -136,6 +145,7 @@ mounted) so the per-row links are correct at any mount.
                      placeholder="Message…" autocomplete="off">
               <button type="submit" class="btn qa" title="Send a message to {{ a.name }}">Send</button>
             </form>
+            {% endif %}
           </span>
           {% endif %}
         </td>
