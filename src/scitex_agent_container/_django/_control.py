@@ -194,7 +194,7 @@ def _send_via_listener(
         return DeliveryResult(False, "unknown", "Message outcome is unknown. Check the agent before starting a new draft; do not retry this dispatch.", dispatch)
     _Replay.remember(key)
     return DeliveryResult(
-        False, "accepted", "Message accepted by the agent; completion is pending.", dispatch, exchange_id=exchange,
+        False, "accepted", "Message accepted for agent admission; confirmation is pending.", dispatch, exchange_id=exchange,
     )
 
 

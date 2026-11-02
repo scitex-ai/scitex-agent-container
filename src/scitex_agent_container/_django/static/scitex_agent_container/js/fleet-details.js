@@ -8,6 +8,95 @@
  * failure leaves the placeholder — every row keeps its inspect link, so
  * the detail page stays reachable with no JS at all. Vanilla, no bundler.
  */
+const admissionReceipts = new Map();
+let selectedMessageAction = "";
+let messageSelectionGeneration = 0;
+let detailLoadGeneration = 0;
+
+function selectMessageAction(action) {
+  if (action === selectedMessageAction) return;
+  selectedMessageAction = action;
+  messageSelectionGeneration += 1;
+  for (const receipt of admissionReceipts.values()) {
+    if (receipt.abort) receipt.abort.abort();
+    if (receipt.state === "pending") receipt.message = "Admission was pending; tracking stopped after agent selection changed. Receipt kept; check the agent before resending.";
+  }
+  paintAdmissionReceipt();
+}
+
+function paintAdmissionReceipt() {
+  for (const form of document.querySelectorAll("form[data-composer]")) {
+    const action = form.getAttribute("action") || "";
+    const receipt = admissionReceipts.get(action);
+    let node = form.querySelector("[data-admission-receipt]");
+    if (!receipt || action !== selectedMessageAction) {
+      if (node) node.remove();
+      continue;
+    }
+    if (!node) {
+      node = document.createElement("div");
+      node.setAttribute("data-admission-receipt", "");
+      node.setAttribute("role", "status");
+      form.appendChild(node);
+    }
+    node.dataset.exchangeId = receipt.exchangeId;
+    node.dataset.admissionState = receipt.state;
+    node.textContent = receipt.exchangeId + " — " + receipt.message +
+      (receipt.nativeMessage ? " " + receipt.nativeMessage : "");
+  }
+}
+
+async function trackAdmission(action, result) {
+  const receipt = { exchangeId: result.exchange_id, token: result.exchange_receipt,
+    state: "pending", message: "Agent admission is pending. Model task completion is separate.", nativeMessage: "" };
+  admissionReceipts.set(action, receipt);
+  paintAdmissionReceipt();
+  if (selectedMessageAction !== action) return;
+  const generation = messageSelectionGeneration;
+  const deadline = Date.now() + 60000;
+  for (let attempt = 0; attempt < 30 && Date.now() < deadline; attempt += 1) {
+    if (generation !== messageSelectionGeneration || admissionReceipts.get(action) !== receipt) return;
+    const abort = new AbortController();
+    receipt.abort = abort;
+    const timer = setTimeout(() => abort.abort(), 5000);
+    try {
+      const url = action.replace(/\/message\/?$/, "/exchanges/") + encodeURIComponent(receipt.exchangeId);
+      const response = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: abort.signal,
+        headers: { Accept: "application/json", "X-SAC-Exchange-Receipt": receipt.token } });
+      const status = await response.json();
+      if (generation !== messageSelectionGeneration || admissionReceipts.get(action) !== receipt) return;
+      if (!response.ok && status.state === "refused") {
+        receipt.state = "lookup_refused";
+        receipt.message = String(status.message || "Receipt lookup was refused. Do not resend.").slice(0, 240);
+        receipt.nativeMessage = "";
+        paintAdmissionReceipt();
+        return;
+      }
+      if (!response.ok || status.exchange_id !== receipt.exchangeId || !["pending", "received", "failed", "unknown"].includes(status.state)) throw new Error("unconfirmed receipt");
+      receipt.state = status.state;
+      receipt.message = String(status.message || "Native admission is unconfirmed; do not resend.");
+      receipt.nativeMessage = String(status.native_message || "").slice(0, 240);
+      paintAdmissionReceipt();
+      if (status.final === true || status.state === "unknown") return;
+    } catch {
+      if (generation !== messageSelectionGeneration) return;
+      receipt.state = "unknown";
+      receipt.message = "Admission status is unavailable. Receipt kept; check the agent before resending.";
+      receipt.nativeMessage = "";
+      paintAdmissionReceipt();
+      return;
+    } finally {
+      clearTimeout(timer);
+      if (receipt.abort === abort) receipt.abort = null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  if (generation === messageSelectionGeneration) {
+    receipt.message = "Admission is still unconfirmed. Receipt kept; no message was resent.";
+    paintAdmissionReceipt();
+  }
+}
+
 function panel() {
   return document.querySelector("[data-role='fleet-detail-body']") || document.querySelector("[data-role='fleet-detail']");
 }
@@ -26,6 +115,10 @@ function chatHost() {
 }
 
 async function loadIntoPanels(url) {
+  const action = String(url).split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "") + "/message";
+  selectMessageAction(action);
+  const selection = messageSelectionGeneration;
+  const load = ++detailLoadGeneration;
   const detailHost = panel();
   const chatHostEl = chatHost();
   if (chatHostEl) chatHostEl.setAttribute("aria-busy", "true");
@@ -34,6 +127,7 @@ async function loadIntoPanels(url) {
     const response = await fetch(url, { headers: { Accept: "text/html" } });
     if (!response.ok) return;
     const html = await response.text();
+    if (selection !== messageSelectionGeneration || load !== detailLoadGeneration) return;
     const doc = new DOMParser().parseFromString(html, "text/html");
     /* Chat thread -> center DM pane (operator 2026-10-23 three-column). */
     const thread = doc.querySelector("[data-role='chat-thread']");
@@ -85,6 +179,7 @@ async function loadIntoPanels(url) {
         initDetailTabs(detailHost);
       }
     }
+    paintAdmissionReceipt();
     showDetails();
   } catch {
     /* fail-soft: keep placeholders; the detail page stays reachable */
@@ -145,11 +240,17 @@ function rowIsCrossHost(name) {
 }
 
 function retargetFleetComposer(name, href) {
+  const targetPath = String(href || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
+  selectMessageAction(targetPath ? targetPath + "/message" : "");
   const host = chatHost();
   if (!host || !name) return;
   const form = host.querySelector('form[data-composer="fleet-dm"]');
   if (!form) return;
   if (rowIsCrossHost(name)) {
+    form.removeAttribute("action");
+    form.dataset.composerBlocked = "true";
+    for (const control of form.querySelectorAll("textarea, button[type='submit']")) control.disabled = true;
+    paintAdmissionReceipt();
     /* Operator 2026-11-01: cross-host messaging is not supported in this
        console — leave the composer parked (disabled) and point at
        scitex-cards instead of enabling a send that cannot complete. */
@@ -164,6 +265,8 @@ function retargetFleetComposer(name, href) {
   }
   const path = String(href || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
   if (path) form.setAttribute("action", path + "/message");
+  form.dataset.composerBlocked = "false";
+  paintAdmissionReceipt();
   const area = form.querySelector("textarea[name='message']");
   const label = form.querySelector("label[for]");
   if (area) {
@@ -653,8 +756,9 @@ document.addEventListener("submit", (e) => {
     composerError(form, "Select an agent before sending a message.");
     return;
   }
-  if (form.dataset.sending === "true") return;
+  if (form.dataset.sending === "true" || form.dataset.composerBlocked === "true") return;
   const area = form.querySelector("textarea[name='message']");
+  if (!selectedMessageAction) selectMessageAction(action);
   const sentText = area ? area.value : "";
   const payload = JSON.stringify([action, sentText]);
   if (form.dataset.uncertainPayload === payload) {
@@ -682,10 +786,13 @@ document.addEventListener("submit", (e) => {
       if (result && result.ok === true) {
         renewComposerDispatch(form);
         form.dataset.dispatchPayload = "";
-        if (form.getAttribute("action") === action) {
+        if (form.getAttribute("action") === action && selectedMessageAction === action) {
           if (area) { if (area.value === sentText) area.value = ""; area.focus(); }
           loadIntoPanel(action.replace(/\/message\/?$/, "") + "?partial=1");
-          if (result.state === "accepted") composerError(form, result.message, true);
+          if (result.state === "accepted" && !result.exchange_id) composerError(form, "Accepted; no admission receipt was returned. Check the agent before resending.", true);
+        }
+        if (result.state === "accepted" && typeof result.exchange_id === "string" && typeof result.exchange_receipt === "string") {
+          trackAdmission(action, result);
         }
         return;
       }
@@ -698,7 +805,7 @@ document.addEventListener("submit", (e) => {
     })
     .finally(() => {
       form.dataset.sending = "false";
-      if (button) button.disabled = false;
+      if (button) button.disabled = form.dataset.composerBlocked === "true";
     });
 });
 

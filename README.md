@@ -217,7 +217,12 @@ not copy policy rules into hooks, skills, prompts, or docs. See
 In the fleet dashboard, Enter or Ctrl/Command+Enter sends in place from either
 composer; Shift+Enter inserts a newline. Messages travel through the authenticated
 host listener, so a Docker dashboard can reach host-loopback bridges. An accepted
-receipt means completion is pending. Refusals retain the draft; an uncertain
+receipt means native admission is pending, not that the model finished. The dashboard
+keeps the exchange receipt and polls its authenticated GET for up to 60 seconds;
+`Received by agent` confirms turn admission and transcript visibility only.
+Changing agents stops polling; inspect the agent manually if status remains
+unconfirmed. Cross-host rows use Cards rather than this same-host composer.
+Refusals retain the draft; an uncertain
 outcome blocks another submission of that same draft until the operator checks
 the agent. Dispatch IDs correlate requests; they are not durable cross-worker
 delivery deduplication.
@@ -226,6 +231,7 @@ The shared SDK filter shows its icon first, `Filter agents with keywords`, and
 `Ctrl+K` while idle or `Esc` while focused. Escape clears and leaves the filter.
 The pane row uses the remaining shell height with a bottom margin; messages and
 details scroll inside it, including the SDK's phone tab layout.
+GUI and development installs share the exact [SDK 0.3.18 cohort](docs/sdk-cohort.md).
 
 **[Container Isolation →](docs/isolation.md)** — 10 Apptainer-default leak paths + sac's hardened-by-default countermeasures (`--containall` auto-prepended, opt-out via `spec.apptainer.relaxed: true`). The reference for reproducibility claims.
 
