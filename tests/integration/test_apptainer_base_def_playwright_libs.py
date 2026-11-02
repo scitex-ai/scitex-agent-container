@@ -46,6 +46,9 @@ _BASE_DEF = (
 # must carry the suffix. These are exactly the names Playwright's own
 # `install-deps` uses on noble; the remaining libs kept their pre-t64 names.
 _REQUIRED_LIBS = (
+    # Puppeteer 25 uses the system ZIP extractor; without it both browser
+    # downloads leave empty cache directories even when HTTP succeeds.
+    "unzip",
     "libnss3",
     "libnspr4",
     "libatk1.0-0t64",
