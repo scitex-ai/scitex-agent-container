@@ -1,12 +1,11 @@
 """Owned OpenCode HTTP fixture and race-free native-child listener handoff.
 
-The production owner inherits stdin, but offers no pass_fds seam. Only this
-synthetic binary adopts a listening FD0; its attach command never reads stdin.
-The wrapper restores the caller's descriptor in finally and closes the reserved
-socket. No native OpenCode process or live agent is used.
+The fixture's real child launcher passes the reserved socket as stdin only to
+its synthetic serve process, which adopts FD0. The parent's stdin and stdlib
+subprocess module stay untouched; the owner's local module binding is restored
+in finally. All children are actual Popen processes, not fabricated results.
 """
 
-import os
 import socket
 
 _FAKE_OPENCODE = """#!/usr/bin/env python3
@@ -112,12 +111,27 @@ def _free_port(*, reserve=True):
             listener.close()
 
 
-def _run_with_listener(run, argv, port):
-    saved_stdin = os.dup(0)
+class _ListenerChildProcesses:
+    """Transparent launcher: real subprocess behavior with owned serve stdin."""
+
+    def __init__(self, real_module, listener):
+        self.real_module = real_module
+        self.listener = listener
+
+    def __getattr__(self, name):
+        return getattr(self.real_module, name)
+
+    def Popen(self, command, *args, **kwargs):
+        if command[:2] == ["opencode", "serve"]:
+            kwargs["stdin"] = self.listener
+        return self.real_module.Popen(command, *args, **kwargs)
+
+
+def _run_with_listener(module, argv, port):
+    original = module.subprocess
     try:
-        os.dup2(port.listener.fileno(), 0)
-        return run(argv)
+        module.subprocess = _ListenerChildProcesses(original, port.listener)
+        return module.main(argv)
     finally:
-        os.dup2(saved_stdin, 0)
-        os.close(saved_stdin)
+        module.subprocess = original
         port.listener.close()

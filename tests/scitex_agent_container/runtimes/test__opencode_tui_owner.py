@@ -48,7 +48,7 @@ def _run_owner(state_dir, port, mode="fresh", max_age="", startup=None):
             _json.dumps(startup), encoding="utf-8"
         )
     return _run_with_listener(
-        owner.main, [
+        owner, [
             "--state-dir",
             str(state_dir),
             "--agent-name",
@@ -217,7 +217,7 @@ def test_pin_respects_a_caller_supplied_session():
 def _run_owner_resume(state_dir, port, resume_id):
     url = f"http://127.0.0.1:{port}"
     return _run_with_listener(
-        owner.main, [
+        owner, [
             "--state-dir",
             str(state_dir),
             "--agent-name",
@@ -398,7 +398,7 @@ def test_fixture_port_stays_reserved_before_child_start(_fake_opencode):
         port.listener.close()
 
 
-def test_owned_listener_restores_stdin_after_session_exit(_fake_opencode):
+def test_owned_listener_keeps_parent_stdin_unchanged(_fake_opencode):
     # Arrange
     before = os.fstat(0)
     port = _free_port()
@@ -409,3 +409,18 @@ def test_owned_listener_restores_stdin_after_session_exit(_fake_opencode):
     assert (after.st_dev, after.st_ino, port.listener.fileno()) == (
         before.st_dev, before.st_ino, -1,
     )
+
+
+def test_owned_listener_restores_launcher_after_owner_error(_fake_opencode):
+    # Arrange
+    original = owner.subprocess
+    (_fake_opencode / "opencode-startup.json").write_text("invalid json")
+    port = _free_port()
+    failure = ""
+    # Act — the owner genuinely starts its child before rejecting startup data.
+    try:
+        _run_owner(_fake_opencode, port)
+    except RuntimeError as exc:
+        failure = str(exc)
+    # Assert — a failing owner must not leak its launcher or reserved socket.
+    assert ("unreadable" in failure, owner.subprocess is original, port.listener.fileno()) == (True, True, -1)
