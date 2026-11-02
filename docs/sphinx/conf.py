@@ -142,19 +142,43 @@ intersphinx_mapping = {
 }
 
 
+
+def _capture_guide_source(app, relative_path, parent_docname, content):
+    """Retain the actual include bytes consumed by the MyST parser."""
+    from pathlib import Path
+
+    canonical = Path(app.srcdir).parent / "talking-to-agents.md"
+    included = Path(app.srcdir) / relative_path
+    if parent_docname == "talking-to-agents" and included.resolve() == canonical.resolve():
+        app.env.metadata.setdefault(parent_docname, {})["sac_guide_source"] = content[0]
+
+
 def _guide_source_fingerprint(app, pagename, templatename, context, doctree):
-    """Bind the packaged guide HTML to the exact Sphinx source bytes."""
+    """Bind packaged guide HTML to the exact source consumed by Sphinx."""
     if pagename != "talking-to-agents":
         return
     import hashlib
-    from pathlib import Path
 
-    source = Path(app.env.doc2path(pagename, base=True)).read_bytes()
+    source = app.env.metadata[pagename]["sac_guide_source"].encode("utf-8")
     digest = hashlib.sha256(source).hexdigest()
     context["metatags"] += (
         f'<meta name="sac-guide-source-sha256" content="{digest}" />'
     )
 
 
+def _export_guide_source(app, exception):
+    """Expose the consumed canonical source rather than its thin include wrapper."""
+    if exception is not None or app.builder.format != "html":
+        return
+    from pathlib import Path
+
+    source = app.env.metadata["talking-to-agents"]["sac_guide_source"].encode("utf-8")
+    target = Path(app.outdir) / "_sources/talking-to-agents.md.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(source)
+
+
 def setup(app):
+    app.connect("include-read", _capture_guide_source)
     app.connect("html-page-context", _guide_source_fingerprint)
+    app.connect("build-finished", _export_guide_source)

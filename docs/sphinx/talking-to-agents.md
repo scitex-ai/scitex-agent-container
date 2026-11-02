@@ -1,1 +1,2 @@
-../talking-to-agents.md
+```{include} ../talking-to-agents.md
+```
