@@ -347,6 +347,7 @@ sac accounts watch-quota                  # auto-rotate when quota threshold hit
 sac host list / add / remove / set / probe / exec / validate
 sac host ssh-opts                         # print sac's ssh ControlMaster flags (shell-quoted)
 sac host add-peer / list-peers / remove-peer      # cross-host listen-bearer registry
+sac host list-peers --json                 # registered names only; no bearer values
 sac host probe-hub                        # WSL → fleet-hub layered connectivity probe
 
 # Fleet (peer-aware multi-agent orchestration)

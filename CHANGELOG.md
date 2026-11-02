@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Expose actual structured reads for the peer-name registry and federated
+  service/timer status. Forward status JSON only when the resolved Dev command
+  supports it; preserve legacy human output and never expose bearer contents.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

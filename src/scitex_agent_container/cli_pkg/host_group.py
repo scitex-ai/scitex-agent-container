@@ -434,17 +434,26 @@ def host_add_peer(peer_host: str, token: str) -> None:
 
 
 @host_group.command("list-peers")
-def host_list_peers() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Output peer names as JSON.")
+@click.pass_context
+def host_list_peers(ctx: click.Context, as_json: bool) -> None:
     """List the peer hosts that have a registered listen bearer.
 
     Token values are NEVER printed — only the peer-host names. To
     see the on-disk file paths run
     ``ls -la ~/.scitex/agent-container/peer-tokens/``.
+
+    \b
+    Examples:
+      $ sac host list-peers --json
     """
     from .._listen.peer_tokens import default_peer_tokens_dir, list_peer_hosts
 
     tdir = default_peer_tokens_dir()
     hosts = list_peer_hosts()
+    if _json_flag(ctx, as_json):
+        click.echo(json.dumps({"peers": hosts}))
+        return
     if not hosts:
         render_rich(f"no peer tokens registered (dir: {tdir}). "
             "Add one with: sac host add-peer <host> <token>", __name__)

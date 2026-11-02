@@ -306,6 +306,7 @@ def build_argv(
     force: bool = False,
     exe: str = "scitex-dev",
     leaf: object | None = None,
+    as_json: bool = False,
 ) -> list[str]:
     """The exact argv :func:`invoke` will run. Separated so it is testable.
 
@@ -345,6 +346,19 @@ def build_argv(
     the verb and is not.
     """
     argv = [exe, "ecosystem", *delegation.path, delegation.verb]
+    if as_json:
+        target = (
+            leaf if leaf is not None else leaf_command(delegation.path, delegation.verb)
+        )
+        if not isinstance(target, click.Command) or not any(
+            isinstance(param, click.Option) and "--json" in param.opts
+            for param in target.params
+        ):
+            raise click.ClickException(
+                "the resolved scitex-dev command does not support --json; "
+                "upgrade scitex-dev or request human-readable status"
+            )
+        argv.append("--json")
     if name is not None:
         if leaf is None:
             style = name_style_for(delegation.path, delegation.verb)
@@ -395,6 +409,7 @@ def invoke(
     dry_run: bool = False,
     adopt: bool = False,
     force: bool = False,
+    as_json: bool = False,
 ) -> int:
     """Run the resolved ``scitex-dev ecosystem`` command; return its exit code.
 
@@ -451,6 +466,7 @@ def invoke(
             adopt=adopt,
             force=force,
             exe=exe,
+            as_json=as_json,
         )
     )
 

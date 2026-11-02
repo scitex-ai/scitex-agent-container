@@ -165,6 +165,7 @@ def _delegate(
     dry_run: bool = False,
     adopt: bool = False,
     force: bool = False,
+    as_json: bool = False,
 ) -> int:
     """Resolve + run one ecosystem delegation. THE single mutation seam.
 
@@ -200,6 +201,7 @@ def _delegate(
         dry_run=dry_run,
         adopt=adopt,
         force=force,
+        **({"as_json": True} if as_json else {}),
     )
 
 
@@ -331,6 +333,19 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
     )
 
 
+def _status_json_option(verb: str):
+    """Expose structured output only for the read-only status command."""
+
+    def decorate(fn):
+        if verb == "status":
+            return click.option(
+                "--json", "as_json", is_flag=True, help="Output status as JSON."
+            )(fn)
+        return fn
+
+    return decorate
+
+
 def _add_named_command(grp, group: str, verb: str) -> None:
     """Attach a lifecycle verb that acts on ONE named job."""
 
@@ -354,10 +369,14 @@ def _add_named_command(grp, group: str, verb: str) -> None:
         hidden=not mutating,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _named(name, dry_run, yes, _verb=verb):
+    @_status_json_option(verb)
+    def _named(name, dry_run, yes, as_json=False, _verb=verb):
         _announce_deprecation(group)
         wanted = _resolve_one(group, name)
-        raise SystemExit(_delegate(_kind_of(group), _verb, wanted, yes, dry_run))
+        kwargs = {"as_json": True} if as_json else {}
+        raise SystemExit(
+            _delegate(_kind_of(group), _verb, wanted, yes, dry_run, **kwargs)
+        )
 
     _named.help = (
         f"{_VERB_SUMMARY[verb]} one of sac's {group} jobs via scitex-dev.\n\n"

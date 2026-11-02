@@ -80,7 +80,7 @@ sac image rollback --layer base
 | Command | Purpose |
 |---|---|
 | `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
-| `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
+| `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). `list-peers --json` returns only registered names as `{"peers": [...]}`; bearer values are never returned. |
 | `sac host ssh-opts` | Print sac's ssh ControlMaster flags shell-quoted — use as `ssh $(sac host ssh-opts) host cmd`. |
 | `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
@@ -140,3 +140,12 @@ when a SAC endpoint is not reachable from the serving host.
 - [03_python-api.md](03_python-api.md) — programmatic surface (mirrors the lifecycle commands)
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment internals
 - [13_observability.md](13_observability.md) — `status --json` contract
+
+### Structured scheduled-job status
+
+`sac dev timer status accounts-refresh --json` forwards the JSON request to
+the resolved scitex-dev status command. It returns that owner's actual status
+DTO, rather than wrapping human text. `service status NAME --json` uses the
+same contract for a declared service; an empty service catalog still refuses
+an unknown name. A resolved legacy target without `--json` is refused before
+execution; omit the option for its existing human-readable behavior.
