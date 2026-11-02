@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .._runners._session_state import read_session_id, state_dir_for
+from .._runners._session_state import state_dir_for
 from .._state.registry import Registry
 from ..config._resolve import AmbiguousRegistryScope, resolve_config
 from ._nodes import Broker, NodeRegistry
@@ -179,13 +179,16 @@ async def agent_status(request: Request) -> JSONResponse:
             status_code=500,
         )
     sd = state_dir_for(name)
-    sid = read_session_id(sd)
+    from ._status_session_identity import status_session_identity
+
+    sid, session_evidence = await status_session_identity(cfg, sd)
     running, runtime_status, liveness = _runtime_liveness(cfg)
     body: dict[str, Any] = {
         "name": name,
         "spec_path": str(spec_path),
         "workdir": cfg.expanded_workdir,
         "session_id": sid,
+        "session_evidence": session_evidence,
         "state_dir": str(sd),
         "status": runtime_status,
         "liveness": liveness,
@@ -200,7 +203,11 @@ async def agent_status(request: Request) -> JSONResponse:
     try:
         from .._lifecycle._runtime_select import _get_runtime
 
-        control = _get_runtime(cfg).control_state(cfg)
+        from .._lifecycle._off_loop import run_blocking
+
+        control = await run_blocking(
+            _get_runtime(cfg).observe_control_state, cfg, timeout_s=3.0
+        )
     except Exception:  # stx-allow: fallback (reason: optional runtime observation must not turn status into a 500)
         control = None
     if control is not None:
@@ -208,9 +215,12 @@ async def agent_status(request: Request) -> JSONResponse:
     from ._activity_projection import activity_projection, project_session_id
 
     body["activity"] = activity_projection(sd, runtime_control=control)
-    body["session_id"], body["session_id_source"] = project_session_id(
-        sid, body["activity"], harness=str(body.get("harness") or "")
-    )
+    if session_evidence["state"] == "unknown":
+        body["session_id"], body["session_id_source"] = None, "unknown"
+    else:
+        body["session_id"], body["session_id_source"] = project_session_id(
+            sid, body["activity"], harness=str(body.get("harness") or "")
+        )
     # PR-1 — stillborn surface. If the runtime dir has a
     # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
     # session), echo it so callers don't have to also poll a separate

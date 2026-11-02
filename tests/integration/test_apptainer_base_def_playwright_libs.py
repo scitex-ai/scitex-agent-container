@@ -46,6 +46,9 @@ _BASE_DEF = (
 # must carry the suffix. These are exactly the names Playwright's own
 # `install-deps` uses on noble; the remaining libs kept their pre-t64 names.
 _REQUIRED_LIBS = (
+    # Puppeteer 25 uses the system ZIP extractor; without it both browser
+    # downloads leave empty cache directories even when HTTP succeeds.
+    "unzip",
     "libnss3",
     "libnspr4",
     "libatk1.0-0t64",
@@ -110,3 +113,15 @@ def test_base_apt_block_installs_headless_chromium_lib(
         f"apptainer-base.def — headless Chromium (Playwright / mermaid-cli / "
         f"chrome-headless-shell) will fail to launch. Block:\n{block}"
     )
+
+
+@pytest.mark.parametrize("section", ("post", "environment"))
+def test_browser_cache_is_accessible_outside_private_build_home(
+    base_def_text: str, section: str
+) -> None:
+    # Arrange
+    block = base_def_text.split(f"%{section}\n", 1)[1].split("\n%", 1)[0]
+    # Act
+    public_cache = "export PUPPETEER_CACHE_DIR=/opt/browser-cache" in block
+    # Assert
+    assert public_cache, "Browser installation and non-root runtime must share the public image cache"

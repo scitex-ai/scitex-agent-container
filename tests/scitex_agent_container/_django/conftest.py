@@ -170,7 +170,7 @@ class _Listener(BaseHTTPRequestHandler):
         elif stripped.endswith("/restart"):
             self._send(200, json.dumps({"status": "restarted"}).encode())
         elif stripped.endswith("/send"):
-            self._send(200, json.dumps({"delivered": True}).encode())
+            self._send(202, json.dumps({"exchange_id": "xch_20261102T000000Z_gui_fixture_abcdef", "status_code": {"kind": "http", "code": 202, "message": "accepted; poll `/v1/exchanges/xch_20261102T000000Z_gui_fixture_abcdef`"}}).encode())
         else:
             self._send(404, b'{"error": "not found"}')
 

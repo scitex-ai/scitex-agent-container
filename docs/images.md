@@ -76,6 +76,14 @@ unset PYTHONPATH
 PYTHONPATH=/path/to/canonical/checkout/src uv run sac image build base -y
 ```
 
+The scientific recipe resolves `scitex[all]>=2.30.9`, staged SAC with its
+`[all,dev]` extras, staged Cards and the tool/provider requirements together.
+Both uv and pip rebuild the staged distributions with normal dependency
+resolution enabled. A final `pip check` refuses incompatible inherited
+packages before system provisioning. The compatible umbrella cohort must be
+published before this layer can build; publishing the SAC CLI or building
+`:base` does not imply that `:scitex` is available or qualified.
+
 ## Sandbox / freeze workflow
 
 Sandbox once, refresh when you want, freeze when stable:

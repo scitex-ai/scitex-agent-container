@@ -594,20 +594,21 @@ def test_cold_shell_points_poll_at_leaf_api(client, unreachable_listener, env_sa
 
 
 def test_leaf_assets_carry_version_buster(client, unreachable_listener, env_save_restore):
-    # Arrange — operator 2026-10-26 (laptop prompt): the fleet stuck on
-    # "Reading the fleet…" until Ctrl+Shift+R. Two causes, both fixed
-    # here: (a) unversioned {% static %} URLs let browsers run stale
-    # JS/CSS across rebakes — every leaf asset URL carries
-    # ?v=<leaf version> so each release re-fetches; (b) the warm-poll
-    # module lived inside {% if agents %}, so cold shells loaded no
-    # poller at all — it now loads unconditionally (null-guarded).
-    from importlib.metadata import version
+    # Arrange — preview edits must invalidate assets without a package release.
+    import hashlib
+    from pathlib import Path
 
+    leaf = Path(__file__).resolve().parents[3] / "src/scitex_agent_container/_django"
+    assets = ["js/fleet-details.js", "fleet.js", "agents.css"]
+    expected = [
+        f"{asset}?v={hashlib.sha256((leaf / 'static/scitex_agent_container' / asset).read_bytes()).hexdigest()[:12]}"
+        for asset in assets
+    ]
     env_save_restore.set(IDENTITY_ENV, "alice")
-    # Act: cold cache, unreachable control plane — the loading shell.
+    # Act — the cold shell still loads the same content-addressed scripts.
     html = client.get("/").content.decode()
     # Assert
-    assert ("fleet-details.js?v=" + version("scitex-agent-container")) in html and ("agents.css?v=" + version("scitex-agent-container")) in html and 'data-fleet-state="loading"' in html
+    assert all(url in html for url in expected) and 'data-fleet-state="loading"' in html
 
 
 

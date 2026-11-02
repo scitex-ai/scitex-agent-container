@@ -340,6 +340,18 @@ class RemoteFleet:
         }
 
     # ── mutations (delegated to the authenticated listener) ─────────────────
+    def send_prompt(self, name: str, text: str, dispatch_id: str, *, timeout: float = 120) -> dict[str, Any]:
+        """Use the authenticated listener's canonical live-turn proxy.
+
+        The listener owns local/remote loopback routing. A dispatch id is
+        correlation, not proof of delivery or a runner deduplication promise.
+        """
+        return self._request(
+            f"/agents/{quote(name, safe='')}/send", method="POST",
+            body={"type": "prompt", "prompt": text, "options": {"dispatch_id": dispatch_id}},
+            timeout=timeout,
+        )
+
     def lifecycle(self, name: str, action: str) -> dict[str, Any]:
         target = quote(name, safe="")
         if action == "start":

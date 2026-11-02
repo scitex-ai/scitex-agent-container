@@ -2,7 +2,7 @@
 name: scitex-agent-container
 description: |
   [WHAT] `spec.yaml` selects Claude, Codex, Hermes or OpenCode in Apptainer; A2A inbound (`POST /v1/turn`), SSH deploy and JSON status.
-  [WHEN] Agents, fleets, Hermes profiles, goal_judge errors, MCP, A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
+  [WHEN] Agents, fleets, Hermes profiles, goal_judge/subscription errors, MCP, A2A; `sac agents start`, `scitex-agent-container`, `spec.yaml`.
   [HOW] `pip install scitex-agent-container`; `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
@@ -18,9 +18,8 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Define an agent in `spec.yaml`, select its harness and launch mode,
-run it in Apptainer locally or via SSH, and observe with
-`sac agents list`/`tail`/`health`.
+Define `spec.yaml`, choose a harness/mode, run via Apptainer/SSH, and observe
+with `sac agents list`/`tail`/`health`.
 
 Claude and direct Codex support TUI/headless; Hermes and OpenCode support
 TUI. Authentication is separate from harness selection. OpenAI Agents SDK
@@ -91,6 +90,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
 - [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md) — profiles, project context, skills, judge errors
 - [48_model-availability.md](48_model-availability.md) — API preflights, caps, fresh restarts, Say Hi
+- [49_subscription-errors.md](49_subscription-errors.md) — entitlement/judge diagnosis and bounded recovery
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — troubleshooting
@@ -108,6 +108,4 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 
 ## 30-second start
 
-See [02_quick-start.md](02_quick-start.md). After installation, place
-`spec.yaml` in `~/.scitex/agent-container/agents/<name>/`; use
-`sac agents start <name>` / `list` / `tail`.
+Follow [02_quick-start.md](02_quick-start.md) for spec placement and first launch.

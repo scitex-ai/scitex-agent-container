@@ -163,6 +163,11 @@ async def agent_send(request: Request) -> Response:
 
     # 1) Try live-runner route first.
     options = body.get("options") or {}
+    if not isinstance(options, dict):
+        return JSONResponse({"error": "options must be an object"}, status_code=400)
+    dispatch_id = options.get("dispatch_id")
+    if dispatch_id is not None and (not isinstance(dispatch_id, str) or not dispatch_id.strip()):
+        return JSONResponse({"error": "dispatch_id must be a nonempty string"}, status_code=400)
     live = await forward_to_live_runner(cfg, name, prompt, options)
     if live is not None:
         return live
@@ -181,7 +186,10 @@ async def agent_send(request: Request) -> Response:
     local_host = getattr(request.app.state, "local_host", None) or (
         _resolve_local_host(None)
     )
-    remote = await forward_to_remote_runner(name, prompt, local_host=local_host)
+    remote = await forward_to_remote_runner(
+        name, prompt, local_host=local_host,
+        **({"dispatch_id": dispatch_id} if dispatch_id else {}),
+    )
     if remote is not None:
         return remote
 

@@ -251,7 +251,12 @@ def test_unreachable_bridge_is_reported_as_failed_not_delivered(dead_bridge):
     # Act
     result = send_message(f"{dead_bridge}/v1/turn", text="hello")
     # Assert
-    assert result.delivered is False and result.state == "failed"
+    assert (
+        result.delivered,
+        result.state,
+        "Use Cards" in result.message,
+        dead_bridge in result.message,
+    ) == (False, "failed", True, False)
 
 
 # ── no secret leakage ────────────────────────────────────────────────────────
@@ -260,7 +265,9 @@ def test_unreachable_bridge_is_reported_as_failed_not_delivered(dead_bridge):
 def test_redaction_scrubs_credentials():
     # Arrange
     # Act
-    scrubbed = redact("failed for Bearer abcdefghijklmnop1234 and sk-abcdefghijklmnop123")
+    scrubbed = redact(
+        "failed for Bearer abcdefghijklmnop1234 and sk-abcdefghijklmnop123"
+    )
     # Assert
     assert "abcdefghijklmnop1234" not in scrubbed and "[REDACTED]" in scrubbed
 
@@ -268,7 +275,9 @@ def test_redaction_scrubs_credentials():
 def test_delivery_result_never_carries_the_message_text(bridge):
     # Arrange
     # Act
-    result = send_message(f"{bridge}/v1/turn", text="secret-value sk-abcdefghijklmnop123")
+    result = send_message(
+        f"{bridge}/v1/turn", text="secret-value sk-abcdefghijklmnop123"
+    )
     # Assert: the confirmation echoed to a browser must not become a transcript.
     assert "sk-abcdefghijklmnop123" not in json.dumps(result.as_dict())
 
@@ -301,7 +310,9 @@ def test_exactly_one_guard_enforces_mutual_exclusion(first, second, expected):
 # ── the view that fronts these surfaces ──────────────────────────────────────
 
 
-def test_message_route_denies_a_non_operator(client, loopback, env_save_restore, audit_log):
+def test_message_route_denies_a_non_operator(
+    client, loopback, env_save_restore, audit_log
+):
     # Arrange: a caller who may READ the fleet but is not an operator.
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
@@ -325,7 +336,9 @@ def test_message_route_requires_exactly_one_action(client, loopback, env_save_re
     assert response.status_code == 302 and "state=refused" in response["Location"]
 
 
-def test_message_route_refuses_a_made_up_control_key(client, loopback, env_save_restore, audit_log):
+def test_message_route_refuses_a_made_up_control_key(
+    client, loopback, env_save_restore, audit_log
+):
     # Arrange
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
@@ -337,22 +350,24 @@ def test_message_route_refuses_a_made_up_control_key(client, loopback, env_save_
     assert response.status_code == 302 and "state=refused" in response["Location"]
 
 
-def test_message_route_audits_an_authorized_delivery(client, loopback, env_save_restore, audit_log):
-    # Arrange: the loopback listener does not serve a turn bridge, so the
-    # delivery legitimately FAILS — what matters is that it was attempted,
-    # authorized, and audited, not silently dropped.
+def test_message_route_audits_an_authorized_delivery(
+    client, loopback, env_save_restore, audit_log
+):
+    # Arrange: the authenticated loopback listener returns a canonical
+    # acceptance receipt; the authorized attempt must also be audited.
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
     env_save_restore.set(IDENTITY_ENV, "alice")
     env_save_restore.set(OPERATORS_ENV, "alice")
     # Act
     response = client.post("/alpha/message", {"message": "please continue"})
-    # Assert: authorized and redirected (the delivery itself fails against a
-    # listener with no turn bridge, which is not what this test is about).
+    # Assert: the authorized acceptance is redirected back to the operator.
     assert response.status_code == 302
 
 
-def test_message_route_writes_an_audit_line(client, loopback, env_save_restore, audit_log):
+def test_message_route_writes_an_audit_line(
+    client, loopback, env_save_restore, audit_log
+):
     # Arrange
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
@@ -361,10 +376,14 @@ def test_message_route_writes_an_audit_line(client, loopback, env_save_restore, 
     # Act
     client.post("/alpha/message", {"message": "please continue"})
     # Assert: the attempt is audited, not silently dropped.
-    assert audit_log.exists() and "message_action" in audit_log.read_text(encoding="utf-8")
+    assert audit_log.exists() and "message_action" in audit_log.read_text(
+        encoding="utf-8"
+    )
 
 
-def test_detail_page_renders_the_control_surfaces_for_an_operator(client, loopback, env_save_restore):
+def test_detail_page_renders_the_control_surfaces_for_an_operator(
+    client, loopback, env_save_restore
+):
     # Arrange
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 
@@ -376,7 +395,9 @@ def test_detail_page_renders_the_control_surfaces_for_an_operator(client, loopba
     assert "Enter" in html and "Escape" in html and "C-c" in html
 
 
-def test_detail_page_renders_the_message_form_for_an_operator(client, loopback, env_save_restore):
+def test_detail_page_renders_the_message_form_for_an_operator(
+    client, loopback, env_save_restore
+):
     # Arrange
     from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
 

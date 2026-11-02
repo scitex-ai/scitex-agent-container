@@ -1,8 +1,10 @@
 """Agent control surfaces: message/steer + pending-choice response.
 
 Card sac-agent-activity-timeline-dashboard-20260917. The card is explicit: the
-GUI must use EXISTING SAC APIs only, own no alternate state, and never touch
-tmux directly. The APIs are the agent's own turn bridge:
+GUI must use EXISTING SAC APIs only, own no alternate message queue, and
+never touch tmux directly. Messages use the authenticated listener proxy
+(``POST /agents/<name>/send``), which owns local/cross-host bridge routing.
+Control keys retain their direct bridge surface:
 
   * turn / steer  POST /v1/turn  (or /agents/<name>/{turn,send,message:send})
                   body {"text": "..."} — the SAME verb the fleet's A2A send
@@ -18,13 +20,16 @@ must hold and both are easy to get wrong inline.
 1. **Idempotency.** A double-submitted message would inject the text TWICE into
    a live agent's turn — the worst failure this surface can cause. Every
    mutation carries a dispatch id, and a repeated submit with the same id is
-   reported as a replay rather than delivered again.
+   reported as a replay rather than delivered again. Listener attempts claim
+   an id before network I/O and keep ambiguous outcomes blocked locally.
+   This bounded process-local guard is not cross-worker durable deduplication;
+   the forwarded dispatch id is correlation, not proof of bridge idempotency.
 2. **No secret or prompt leakage.** Text sent to an agent can contain anything;
    the confirmation the GUI renders back must never echo a credential, and the
    audit trail must not become a transcript.
 
 The GUI holds NO queue and NO pending-message store: a delivery is either
-reported as delivered by the bridge, or reported as failed. Nothing is parked
+reported as accepted pending completion, refused, or unknown. Nothing is parked
 in the dashboard waiting to be retried behind the operator's back.
 """
 
@@ -34,8 +39,14 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
+from threading import Lock
+from typing import TYPE_CHECKING
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from ._remote import RemoteFleet
+
 
 #: The complete set of UI-control keys the SAC bridge accepts. Any other value
 #: is refused by the bridge with a 400, so offering a fourth here would be a
@@ -63,10 +74,11 @@ class DeliveryResult:
     """What the bridge said about one delivery attempt."""
 
     delivered: bool
-    state: str          # delivered | replay | failed | refused
+    state: str  # accepted | unknown | delivered | replay | failed | refused
     message: str
     dispatch_id: str
     mode: str = "turn"
+    exchange_id: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -75,6 +87,7 @@ class DeliveryResult:
             "message": self.message,
             "dispatch_id": self.dispatch_id,
             "mode": self.mode,
+            **({"exchange_id": self.exchange_id} if self.exchange_id else {}),
         }
 
 
@@ -89,6 +102,19 @@ class _Replay:
 
     _seen: dict[str, str] = {}
     _MAX = 512
+    _lock = Lock()
+
+    @classmethod
+    def claim(cls, dispatch_id: str) -> bool:
+        """Claim one local attempt before network I/O; unknowns are not retried."""
+        with cls._lock:
+            if dispatch_id in cls._seen:
+                return False
+            if len(cls._seen) >= cls._MAX:
+                for oldest in list(cls._seen)[: cls._MAX // 4]:
+                    cls._seen.pop(oldest, None)
+            cls._seen[dispatch_id] = "pending"
+            return True
 
     @classmethod
     def remember(cls, dispatch_id: str) -> None:
@@ -138,12 +164,48 @@ def _bridge_base(turn_url: str | None) -> str:
     return base
 
 
+def _send_via_listener(
+    fleet: RemoteFleet, name: str, text: str, dispatch: str, timeout: float
+) -> DeliveryResult:
+    """An acceptance receipt is pending completion, never final delivery."""
+    from scitex_dev.status import StatusCode, StatusError, is_exchange_id
+
+    from ._remote import FleetUnavailableError, RemoteOperationError
+
+    key = f"listener:{name}:{dispatch}"
+    if not _Replay.claim(key):
+        if _Replay._seen.get(key) == "delivered":
+            return DeliveryResult(False, "replay", "Already accepted; completion is pending.", dispatch)
+        return DeliveryResult(
+            False, "unknown", "This dispatch was already attempted. Check its outcome before starting a new draft.", dispatch,
+        )
+    try:
+        payload = fleet.send_prompt(name, text, dispatch, timeout=timeout)
+        receipt = StatusCode.from_dict(payload.get("status_code", {}))
+        exchange = payload.get("exchange_id")
+        if receipt.kind != "http" or receipt.code != 202 or receipt.final or not is_exchange_id(exchange):
+            raise ValueError("missing canonical acceptance receipt")
+    except RemoteOperationError as exc:
+        if exc.status_code in {400, 401, 403, 404, 409, 422}:
+            _Replay.forget(key)
+            return DeliveryResult(False, "refused", "The control plane refused this message.", dispatch)
+        return DeliveryResult(False, "unknown", "Message outcome is unknown. Check the agent before starting a new draft; do not retry this dispatch.", dispatch)
+    except (FleetUnavailableError, OSError, ValueError, TypeError, AttributeError, KeyError, StatusError):
+        return DeliveryResult(False, "unknown", "Message outcome is unknown. Check the agent before starting a new draft; do not retry this dispatch.", dispatch)
+    _Replay.remember(key)
+    return DeliveryResult(
+        False, "accepted", "Message accepted by the agent; completion is pending.", dispatch, exchange_id=exchange,
+    )
+
+
 def send_message(
     turn_url: str | None,
     *,
     text: str,
     dispatch_id: str | None = None,
     timeout: float = _DELIVERY_TIMEOUT,
+    fleet: RemoteFleet | None = None,
+    agent_name: str | None = None,
 ) -> DeliveryResult:
     """Deliver a message/steer to an agent through its own turn bridge.
 
@@ -153,11 +215,20 @@ def send_message(
     """
     dispatch = dispatch_id or new_dispatch_id()
     if not isinstance(text, str) or not text.strip():
-        return DeliveryResult(False, "refused", "a message needs non-empty text", dispatch)
+        return DeliveryResult(
+            False, "refused", "a message needs non-empty text", dispatch
+        )
     if len(text) > MAX_MESSAGE_CHARS:
         return DeliveryResult(
-            False, "refused", f"message exceeds {MAX_MESSAGE_CHARS} characters", dispatch
+            False,
+            "refused",
+            f"message exceeds {MAX_MESSAGE_CHARS} characters",
+            dispatch,
         )
+    if fleet is not None:
+        if not isinstance(agent_name, str) or not agent_name:
+            return DeliveryResult(False, "refused", "an authorized agent name is required", dispatch)
+        return _send_via_listener(fleet, agent_name, text, dispatch, timeout)
     base = _bridge_base(turn_url)
     if not base:
         return DeliveryResult(
@@ -182,17 +253,34 @@ def send_message(
     except HTTPError as exc:
         detail = ""
         try:
-            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get("error", "")
+            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get(
+                "error", ""
+            )
         except (ValueError, OSError):
             detail = ""
         return DeliveryResult(
             False, "failed", redact(detail or f"HTTP {exc.code}"), dispatch
         )
-    except (URLError, OSError, ValueError) as exc:
-        return DeliveryResult(False, "failed", redact(str(exc)), dispatch)
+    except (URLError, OSError):
+        return DeliveryResult(
+            False,
+            "failed",
+            "The agent's message endpoint is not reachable from this dashboard. "
+            "Use Cards for cross-host messages.",
+            dispatch,
+        )
+    except ValueError:
+        return DeliveryResult(
+            False,
+            "failed",
+            "The agent returned an invalid delivery response.",
+            dispatch,
+        )
 
     _Replay.remember(dispatch)
-    delivered = bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    delivered = (
+        bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    )
     state = "delivered" if delivered else "failed"
     if not delivered:
         _Replay.forget(dispatch)
@@ -225,11 +313,19 @@ def send_control_key(
     base = _bridge_base(turn_url)
     if not base:
         return DeliveryResult(
-            False, "refused", "this agent publishes no control endpoint", dispatch, mode="control"
+            False,
+            "refused",
+            "this agent publishes no control endpoint",
+            dispatch,
+            mode="control",
         )
     if _Replay.seen(f"{dispatch}:{key}"):
         return DeliveryResult(
-            True, "replay", "already sent (duplicate submit ignored)", dispatch, mode="control"
+            True,
+            "replay",
+            "already sent (duplicate submit ignored)",
+            dispatch,
+            mode="control",
         )
 
     body = json.dumps({"key": key}).encode("utf-8")
@@ -245,17 +341,27 @@ def send_control_key(
     except HTTPError as exc:
         detail = ""
         try:
-            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get("error", "")
+            detail = json.loads(exc.read().decode("utf-8", errors="replace")).get(
+                "error", ""
+            )
         except (ValueError, OSError):
             detail = ""
         return DeliveryResult(
-            False, "failed", redact(detail or f"HTTP {exc.code}"), dispatch, mode="control"
+            False,
+            "failed",
+            redact(detail or f"HTTP {exc.code}"),
+            dispatch,
+            mode="control",
         )
     except (URLError, OSError, ValueError) as exc:
-        return DeliveryResult(False, "failed", redact(str(exc)), dispatch, mode="control")
+        return DeliveryResult(
+            False, "failed", redact(str(exc)), dispatch, mode="control"
+        )
 
     _Replay.remember(f"{dispatch}:{key}")
-    delivered = bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    delivered = (
+        bool(payload.get("delivered", True)) if isinstance(payload, dict) else True
+    )
     return DeliveryResult(
         delivered,
         "delivered" if delivered else "failed",

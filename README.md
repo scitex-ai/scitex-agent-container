@@ -214,6 +214,19 @@ not copy policy rules into hooks, skills, prompts, or docs. See
 
 **[Talking to a Running Agent →](docs/talking-to-agents.md)** — three transports (A2A `POST /v1/turn`, `sac agents send`, host-level `sac listen`), when to use which, copy-pasteable curl examples.
 
+In the fleet dashboard, Enter or Ctrl/Command+Enter sends in place from either
+composer; Shift+Enter inserts a newline. Messages travel through the authenticated
+host listener, so a Docker dashboard can reach host-loopback bridges. An accepted
+receipt means completion is pending. Refusals retain the draft; an uncertain
+outcome blocks another submission of that same draft until the operator checks
+the agent. Dispatch IDs correlate requests; they are not durable cross-worker
+delivery deduplication.
+
+The shared SDK filter shows its icon first, `Filter agents with keywords`, and
+`Ctrl+K` while idle or `Esc` while focused. Escape clears and leaves the filter.
+The pane row uses the remaining shell height with a bottom margin; messages and
+details scroll inside it, including the SDK's phone tab layout.
+
 **[Container Isolation →](docs/isolation.md)** — 10 Apptainer-default leak paths + sac's hardened-by-default countermeasures (`--containall` auto-prepended, opt-out via `spec.apptainer.relaxed: true`). The reference for reproducibility claims.
 
 ## Configuration and Runtime Directories
@@ -244,6 +257,14 @@ curl -s http://127.0.0.1:7878/v1/health                # healthcheck
 ```
 
 See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe + the federated-jobs vs hand-maintained-services split.
+
+Authenticated `GET /agents/<name>/status` reads session identity through the
+selected runtime's ownership checks. Its additive `session_evidence` field
+reports retained identity as observed, absent, or unknown; unknown proof keeps
+`session_id` null without hiding independent liveness/activity evidence. Passive
+status never activates a Hermes renderer. Optional clarification remains
+explicitly unknown when it has not been queried through a passive snapshot.
+
 
 ## Three Interfaces
 

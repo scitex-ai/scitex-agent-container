@@ -124,6 +124,16 @@ sac image rollback --layer base
 | `sac list-python-apis` | Enumerate the public Python API. |
 | `sac auto-accept` | Auto-accept TUI handler for legacy claude-code agents (the apptainer/SDK runner doesn't need it). |
 
+## Fleet dashboard messages
+
+The fleet composer accepts Enter and Ctrl/Command+Enter; Shift+Enter keeps a
+newline and IME composition must not submit. Failed delivery stays inline with
+the draft and dispatch id preserved. A successful send renews the id so the
+next message is not mistaken for a duplicate; changed text/recipient also gets
+a new id. Do not retry an uncertain fetch as a native form POST: that navigates
+away and can submit the same action twice. Use Cards for cross-host coordination
+when a SAC endpoint is not reachable from the serving host.
+
 ## See also
 
 - [10_cli.md](10_cli.md) — long-form flag tables + Python-API mirror

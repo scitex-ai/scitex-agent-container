@@ -4,7 +4,7 @@ adapter (scitex_sdk/app/app_shell.html) and fills scitex_app_content.
 `url_base` is the app's mount prefix ("" at root, "/apps/agent-container" when
 mounted) so the per-row links are correct at any mount.
 {% endcomment %}
-{% load static %}
+{% load static scitex_static %}
 <div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}"
      data-fleet-api="{{ url_base }}/api/fleet" data-cache-ttl="{{ cache_ttl|default:45 }}"
      data-observed-age="{% if observed_age is not None %}{{ observed_age|floatformat:0 }}{% endif %}">
@@ -72,14 +72,10 @@ mounted) so the per-row links are correct at any mount.
   {# the pagehead single action row. #}
 
   {% if agents %}
+  <link rel="stylesheet" href="{% app_static 'scitex_sdk/ui/css/app/filter-field.css' %}">
   <div class="agents-filterbar">
     <label class="visually-hidden" for="agents-filter">Filter agents</label>
-    <div class="agents-filterbox">
-    <input id="agents-filter" type="search" name="q" maxlength="200"
-           placeholder="Filter agents…" autocomplete="off"
-           data-role="agents-filter">
-    <span class="shortcuts-hint agents-filter-hint"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>
-    </div>
+    <div data-stx-filter-field data-filter-subject="agents" data-filter-id="agents-filter"></div>
   </div>
   <link rel="stylesheet" href="{% static 'scitex_sdk/ui/css/app/panes.css' %}">
   {# Operator 2026-10-23: three-column DM layout (Cards DM idiom, leaf-side). #}
@@ -210,7 +206,8 @@ mounted) so the per-row links are correct at any mount.
   unless the shell is loading, so loading it unconditionally is
   safe on every fleet paint.
   {% endcomment %}
-  <script type="module" src="{% static 'scitex_agent_container/js/fleet-details.js' %}?v={{ app_version }}"></script>
+  <script type="module" src="{% app_static 'scitex_sdk/ui/js/app/filter-field.js' %}"></script>
+  <script type="module" src="{% app_static 'scitex_agent_container/js/fleet-details.js' %}"></script>
 
   {# B1: cold shell renders as `loading`. The warm poll lives in #}
   {# fleet-details.js `warmColdShell()` (no inline scripts in HTML). #}

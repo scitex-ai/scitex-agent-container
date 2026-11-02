@@ -320,3 +320,30 @@ def test_typed_state_detail_publishes_the_trusted_text_not_the_raw_message():
     # Assert: the fixed public text for the typed CODE, and nothing of the raw
     # message - while the typed LABEL is still carried separately.
     assert detail == "The agent's spec could not be validated." and "delta/spec.yaml" not in detail
+
+
+def test_row_project_prefers_top_level():
+    # Arrange — a row carrying both a top-level project and labels.
+    row = {"name": "alpha", "project": "top", "labels": {"project": "labels"}}
+    # Act
+    projected = project_row(row, ALIVE)
+    # Assert — explicit top-level wins.
+    assert projected["project"] == "top"
+
+
+def test_row_project_falls_back_to_labels():
+    # Arrange — a live list row: no top-level project, labels carry it.
+    row = {"name": "alpha", "labels": {"project": "dotfiles"}}
+    # Act
+    projected = project_row(row, ALIVE)
+    # Assert — the L513 column renders the declared project, not em-dash.
+    assert projected["project"] == "dotfiles"
+
+
+def test_row_project_empty_without_either():
+    # Arrange — a row with neither source (e.g. heartbeat-only shape).
+    row = {"name": "alpha"}
+    # Act
+    projected = project_row(row, ALIVE)
+    # Assert — the honest empty, never a crash.
+    assert projected["project"] == "—"
