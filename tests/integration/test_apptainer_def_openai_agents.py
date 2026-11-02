@@ -17,9 +17,8 @@ Layer contracts pinned here:
   assert, deleting ``scitex-agent-container[openai]`` from ``all`` would
   silently stop baking the SDK while this file still passed.
 * ``apptainer-scitex.def`` lists ``openai-agents`` EXPLICITLY in BOTH
-  resolver branches (uv + pip fallback), because its sac install is
-  ``--force-reinstall --no-deps`` (an extra can never ride that) and
-  the transitive sac wheel from ``scitex[all]`` may predate the extra.
+  resolver branches (uv + pip fallback). Both resolve the staged SAC
+  ``[all,dev]`` extras and the scientific umbrella in the same transaction.
 
 Drop either install and CI yells before a SIF rebuild ships an image
 whose ``provider: openai`` agents crash on ``import agents``. Follows
@@ -142,8 +141,7 @@ def test_all_extra_carries_dev_test_tooling(base_def_text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# scitex layer — explicit floor in BOTH resolver branches (sac install
-# there is --no-deps, so the extra cannot ride it)
+# scitex layer — explicit floor in BOTH complete resolver branches
 # ---------------------------------------------------------------------------
 
 
@@ -155,8 +153,7 @@ def test_scitex_def_lists_openai_agents_floor(scitex_def_text: str) -> None:
     # Assert
     assert present, (
         "apptainer-scitex.def must list an explicit openai-agents floor "
-        "(its sac install is --no-deps, so pyproject's [openai] extra "
-        "cannot ride it)."
+        "alongside the staged source extras in each resolver branch."
     )
 
 
