@@ -9,6 +9,10 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Resolve the scientific umbrella, staged SAC and staged Cards together with
+  dependency checking enabled. Refuse an image whose installed requirements
+  conflict. The scientific layer requires the compatible scitex 2.30.9 cohort
+  to be published before building; CLI/base publication is independent.
 - Install the ZIP extractor required by Puppeteer before browser downloads.
   Reject missing browser executables and require both stable browser paths to
   launch headlessly before accepting a base image. Keep the browser cache outside
