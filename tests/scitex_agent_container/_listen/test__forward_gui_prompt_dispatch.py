@@ -3,10 +3,10 @@
 import asyncio
 
 from scitex_agent_container._django._control import new_dispatch_id
-from tests.scitex_agent_container._django.test__listener_message import (
+from tests.scitex_agent_container._django.test__control_listener_message import (
     Bridge,
 )
-from tests.scitex_agent_container._django.test__listener_message import (
+from tests.scitex_agent_container._django.test__control_listener_message import (
     endpoints as endpoints,
 )
 

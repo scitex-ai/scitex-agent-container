@@ -55,23 +55,35 @@ def mount_composer(page, kind, outcome, action="/alpha/message"):
 
 
 @pytest.mark.parametrize("kind", ["fleet-dm", "dm"])
-@pytest.mark.parametrize("outcome", ["refusal", "transport", "success"])
-def test_enter_keeps_dashboard_and_preserves_unconfirmed_draft(browser_page, kind, outcome):
-    # Arrange — real shipped event handlers, intercepted disposable transport.
+def test_confirmed_enter_clears_draft_without_leaving_dashboard(browser_page, kind):
+    # Arrange — confirmed acceptance may clear the submitted draft.
+    page = browser_page
+    requests = mount_composer(page, kind, "success")
+    area = page.locator("textarea").first
+    area.fill("Disposable browser fixture")
+    # Act — native keyboard dispatch, rather than calling the handler directly.
+    area.press("Enter")
+    page.wait_for_function("document.querySelector('textarea').value === ''")
+    # Assert
+    assert (page.url, len(requests), requests[0]["accept"], area.input_value()) == (
+        "https://dashboard.example/", 1, "application/json", "",
+    )
+
+
+@pytest.mark.parametrize("kind", ["fleet-dm", "dm"])
+@pytest.mark.parametrize("outcome", ["refusal", "transport"])
+def test_unconfirmed_enter_preserves_draft_and_dashboard(browser_page, kind, outcome):
+    # Arrange — neither an explicit refusal nor an uncertain transport clears text.
     page = browser_page
     requests = mount_composer(page, kind, outcome)
     area = page.locator("textarea").first
     area.fill("Disposable browser fixture")
-    # Act — native keyboard input, including requestSubmit dispatch.
+    # Act
     area.press("Enter")
-    if outcome == "success":
-        page.wait_for_function("document.querySelector('textarea').value === ''")
-    else:
-        page.locator("[data-composer-error]:visible").wait_for()
-    # Assert — one JSON-requested send and no navigation on either result.
+    page.locator("[data-composer-error]:visible").wait_for()
+    # Assert
     assert (page.url, len(requests), requests[0]["accept"], area.input_value()) == (
-        "https://dashboard.example/", 1, "application/json",
-        "" if outcome == "success" else "Disposable browser fixture",
+        "https://dashboard.example/", 1, "application/json", "Disposable browser fixture",
     )
 
 
