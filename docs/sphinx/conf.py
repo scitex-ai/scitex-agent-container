@@ -140,3 +140,21 @@ myst_heading_anchors = 3
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
+
+
+def _guide_source_fingerprint(app, pagename, templatename, context, doctree):
+    """Bind the packaged guide HTML to the exact Sphinx source bytes."""
+    if pagename != "talking-to-agents":
+        return
+    import hashlib
+    from pathlib import Path
+
+    source = Path(app.env.doc2path(pagename, base=True)).read_bytes()
+    digest = hashlib.sha256(source).hexdigest()
+    context["metatags"] += (
+        f'<meta name="sac-guide-source-sha256" content="{digest}" />'
+    )
+
+
+def setup(app):
+    app.connect("html-page-context", _guide_source_fingerprint)

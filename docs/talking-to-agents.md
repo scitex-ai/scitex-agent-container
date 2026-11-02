@@ -199,11 +199,15 @@ consumers):
 
 `send` accepts both turn types:
 
-```jsonc
-// prompt turn
-{ "type": "prompt", "prompt": "Your question here", "options": { ... } }
+A prompt turn:
 
-// key / interrupt
+```json
+{ "type": "prompt", "prompt": "Your question here", "options": {} }
+```
+
+An interrupt turn:
+
+```json
 { "type": "key", "key": "ESC" }
 ```
 
@@ -250,7 +254,7 @@ spec:
 ```
 
 See [`spec-reference.md` § `kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents)
-and [`examples/agents/proxy-agent/`](../examples/agents/proxy-agent/)
+and [`examples/agents/proxy-agent/`](https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/proxy-agent)
 for the full reference.
 
 ## Picking a transport
