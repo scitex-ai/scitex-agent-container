@@ -424,3 +424,37 @@ def test_owned_listener_restores_launcher_after_owner_error(_fake_opencode):
         failure = str(exc)
     # Assert — a failing owner must not leak its launcher or reserved socket.
     assert ("unreadable" in failure, owner.subprocess is original, port.listener.fileno()) == (True, True, -1)
+
+
+@pytest.fixture(params=("success", "failure"))
+def _owner_signal_observation(_fake_opencode, request):
+    """Observe real owner signal changes, containing even a RED test's leak."""
+    import signal
+
+    signals = (signal.SIGTERM, signal.SIGINT)
+    before = tuple(signal.getsignal(sig) for sig in signals)
+    try:
+        port = _free_port()
+        if request.param == "success":
+            _run_owner(_fake_opencode, port)
+        else:
+            try:
+                _run_owner_resume(_fake_opencode, port, "")
+            except RuntimeError as exc:
+                if "no --resume-session" not in str(exc):
+                    raise
+            else:
+                raise RuntimeError("Invalid resume unexpectedly succeeded")
+        yield before, tuple(signal.getsignal(sig) for sig in signals)
+    finally:
+        for sig, handler in zip(signals, before):
+            signal.signal(sig, handler)
+
+
+def test_owned_fixture_restores_signal_dispositions(_owner_signal_observation):
+    # Arrange
+    before, after = _owner_signal_observation
+    # Act
+    actual = after
+    # Assert
+    assert actual == before
