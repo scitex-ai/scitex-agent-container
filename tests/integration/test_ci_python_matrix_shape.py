@@ -184,7 +184,7 @@ def test_pr_gate_job_names_match_the_required_status_checks():
     # a caller-local `runs-on` or `steps` would fork execution policy back
     # into this repo, which is exactly what ci.yml exists to end.
     central = "scitex-ai/.github/.github/workflows/"
-    pin = "@8510d06e21e8e7d24f575ee07a3fa62bc745e341"
+    pin = "@cd4e545a20a1e35385ffe88f4a963ae3c500819b"
     expected = {
         "pytest-matrix": f"{central}pytest-matrix.yml{pin}",
         "import-smoke": f"{central}import-smoke.yml{pin}",
