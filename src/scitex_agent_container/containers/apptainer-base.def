@@ -122,7 +122,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
         git openssh-client sshpass autossh git-crypt \
-        rsync \
+        rsync unzip \
         build-essential pkg-config \
         libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
         python3 python3-pip python3-venv python3-dev \
@@ -247,7 +247,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the decoupling is STRUCTURAL (standalone npm CLI vs the SDK's
     # internal bundle), not a frozen version mismatch; see section 6b for
     # the caveat about SDK/claude-session agents.
-    npx puppeteer browsers install chrome-headless-shell || true
+    # Puppeteer 25 requires unzip; section 1 installs it before npm postinstall.
+    npx puppeteer browsers install chrome-headless-shell
 
     # ---- 3b. bun runtime (pinned) --------------------------------------
     # The fleet's CCT stack (claude-code-telegrammer TS server + poller,
@@ -303,13 +304,12 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         if [ -n "$_found" ] && [ -x "$_found" ]; then
             ln -sfn "$_found" /opt/browser/"$_b"
             echo "BROWSER: /opt/browser/$_b -> $_found"
+            /opt/browser/"$_b" --headless --no-sandbox --disable-gpu --dump-dom about:blank
         else
-            # LOUD, because the `|| true` above makes a failed download
-            # indistinguishable from a successful one. An image that
-            # silently ships without a browser is exactly how the fleet came
-            # to run two dead MCP servers without anyone noticing.
-            echo "BROWSER: WARNING - no $_b under /root/.cache/puppeteer;" \
-                 "browser MCP servers will not start in this image" >&2
+            # Both stable paths are runtime contracts for browser MCP tools.
+            # Reject incomplete downloads instead of publishing a broken image.
+            echo "BROWSER: FAIL - no executable $_b under /root/.cache/puppeteer" >&2
+            exit 1
         fi
     done
     unset _b _found

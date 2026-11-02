@@ -9,6 +9,9 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Install the ZIP extractor required by Puppeteer before browser downloads.
+  Reject missing browser executables and require both stable browser paths to
+  launch headlessly before accepting a base image.
 - Keep both dashboard message composers on the current page when Enter or
   Ctrl/Command+Enter submits. Shift+Enter inserts a newline. Preserve the draft
   and show inline errors after refusal or uncertain transport; do not blindly
