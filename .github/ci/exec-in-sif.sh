@@ -269,9 +269,32 @@ find "$CI_PG_ROOT" -mindepth 1 -maxdepth 1 -type d -mmin +360 2>/dev/null |
 # one runner and not the next, which is the failure shape this whole change
 # exists to end.
 CI_PG_SIF=""
-for _cand in "$HOME"/.scitex/pg/postgres*.sif; do
-    [ -f "$_cand" ] && CI_PG_SIF="$_cand"
-done
+_release_pg_ready=""
+if [ -n "${SAC_RELEASE_PG_SIF:-}" ]; then
+    # Release-only opt-in: never rediscover another image by glob. Recheck the
+    # fixed whole PG/runtime bytes here, immediately before any PG invocation.
+    CI_PG_SIF="$(/usr/bin/readlink -f -- "$SAC_RELEASE_PG_SIF")"
+    [ -f "$CI_PG_SIF" ] && [ ! -L "$CI_PG_SIF" ] || exit 1
+    _release_pg_before="$(/usr/bin/stat -c '%d:%i:%s:%f:%y:%z' -- "$CI_PG_SIF")"
+    APPTAINER="$(/usr/bin/readlink -f -- "$APPTAINER")"
+    [ -f "$APPTAINER" ] && [ ! -L "$APPTAINER" ] && [ -x "$APPTAINER" ] || exit 1
+    _release_runtime_before="$(/usr/bin/stat -c '%d:%i:%s:%f:%y:%z' -- "$APPTAINER")"
+    _release_pg_hash="$(/usr/bin/sha256sum -- "$CI_PG_SIF")"
+    _release_runtime_hash="$(/usr/bin/sha256sum -- "$APPTAINER")"
+    _release_pg_after="$(/usr/bin/stat -c '%d:%i:%s:%f:%y:%z' -- "$CI_PG_SIF")"
+    _release_runtime_after="$(/usr/bin/stat -c '%d:%i:%s:%f:%y:%z' -- "$APPTAINER")"
+    if [ "${_release_pg_hash%% *}" != 842a1fcf5abdc512af312c1527a0700c52e4b1a6b6e3e3dddc6edde69113ee23 ] ||
+       [ "${_release_runtime_hash%% *}" != 7bdb501fdddbb7264b4e4d6038e0ec27201f63e217519e5f7f0db950c9285ddd ] ||
+       [ "$_release_pg_after" != "$_release_pg_before" ] ||
+       [ "$_release_runtime_after" != "$_release_runtime_before" ]; then
+        echo "::error::release PostgreSQL/runtime byte identity differs" >&2
+        exit 1
+    fi
+else
+    for _cand in "$HOME"/.scitex/pg/postgres*.sif; do
+        [ -f "$_cand" ] && CI_PG_SIF="$_cand"
+    done
+fi
 
 if [ -z "$CI_PG_SIF" ]; then
     echo "::warning::no postgres SIF under $HOME/.scitex/pg — PostgreSQL tests will SKIP (loudly). Looked for postgres*.sif."
@@ -327,6 +350,16 @@ else
             done
 
             if [ -n "$CI_PG_READY" ]; then
+                if [ -n "${SAC_RELEASE_PG_SIF:-}" ]; then
+                    _release_pg_identity="$("$APPTAINER" exec --bind "$CI_PG_ROOT" "$CI_PG_SIF" \
+                        psql -X -h 127.0.0.1 -p "$CI_PG_PORT" -U ci_tests -d postgres -Atqc \
+                        "SELECT concat_ws(chr(9), current_setting('data_directory'), current_setting('server_version_num'), pg_is_in_recovery()::text, current_setting('transaction_read_only'))")"
+                    if [ "$_release_pg_identity" != "$CI_PG_DATA"$'\t'"180006"$'\t'"false"$'\t'"off" ]; then
+                        echo "::error::release PostgreSQL is not the owned writable qualified PG18.6 cluster" >&2
+                        exit 1
+                    fi
+                    _release_pg_ready=yes
+                fi
                 export APPTAINERENV_SAC_TEST_PG_DSN="postgresql://127.0.0.1:$CI_PG_PORT/postgres"
                 export APPTAINERENV_PGUSER="ci_tests"
                 echo "exec-in-sif: CI postgres ready on 127.0.0.1:$CI_PG_PORT (data=$CI_PG_DATA, image=$(basename "$CI_PG_SIF"))"
@@ -338,6 +371,10 @@ else
             echo "::warning::initdb failed for the CI postgres — PostgreSQL tests will SKIP (loudly)."
         fi
     fi
+fi
+if [ -n "${SAC_RELEASE_PG_SIF:-}" ] && [ "$_release_pg_ready" != yes ]; then
+    echo "::error::release requires its verified owned PostgreSQL cluster" >&2
+    exit 1
 fi
 # --- end throwaway PostgreSQL ------------------------------------------------
 

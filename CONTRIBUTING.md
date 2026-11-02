@@ -142,7 +142,10 @@ CONTRIBUTING, examples/, mirror tests), Python API exports.
 ## Release
 
 `develop → main` PR. Tag from `main` after merge. `pyproject.toml`
-version bump in the same PR. CI publishes to PyPI on tag push.
+version bump in the same PR. CI publishes to PyPI on tag push. The checked
+release executor requires the tag to match current protected main and retain
+accepted-develop ancestry; see [release guards](docs/release-guards.md) for the
+exact runtime and private PostgreSQL requirements.
 
 ## License + CLA
 
