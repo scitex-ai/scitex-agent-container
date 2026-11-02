@@ -125,7 +125,7 @@ def test_dashboard_uses_authenticated_listener_and_preserves_dispatch(endpoints)
     assert (
         result.state == "accepted"
         and result.exchange_id == EXCHANGE
-        and "completion is pending" in result.message
+        and "agent admission; confirmation is pending" in result.message
         and Listener.received
         == [
             {

@@ -26,7 +26,7 @@ TUI. Authentication is separate from harness selection. OpenAI Agents SDK
 has no lifecycle launch adapter; Command Code is unregistered. See
 [how-sac-works.md](../../../../docs/how-sac-works.md) for the support matrix.
 
-## What the package ships
+## Interfaces
 
 | Surface | Location |
 |---|---|
@@ -66,7 +66,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [35](35_spec-authority.md)
 
 ### Workflows
-- [10_cli.md](10_cli.md) — CLI commands and Python API
+- [10_cli.md](10_cli.md) — CLI; [GUI receipts](57_gui-admission-receipts.md)
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha

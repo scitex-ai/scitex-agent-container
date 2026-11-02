@@ -562,6 +562,7 @@ def message_action(request: HttpRequest, name: str):
         send_control_key,
         send_message,
     )
+    from ._exchange import accepted_receipt
 
     fleet = RemoteFleet.from_environment()
     identity = resolve_identity(request)
@@ -657,6 +658,7 @@ def message_action(request: HttpRequest, name: str):
             "cross_host": cross_host,
             "state": result.state,
             "dispatch_id": result.dispatch_id,
+            "exchange_id": result.exchange_id,
             "message": result.message[:240],
             "path": request.path,
         }
@@ -676,7 +678,16 @@ def message_action(request: HttpRequest, name: str):
                 "state": result.state,
                 "message": result.message[:240],
                 "dispatch_id": result.dispatch_id,
-                **({"exchange_id": result.exchange_id} if result.exchange_id else {}),
+                **(
+                    {
+                        "exchange_id": result.exchange_id,
+                        "exchange_receipt": accepted_receipt(
+                            identity, name, result.exchange_id
+                        ),
+                    }
+                    if result.exchange_id
+                    else {}
+                ),
             }
         )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
