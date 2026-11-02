@@ -78,7 +78,7 @@ with click.Context(mcp,parent=context) as child:
  nested={name:mcp.get_command(child,name) for name in mcp.list_commands(child)}
 tools=nested.get('list-tools')
 print(json.dumps({'same_api':api is main.get_command(context,'list-python-apis'),
- 'same_mcp':mcp is main.get_command(context,'mcp'),
+ 'same_mcp':mcp is main.get_command(context,'mcp') and mcp is facade.get_command(ctx=context,cmd_name='mcp'),
  'same_tools':tools is mcp.commands.get('list-tools'),
  'api_json':any('--json' in p.opts for p in api.params),
  'tools_json':any('--json' in p.opts for p in tools.params)}))

@@ -204,9 +204,9 @@ class _SacBootstrapGroup(click.Group):
         """Expose the real owner's lazy discovery without warming its cache."""
         return self._command.list_commands(ctx)
 
-    def get_command(self, ctx: click.Context, name: str) -> click.Command | None:
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Return the real command object, preserving callbacks and ownership."""
-        return self._command.get_command(ctx, name)
+        return self._command.get_command(ctx, cmd_name)
 
     def main(
         self,
