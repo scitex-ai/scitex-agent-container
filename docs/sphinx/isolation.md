@@ -367,5 +367,5 @@ sees exactly what changed instead of a flat "non-standard" label.
 ## See also
 
 - [`spec-reference.md`](spec-reference.md) — `spec.apptainer.raw_args` field
-- [`talking-to-agents.md`](talking-to-agents.md) — A2A surface (where isolation level should be advertised)
+- {doc}`talking-to-agents` — A2A surface (where isolation level should be advertised)
 - [`how-sac-works.md`](how-sac-works.md) — overall architecture

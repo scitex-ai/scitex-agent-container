@@ -186,6 +186,12 @@ jobs:
             exit 1
           fi
           echo "OK: dist/ contains a wheel for the tagged version ${V}."
+      - name: Verify packaged admission guide portability and source freshness
+        run: |
+          set -euo pipefail
+          for wheel in dist/*.whl; do
+            python3 .github/ci/check_admission_guide.py "$wheel"
+          done
       # upload-artifact is a JS action — runs fine on the self-hosted runner.
       - uses: actions/upload-artifact@v4
         id: upload

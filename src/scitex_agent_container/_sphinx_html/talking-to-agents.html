@@ -4,17 +4,18 @@
 <html class="writer-html5" lang="en" data-content_root="./">
 <head>
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-
+<meta name="sac-guide-source-sha256" content="dc96aa14c7b178b6ed9c1e9e0890f32d85be0e1ce155f7e6fdb5b6367da8ff42" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Talking to a Running Agent &mdash; scitex-agent-container v0.29.5</title>
+  <title>Talking to a Running Agent &mdash; scitex-agent-container v0.38.6</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+      <link rel="stylesheet" type="text/css" href="_static/sphinx_autodoc_typehints.css?v=057ac668" />
 
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=a4b8ebc0"></script>
+      <script src="_static/documentation_options.js?v=f05317e9"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -117,6 +118,7 @@
 </ul>
 </li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Talking to a Running Agent</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#fleet-dashboard-admission-receipts">Fleet dashboard admission receipts</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#a2a-sidecar-post-agents-name-turn">1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#send-a-turn">Send a turn</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#discover-the-agent">Discover the agent</a></li>
@@ -190,6 +192,7 @@
 <li class="toctree-l2"><a class="reference internal" href="api/scitex_agent_container.html#module-scitex_agent_container.config">Config</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.uuid"><code class="docutils literal notranslate"><span class="pre">AgentConfig.uuid</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.harness_key_is_legacy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.harness_key_is_legacy</span></code></a></li>
@@ -203,6 +206,7 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.subscription_account"><code class="docutils literal notranslate"><span class="pre">AgentConfig.subscription_account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.residency"><code class="docutils literal notranslate"><span class="pre">AgentConfig.residency</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.secret_scope"><code class="docutils literal notranslate"><span class="pre">AgentConfig.secret_scope</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -218,10 +222,13 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.restart"><code class="docutils literal notranslate"><span class="pre">AgentConfig.restart</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.autonomous"><code class="docutils literal notranslate"><span class="pre">AgentConfig.autonomous</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_background_review"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_background_review</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_max_turns"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_max_turns</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_goals"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_goals</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_failover"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_failover</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_yolo"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_yolo</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_run_budget_seconds</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hermes_compression"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hermes_compression</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.worktree"><code class="docutils literal notranslate"><span class="pre">AgentConfig.worktree</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_approval_policy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_approval_policy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_run_budget_seconds"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_run_budget_seconds</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.opencode_serve_port"><code class="docutils literal notranslate"><span class="pre">AgentConfig.opencode_serve_port</span></code></a></li>
@@ -415,6 +422,11 @@
 <li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WatchdogSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WatchdogSpec.__init__()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WorktreeSpec"><code class="docutils literal notranslate"><span class="pre">WorktreeSpec</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WorktreeSpec.authority_branch"><code class="docutils literal notranslate"><span class="pre">WorktreeSpec.authority_branch</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.WorktreeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">WorktreeSpec.__init__()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.apply_engine"><code class="docutils literal notranslate"><span class="pre">apply_engine()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.compose_effective_name"><code class="docutils literal notranslate"><span class="pre">compose_effective_name()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="api/scitex_agent_container.html#scitex_agent_container.config.derive_hermes_fleet_context_budget"><code class="docutils literal notranslate"><span class="pre">derive_hermes_fleet_context_budget()</span></code></a></li>
@@ -530,6 +542,26 @@ ordered from external-friendliest to most internal:</p>
 inbox, so the SDK conversation is identical regardless of which door
 the prompt came through.</p>
 <hr class="docutils" />
+<section id="fleet-dashboard-admission-receipts">
+<h2>Fleet dashboard admission receipts<a class="headerlink" href="#fleet-dashboard-admission-receipts" title="Link to this heading"></a></h2>
+<p>The same-host dashboard sends through the authenticated host listener, so a
+Docker dashboard can reach a host-loopback bridge. Cross-host rows disable the
+composer and direct the operator to Cards; switching rows preserves an unsent
+draft and clears the previous recipient.</p>
+<p>A successful POST can return <code class="docutils literal notranslate"><span class="pre">202</span></code> with an exchange ID. The dashboard keeps that
+receipt and performs authenticated GETs, at most 30 attempts over 60 seconds,
+without repeating the POST. The GET is bound to the caller, agent, and exchange
+by a signed receipt, rechecks control scope, and uses private/no-store responses.
+Canonical <code class="docutils literal notranslate"><span class="pre">202</span></code> and <code class="docutils literal notranslate"><span class="pre">102</span></code> remain pending. A final native <code class="docutils literal notranslate"><span class="pre">200</span></code> means <strong>Received by
+agent</strong>: the identified turn was admitted and became visible in its transcript.
+It does not mean the model finished the requested task. A final refusal remains
+an error; an unavailable or exhausted lookup remains unconfirmed.</p>
+<p>Changing the selected agent cancels polling. The receipt remains available when
+returning to that agent within the current page. If confirmation is unavailable,
+inspect the agent before intentionally submitting another message. There is no
+automatic resend, and dispatch IDs provide correlation rather than durable
+cross-worker deduplication. The exchange GET does not enqueue another turn.</p>
+</section>
 <section id="a2a-sidecar-post-agents-name-turn">
 <h2>1. A2A sidecar — <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/agents/&lt;name&gt;/turn</span></code><a class="headerlink" href="#a2a-sidecar-post-agents-name-turn" title="Link to this heading"></a></h2>
 <p>Enable it by leaving <code class="docutils literal notranslate"><span class="pre">spec.a2a.port</span></code> at its default (<code class="docutils literal notranslate"><span class="pre">auto</span></code>) — sac
@@ -731,11 +763,12 @@ consumers):</p>
 </tbody>
 </table>
 <p><code class="docutils literal notranslate"><span class="pre">send</span></code> accepts both turn types:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>// prompt turn
-{ "type": "prompt", "prompt": "Your question here", "options": { ... } }
-
-// key / interrupt
-{ "type": "key", "key": "ESC" }
+<p>A prompt turn:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"prompt"</span><span class="p">,</span><span class="w"> </span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Your question here"</span><span class="p">,</span><span class="w"> </span><span class="nt">"options"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>An interrupt turn:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"key"</span><span class="p">,</span><span class="w"> </span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ESC"</span><span class="w"> </span><span class="p">}</span>
 </pre></div>
 </div>
 </section>
@@ -776,7 +809,7 @@ peers see one consistent skill list.</p>
 </pre></div>
 </div>
 <p>See <a class="reference internal" href="spec-reference.html#kind-agentproxy-http-forwarder-agents"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">spec-reference.md</span></code> § <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">AgentProxy</span></code></span></a>
-and <a class="reference external" href="https://github.com/ywatanabe1989/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/</span></code></a>
+and <a class="reference external" href="https://github.com/scitex-ai/scitex-agent-container/tree/develop/examples/agents/proxy-agent"><code class="docutils literal notranslate"><span class="pre">examples/agents/proxy-agent/</span></code></a>
 for the full reference.</p>
 </section>
 <section id="picking-a-transport">

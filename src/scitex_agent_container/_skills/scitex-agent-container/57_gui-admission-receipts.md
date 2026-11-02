@@ -16,5 +16,5 @@ by agent** (turn admission/transcript visibility). Switching agents stops the
 poll. An unconfirmed receipt needs manual agent inspection before another send;
 never automatically resend an uncertain submission. Dispatch IDs correlate
 requests and are not durable cross-worker deduplication. See
-[talking-to-agents.md](../../../../docs/talking-to-agents.md#fleet-dashboard-admission-receipts).
+[talking-to-agents.md](../../_sphinx_html/talking-to-agents.html#fleet-dashboard-admission-receipts).
 
