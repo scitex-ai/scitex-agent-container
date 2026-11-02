@@ -20,86 +20,11 @@ import pytest
 from scitex_agent_container.runtimes import _opencode_tui_owner as owner
 from scitex_agent_container.runtimes._gateway_opencode import SERVE_FILE
 
-_FAKE_OPENCODE = """#!/usr/bin/env python3
-import json
-import os
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-
-def _serve(port):
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def _send(self, code, payload):
-            import json as _json
-
-            body = _json.dumps(payload).encode()
-            self.send_response(code)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path == "/global/health":
-                self._send(200, {"healthy": True})
-            elif self.path.startswith("/session/"):
-                self._send(200, {"id": self.path.rsplit("/", 1)[-1]})
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-        def do_POST(self):
-            if self.path == "/session":
-                length = int(self.headers.get("Content-Length", 0))
-                self.rfile.read(length)
-                self._send(200, {"id": "ses_stub1"})
-            elif self.path.endswith("/message"):
-                import json as _json
-
-                length = int(self.headers.get("Content-Length", 0))
-                body = _json.loads(self.rfile.read(length) or b"{}")
-                log_path = os.path.join(os.environ["OC_TEST_STATE"], "posts.jsonl")
-                with open(log_path, "a", encoding="utf-8") as handle:
-                    handle.write(_json.dumps(body))
-                    handle.write(chr(10))
-                self._send(200, {"info": {"id": "msg_stub1"}, "parts": []})
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
-
-
-def _attach():
-    import json as _json
-
-    state_dir = os.environ["OC_TEST_STATE"]
-    serve_path = os.path.join(state_dir, "opencode-serve.json")
-    with open(serve_path, encoding="utf-8") as handle:
-        url = _json.load(handle)["url"]
-    with open(os.path.join(state_dir, "attach-marker"), "w", encoding="utf-8") as out:
-        out.write(url)
-    marker = os.path.join(state_dir, "attach-argv.json")
-    with open(marker, "w", encoding="utf-8") as out:
-        _json.dump(sys.argv[1:], out)
-    raise SystemExit(int(os.environ.get("OC_TEST_ATTACH_RC", "0")))
-
-
-if sys.argv[1] == "serve":
-    _serve(int(sys.argv[sys.argv.index("--port") + 1]))
-elif sys.argv[1] == "attach":
-    _attach()
-else:
-    raise SystemExit(2)
-"""
-
-
-def _free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+from tests.scitex_agent_container.runtimes._opencode_fixture import (
+    _FAKE_OPENCODE,
+    _free_port,
+    _run_with_listener,
+)
 
 
 @pytest.fixture()
@@ -122,8 +47,8 @@ def _run_owner(state_dir, port, mode="fresh", max_age="", startup=None):
         (state_dir / "opencode-startup.json").write_text(
             _json.dumps(startup), encoding="utf-8"
         )
-    return owner.main(
-        [
+    return _run_with_listener(
+        owner.main, [
             "--state-dir",
             str(state_dir),
             "--agent-name",
@@ -138,7 +63,7 @@ def _run_owner(state_dir, port, mode="fresh", max_age="", startup=None):
             "opencode",
             "attach",
             url,
-        ]
+        ], port,
     )
 
 
@@ -291,8 +216,8 @@ def test_pin_respects_a_caller_supplied_session():
 
 def _run_owner_resume(state_dir, port, resume_id):
     url = f"http://127.0.0.1:{port}"
-    return owner.main(
-        [
+    return _run_with_listener(
+        owner.main, [
             "--state-dir",
             str(state_dir),
             "--agent-name",
@@ -307,7 +232,7 @@ def _run_owner_resume(state_dir, port, resume_id):
             "opencode",
             "attach",
             url,
-        ]
+        ], port,
     )
 
 
@@ -433,7 +358,7 @@ def test_owner_refuses_an_invalid_port(tmp_path):
 
 def test_health_wait_times_out_when_nothing_listens():
     # Arrange
-    port = _free_port()
+    port = _free_port(reserve=False)
     url = f"http://127.0.0.1:{port}"
     process = SimpleNamespace(poll=lambda: None)
     # Act
@@ -452,3 +377,35 @@ def test_atomic_json_is_owner_only(tmp_path):
     owner._atomic_json(path, {"url": "http://127.0.0.1:1"})
     # Assert
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_fixture_port_stays_reserved_before_child_start(_fake_opencode):
+    # Arrange — a competing bind reproduces another xdist worker's port claim.
+    import errno
+
+    port = _free_port()
+    error = None
+    try:
+        with socket.socket() as competitor:
+            # Act
+            try:
+                competitor.bind(("127.0.0.1", int(port)))
+            except OSError as exc:
+                error = exc.errno
+        # Assert — the listener stays owned across the free-port/startup gap.
+        assert error == errno.EADDRINUSE
+    finally:
+        port.listener.close()
+
+
+def test_owned_listener_restores_stdin_after_session_exit(_fake_opencode):
+    # Arrange
+    before = os.fstat(0)
+    port = _free_port()
+    # Act
+    _run_owner(_fake_opencode, port)
+    after = os.fstat(0)
+    # Assert
+    assert (after.st_dev, after.st_ino, port.listener.fileno()) == (
+        before.st_dev, before.st_ino, -1,
+    )
