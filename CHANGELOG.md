@@ -9,6 +9,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Keep GUI and development installs on the same exact SDK 0.3.18 cohort,
+  including its phone viewport and shell utility ownership corrections.
 - Read status session identity through the selected runtime's ownership proof,
   including Hermes container/host aliases. Keep status and activity available
   with explicit unknown session evidence when proof fails. Passive status reads
