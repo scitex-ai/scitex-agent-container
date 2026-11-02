@@ -9,6 +9,10 @@ versioning follows [SemVer](https://semver.org/).
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
+- Read status session identity through the selected runtime's ownership proof,
+  including Hermes container/host aliases. Keep status and activity available
+  with explicit unknown session evidence when proof fails. Passive status reads
+  no longer activate the Hermes renderer to inspect optional clarification state.
 - Resolve the scientific umbrella, staged SAC and staged Cards together with
   dependency checking enabled. Refuse an image whose installed requirements
   conflict. The scientific layer requires the compatible scitex 2.30.9 cohort

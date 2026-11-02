@@ -258,6 +258,14 @@ curl -s http://127.0.0.1:7878/v1/health                # healthcheck
 
 See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe + the federated-jobs vs hand-maintained-services split.
 
+Authenticated `GET /agents/<name>/status` reads session identity through the
+selected runtime's ownership checks. Its additive `session_evidence` field
+reports retained identity as observed, absent, or unknown; unknown proof keeps
+`session_id` null without hiding independent liveness/activity evidence. Passive
+status never activates a Hermes renderer. Optional clarification remains
+explicitly unknown when it has not been queried through a passive snapshot.
+
+
 ## Three Interfaces
 
 <details open>
