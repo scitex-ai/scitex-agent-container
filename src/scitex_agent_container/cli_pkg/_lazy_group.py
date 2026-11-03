@@ -42,28 +42,39 @@ class _LazyCommandsDict(dict):
     """Dict-of-commands that resolves lazy entries on ``get`` / ``in``.
 
     The CLI audit (and any third-party tooling that introspects a
-    click group) reads ``group.commands`` directly without going
-    through ``Group.get_command`` — by name (``get`` / ``in``) AND by
-    enumeration (``list()`` / ``len()`` / iteration, which is how the
-    audit snapshots the tree). With a plain dict, lazy entries are
-    invisible to both. This subclass forwards misses to the owning
-    group's lazy resolver and caches the result; enumeration
-    materialises every lazy entry first so ``list()``/``len()`` tell
-    the truth (audit-time import cost, never hot-path: normal
-    invocation resolves only the invoked subcommand).
+    click group) reads ``group.commands`` by name (``get`` / ``in`` /
+    ``[]``) without going through ``Group.get_command``. With a plain
+    dict, lazy entries are invisible, so this subclass forwards misses
+    to the owning group's lazy resolver and caches the result.
+    Enumeration (``list()`` / ``len()`` / ``keys()``, which is how the
+    audit snapshots the tree) additionally materialises the handful
+    of names in ``_ENUMERATE_EAGER_NAMES`` — every lazy entry would
+    drag its module into the process and break the --help import
+    closure the startup-budget test guards, so enumeration stays
+    scoped while by-name access resolves anything on demand.
     """
 
     def __init__(self, group: "LazyGroup") -> None:
         super().__init__()
         self._group = group
 
+    # Names that MUST be visible to pure-dict enumeration. Importing
+    # every lazy entry here would drag each subcommand module into the
+    # process (`doctor` pulls runtimes -> scitex_logging.getDiagnostic,
+    # which breaks --help under older scitex-logging; the startup-budget
+    # closure test exists precisely to forbid that). The audit needs
+    # exactly these; everything else still resolves on demand.
+    _ENUMERATE_EAGER_NAMES = frozenset({
+        "list-python-apis",
+        "mcp",
+        "dev",
+        "install-shell-completion",
+        "print-shell-completion",
+    })
+
     def _populate_all(self) -> None:
-        for name in self._group.LAZY_COMMANDS:
+        for name in self._ENUMERATE_EAGER_NAMES:
             self._try_resolve(name)
-        # Subclasses may resolve extra names outside LAZY_COMMANDS
-        # (e.g. _MainGroup's lazily-attached shell-completion pair,
-        # resolved via its _resolve_lazy override). Enumerate those too
-        # so list()/len() match list_commands(ctx).
         for name in getattr(self._group, "_COMPLETION_NAMES", ()):
             self._try_resolve(name)
 
