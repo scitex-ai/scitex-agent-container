@@ -42,15 +42,30 @@ class _LazyCommandsDict(dict):
     """Dict-of-commands that resolves lazy entries on ``get`` / ``in``.
 
     The CLI audit (and any third-party tooling that introspects a
-    click group) reads ``group.commands.get(name)`` directly without
-    going through ``Group.get_command``. With a plain dict, lazy
-    entries are invisible. This subclass forwards misses to the owning
-    group's lazy resolver and caches the result.
+    click group) reads ``group.commands`` directly without going
+    through ``Group.get_command`` — by name (``get`` / ``in``) AND by
+    enumeration (``list()`` / ``len()`` / iteration, which is how the
+    audit snapshots the tree). With a plain dict, lazy entries are
+    invisible to both. This subclass forwards misses to the owning
+    group's lazy resolver and caches the result; enumeration
+    materialises every lazy entry first so ``list()``/``len()`` tell
+    the truth (audit-time import cost, never hot-path: normal
+    invocation resolves only the invoked subcommand).
     """
 
     def __init__(self, group: "LazyGroup") -> None:
         super().__init__()
         self._group = group
+
+    def _populate_all(self) -> None:
+        for name in self._group.LAZY_COMMANDS:
+            self._try_resolve(name)
+        # Subclasses may resolve extra names outside LAZY_COMMANDS
+        # (e.g. _MainGroup's lazily-attached shell-completion pair,
+        # resolved via its _resolve_lazy override). Enumerate those too
+        # so list()/len() match list_commands(ctx).
+        for name in getattr(self._group, "_COMPLETION_NAMES", ()):
+            self._try_resolve(name)
 
     def _try_resolve(self, name: str) -> click.Command | None:
         if dict.__contains__(self, name):
@@ -59,6 +74,18 @@ class _LazyCommandsDict(dict):
         if cmd is not None:
             dict.__setitem__(self, name, cmd)
         return cmd
+
+    def __iter__(self):  # type: ignore[override]
+        self._populate_all()
+        return dict.__iter__(self)
+
+    def __len__(self) -> int:  # type: ignore[override]
+        self._populate_all()
+        return dict.__len__(self)
+
+    def keys(self):  # type: ignore[override]
+        self._populate_all()
+        return dict.keys(self)
 
     def get(self, name, default=None):
         cmd = self._try_resolve(name)
