@@ -117,3 +117,44 @@ def test_baseline_always_load_survives_overlay_without_it():
     merged = merge_mcp_json(base, overlay)
     # Assert
     assert merged["mcpServers"]["scitex-todo"]["alwaysLoad"] is True
+
+
+def test_null_overlay_server_removes_baseline_server():
+    # Arrange — isolated child excludes a baseline server it must not inherit
+    # (card to-home-baseline-merge-defeats-child-isolation-20260920).
+    base = {"mcpServers": {"sac": {"command": "sac"}, "cards": {"command": "cards"}}}
+    overlay = {"mcpServers": {"cards": None}}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert set(merged["mcpServers"]) == {"sac"}
+
+
+def test_null_overlay_for_absent_server_is_noop():
+    # Arrange — excluding a server the baseline does not carry changes nothing.
+    base = {"mcpServers": {"sac": {"command": "sac"}}}
+    overlay = {"mcpServers": {"ghost": None}}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert set(merged["mcpServers"]) == {"sac"}
+
+
+def test_null_overlay_env_block_strips_store_env():
+    # Arrange — child keeps the server but strips the store/quota env block.
+    base = {"mcpServers": {"pw": {"command": "pw", "env": {"PGUSER": "x", "KEEP": "y"}}}}
+    overlay = {"mcpServers": {"pw": {"env": None}}}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert merged["mcpServers"]["pw"] == {"command": "pw"}
+
+
+def test_null_overlay_top_level_key_removes_it():
+    # Arrange
+    base = {"mcpServers": {}, "_note": "baseline"}
+    overlay = {"_note": None}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert "_note" not in merged
