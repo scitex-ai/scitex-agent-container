@@ -253,8 +253,9 @@ def test_detail_fragment_renders_five_tabs(client, loopback, env_save_restore):
     # Arrange — seeded tabbed Details fragment (helper).
     # Act
     html = _seeded_details_partial(client, env_save_restore)
-    # Assert — operator 2026-10-22: 5 tabs, no <details> shells.
-    assert html.count('role="tab"') == 5 and "<details" not in html
+    # Assert — operator 2026-10-22: 5 tabs, no <details> shells; compass
+    # L518: the single <details> is the collapsed advanced disclosure.
+    assert html.count('role="tab"') == 5 and html.count("<details") == 1 and 'data-advanced="runtime"' in html
 
 
 def test_detail_fragment_pairs_every_tab_with_panel(client, loopback, env_save_restore):
