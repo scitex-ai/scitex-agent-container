@@ -198,6 +198,15 @@ class _SacBootstrapGroup(click.Group):
     """Auditable facade whose execution uses SAC's console wrapper."""
 
     _delegate: Callable[[], object]
+    _command: click.Group
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        """Advertise the real command surface, including uncached lazy groups."""
+        return self._command.list_commands(ctx)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        """Resolve through the guarded root's public discovery protocol."""
+        return self._command.get_command(ctx, cmd_name)
 
     def main(
         self,
@@ -245,6 +254,7 @@ def _load_cli() -> click.Group:
         chain=command.chain,
     )
     facade._delegate = delegate
+    facade._command = command
     return facade
 
 
