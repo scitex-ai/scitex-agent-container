@@ -135,11 +135,13 @@ def test_detail_fragment_renders_five_tabs_not_details(
     body = client.get("/alpha/?partial=1").content.decode()
     # Assert — 5 tabs in a tablist; the standalone Message thread card and
     # every <details> shell are gone (thread lives in the center DM pane).
+    # Compass L518: the single <details> is the collapsed advanced disclosure.
     assert (
         body.count('role="tab"') == 5
         and 'role="tablist"' in body
         and 'id="message-thread"' not in body
-        and "<details" not in body
+        and body.count("<details") == 1
+        and 'data-advanced="runtime"' in body
     )
 
 

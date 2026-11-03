@@ -169,6 +169,10 @@
 .activity-kv { grid-template-columns: 110px minmax(120px, 1fr) 110px minmax(120px, 1fr); }
 .activity-kv .unknown { color: var(--agents-faint); }
 .activity-note { margin: 12px 0 0; font-size: 12px; }
+/* Compass L518: collapsed-until-needed runtime internals (pid / port / url /
+   session). Native <details> — no-JS safe, same idiom as details.detail-card. */
+.detail-advanced { margin-top: 12px; }
+.detail-advanced > summary { cursor: pointer; font-size: 12.5px; color: var(--agents-dim); }
 .detail-state { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .detail-state-label { font-size: 17px; font-weight: 650; }
 .detail-state-label.good { color: var(--agents-good); }
