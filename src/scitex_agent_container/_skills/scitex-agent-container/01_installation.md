@@ -136,7 +136,11 @@ installations without these setup capabilities fail clearly before changing
 any skill destination or client configuration; the core dependency floor alone
 does not establish setup capability availability.
 
-At runtime, SAC's existing Hermes profile adapter separately discovers enabled
-installed skill providers, applies central opt-outs and agent exclusions, and
-materializes audited hashed projections in the isolated agent home. Manual
-installation does not replace that runtime adapter.
+At runtime, the Hermes profile adapter reads the public
+`scitex_dev.skill_registry.discover_installed_skills()` registry. This requires
+`installed-provider-registry-v1` in Dev's `INSTALL_CAPABILITIES`; older Dev is
+refused before a runtime skill projection is written. The shared registry owns installed
+skill discovery, distribution ownership and central opt-outs. SAC additionally
+applies `exclude_skills` to owners and namespaces, then materializes audited
+hashed projections in the isolated agent home. Manual installation does not
+replace that runtime adapter.

@@ -403,6 +403,13 @@ sac dev skills install --claude-symlink    # (legacy) also expose to Claude Code
   by default (Hermes is the first-option harness; Claude Code is legacy). Opt out with
   `--no-hermes-symlink`.
 
+Generated Hermes profiles use the shared
+`scitex_dev.skill_registry.discover_installed_skills()` registry, requiring the
+`installed-provider-registry-v1` Dev capability. Central opt-outs apply before
+SAC's `exclude_skills` filters distribution owners and namespaces; each selected
+tree is copied and hash-audited in the isolated home. Older Dev is refused
+before the runtime skill projection is materialized.
+
 <details>
 <summary><strong>Python ⭐⭐</strong></summary>
 
