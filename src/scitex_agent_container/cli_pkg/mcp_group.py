@@ -355,6 +355,7 @@ def mcp_list_tools(as_json: bool) -> None:
 
 
 @mcp.command("install")
+@click.option("--json", "as_json", is_flag=True, help="Emit the shared normalized MCP client manifest.")
 @click.option(
     "--claude-code",
     is_flag=True,
@@ -375,7 +376,7 @@ def mcp_list_tools(as_json: bool) -> None:
     default=False,
     help="Skip the (currently never-shown) confirm prompt; reserved for parity.",
 )
-def mcp_install(claude_code: bool, dry_run: bool, yes: bool) -> None:
+def mcp_install(claude_code: bool, dry_run: bool, yes: bool, as_json: bool) -> None:
     """Show MCP installation instructions.
 
     \b
@@ -384,7 +385,26 @@ def mcp_install(claude_code: bool, dry_run: bool, yes: bool) -> None:
       $ sac mcp install --claude-code
       $ sac mcp install --dry-run
     """
-    del dry_run, yes  # `install` only prints today; flags reserved
+    del dry_run, yes  # `install` only prints; it does not modify client configuration
+    if as_json:
+        import sys
+        try:
+            from scitex_dev.mcp_setup import build_mcp_install_manifest
+        except ImportError as exc:
+            raise click.ClickException(
+                "Normalized MCP setup requires scitex-dev's public mcp_setup API; "
+                "update scitex-dev in this interpreter. No client config changed."
+            ) from exc
+        launch = ["-m", "scitex_agent_container", "mcp", "start"]
+        manifest = build_mcp_install_manifest(
+            "scitex-agent-container", command=sys.executable, args=launch,
+            verify=[
+                [sys.executable, "-m", "scitex_agent_container", "mcp", "doctor"],
+                [sys.executable, "-m", "scitex_agent_container", "mcp", "list-tools", "--json"],
+            ],
+        )
+        click.echo(json_mod.dumps(manifest, indent=2, sort_keys=True))
+        return
     if claude_code:
         click.secho("Add to your Claude Code MCP config:", fg="cyan")
         click.echo()

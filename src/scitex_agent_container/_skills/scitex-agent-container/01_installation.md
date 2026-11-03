@@ -111,3 +111,32 @@ sac image list             # built SIFs (none on a fresh install)
 - [02_quick-start.md](02_quick-start.md) — 30-second first-agent walkthrough
 - [03_python-api.md](03_python-api.md) — programmatic surface
 - [20_env-vars.md](20_env-vars.md) — full env-var reference
+
+## Shared agent setup
+
+```bash
+sac dev skills install --dry-run --json
+sac dev skills install --no-link --no-hermes-symlink
+sac mcp install --json
+```
+
+Skill installation delegates to the current interpreter's shared Dev installer.
+It requires the public `transactional-projection-v1` capability, validates
+projection hashes, preserves other managed packages and refuses unmanaged or
+modified destinations. `--no-link` forces a copy even for editable packages.
+The default store follows `SCITEX_DIR`; `--dest` remains an explicit store root.
+Hermes exposure is enabled by default; `--no-hermes-symlink` opts out and
+`--claude-symlink` adds the Claude projection. Installation does not prove that
+a running client has reloaded its skills.
+
+The MCP manifest delegates launch metadata to Dev's public `mcp_setup` API.
+It contains `client_config.mcpServers` and keeps `runtime_verified` false. It
+does not write configuration, start a server or enable a client. Older Dev
+installations without these setup capabilities fail clearly before changing
+any skill destination or client configuration; the core dependency floor alone
+does not establish setup capability availability.
+
+At runtime, SAC's existing Hermes profile adapter separately discovers enabled
+installed skill providers, applies central opt-outs and agent exclusions, and
+materializes audited hashed projections in the isolated agent home. Manual
+installation does not replace that runtime adapter.

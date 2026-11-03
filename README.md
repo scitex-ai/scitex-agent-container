@@ -354,6 +354,7 @@ sac agents start <name>                   # fail-closed source authority (docs/s
 sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
+sac mcp install --json                    # read-only shared client manifest
 sac skills list / get                     # bundled agent-facing skills
 sac dev skills install [--dry-run]        # → ~/.scitex/dev/skills/ (canonical store) + Hermes exposure
 
@@ -385,6 +386,7 @@ immutable detached snapshot, with no stale-source bypass.
 
 ```bash
 sac dev skills list                        # bundled skill files
+sac dev skills install --dry-run --json    # preview protected shared installation
 sac dev skills get 01_installation         # print one skill
 sac dev skills install                     # canonical store + Hermes exposure
 sac dev skills install --dry-run           # preview without linking
