@@ -46,37 +46,19 @@ class _LazyCommandsDict(dict):
     ``[]``) without going through ``Group.get_command``. With a plain
     dict, lazy entries are invisible, so this subclass forwards misses
     to the owning group's lazy resolver and caches the result.
-    Enumeration (``list()`` / ``len()`` / ``keys()``, which is how the
-    audit snapshots the tree) additionally materialises the handful
-    of names in ``_ENUMERATE_EAGER_NAMES`` — every lazy entry would
-    drag its module into the process and break the --help import
-    closure the startup-budget test guards, so enumeration stays
-    scoped while by-name access resolves anything on demand.
+
+    Deliberately NO enumeration overrides: two variants were tried
+    and both broke (populate-everything crashed --help on an
+    import-faulting lazy module; scoped materialisation broke the
+    startup-budget import closure). Enumeration tools must use
+    ``Group.list_commands(ctx)``, which already merges lazy names.
+    The scitex-dev 0.62.9 snapshotter enumerates dict keys instead —
+    that fix belongs upstream (scitex-dev), not here.
     """
 
     def __init__(self, group: "LazyGroup") -> None:
         super().__init__()
         self._group = group
-
-    # Names that MUST be visible to pure-dict enumeration. Importing
-    # every lazy entry here would drag each subcommand module into the
-    # process (`doctor` pulls runtimes -> scitex_logging.getDiagnostic,
-    # which breaks --help under older scitex-logging; the startup-budget
-    # closure test exists precisely to forbid that). The audit needs
-    # exactly these; everything else still resolves on demand.
-    _ENUMERATE_EAGER_NAMES = frozenset({
-        "list-python-apis",
-        "mcp",
-        "dev",
-        "install-shell-completion",
-        "print-shell-completion",
-    })
-
-    def _populate_all(self) -> None:
-        for name in self._ENUMERATE_EAGER_NAMES:
-            self._try_resolve(name)
-        for name in getattr(self._group, "_COMPLETION_NAMES", ()):
-            self._try_resolve(name)
 
     def _try_resolve(self, name: str) -> click.Command | None:
         if dict.__contains__(self, name):
@@ -85,18 +67,6 @@ class _LazyCommandsDict(dict):
         if cmd is not None:
             dict.__setitem__(self, name, cmd)
         return cmd
-
-    def __iter__(self):  # type: ignore[override]
-        self._populate_all()
-        return dict.__iter__(self)
-
-    def __len__(self) -> int:  # type: ignore[override]
-        self._populate_all()
-        return dict.__len__(self)
-
-    def keys(self):  # type: ignore[override]
-        self._populate_all()
-        return dict.keys(self)
 
     def get(self, name, default=None):
         cmd = self._try_resolve(name)
