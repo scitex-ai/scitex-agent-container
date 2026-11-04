@@ -88,12 +88,11 @@ dependencies = [
     "scitex-container>=0.4.0",
     # Caller-stream emit kwargs + plain console ship in scitex-logging>=0.2.3.
     "scitex-logging>=0.2.4",
-    # Required by the control plane's Store/schema/ACL, exchange-status and
-    # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
-    # the earlier Store correctness floors are recorded in the history below.
-    # (0.62.4.dev0 was never published; nothing in this tree imports past
-    # the released auditor API, so the floor stays at the release.)
-    "scitex-dev>=0.61.0",
+    # 0.62.10 publishes the protected skill installer, public installed-skill
+    # registry and normalized MCP setup builder used by this control plane.
+    # Capability guards still refuse incompatible/custom installations.
+    # Earlier Store and managed-home floors remain subsumed by this minimum.
+    "scitex-dev>=0.62.10",
     # SAC directly opens PostgreSQL channel connections and classifies lost
     # connections with psycopg exceptions. Match scitex_dev.store's driver
     # floor and binary extra so a bare install does not require system libpq.

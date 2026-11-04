@@ -120,7 +120,8 @@ sac dev skills install --no-link --no-hermes-symlink
 sac mcp install --json
 ```
 
-Skill installation delegates to the current interpreter's shared Dev installer.
+Skill installation requires `scitex-dev>=0.62.10` and delegates to the current
+interpreter's shared Dev installer.
 It requires the public `transactional-projection-v1` capability, validates
 projection hashes, preserves other managed packages and refuses unmanaged or
 modified destinations. `--no-link` forces a copy even for editable packages.
