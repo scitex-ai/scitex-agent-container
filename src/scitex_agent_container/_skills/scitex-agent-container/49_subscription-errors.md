@@ -75,11 +75,24 @@ replenish the account. The implemented bounds are:
   cannot authorize a quota restart.
 - Select running consumers of confirmed exhausted declared slots, not every
   stopped agent and not a guessed in-memory active key.
-- A successfully handled cap event is fingerprinted and not restarted again.
-  Failed/refused attempts still consume the persisted restart budget.
+- Successful handling is remembered per slot, quota-window name and provider
+  reset time. Unknown/missing/stopped observations and subset/order changes do
+  not re-arm handled events. A positive `alive` verdict for that same slot
+  permits a subsequent cap to be handled again. Failed/refused attempts still
+  consume the persisted restart budget.
+- Missing, expired or unparseable window resets return `unknown-cap-identity`
+  without spending restart budget. This also holds zero-balance exhaustion when
+  no reset identity is reported; no refill/reset event is invented.
+- Exact legacy aggregate fingerprints can be adopted without another restart.
+  Ambiguous legacy memory returns `legacy-cap-identity-unknown`; inspect it
+  rather than deleting recovery history to force admission.
 - At most two attempts per sweep, a 1,800-second per-agent debounce, and at most
   two per agent per rolling hour. The callback uses a 30-second drain request;
   lifecycle refusal/busy handling remains authoritative.
+
+These records prove configured-slot event handling, not which key a live client
+is using. Fresh-session goal preservation and delegation admission remain
+separate requirements; this ledger does not implement either contract.
 
 Stop when admission cannot be proved or the budget refuses another attempt.
 Report aliases, status and reset times; preserve the evidence for the operator.
@@ -110,3 +123,7 @@ Paths are relative to the installed `scitex_agent_container` package:
 
 Use the pinned/deployed Hermes implementation for auxiliary-cache and goal
 semantics; the host checkout alone does not establish what an existing SIF runs.
+
+The cap ledger deduplicates successful callbacks. If a callback raises after a
+physical restart, its outcome remains uncertain; the spent restart budget stays
+recorded, but this is not a strict at-most-once lifecycle guarantee.
