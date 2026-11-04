@@ -51,6 +51,31 @@ mechanisms. Do not copy an API key into an OAuth store to silence a warning.
    running client's cache was replaced or that a different image contains the
    source fix. Verify the actual judge after recovery.
 
+## Check the scheduled caller's pool sources
+
+With `SAC_SECRETS_ENVRC` unset or empty, `runtimes/_envrc.py` resolves existing
+`$HOME/.bash.d/secrets/010_scitex/*.src` files first, then
+`$HOME/.bash.d/secrets/000_ENV/api_keys/*.src` files. Each group is sorted;
+canonical API definitions are sourced last so rotations override dated legacy
+copies and inherited process values. A nonempty explicit override keeps its
+ordered source list; missing entries are skipped without falling back to defaults.
+Do not copy provider credentials into legacy mirrors to make a daemon work.
+
+The listen installer enumerates this same resolver through the selected SAC
+console script's declared Python interpreter. It does not source the files while
+rendering the unit. Unsupported launchers or unavailable resolver imports refuse
+before destination files or service state are changed.
+
+Inspect the actual scheduled executable, supervisor environment and cached
+verdicts. A recent exit-zero receipt with every slot `unresolved` and no provider
+observations is not a measured healthy pool. An interactive shell can mask missing
+default sources by already exporting credentials.
+
+Changing source visibility on a host whose existing job includes
+`--restart-capped` can admit fresh restarts at the next tick. Keep source repair
+and live recovery activation separate; preserve host job opt-outs and standing
+work, and inspect goal continuity before applying any runtime change.
+
 ## Probe and recover within a bounded budget
 
 The examples in [48](48_model-availability.md) are real network operations, not

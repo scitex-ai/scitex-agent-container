@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Resolve canonical API-key source files after legacy SciTeX pool files so
+  scheduled callers without shell-exported credentials can see provider
+  rotations. Preserve explicit source overrides and reuse the resolver in the
+  listen installer through its selected console-script interpreter, refusing
+  unsupported launchers before installation writes. This source change does
+  not activate jobs or restart agents.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

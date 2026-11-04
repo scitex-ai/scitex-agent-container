@@ -11,6 +11,24 @@ nothing in sac installs them, and `@PLACEHOLDER@`s must be filled per host.
 Placeholders: `@SAC_BIN@` (absolute path to the **current** `sac`),
 `@SAC_SECRETS_ENVRC@` (colon-separated secret `.src` files, host-specific).
 
+## Secret-source resolution in the companion installer
+
+`scripts/systemd/install-sac-listen.sh` preserves an explicit nonempty
+`SAC_SECRETS_ENVRC` override. Otherwise it calls
+`runtimes._envrc.resolve_secret_files` through the selected SAC console script's
+absolute Python shebang. Valid console-script symlinks are supported; unsupported
+launchers and missing resolver imports refuse before installation writes.
+There is no fallback to an unrelated Python interpreter.
+
+The shared default orders existing `~/.bash.d/secrets/010_scitex/*.src` files
+before `~/.bash.d/secrets/000_ENV/api_keys/*.src`, sorting each group. API provider
+rotations therefore override legacy copies when the runtime sources the pool.
+Enumeration prints paths only and does not read credential values. These are
+source/install semantics, not proof that an existing supervisor has the new code
+or that its liveness sweep observed providers. Source visibility changes can
+activate an already configured `--restart-capped` job; review recovery admission
+and current work before a live rollout.
+
 ## Why these are tracked at all
 
 Until 2026-07-30 both units existed in exactly one place: live-only files under

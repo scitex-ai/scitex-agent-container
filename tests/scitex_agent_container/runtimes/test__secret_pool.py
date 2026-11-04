@@ -166,3 +166,230 @@ def test_pool_env_still_returns_the_bare_mapping(
     env = _pool_env()
     # Assert
     assert env.get("CCT_BOT_TOKEN_ZZ_COMPAT") == "zz-value"
+
+
+def _bare_pool_read(tmp_path: Path, **overrides: str) -> dict:
+    """Exercise real pool sourcing in a child with no inherited credentials."""
+    import json
+    import subprocess
+    import sys
+
+    source = Path(__file__).resolve().parents[3] / "src"
+    script = """
+import sys,json
+sys.path.insert(0,sys.argv[1])
+from scitex_agent_container.runtimes._secret_pool import read_pool
+pool=read_pool()
+print(json.dumps({'trusted':pool.trusted,
+ 'canonical':pool.env.get('OPENCODE_GO_API_KEY_01')=='owned-canonical-fixture',
+ 'legacy':pool.env.get('ZZ_LEGACY_POOL')=='owned-legacy-fixture'}))
+"""
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": "/usr/bin:/bin",
+        "SCITEX_DIR": str(tmp_path / "diagnostics"),
+        **overrides,
+    }
+    child = subprocess.run(
+        [sys.executable, "-B", "-I", "-c", script, str(source)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return json.loads(child.stdout)
+
+
+def test_bare_process_sources_canonical_api_directory(tmp_path: Path) -> None:
+    # Arrange
+    api = tmp_path / ".bash.d/secrets/000_ENV/api_keys"
+    api.mkdir(parents=True)
+    (api / "provider.src").write_text(
+        "export OPENCODE_GO_API_KEY_01=owned-canonical-fixture\n"
+    )
+    # Act
+    result = _bare_pool_read(tmp_path)
+    # Assert
+    assert result == {"trusted": True, "canonical": True, "legacy": False}
+
+
+def test_canonical_rotation_wins_legacy_and_inherited_values(tmp_path: Path) -> None:
+    # Arrange
+    legacy = tmp_path / ".bash.d/secrets/010_scitex"
+    canonical = tmp_path / ".bash.d/secrets/000_ENV/api_keys"
+    legacy.mkdir(parents=True)
+    canonical.mkdir(parents=True)
+    (legacy / "99_old_copy.src").write_text(
+        "export OPENCODE_GO_API_KEY_01=owned-old-fixture\n"
+        "export ZZ_LEGACY_POOL=owned-legacy-fixture\n"
+    )
+    (canonical / "00_provider.src").write_text(
+        "export OPENCODE_GO_API_KEY_01=owned-canonical-fixture\n"
+    )
+    # Act
+    result = _bare_pool_read(tmp_path, OPENCODE_GO_API_KEY_01="owned-inherited-fixture")
+    # Assert
+    assert result == {"trusted": True, "canonical": True, "legacy": True}
+
+
+def test_bare_process_keeps_legacy_only_pool_compatible(tmp_path: Path) -> None:
+    # Arrange
+    legacy = tmp_path / ".bash.d/secrets/010_scitex"
+    legacy.mkdir(parents=True)
+    (legacy / "legacy.src").write_text("export ZZ_LEGACY_POOL=owned-legacy-fixture\n")
+    # Act
+    result = _bare_pool_read(tmp_path)
+    # Assert
+    assert result == {"trusted": True, "canonical": False, "legacy": True}
+
+
+def test_explicit_pool_overrides_both_default_directories(tmp_path: Path) -> None:
+    # Arrange
+    api = tmp_path / ".bash.d/secrets/000_ENV/api_keys"
+    api.mkdir(parents=True)
+    (api / "provider.src").write_text(
+        "export OPENCODE_GO_API_KEY_01=owned-canonical-fixture\n"
+    )
+    explicit = tmp_path / "explicit.src"
+    explicit.write_text("export ZZ_LEGACY_POOL=owned-legacy-fixture\n")
+    # Act
+    result = _bare_pool_read(tmp_path, SAC_SECRETS_ENVRC=str(explicit))
+    # Assert
+    assert result == {"trusted": True, "canonical": False, "legacy": True}
+
+
+def _listen_fixture(
+    tmp_path: Path,
+    *,
+    source_import: bool = True,
+    symlink: bool = False,
+    launcher: str = "python",
+) -> tuple[Path, dict]:
+    """Own every destination and prevent any real systemctl operation."""
+    import sys
+
+    root = Path(__file__).resolve().parents[3]
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    console = binaries / "sac"
+    console.write_text(f"#!{sys.executable}\nraise AssertionError('not invoked')\n")
+    console.chmod(0o755)
+    if launcher == "non-python":
+        console.write_text("#!/bin/sh\nexit 91\n")
+    elif launcher == "dangling":
+        console.unlink()
+        console.symlink_to(tmp_path / "absent-console")
+    elif launcher == "missing-interpreter":
+        console.write_text(f"#!{tmp_path}/absent/python\n")
+    if symlink:
+        link = tmp_path / "pipx-sac"
+        link.symlink_to(console)
+        console = link
+    systemctl = binaries / "systemctl"
+    systemctl.write_text('#!/bin/sh\ntouch "$OWN_SYSTEMCTL_MARKER"\nexit 97\n')
+    systemctl.chmod(0o755)
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": str(binaries) + ":/usr/bin:/bin",
+        "SAC_BIN": str(console),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "SCITEX_DIR": str(tmp_path / "diagnostics"),
+        "OWN_SYSTEMCTL_MARKER": str(tmp_path / "systemctl-called"),
+    }
+    if source_import:
+        env["PYTHONPATH"] = str(root / "src")
+    return root / "scripts/systemd/install-sac-listen.sh", env
+
+
+def _listen_source_value(script: Path, env: dict):
+    """Run the actual enumeration functions, without installer mutations."""
+    import subprocess
+
+    text = script.read_text()
+    functions = []
+    for name in ["resolve_sac_python", "secrets_envrc_value"]:
+        start = text.index(name + "() {")
+        functions.append(text[start : text.index("\n}\n", start) + 3])
+    shell = "log() { printf '%s\\n' \"$*\" >&2; }\n" + "\n".join(functions)
+    return subprocess.run(
+        ["bash", "-c", shell + "\nsecrets_envrc_value"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_listen_installer_delegates_to_console_python(tmp_path: Path, symlink) -> None:
+    # Arrange
+    from scitex_agent_container.runtimes._envrc import resolve_secret_files
+
+    script, env = _listen_fixture(tmp_path, symlink=symlink)
+    for directory in ["010_scitex", "000_ENV/api_keys"]:
+        target = tmp_path / ".bash.d/secrets" / directory
+        target.mkdir(parents=True)
+        (target / "provider.src").write_text("exit 91 # enumeration must not source\n")
+    expected = ":".join(str(p) for p in resolve_secret_files(environ={}, home=tmp_path))
+    # Act
+    child = _listen_source_value(script, env)
+    # Assert
+    assert (child.returncode, child.stdout) == (0, expected)
+
+
+def test_listen_explicit_override_does_not_probe_unrelated_python(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    script, env = _listen_fixture(tmp_path)
+    Path(env["SAC_BIN"]).write_text("#!/bin/sh\nexit 91\n")
+    explicit = str(tmp_path / "missing.src") + ":" + str(tmp_path / "first.src")
+    env["SAC_SECRETS_ENVRC"] = explicit
+    # Act
+    child = _listen_source_value(script, env)
+    # Assert
+    assert (child.returncode, child.stdout) == (0, explicit)
+
+
+@pytest.mark.parametrize("launcher", ["non-python", "dangling", "missing-interpreter"])
+def test_listen_unsupported_launcher_refuses_before_writes(
+    tmp_path: Path, launcher
+) -> None:
+    # Arrange
+    import subprocess
+
+    script, env = _listen_fixture(tmp_path, launcher=launcher)
+    # Act
+    child = subprocess.run(
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=30
+    )
+    # Assert
+    assert (
+        child.returncode != 0,
+        (tmp_path / "config").exists(),
+        (tmp_path / "systemctl-called").exists(),
+        "ERROR:" in child.stderr,
+    ) == (True, False, False, True)
+
+
+def test_listen_missing_resolver_refuses_before_writes(tmp_path: Path) -> None:
+    # Arrange
+    import subprocess
+    import venv
+
+    script, env = _listen_fixture(tmp_path, source_import=False)
+    empty = tmp_path / "empty-python"
+    venv.EnvBuilder(with_pip=False).create(empty)
+    Path(env["SAC_BIN"]).write_text(f"#!{empty}/bin/python\n")
+    # Act
+    child = subprocess.run(
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=30
+    )
+    # Assert
+    assert (
+        child.returncode != 0,
+        (tmp_path / "config").exists(),
+        (tmp_path / "systemctl-called").exists(),
+        "own Python environment" in child.stderr,
+    ) == (True, False, False, True)

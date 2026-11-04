@@ -414,3 +414,45 @@ def test_pool_definitions_do_not_claim_unproven_secret_conflicts(
         ["SAC_TEST_DUP"],
         [],
     )
+
+
+def test_canonical_api_sources_follow_legacy_sources(tmp_path: Path) -> None:
+    # Arrange
+    legacy = _seed_default_pool(tmp_path, "02_legacy.src", "01_legacy.src")
+    api = tmp_path / ".bash.d/secrets/000_ENV/api_keys"
+    api.mkdir(parents=True)
+    canonical = [api / "20_second.src", api / "10_first.src"]
+    for path in canonical:
+        path.write_text("# owned fixture\n")
+    # Act
+    files = resolve_secret_files(environ={}, home=tmp_path)
+    # Assert
+    assert files == sorted(legacy) + sorted(canonical)
+
+
+def test_explicit_sources_never_fall_back_when_missing(tmp_path: Path) -> None:
+    # Arrange
+    _seed_default_pool(tmp_path, "01_legacy.src")
+    api = tmp_path / ".bash.d/secrets/000_ENV/api_keys"
+    api.mkdir(parents=True)
+    (api / "provider.src").write_text("# owned fixture\n")
+    absent = tmp_path / "absent.src"
+    # Act
+    files = resolve_secret_files(
+        environ={"SAC_SECRETS_ENVRC": str(absent)}, home=tmp_path
+    )
+    # Assert
+    assert files == []
+
+
+def test_explicit_source_order_and_missing_filter_are_preserved(tmp_path: Path) -> None:
+    # Arrange
+    paths = [tmp_path / "second.src", tmp_path / "first.src"]
+    for path in paths:
+        path.write_text("# owned fixture\n")
+    missing = tmp_path / "missing.src"
+    value = f"{paths[0]}:{missing}:{paths[1]}"
+    # Act
+    files = resolve_secret_files(environ={"SAC_SECRETS_ENVRC": value}, home=tmp_path)
+    # Assert
+    assert files == paths

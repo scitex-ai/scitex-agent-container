@@ -38,8 +38,11 @@ CCT/Telegram tokens and thereby STRIPPED them on redeploy (confirmed live: an
 ``auth-heal.py`` cron restart and a raw-ssh restart both stripped cards+hub).
 :func:`resolve_secret_files` is the caller-independent resolver: an explicit
 ``SAC_SECRETS_ENVRC`` wins verbatim, and when it is unset/empty it falls back to
-the operator's standardized secret files (``$HOME/.bash.d/secrets/010_scitex/
-*.src``) — the SAME default ``scripts/systemd/install-sac-listen.sh`` computes.
+the operator's legacy SciTeX files followed by canonical API-key files
+(``$HOME/.bash.d/secrets/010_scitex/*.src``, then
+``$HOME/.bash.d/secrets/000_ENV/api_keys/*.src``). Canonical provider rotations
+therefore override dated legacy mirrors. The listen installer calls this same
+resolver using its selected SAC console-script interpreter.
 The CCT pool resolver (``_cct_token_pool._pool_env``) uses it, so any caller
 re-resolves the bot token from the default pool AFTER the fold — no more
 stripping. The general ``.envrc`` fold preamble (:func:`_secrets_preamble_lines`)
@@ -71,13 +74,13 @@ _SHELL_NOISE = frozenset({"_", "SHLVL", "PWD", "OLDPWD"})
 # Env var naming the secrets-preamble files (colon-separated absolute paths).
 _SECRETS_ENVRC_VAR = "SAC_SECRETS_ENVRC"
 
-# Canonical default pool location, resolved relative to ``$HOME`` — the SAME
-# glob ``scripts/systemd/install-sac-listen.sh::secrets_envrc_value`` bakes into
-# the listen unit. Used ONLY when ``SAC_SECRETS_ENVRC`` is unset/empty, so the
-# CCT/Telegram pool is found no matter which caller (cron, raw ssh, a federated
-# timer) launched the restart — not just the one process the operator's shell or
-# the listen unit happened to export the var into. See the module docstring.
-_DEFAULT_SECRETS_GLOB = ".bash.d/secrets/010_scitex/*.src"
+# Ordered source groups: canonical API-key definitions are sourced LAST so
+# rotated provider credentials override legacy mirrors and inherited values.
+# The listen installer delegates here; it must not carry a second glob list.
+_DEFAULT_SECRETS_GLOBS = (
+    ".bash.d/secrets/010_scitex/*.src",
+    ".bash.d/secrets/000_ENV/api_keys/*.src",
+)
 
 
 class EnvrcEvalError(RuntimeError):
@@ -96,8 +99,11 @@ def resolve_secret_files(
        non-existent path is skipped — the per-layer skip-if-missing posture).
        An operator/inherited value is never overridden.
     2. Otherwise (unset OR empty) fall back to the operator's standardized
-       secret files ``$HOME/.bash.d/secrets/010_scitex/*.src`` (sorted, existing
-       only) — the SAME default the listen-unit installer computes. This is what
+       legacy ``$HOME/.bash.d/secrets/010_scitex/*.src`` files, followed by
+       canonical ``$HOME/.bash.d/secrets/000_ENV/api_keys/*.src`` files (sorted
+       within each group, existing files only). The listen installer delegates
+       to this resolver. Later canonical definitions override legacy copies.
+       This is what
        makes the pool CALLER-INDEPENDENT: a cron/raw-ssh/federated-timer restart
        that never had the var exported still loads the pool instead of folding
        (and thereby STRIPPING) every CCT/Telegram token.
@@ -112,7 +118,12 @@ def resolve_secret_files(
     if raw:
         return [Path(e) for e in raw.split(":") if e and Path(e).is_file()]
     base = Path(home) if home is not None else Path(env.get("HOME") or Path.home())
-    return sorted(p for p in base.glob(_DEFAULT_SECRETS_GLOB) if p.is_file())
+    return [
+        path
+        for pattern in _DEFAULT_SECRETS_GLOBS
+        for path in sorted(base.glob(pattern))
+        if path.is_file()
+    ]
 
 
 _EXPORT_NAME_RE = re.compile(r"^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)\s*=")

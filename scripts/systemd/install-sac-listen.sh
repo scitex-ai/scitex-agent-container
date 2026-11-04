@@ -31,32 +31,51 @@ PROBE_SCRIPT="sac-listen-health-probe.sh"
 
 log() { printf '%s\n' "$*" >&2; }
 
-# Compute the SAC_SECRETS_ENVRC value to bake into the listen unit.
-#   - Operator override: if SAC_SECRETS_ENVRC is already exported when the
-#     installer runs, use it verbatim.
-#   - Default: colon-join the operator's standardized scitex secret files,
-#     globbed from ~/.bash.d/secrets/010_scitex/*.src (sorted).
-# Prints nothing when neither yields a path (caller then OMITS the line).
+# Resolve ONLY the interpreter declared by the selected Python console script.
+# A pipx-style symlink is supported; a shell/binary wrapper is not guessed.
+resolve_sac_python() {
+  local target shebang pattern interpreter
+  if ! target="$(readlink -f -- "$SAC_BIN")" || [ ! -f "$target" ]; then
+    log "ERROR: SAC_BIN does not resolve to a readable console script. Use the installed SAC Python entrypoint."
+    return 1
+  fi
+  IFS= read -r shebang < "$target" || true
+  pattern='^#!(/[^[:space:]]*/python([0-9]+(\.[0-9]+)*)?)$'
+  if [[ ! "$shebang" =~ $pattern ]]; then
+    log "ERROR: SAC_BIN has no supported absolute Python shebang. Use the installed SAC Python console entrypoint or set SAC_SECRETS_ENVRC explicitly."
+    return 1
+  fi
+  interpreter="${BASH_REMATCH[1]}"
+  if [ ! -x "$interpreter" ]; then
+    log "ERROR: SAC_BIN's declared Python is unavailable. Repair that installation; no unrelated Python will be used."
+    return 1
+  fi
+  printf '%s' "$interpreter"
+}
+
+# Explicit source overrides remain verbatim. Default paths come from the SAME
+# installed resolver as launch/probe code; source groups/order live only there.
+# This enumerates filenames, never sources files or prints credential values.
 secrets_envrc_value() {
   if [ -n "${SAC_SECRETS_ENVRC:-}" ]; then
     printf '%s' "$SAC_SECRETS_ENVRC"
     return 0
   fi
-  local joined="" f
-  # Sorted glob of the standardized secrets location; nullglob so a
-  # no-match expands to nothing rather than the literal pattern. Glob
-  # expansion preserves each path as one word (no word-splitting), and
-  # bash already returns matches sorted.
-  shopt -s nullglob
-  for f in "$HOME"/.bash.d/secrets/010_scitex/*.src; do
-    if [ -z "$joined" ]; then
-      joined="$f"
-    else
-      joined="${joined}:${f}"
-    fi
-  done
-  shopt -u nullglob
-  printf '%s' "$joined"
+  local sac_python
+  sac_python="$(resolve_sac_python)" || return 1
+  if ! "$sac_python" -c '
+import sys
+try:
+    from scitex_agent_container.runtimes._envrc import resolve_secret_files
+    value = ":".join(str(path) for path in resolve_secret_files())
+except Exception as exc:
+    print("SAC secret-source resolver unavailable (" + type(exc).__name__ + ").", file=sys.stderr)
+    raise SystemExit(2)
+print(value, end="")
+'; then
+    log "ERROR: install scitex-agent-container in SAC_BIN's own Python environment or set SAC_SECRETS_ENVRC explicitly. No unit was installed."
+    return 1
+  fi
 }
 
 # Idempotently refresh the `Environment=SAC_SECRETS_ENVRC=` line in the
@@ -69,7 +88,7 @@ secrets_envrc_value() {
 # Always strips any prior occurrence first so re-running never stacks lines.
 apply_secrets_envrc() {
   local unit="$1" value
-  value="$(secrets_envrc_value)"
+  value="$RESOLVED_SECRETS_ENVRC"
   # Drop any existing line (idempotency) before re-adding.
   sed -i '/^Environment=SAC_SECRETS_ENVRC=/d' "$unit"
   if [ -z "$value" ]; then
@@ -147,13 +166,13 @@ if [ "${1:-}" != "" ]; then
   exit 2
 fi
 
-mkdir -p "$DEST_DIR"
-
 # 0. Resolve SAC_BIN FIRST, before installing/enabling anything. This is
 #    a fail-loud step (see resolve_sac_bin above): an unresolvable sac
 #    must abort the whole install, not land a broken unit that only
 #    fails once systemd tries to start it.
 SAC_BIN="$(resolve_sac_bin)"
+RESOLVED_SECRETS_ENVRC="$(secrets_envrc_value)"
+mkdir -p "$DEST_DIR"
 log "# SAC_BIN=${SAC_BIN} -> will be baked into ${LISTEN_UNIT}'s ExecStart"
 
 # 1. Copy the probe script first (the health .service ExecStart points
