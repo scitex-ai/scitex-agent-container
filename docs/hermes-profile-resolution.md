@@ -5,6 +5,11 @@ The maintained procedure is the shipped
 It maps spec and `to_home` inputs to generated runtime/overlay profiles, identifies
 the active container HOME, and distinguishes project skills from provider settings.
 
+Runtime projections consume Dev's public installed-skills registry and require
+its `installed-provider-registry-v1` capability. Distribution ownership and
+central opt-outs come from that registry; SAC applies spec exclusions before
+materializing the selected trees.
+
 Read it through `sac dev skills get 47_hermes-profile-resolution`. For fleet hosts
 and skill projections, follow its references to the owning scitex-dev skills.
 

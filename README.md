@@ -354,6 +354,7 @@ sac agents start <name>                   # fail-closed source authority (docs/s
 sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
+sac mcp install --json                    # read-only shared client manifest
 sac skills list / get                     # bundled agent-facing skills
 sac dev skills install [--dry-run]        # → ~/.scitex/dev/skills/ (canonical store) + Hermes exposure
 
@@ -385,6 +386,7 @@ immutable detached snapshot, with no stale-source bypass.
 
 ```bash
 sac dev skills list                        # bundled skill files
+sac dev skills install --dry-run --json    # preview protected shared installation
 sac dev skills get 01_installation         # print one skill
 sac dev skills install                     # canonical store + Hermes exposure
 sac dev skills install --dry-run           # preview without linking
@@ -400,6 +402,14 @@ sac dev skills install --claude-symlink    # (legacy) also expose to Claude Code
 - **Hermes first:** install exposes the package at `~/.hermes/skills/scitex-agent-container/`
   by default (Hermes is the first-option harness; Claude Code is legacy). Opt out with
   `--no-hermes-symlink`.
+
+SAC requires `scitex-dev>=0.62.10` for its shared setup and runtime skill contracts.
+Generated Hermes profiles use the shared
+`scitex_dev.skill_registry.discover_installed_skills()` registry, requiring the
+`installed-provider-registry-v1` Dev capability. Central opt-outs apply before
+SAC's `exclude_skills` filters distribution owners and namespaces; each selected
+tree is copied and hash-audited in the isolated home. Older Dev is refused
+before the runtime skill projection is materialized.
 
 <details>
 <summary><strong>Python ⭐⭐</strong></summary>
