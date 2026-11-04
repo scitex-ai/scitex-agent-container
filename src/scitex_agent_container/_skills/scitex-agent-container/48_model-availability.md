@@ -84,7 +84,7 @@ debounce and two attempts per rolling hour. Attempts are persisted before the
 callback, including failures; only successful handling marks the cap event seen. A busy turn may cause
 the lifecycle gate to defer a restart.
 
-The account-key-liveness JobSpec schedules this sweep every 15 minutes through
+The `scitex-agent-container-accounts-key-liveness` JobSpec schedules this sweep every 15 minutes through
 scitex-dev's jobs plugin. A JobSpec alone does not prove it runs on a host;
 verify the actual timer/supervisor and latest receipt.
 
