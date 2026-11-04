@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Deduplicate quota recovery per slot/window/reset event across unknown,
+  partial and stopped observations. Re-arm only positively recovered slots,
+  refuse missing reset identities and ambiguous legacy history, and retain
+  existing restart budgets. This source change does not activate recovery,
+  prove an in-memory active key, or migrate goals between fresh sessions.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
