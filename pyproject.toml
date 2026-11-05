@@ -237,12 +237,10 @@ gui = [
     # Floor 0.3.7 (2026-10-19): the shared app-header contract
     # (css/app/app-header.css + data-stx-app-header) the dashboard adopts.
     "django>=4.2",
-    # SSoT pin: scitex-sdk behavior is part of our render contract
-    # (0.3.17 includes the canonical header, keyword filter, and explicit
-    # user-scope capability contracts adopted by the dashboard). An open
-    # floor previously let CI resolve a newer SDK than dev venvs and
-    # red the gate on identical code.
-    "scitex-sdk[gui]==0.3.17",
+    # Shared GUI and full-test profiles use the same exact SDK version as the
+    # current Hub deployment cohort. Keep the pin synchronized across both
+    # profiles; qualify the dashboard before changing it.
+    "scitex-sdk[gui]==0.3.23",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -495,7 +493,7 @@ dev = [
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
     # Same SSoT pin as [gui] above — the two must not drift.
-    "scitex-sdk[gui]==0.3.17",
+    "scitex-sdk[gui]==0.3.23",
 ]
 docs = [
     "sphinx>=7.0",

@@ -14,6 +14,8 @@ import site
 import sys
 import sysconfig
 from collections.abc import Callable
+from copy import copy
+from functools import partial
 from importlib import metadata
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -194,27 +196,22 @@ def assert_image_build_source_authority(
     )
 
 
-class _SacBootstrapGroup(click.Group):
-    """Auditable facade whose execution uses SAC's console wrapper."""
-
-    _delegate: Callable[[], object]
-
-    def main(
-        self,
-        args: list[str] | None = None,
-        prog_name: str | None = None,
-        **extra: object,
-    ) -> object:
-        """Delegate execution while retaining SAC's pre-Click processing."""
-        delegated_args = list(sys.argv[1:] if args is None else args)
-        if args is None:
-            return self._delegate()
-        original_argv = sys.argv
-        sys.argv = [prog_name or original_argv[0], *delegated_args]
-        try:
-            return self._delegate()
-        finally:
-            sys.argv = original_argv
+def _console_main(
+    delegate: Callable[[], object],
+    args: list[str] | None = None,
+    prog_name: str | None = None,
+    **extra: object,
+) -> object:
+    """Retain SAC's pre-Click processing for the installed console facade."""
+    delegated_args = list(sys.argv[1:] if args is None else args)
+    if args is None:
+        return delegate()
+    original_argv = sys.argv
+    sys.argv = [prog_name or original_argv[0], *delegated_args]
+    try:
+        return delegate()
+    finally:
+        sys.argv = original_argv
 
 
 def _load_cli() -> click.Group:
@@ -228,23 +225,10 @@ def _load_cli() -> click.Group:
     from scitex_agent_container.cli import cli_entry_point as delegate
     from scitex_agent_container.cli import main as command
 
-    facade = _SacBootstrapGroup(
-        name=command.name,
-        commands=command.commands,
-        params=command.params,
-        callback=command.callback,
-        context_settings=command.context_settings,
-        help=command.help,
-        epilog=command.epilog,
-        short_help=command.short_help,
-        options_metavar=command.options_metavar,
-        add_help_option=command.add_help_option,
-        no_args_is_help=command.no_args_is_help,
-        invoke_without_command=command.invoke_without_command,
-        subcommand_metavar=command.subcommand_metavar,
-        chain=command.chain,
-    )
-    facade._delegate = delegate
+    # Retain the real group's lazy registry, methods and help metadata. A
+    # generic Click Group loses command enumeration until its cache is primed.
+    facade = copy(command)
+    facade.main = partial(_console_main, delegate)
     return facade
 
 

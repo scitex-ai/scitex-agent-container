@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep the installed console's lazy command enumeration and help metadata by
+  copying the real CLI group instead of reconstructing a generic Click group.
+  Preserve the pre-import image-build authority check and console processing.
+- Align the GUI and full-test profiles on SDK 0.3.23 for the current Hub cohort.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
