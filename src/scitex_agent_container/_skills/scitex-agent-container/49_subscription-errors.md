@@ -53,6 +53,19 @@ mechanisms. Do not copy an API key into an OAuth store to silence a warning.
 
 ## Probe and recover within a bounded budget
 
+For a deliberate subscription rest, preview the local account pause before
+recording it:
+
+```bash
+sac accounts pause worker-account --reason "subscription rest" --dry-run
+```
+
+The preview validates the account, reason and last-usable-account guard without
+changing credentials or pause records. Remove `--dry-run` to record the decision.
+The existing `--yes` option explicitly permits pausing the last usable account;
+the preview does not bypass that guard. This local pause does not stop an agent
+already using the credential, renew a subscription or measure provider quota.
+
 The examples in [48](48_model-availability.md) are real network operations, not
 offline documentation tests. `accounts probe-api-keys` queries supported official
 usage/billing endpoints; `--no-record` avoids updating its local verdict cache.
