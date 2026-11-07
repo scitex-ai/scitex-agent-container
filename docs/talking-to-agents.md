@@ -44,6 +44,11 @@ inspect the agent before intentionally submitting another message. There is no
 automatic resend, and dispatch IDs provide correlation rather than durable
 cross-worker deduplication. The exchange GET does not enqueue another turn.
 
+The dashboard uses the same canonical exchange validator as peer callers. An
+optional native receipt projection must agree with the status primitive; a
+contradiction or malformed finality stays unconfirmed rather than becoming
+proof of admission.
+
 ## 1. A2A sidecar — `POST /agents/<name>/turn`
 
 Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac

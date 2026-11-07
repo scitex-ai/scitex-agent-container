@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Reject malformed or contradictory native receipt projections when the
+  dashboard follows an accepted message, using the existing peer exchange
+  validator rather than interpreting a second status independently.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

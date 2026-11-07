@@ -201,3 +201,25 @@ def test_signed_receipt_does_not_authorize_cross_host_or_missing_recipient(
     paths = [p for p in native_exchange.request_paths if "/exchanges/" in p]
     # Assert
     assert (response.status_code, paths) == (403, [])
+
+
+@pytest.mark.parametrize(
+    "code, projection",
+    [
+        (200, {"final": False, "state": "pending"}),
+        (202, {"final": True, "state": "delivered"}),
+        (200, {"final": "true", "state": "delivered"}),
+    ],
+)
+def test_contradictory_or_malformed_projection_never_confirms_admission(
+    client, native_exchange, env_save_restore, code, projection
+):
+    # Arrange — the native convenience projection must agree with its primitive.
+    configure(env_save_restore)
+    native_exchange.exchange_code = code
+    native_exchange.exchange_message = "fixture; poll `/v1/exchanges/" + EXCHANGE + "`"
+    native_exchange.exchange_receipt = projection
+    # Act
+    response = lookup(client)
+    # Assert
+    assert (response.status_code, response.json()["state"]) == (502, "unknown")

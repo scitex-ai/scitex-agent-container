@@ -100,6 +100,7 @@ class _Listener(BaseHTTPRequestHandler):
     exchange_code = 202
     exchange_message = "accepted; poll `/v1/exchanges/xch_20261102T000000Z_gui_fixture_abcdef`"
     exchange_wrong_id = False
+    exchange_receipt = None
     request_paths: list[str] = []
     request_bodies: list[dict[str, Any]] = []
 
@@ -131,8 +132,11 @@ class _Listener(BaseHTTPRequestHandler):
             exchange_id = path.rsplit("/", 1)[-1]
             if self.exchange_wrong_id:
                 exchange_id = "xch_20261102T000000Z_other_fixture_abcdef"
-            self._send(200, json.dumps({"exchange_id": exchange_id, "status_code": {
-                "kind": "http", "code": self.exchange_code, "message": self.exchange_message}}).encode())
+            payload = {"exchange_id": exchange_id, "status_code": {
+                "kind": "http", "code": self.exchange_code, "message": self.exchange_message}}
+            if self.exchange_receipt is not None:
+                payload["receipt"] = self.exchange_receipt
+            self._send(200, json.dumps(payload).encode())
         elif path.endswith("/status"):
             name = path.rsplit("/status", 1)[0].rsplit("/", 1)[-1]
             if name == "delta":
@@ -209,6 +213,7 @@ def loopback(env_save_restore):
     _Listener.exchange_code = 202
     _Listener.exchange_message = "accepted; poll `/v1/exchanges/xch_20261102T000000Z_gui_fixture_abcdef`"
     _Listener.exchange_wrong_id = False
+    _Listener.exchange_receipt = None
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

@@ -12,8 +12,10 @@ except ImportError as exc:
         "SAC GUI dependencies are unavailable; install scitex-agent-container[gui]."
     ) from exc
 
-from scitex_dev.status import StatusCode, StatusError, is_exchange_id
+from scitex_dev.status import is_exchange_id
 
+from .._network._peer_exchange import _exchange_status
+from .._network.peer import PeerError
 from ._authorization import can_control, resolve_identity, scope_rows
 from ._control import redact
 from ._remote import FleetUnavailableError, RemoteFleet, RemoteOperationError
@@ -88,9 +90,7 @@ def exchange_status(request, name: str, exchange_id: str):
         )
     try:
         payload = fleet.read_exchange(name, exchange_id, timeout=5)
-        if payload.get("exchange_id") != exchange_id:
-            raise ValueError("wrong exchange")
-        native = StatusCode.from_dict(payload.get("status_code", {}))
+        native = _exchange_status(payload, exchange_id=exchange_id)
         if native.kind != "http":
             raise ValueError("unsupported native status vocabulary")
     except (
@@ -100,7 +100,7 @@ def exchange_status(request, name: str, exchange_id: str):
         ValueError,
         TypeError,
         AttributeError,
-        StatusError,
+        PeerError,
     ):
         return JsonResponse(
             {
@@ -112,11 +112,11 @@ def exchange_status(request, name: str, exchange_id: str):
     state = (
         "pending"
         if not native.final
-        else "received"
-        if native.code == 200
-        else "failed"
-        if not native.ok
-        else "unknown"
+        else (
+            "received"
+            if native.code == 200
+            else "failed" if not native.ok else "unknown"
+        )
     )
     message = {
         "pending": "Agent admission is still pending.",
