@@ -506,9 +506,9 @@ def roles(
 
     \b
     Example:
-      $ sac agents roles
-      $ sac agents roles --missing
-      $ sac agents roles --json
+      $ sac agents list-roles
+      $ sac agents list-roles --missing
+      $ sac agents list-roles --json
     """
     search_path = (
         _roles_default_dir()

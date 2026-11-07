@@ -266,7 +266,11 @@ status never activates a Hermes renderer. Optional clarification remains
 explicitly unknown when it has not been queried through a passive snapshot.
 
 
-## Three Interfaces
+## Five Interfaces
+
+SAC provides a CLI, Python API, MCP tools, an authenticated host Web API,
+and packaged agent skills. The CLI is the primary operator interface; the
+Web API is served by `sac listen`, and skills are covered below.
 
 <details open>
 <summary><strong>CLI ⭐⭐⭐ (primary)</strong></summary>
@@ -303,6 +307,8 @@ sac agents tail   <name>                  # render session.jsonl (structured tra
 sac agents recall <name>                  # human-readable session summary
 sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
 sac agents find   <capability>            # search by metadata.labels.capabilities
+sac agents list-roles --json              # inspect declared role definitions
+sac a2a list-grants --json                 # inspect directional send permissions
 
 # Control plane (HTTP/JSON, loopback-only)
 sac listen [--bind 127.0.0.1:7878]        # boot per-host REST API (bearer-auth)

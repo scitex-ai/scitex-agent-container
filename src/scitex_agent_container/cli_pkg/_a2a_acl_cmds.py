@@ -18,6 +18,7 @@ never load a database driver. The same lazy pattern used by
 from __future__ import annotations
 
 import json
+from copy import copy
 
 import click
 
@@ -203,7 +204,7 @@ def a2a_revoke(sender: str, target: str) -> None:
         render_rich(f"[dim]no-op[/dim]  no grant  {sender}  ->  {target}", __name__)
 
 
-@click.command("grants")
+@click.command("list-grants")
 @click.option(
     "--json",
     "as_json",
@@ -220,8 +221,8 @@ def a2a_grants(as_json: bool) -> None:
 
     \b
     Example:
-      $ sac a2a grants
-      $ sac a2a grants --json | jq '.[] | select(.sender == "worker-a")'
+      $ sac a2a list-grants
+      $ sac a2a list-grants --json | jq '.[] | select(.sender == "worker-a")'
     """
     from .._state.state_store_nodes import list_comms_grants
 
@@ -251,6 +252,11 @@ def a2a_grants(as_json: bool) -> None:
 
 
 def register(a2a_group) -> None:
-    """Attach the five ACL verbs to the parent ``a2a`` Click group."""
+    """Attach ACL verbs and the hidden legacy grant-list alias."""
     for command in (a2a_grant, a2a_unblock, a2a_block, a2a_revoke, a2a_grants):
         a2a_group.add_command(command)
+    legacy = copy(a2a_grants)
+    legacy.name = "grants"
+    legacy.hidden = True
+    legacy.deprecated = "Use sac a2a list-grants."
+    a2a_group.add_command(legacy)

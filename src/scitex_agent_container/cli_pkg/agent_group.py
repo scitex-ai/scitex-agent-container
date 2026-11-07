@@ -13,6 +13,7 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
+from ._agents_restore_worktree import register as _register_restore_worktree
 from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
@@ -36,7 +37,13 @@ from .status_cmds import health as _health_impl
 from .status_cmds import status as _status_impl
 
 
-def _rebind(cmd: click.Command, new_name: str) -> click.Command:
+def _rebind(
+    cmd: click.Command,
+    new_name: str,
+    *,
+    hidden: bool = False,
+    deprecated: bool | str = False,
+) -> click.Command:
     return click.Command(
         name=new_name,
         callback=cmd.callback,
@@ -44,6 +51,8 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
         help=cmd.help,
         short_help=cmd.short_help,
         epilog=cmd.epilog,
+        hidden=hidden,
+        deprecated=deprecated,
     )
 
 
@@ -88,7 +97,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             ],
         ),
         ("Preflight", ["check"]),
-        ("Discovery", ["find", "roles", "whoami"]),
+        ("Discovery", ["find", "list-roles", "whoami"]),
         (
             "Maintenance",
             [
@@ -278,7 +287,10 @@ agent_group.add_command(_auth_status_impl)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))
-agent_group.add_command(_rebind(_roles_impl, "roles"))
+agent_group.add_command(_rebind(_roles_impl, "list-roles"))
+agent_group.add_command(
+    _rebind(_roles_impl, "roles", hidden=True, deprecated="Use sac agents list-roles.")
+)
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
@@ -312,7 +324,6 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_link_specs import register as _register_link_specs  # noqa: E402
 
 _register_link_specs(agent_group)
-from ._agents_restore_worktree import register as _register_restore_worktree  # noqa: E402
 
 _register_restore_worktree(agent_group)
 # `migrate-layers` — step 3 of the to_home_layers migration: write into each
