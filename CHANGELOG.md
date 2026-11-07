@@ -6,6 +6,15 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Expose read-only role/grant/quota discovery as `agents list-roles`,
+  `a2a list-grants` and `accounts get-quota`; retain hidden deprecated aliases for existing scripts.
+- Reserve the unspent 0.38.7 version for these pending changes.
+- Preserve lazy command enumeration and custom command lookup through the console
+  bootstrap facade. External CLI auditors can discover the Python API and MCP
+  interfaces without invoking the console wrapper; execution still uses the
+  existing source-authority guard and pre-Click processing.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

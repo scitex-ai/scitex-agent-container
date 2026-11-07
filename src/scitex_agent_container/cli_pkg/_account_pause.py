@@ -208,7 +208,12 @@ def register_pause_commands(group: click.Group) -> None:
             "fails every agent boot."
         ),
     )
-    def account_pause(name: str, reason: str, yes: bool) -> None:
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Validate the pause and show its target without changing account files.",
+    )
+    def account_pause(name: str, reason: str, yes: bool, dry_run: bool) -> None:
         """Stop using an account WITHOUT deleting it — a decision, not a fault.
 
         For the workflow of stopping a subscription and putting it back
@@ -240,6 +245,11 @@ def register_pause_commands(group: click.Group) -> None:
         credential — the path is printed. Peers stop receiving the
         credential immediately and drop the account when their copy
         expires.
+
+        \b
+        Example:
+          $ sac accounts pause worker-account --reason "subscription rest" --dry-run
+          $ sac accounts pause worker-account --reason "subscription rest"
         """
         from .._creds._pause import Pause, pause_path, read_pause, write_pause
 
@@ -252,7 +262,7 @@ def register_pause_commands(group: click.Group) -> None:
 
         account_dir = _resolve_account_dir(name)
         existing = read_pause(name, account_dir)
-        if existing.problem:
+        if existing.problem and not dry_run:
             click.echo(
                 f"note: the existing pause record was not usable "
                 f"({existing.problem}). Overwriting it.",
@@ -266,6 +276,14 @@ def register_pause_commands(group: click.Group) -> None:
                 "would leave the picker with nothing and fail every "
                 "agent boot. Pass --yes if that is what you want."
             )
+
+        if dry_run:
+            click.echo(
+                f"would pause {name}: {reason.strip()}\n"
+                f"  record: {pause_path(account_dir)}\n"
+                "  dry run: no account files changed."
+            )
+            return
 
         record = Pause(
             name=name,
