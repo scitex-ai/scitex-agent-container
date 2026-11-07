@@ -50,18 +50,24 @@ def _snapshot(store: Path) -> dict[str, bytes]:
     }
 
 
-@pytest.mark.parametrize("existing_pause", [False, True])
-def test_preview_preserves_account_and_pause_bytes(pause_store, existing_pause):
-    # Arrange
+@pytest.fixture(params=[False, True])
+def preview_store(pause_store, request):
+    """Prepare either an active account or an existing pause before previewing."""
     group, env, store = pause_store
     runner = CliRunner()
-    if existing_pause:
+    if request.param:
         result = runner.invoke(group, ["pause", "alpha", "--reason", "rest"], env=env)
         if result.exit_code:
             pytest.fail(result.output)
+    return group, env, store
+
+
+def test_preview_preserves_account_and_pause_bytes(preview_store):
+    # Arrange
+    group, env, store = preview_store
     before = _snapshot(store)
     # Act
-    result = runner.invoke(
+    result = CliRunner().invoke(
         group, ["pause", "alpha", "--reason", "new reason", "--dry-run"], env=env
     )
     # Assert
@@ -76,29 +82,34 @@ def test_preview_preserves_account_and_pause_bytes(pause_store, existing_pause):
     )
 
 
-@pytest.mark.parametrize(
-    "name,reason,last_valid,yes,expected_exit",
-    [
+@pytest.fixture(
+    params=[
         ("alpha", "rest", True, False, 1),
         ("alpha", "rest", True, True, 0),
         ("unknown", "rest", False, False, 1),
         ("alpha", "   ", False, False, 1),
     ],
+    ids=["last-valid-refused", "last-valid-explicit", "unknown", "blank-reason"],
 )
-def test_preview_keeps_existing_refusal_boundaries(
-    pause_store, name, reason, last_valid, yes, expected_exit
-):
-    # Arrange
+def preview_boundary(pause_store, request):
+    """Prepare real store states and explicit CLI arguments for each boundary."""
     group, env, store = pause_store
+    name, reason, last_valid, yes, expected_exit = request.param
     if last_valid:
         path = store / "beta" / ".credentials.json"
         payload = json.loads(path.read_text())
         payload["claudeAiOauth"]["expiresAt"] = 1
         path.write_text(json.dumps(payload))
-    before = _snapshot(store)
     args = ["pause", name, "--reason", reason, "--dry-run"]
     if yes:
         args.append("--yes")
+    return group, env, store, args, expected_exit
+
+
+def test_preview_keeps_existing_refusal_boundaries(preview_boundary):
+    # Arrange
+    group, env, store, args, expected_exit = preview_boundary
+    before = _snapshot(store)
     # Act
     result = CliRunner().invoke(group, args, env=env)
     # Assert

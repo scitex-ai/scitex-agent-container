@@ -343,16 +343,26 @@ def test_an_unknown_host_name_is_a_usage_error_naming_the_known_hosts(fleet):
 
 
 def test_help_prefers_validate_reachability(fleet):
-    result = CliRunner().invoke(a2a, ["--help"], catch_exceptions=False)
-    assert result.exit_code == 0
-    assert "validate-reachability" in result.stdout
-    assert "\n  reachability " not in result.stdout
+    # Arrange
+    args = ["--help"]
+    # Act
+    result = CliRunner().invoke(a2a, args, catch_exceptions=False)
+    # Assert
+    assert (
+        result.exit_code,
+        "validate-reachability" in result.stdout,
+        "\n  reachability " in result.stdout,
+    ) == (0, True, False)
 
 
 def test_legacy_reachability_keeps_json_stdout_and_warns(fleet):
-    result = CliRunner().invoke(
-        a2a, ["reachability", "--all", "--json"], catch_exceptions=False
-    )
-    assert result.exit_code == 3
-    assert {row["reachable"] for row in json.loads(result.stdout)["hosts"]} == {None}
-    assert "validate-reachability" in result.stderr
+    # Arrange
+    args = ["reachability", "--all", "--json"]
+    # Act
+    result = CliRunner().invoke(a2a, args, catch_exceptions=False)
+    # Assert
+    assert (
+        result.exit_code,
+        {row["reachable"] for row in json.loads(result.stdout)["hosts"]},
+        "validate-reachability" in result.stderr,
+    ) == (3, {None}, True)
