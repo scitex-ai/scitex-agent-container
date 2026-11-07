@@ -41,3 +41,22 @@ def test_canonical_read_command_and_legacy_help_remain_available(
         True,
         True,
     )
+
+
+def test_role_json_is_identical_through_canonical_and_legacy_commands(tmp_path):
+    # Arrange — a real empty definition directory, not the operator's fleet.
+    import json
+
+    runner = CliRunner()
+    arguments = ["--dir", str(tmp_path), "--json"]
+    # Act
+    current = runner.invoke(main, ["agents", "list-roles", *arguments])
+    legacy = runner.invoke(main, ["agents", "roles", *arguments])
+    current_data = json.loads(current.stdout)
+    legacy_data = json.loads(legacy.stdout)
+    # Assert
+    assert (
+        current.exit_code == legacy.exit_code == 0
+        and current_data == legacy_data
+        and current_data["total"] == 0
+    )
