@@ -66,6 +66,16 @@ The existing `--yes` option explicitly permits pausing the last usable account;
 the preview does not bypass that guard. This local pause does not stop an agent
 already using the credential, renew a subscription or measure provider quota.
 
+Preview lifting a local pause:
+
+```bash
+sac accounts resume worker-account --dry-run
+```
+
+This reads the named account's pause record without removing it or checking
+model access. Remove `--dry-run` to lift the pause through the normal command;
+the account may still be expired or refused by its provider.
+
 The examples in [48](48_model-availability.md) are real network operations, not
 offline documentation tests. `accounts probe-api-keys` queries supported official
 usage/billing endpoints; `--no-record` avoids updating its local verdict cache.

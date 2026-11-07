@@ -114,3 +114,43 @@ def test_preview_keeps_existing_refusal_boundaries(preview_boundary):
     result = CliRunner().invoke(group, args, env=env)
     # Assert
     assert (result.exit_code, _snapshot(store)) == (expected_exit, before)
+
+
+@pytest.fixture(
+    params=[
+        ("active", "alpha", 0, "would resume alpha"),
+        ("corrupt", "alpha", 0, "unusable pause record"),
+        ("absent", "alpha", 0, "nothing to lift"),
+        ("active", "unknown", 1, "unknown account"),
+        ("active", "..", 1, "unknown account"),
+    ],
+    ids=["paused", "corrupt-record", "not-paused", "unknown", "parent-path"],
+)
+def resume_preview_store(pause_store, request):
+    """Prepare real pause records and preserve all local store bytes."""
+    group, env, store = pause_store
+    state, name, expected_exit, expected_text = request.param
+    if state == "active":
+        result = CliRunner().invoke(
+            group, ["pause", "alpha", "--reason", "subscription rest"], env=env
+        )
+        if result.exit_code:
+            pytest.fail(result.output)
+    elif state == "corrupt":
+        (store / "alpha" / "pause.json").write_text("not valid JSON")
+    return group, env, store, name, expected_exit, expected_text
+
+
+def test_resume_preview_reports_the_record_without_changing_store(resume_preview_store):
+    # Arrange
+    group, env, store, name, expected_exit, expected_text = resume_preview_store
+    before = _snapshot(store)
+    # Act
+    result = CliRunner().invoke(group, ["resume", name, "--dry-run"], env=env)
+    # Assert
+    assert (
+        result.exit_code,
+        expected_text in result.output,
+        "health now:" in result.output,
+        _snapshot(store),
+    ) == (expected_exit, True, False, before)

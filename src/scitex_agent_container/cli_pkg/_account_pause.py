@@ -307,7 +307,12 @@ def register_pause_commands(group: click.Group) -> None:
 
     @group.command("resume")
     @click.argument("name")
-    def account_resume(name: str) -> None:
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Show the pause record that would be removed without changing it.",
+    )
+    def account_resume(name: str, dry_run: bool) -> None:
         """Put a paused account back in service. The inverse of `pause`.
 
         Prints the reason that was lifted, how long the pause stood, and
@@ -316,12 +321,31 @@ def register_pause_commands(group: click.Group) -> None:
         is a different problem with a different fix (restore the
         subscription; the entitlement probe picks it up within 30
         minutes on its own).
+
+        Preview validates the stored account and reads its pause record. It
+        does not remove that record, query a provider or establish model access.
+
+        \b
+        Example:
+          $ sac accounts resume worker-account --dry-run
+          $ sac accounts resume worker-account
         """
         from .._creds._account_health import account_health
         from .._creds._pause import clear_pause, pause_path, read_pause
 
         account_dir = _resolve_account_dir(name)
         existing = read_pause(name, account_dir)
+        if dry_run:
+            if existing.active or existing.problem:
+                detail = existing.reason if existing.active else "unusable pause record"
+                click.echo(
+                    f"would resume {name}: {detail}\n"
+                    f"  record: {pause_path(account_dir)}\n"
+                    "  dry run: no account files changed; model access not checked."
+                )
+            else:
+                click.echo(f"{name} was not paused — nothing to lift (dry run).")
+            return
         # :func:`clear_pause` deliberately propagates every OSError that
         # is not FileNotFoundError, because a permission-denied unlink
         # means the pause is STILL THERE and calling that "nothing to
