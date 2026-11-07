@@ -22,6 +22,33 @@ the prompt came through.
 
 ---
 
+## Fleet dashboard admission receipts
+
+The same-host dashboard sends through the authenticated host listener, so a
+Docker dashboard can reach a host-loopback bridge. Cross-host rows disable the
+composer and direct the operator to Cards; switching rows preserves an unsent
+draft and clears the previous recipient.
+
+A successful POST can return `202` with an exchange ID. The dashboard keeps that
+receipt and performs authenticated GETs, at most 30 attempts over 60 seconds,
+without repeating the POST. The GET is bound to the caller, agent, and exchange
+by a signed receipt, rechecks control scope, and uses private/no-store responses.
+Canonical `202` and `102` remain pending. A final native `200` means **Received by
+agent**: the identified turn was admitted and became visible in its transcript.
+It does not mean the model finished the requested task. A final refusal remains
+an error; an unavailable or exhausted lookup remains unconfirmed.
+
+Changing the selected agent cancels polling. The receipt remains available when
+returning to that agent within the current page. If confirmation is unavailable,
+inspect the agent before intentionally submitting another message. There is no
+automatic resend, and dispatch IDs provide correlation rather than durable
+cross-worker deduplication. The exchange GET does not enqueue another turn.
+
+The dashboard uses the same canonical exchange validator as peer callers. An
+optional native receipt projection must agree with the status primitive; a
+contradiction or malformed finality stays unconfirmed rather than becoming
+proof of admission.
+
 ## 1. A2A sidecar — `POST /agents/<name>/turn`
 
 Enable it by leaving `spec.a2a.port` at its default (`auto`) — sac

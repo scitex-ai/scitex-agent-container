@@ -294,6 +294,19 @@ class RemoteFleet:
             f"/agents/{quote(name, safe='')}/status", timeout=timeout
         )
 
+    def read_exchange(
+        self, name: str, exchange_id: str, *, timeout: float = 5
+    ) -> dict[str, Any]:
+        """Read the exact canonical exchange through the authenticated listener."""
+        from scitex_dev.status import is_exchange_id
+
+        if not is_exchange_id(exchange_id):
+            raise ValueError("invalid canonical exchange id")
+        return self._request(
+            f"/agents/{quote(name, safe='')}/exchanges/{quote(exchange_id, safe='')}",
+            timeout=timeout,
+        )
+
     def read_tail(self, name: str, *, max_bytes: int = 262144) -> str:
         """Read the bounded ``follow=false`` SSE tail of an agent's session log.
 
