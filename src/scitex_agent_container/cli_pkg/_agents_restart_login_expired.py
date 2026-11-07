@@ -244,7 +244,7 @@ def restart_login_expired(
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
-            "    sac agents auth-status\n"
+            "    sac agents show-auth-status\n"
             "    sac agents list",
             __name__,
         )

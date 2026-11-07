@@ -103,7 +103,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [21](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env`; host fs/git/gh
 - [23](23_telegram-integration.md) — Telegram wake contract, token resolution
-- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `cct-audit`
+- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `validate-telegram`
 - [23-1t1p](23_telegram-one-token-one-poller.md) — one token, one consumer
 
 ## 30-second start

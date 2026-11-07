@@ -87,13 +87,13 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "list",
                 "status",
                 "health",
-                "auth-status",
+                "show-auth-status",
                 "tail",
                 "recall",
                 "explain",
                 "state",
-                "auth-audit",
-                "cct-audit",
+                "validate-auth-verdicts",
+                "validate-telegram",
             ],
         ),
         ("Preflight", ["check"]),
@@ -283,7 +283,15 @@ agent_group.add_command(_rebind(_health_impl, "health"))
 # watchdog). See cli_pkg/_auth_status + _runners/_tmux/auth_status.
 from ._auth_status import auth_status as _auth_status_impl  # noqa: E402
 
-agent_group.add_command(_auth_status_impl)
+agent_group.add_command(_rebind(_auth_status_impl, "show-auth-status"))
+agent_group.add_command(
+    _rebind(
+        _auth_status_impl,
+        "auth-status",
+        hidden=True,
+        deprecated="Use sac agents show-auth-status.",
+    )
+)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))

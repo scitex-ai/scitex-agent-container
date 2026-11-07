@@ -308,6 +308,9 @@ sac agents recall <name>                  # human-readable session summary
 sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
 sac agents find   <capability>            # search by metadata.labels.capabilities
 sac agents list-roles --json              # inspect declared role definitions
+sac agents show-auth-status --help        # auth observations and cache behavior
+sac agents validate-auth-verdicts --help  # compare auth verdicts with pane layout
+sac agents validate-telegram --help       # inspect declared and resolved Telegram rails
 sac a2a list-grants --json                 # inspect directional send permissions
 
 # Control plane (HTTP/JSON, loopback-only)
