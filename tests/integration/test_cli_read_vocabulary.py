@@ -12,6 +12,7 @@ from scitex_agent_container.cli_pkg import main
     [
         ("agents", "list-roles", "roles"),
         ("a2a", "list-grants", "grants"),
+        ("accounts", "get-quota", "quota"),
     ],
 )
 def test_canonical_read_command_and_legacy_help_remain_available(

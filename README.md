@@ -338,7 +338,7 @@ sac image snapshot [-o env.json]          # reproducibility capsule
 # Accounts / quota (multi-account rotation)
 sac accounts list / save / delete / switch        # stored-credential rotation
 sac accounts status                       # one-shot quota snapshot (5h%, 7d%, tier)
-sac accounts quota                        # this agent's own live quota
+sac accounts get-quota                        # this agent's own live quota
 sac accounts refresh                      # mint fresh access_token from refresh_token
 sac accounts sync-live / watch-live       # auto-snapshot live cred on `claude /login`
 sac accounts watch-quota                  # auto-rotate when quota threshold hit
