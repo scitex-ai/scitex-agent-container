@@ -431,7 +431,8 @@ def test_explain_run_parses_the_failing_job():
 def test_run_without_failed_job_details_requires_explicit_success(conclusion, jobs):
     # Arrange
     def fetch(args):
-        assert "--json" in args, "there are no failed-job logs to fetch"
+        if "--json" not in args:
+            raise RuntimeError("there are no failed-job logs to fetch")
         return json.dumps(
             {
                 "jobs": jobs,
@@ -442,10 +443,11 @@ def test_run_without_failed_job_details_requires_explicit_success(conclusion, jo
         )
 
     # Act
-    with pytest.raises(CIWhyError, match="no failed job details") as error:
+    # Assert: refusal includes the run's annotation link.
+    with pytest.raises(
+        CIWhyError, match=r"no failed job details.*https://example\.invalid/run"
+    ):
         explain_run("10000003", run_gh=fetch)
-    # Assert
-    assert "https://example.invalid/run" in str(error.value)
 
 
 @pytest.mark.parametrize("payload", ["null", "[]", "42"])
@@ -455,10 +457,9 @@ def test_non_object_run_metadata_is_an_explicit_observation_error(payload):
         return payload
 
     # Act
-    with pytest.raises(CIWhyError) as error:
-        explain_run("10000004", run_gh=fetch)
     # Assert
-    assert "metadata" in str(error.value)
+    with pytest.raises(CIWhyError, match="metadata"):
+        explain_run("10000004", run_gh=fetch)
 
 
 @pytest.mark.parametrize("conclusion", ["success", "SUCCESS"])
