@@ -1,13 +1,13 @@
-"""``sac host`` noun group — local host identity + peer routing (F-CS12).
+"""``sac host`` — host identity, SSH routing and peer configuration.
 
-Phase 1 surface (read-only inspection):
-
-  * ``sac host list`` — local host row + configured peers with their ssh routes
-  * ``sac host add / remove / set`` — peer CRUD against config.yaml
-
-Phase 2 (deferred): ``sac host probe <peer>``, ``sac host exec
-<peer> -- <args>``, the ``--on <peer>`` global flag, and fold-ins
-of ``sac network probe`` / ``sac installation boot``.
+* ``list`` / ``validate`` inspect configured hosts and registry routes.
+* ``probe`` / ``probe-hub`` check reachability; ``exec`` runs a remote command.
+* ``ssh-opts`` prints shared SSH control options; the root ``--on`` flag
+  dispatches a SAC command through the same routing layer.
+* ``add`` / ``remove`` / ``set``, ``sync`` and ``push-config`` manage peers
+  and their configuration through the registered command providers.
+* ``list-peers`` inventories bearer-registry names without reading token contents;
+  ``add-peer`` / ``remove-peer`` manage the separate per-host token files.
 """
 
 from __future__ import annotations
@@ -334,7 +334,10 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
     elif reachable:
-        render_rich(f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}", __name__)
+        render_rich(
+            f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}",
+            __name__,
+        )
     else:
         render_rich(f"[red]unreachable[/red]  {peer}  exit={proc.returncode}", __name__)
         if proc.stderr.strip():
@@ -434,20 +437,39 @@ def host_add_peer(peer_host: str, token: str) -> None:
 
 
 @host_group.command("list-peers")
-def host_list_peers() -> None:
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit peer names as JSON, never token values.",
+)
+@click.pass_context
+def host_list_peers(ctx: click.Context, as_json: bool) -> None:
     """List the peer hosts that have a registered listen bearer.
 
     Token values are NEVER printed — only the peer-host names. To
     see the on-disk file paths run
     ``ls -la ~/.scitex/agent-container/peer-tokens/``.
+
+    \b
+    Examples:
+      sac host list-peers
+      sac host list-peers --json
+      sac --json host list-peers
     """
     from .._listen.peer_tokens import default_peer_tokens_dir, list_peer_hosts
 
     tdir = default_peer_tokens_dir()
     hosts = list_peer_hosts()
+    if _json_flag(ctx, as_json):
+        click.echo(json.dumps({"peer_hosts": hosts}, indent=2))
+        return
     if not hosts:
-        render_rich(f"no peer tokens registered (dir: {tdir}). "
-            "Add one with: sac host add-peer <host> <token>", __name__)
+        render_rich(
+            f"no peer tokens registered (dir: {tdir}). "
+            "Add one with: sac host add-peer <host> <token>",
+            __name__,
+        )
         return
     render_rich(f"peer-tokens dir: {tdir}", __name__)
     for h in hosts:
