@@ -170,6 +170,7 @@ image_group.add_command(_image_inventory_cmds.image_status)
 image_group.add_command(_image_inventory_cmds.image_snapshot)
 image_group.add_command(_image_prune_cmd.image_prune)
 image_group.add_command(_image_disk_cmd.image_disk)
+image_group.add_command(_image_disk_cmd._legacy_disk)
 image_group.add_command(_image_activation_cmds.image_switch)
 image_group.add_command(_image_activation_cmds.image_rollback)
 
