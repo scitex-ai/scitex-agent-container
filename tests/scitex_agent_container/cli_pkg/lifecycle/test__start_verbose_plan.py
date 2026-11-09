@@ -172,7 +172,7 @@ class TestVerbosePlanGateDefaultIsShort:
         # Act
         log_text = _run_interactive(
             yaml_path, verbose=False, capsys=capsys, caplog=caplog
-        ).log_text
+        ).stderr
         # Assert
         assert "without --yes/-y" in log_text
 
@@ -252,7 +252,7 @@ class TestVerbosePlanGateFlagShowsFullPlan:
         # Act
         log_text = _run_interactive(
             yaml_path, verbose=True, capsys=capsys, caplog=caplog
-        ).log_text
+        ).stderr
         # Assert
         assert "without --yes/-y" in log_text
 

@@ -263,4 +263,4 @@ def test_the_refusal_branch_still_logs_the_yes_hint(
     # Act
     result = _refuse(tmp_path, env_save_restore, capsys, caplog)
     # Assert
-    assert "without --yes/-y" in result.log_text
+    assert "without --yes/-y" in result.stderr

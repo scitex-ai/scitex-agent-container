@@ -9,6 +9,12 @@ tags: [scitex-agent-container-cli]
 
 Both the long form `scitex-agent-container` and the short alias `sac` are entry points to the same Click app. Examples below use `sac` for brevity.
 
+Lifecycle status messages use scitex-logging's canonical stderr channel.
+`SCITEX_LOGGING_FORMAT` controls their format; an embedding application's
+stdout formatter does not replace it. Repeated helper imports do not add
+duplicate handlers. Runtime loggers keep their normal propagation to the
+application's handlers, including file handlers. Tables still use Rich.
+
 ## Lifecycle
 
 ```bash

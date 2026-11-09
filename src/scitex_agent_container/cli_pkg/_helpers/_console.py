@@ -13,14 +13,17 @@ import scitex_logging
 from rich.console import Console
 
 console = Console()
-logger = scitex_logging.getLogger("scitex_agent_container")
+# Scope isolation to this helper: isolating the package ancestor would also
+# intercept runtime records intended for an embedding application's handlers.
+logger = scitex_logging.getDiagnostic(__name__)
 
 
 def system_msg(text: str, style: str = "info") -> None:
-    """Emit one lifecycle record through the canonical project logger.
+    """Emit one lifecycle record through the canonical stderr channel.
 
     The shared logging backend owns format, stream and filtering. Helpers
     must not install an additional handler or render the same record again.
+    Runtime loggers retain their normal propagation to caller/file handlers.
 
     ``style`` maps to a scitex-logging level:
 
