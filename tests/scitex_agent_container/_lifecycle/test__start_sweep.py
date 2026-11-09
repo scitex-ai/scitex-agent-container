@@ -209,9 +209,7 @@ def test_start_runs_the_sweep_before_the_verdict(
     assert len(calls) == 1
 
 
-def test_start_on_dry_run_never_sweeps(
-    pg_schema: str, tmp_path: Path
-) -> None:
+def test_start_on_dry_run_never_sweeps(pg_schema: str, tmp_path: Path) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
     registry = Registry(registry_dir=tmp_path / "reg")
@@ -227,9 +225,7 @@ def test_start_on_dry_run_never_sweeps(
     assert calls == []
 
 
-def test_start_survives_a_raising_sweeper(
-    pg_schema: str, tmp_path: Path
-) -> None:
+def test_start_survives_a_raising_sweeper(pg_schema: str, tmp_path: Path) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
     registry = Registry(registry_dir=tmp_path / "reg")
@@ -255,27 +251,21 @@ def _fake_verdict(*, unknown: bool = True) -> LivenessVerdict:
     )
 
 
-def test_announce_names_swept_rows(caplog) -> None:
+def test_announce_names_swept_rows(caplog, capsys) -> None:
     # Arrange
     # Act
     with caplog.at_level(logging.INFO):
-        _announce_start_verdict(
-            _fake_verdict(), swept={"pid_absent_at_sweep": 2}
-        )
+        _announce_start_verdict(_fake_verdict(), swept={"pid_absent_at_sweep": 2})
     # Assert
-    assert any(
-        "sweep: cleared 2 stale instance row(s) (pid_absent_at_sweep=2)"
-        in rec.getMessage()
-        for rec in caplog.records
+    assert "sweep: cleared 2 stale instance row(s) (pid_absent_at_sweep=2)" in (
+        capsys.readouterr().err
     )
 
 
-def test_announce_stays_silent_on_empty_sweep(caplog) -> None:
+def test_announce_stays_silent_on_empty_sweep(caplog, capsys) -> None:
     # Arrange
     # Act
     with caplog.at_level(logging.INFO):
         _announce_start_verdict(_fake_verdict(), swept={})
     # Assert
-    assert not any(
-        "stale instance row" in rec.getMessage() for rec in caplog.records
-    )
+    assert "stale instance row" not in capsys.readouterr().err

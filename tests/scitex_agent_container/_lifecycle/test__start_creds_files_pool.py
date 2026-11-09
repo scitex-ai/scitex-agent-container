@@ -465,35 +465,11 @@ def test_pool_notice_reason_is_emitted_at_info_not_debug(
     _logger_at_info: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The reason must be emitted ABOVE the operator console's INFO threshold.
+    """Capture the diagnostic logger directly at the operator's INFO level.
 
-    MEASURED ON THE LEVEL, NOT ON A FILE DESCRIPTOR. This assertion used to
-    read ``"ranking inputs:" in capfd.readouterr().err``, and that made a
-    LEVEL question depend on WHICH STREAM OBJECT the logging stack happened to
-    be holding — process-global state any other test in the same xdist worker
-    can change just by importing a module. ``_mcp/server.py`` does exactly
-    that at IMPORT time: ``_ensure_stderr_logging()`` attaches a
-    ``logging.StreamHandler(sys.stderr)`` to this very logger, and a stock
-    ``StreamHandler`` CACHES the stream object it is handed. Once some earlier
-    test in the worker imports it, sac's log lines go to whatever ``sys.stderr``
-    was at that instant — a capture buffer belonging to a test that has long
-    since finished — so ``capfd`` here sees nothing and the test fails while the
-    code is behaving correctly.
-
-    That is not a hypothesis: in the 2026-08-12 develop run (gw10) pytest's own
-    ``Captured log call`` section recorded ``INFO ... _console.py:43 ... ranking
-    inputs:`` for this very call, while ``capfd`` returned only an unrelated
-    warning. The two instruments disagreed, and only one of them was measuring
-    the property this test is named after. The same test passes alone and
-    passes across all 1813 ``_lifecycle`` tests in a single process — the
-    failure tracks worker composition, not behaviour.
-
-    ``caplog`` records what the LOGGER emitted, which is the property. The
-    discrimination the test exists for is fully preserved by ``_logger_at_info``:
-    with the logger pinned at INFO, a detail emitted under ``style="dim"``
-    (→ ``scitex_logging.DEBUG``) is dropped AT THE LOGGER and never reaches
-    ``caplog`` at all. So the regression this guards — the reason going out
-    below the level anyone reads — still turns this red.
+    The canonical channel deliberately does not propagate to root handlers.
+    Attach pytest's observer only for this call, retaining the original
+    level-based check: DEBUG reasons must still disappear at INFO.
     """
     # Arrange — the WHY (policy, rationale, per-candidate ranking inputs) went
     # out under style="dim", which maps to DEBUG, so the logger dropped it and
@@ -503,13 +479,18 @@ def test_pool_notice_reason_is_emitted_at_info_not_debug(
     p_b = _write_snapshot(home, "acct-b", _future_ms())
     cfg = _make_pool_config("alpha", [p_a, p_b])
     # Act — no log_stream, so the notice takes the real system_msg path.
-    _rotate_to_healthy_account(cfg, usage_7d={"acct-a": 95.0, "acct-b": 5.0})
+    from scitex_agent_container.cli_pkg._helpers._console import logger
+
+    logger.addHandler(caplog.handler)
+    try:
+        _rotate_to_healthy_account(cfg, usage_7d={"acct-a": 95.0, "acct-b": 5.0})
+    finally:
+        logger.removeHandler(caplog.handler)
     # Assert — the ranking inputs survive an INFO-level console.
     reason_records = [
         record
         for record in caplog.records
-        if "ranking inputs:" in record.getMessage()
-        and record.levelno >= logging.INFO
+        if "ranking inputs:" in record.getMessage() and record.levelno >= logging.INFO
     ]
     assert reason_records
 
