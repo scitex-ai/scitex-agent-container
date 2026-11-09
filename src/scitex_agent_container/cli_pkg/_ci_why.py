@@ -439,20 +439,16 @@ def explain_run(
     run_id: str, *, run_gh: GhRunner = run_gh, repo: Optional[str] = None
 ) -> RunFailures:
     """Fetch + distil every failing job of a single run."""
+    fields = "jobs,displayTitle,headBranch,status,conclusion,url,workflowName"
     meta_raw = run_gh(
-        [
-            "run",
-            "view",
-            str(run_id),
-            *_repo_args(repo),
-            "--json",
-            "jobs,displayTitle,headBranch,conclusion,url,workflowName",
-        ]
+        ["run", "view", str(run_id), *_repo_args(repo), "--json", fields]
     )
     try:
         meta = json.loads(meta_raw or "{}")
     except ValueError as exc:
         raise CIWhyError(f"could not parse gh run view JSON for run {run_id}") from exc
+    if not isinstance(meta, dict):
+        raise CIWhyError(f"invalid run metadata for run {run_id}: expected an object")
     run = RunFailures(
         run_id=str(run_id),
         workflow=meta.get("workflowName", ""),
@@ -466,7 +462,13 @@ def explain_run(
         if str(j.get("conclusion", "")).lower() in _FAILED_JOB_CONCLUSIONS
     ]
     if not failing:
-        return run
+        if str(meta.get("conclusion", "")).lower() == "success":
+            return run
+        raise CIWhyError(
+            f"run {run_id}: no failed job details; "
+            f"status={meta.get('status')!r}, conclusion={meta.get('conclusion')!r}. "
+            f"Inspect workflow annotations: {run.url}"
+        )
 
     by_job = split_log_by_job(
         run_gh(["run", "view", str(run_id), *_repo_args(repo), "--log-failed"])

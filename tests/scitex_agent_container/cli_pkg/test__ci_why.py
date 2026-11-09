@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from scitex_agent_container.cli_pkg._ci_why import (
     CIWhyError,
     RunFailures,
@@ -388,6 +390,9 @@ def _gh_router(jobs: list[dict], log_text: str):
                     "workflowName": "tests",
                     "displayTitle": "t",
                     "headBranch": "b",
+                    "conclusion": "failure"
+                    if any(j.get("conclusion") != "success" for j in jobs)
+                    else "success",
                     "jobs": jobs,
                 }
             )
@@ -417,3 +422,53 @@ def test_explain_run_parses_the_failing_job():
         .failed_tests[0]
         .startswith("FAILED tests/test_math.py::test_math")
     )
+
+
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "cancelled", "timed_out", "startup_failure", None]
+)
+@pytest.mark.parametrize("jobs", [[], [{"name": "test", "conclusion": "skipped"}]])
+def test_run_without_failed_job_details_requires_explicit_success(conclusion, jobs):
+    # Arrange
+    def fetch(args):
+        if "--json" not in args:
+            raise RuntimeError("there are no failed-job logs to fetch")
+        return json.dumps(
+            {
+                "jobs": jobs,
+                "conclusion": conclusion,
+                "status": "in_progress" if conclusion is None else "completed",
+                "url": "https://example.invalid/run",
+            }
+        )
+
+    # Act
+    # Assert: refusal includes the run's annotation link.
+    with pytest.raises(
+        CIWhyError, match=r"no failed job details.*https://example\.invalid/run"
+    ):
+        explain_run("10000003", run_gh=fetch)
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "42"])
+def test_non_object_run_metadata_is_an_explicit_observation_error(payload):
+    # Arrange
+    def fetch(args):
+        return payload
+
+    # Act
+    # Assert
+    with pytest.raises(CIWhyError, match="metadata"):
+        explain_run("10000004", run_gh=fetch)
+
+
+@pytest.mark.parametrize("conclusion", ["success", "SUCCESS"])
+def test_explicit_success_with_no_job_rows_remains_clear(conclusion):
+    # Arrange
+    def fetch(args):
+        return json.dumps({"conclusion": conclusion, "jobs": []})
+
+    # Act
+    run = explain_run("10000005", run_gh=fetch)
+    # Assert
+    assert run.failures == []

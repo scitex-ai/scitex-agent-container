@@ -15,6 +15,7 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
@@ -147,3 +148,60 @@ def test_why_reports_gh_failure_loudly(tmp_path: Path, env_save_restore):
     result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
     # Assert
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "cancelled", "timed_out", "startup_failure", None]
+)
+@pytest.mark.parametrize("json_output", [False, True])
+def test_workflow_failure_without_failed_jobs_is_not_reported_as_green(
+    tmp_path, env_save_restore, conclusion, json_output
+):
+    # Arrange
+    import json
+
+    meta = json.dumps(
+        {
+            "conclusion": conclusion,
+            "status": "completed",
+            "jobs": [{"name": "test", "conclusion": "skipped"}],
+            "url": "https://example.invalid/run",
+        }
+    )
+    _install_fake_gh(tmp_path, env_save_restore, meta, "")
+    # Act
+    result = CliRunner().invoke(
+        main, ["ci", "why", _RUN_ID, *(["--json"] if json_output else [])]
+    )
+    # Assert
+    assert (
+        result.exit_code != 0,
+        result.stdout == "",
+        "no failed job details" in result.stderr,
+    ) == (True, True, True)
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_success_without_jobs_preserves_text_and_json_contract(
+    tmp_path, env_save_restore, json_output
+):
+    # Arrange
+    import json
+
+    _install_fake_gh(
+        tmp_path,
+        env_save_restore,
+        json.dumps({"conclusion": "success", "jobs": []}),
+        "",
+    )
+    # Act
+    result = CliRunner().invoke(
+        main, ["ci", "why", _RUN_ID, *(["--json"] if json_output else [])]
+    )
+    clear = (
+        json.loads(result.stdout)[0]["failures"] == []
+        if json_output
+        else result.stdout.strip() == "no failures"
+    )
+    # Assert
+    assert (result.exit_code, result.stderr, clear) == (0, "", True)

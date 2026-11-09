@@ -50,6 +50,10 @@ def why(ctx: click.Context, target: str, repo: str, as_json: bool) -> None:
     """Extract the real failure(s) from a red CI run — compactly.
 
     \b
+    A run without failed-job logs is clear only if its conclusion is success.
+    Other conclusions raise an error linking to the workflow annotations.
+
+    \b
     TARGET may be:
       * a PR number   -> the run(s) behind its failing checks
       * a run id       -> that run
