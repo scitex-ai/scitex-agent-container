@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Add offline registry registration previews and require explicit approval
+  before accessing the routing store; retain backend conflict checks.
 - Expose root diagnostics as `list-ports`, `list-versions` and
   `show-provenance`; retain hidden legacy aliases with warnings on stderr.
 - Forward service/timer status JSON through the installed scitex-dev backend,
