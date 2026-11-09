@@ -2,7 +2,7 @@
 
 * ``list`` / ``validate`` inspect configured hosts and registry routes.
 * ``probe`` / ``probe-hub`` check reachability; ``exec`` runs a remote command.
-* ``ssh-opts`` prints shared SSH control options; the root ``--on`` flag
+* ``show-ssh-options`` prints shared SSH control options; the root ``--on`` flag
   dispatches a SAC command through the same routing layer.
 * ``add`` / ``remove`` / ``set``, ``sync`` and ``push-config`` manage peers
   and their configuration through the registered command providers.
@@ -25,10 +25,14 @@ from .._state.host_config import (
     Config,
     build_ssh_argv,
     load,
-    ssh_control_options_str,
+)
+from .._state.host_config import (
+    ssh_control_options_str as ssh_control_options_str,
 )
 from ._helpers import _json_flag
 from ._host_list_cmd import host_list, register_list_command
+from ._host_ssh_options import host_ssh_opts as host_ssh_opts
+from ._host_ssh_options import register_ssh_options_command
 from ._host_validate_cmd import host_validate, register_validate_command
 
 # ``host_list`` / ``host_validate`` are re-exported because callers import them
@@ -65,9 +69,10 @@ def host_group() -> None:
 # orchestrator under the per-file line cap; they attach at import time (same
 # pattern as ``_account_list_cmd.py``). This module keeps one cohesive
 # responsibility: reaching peers (split_on_flag / dispatch_remote / exec /
-# probe / ssh-opts / peer CRUD).
+# probe / SSH option inspection / peer CRUD).
 register_list_command(host_group)
 register_validate_command(host_group)
+register_ssh_options_command(host_group)
 
 
 def _unknown_peer_error(peer: str, cfg: Config) -> str:
@@ -344,27 +349,6 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
             render_rich(f"[dim]{proc.stderr.strip()[:200]}[/dim]", __name__)
     if not reachable:
         raise SystemExit(1)
-
-
-@host_group.command("ssh-opts")
-def host_ssh_opts() -> None:
-    """Print sac's ssh ControlMaster options as a shell-quoted string.
-
-    Splat this into an ad-hoc ssh / scp / rsync command so multi-host
-    automation reuses sac's existing multiplexed master per peer
-    instead of opening a fresh connection per call. The output is
-    shell-safe — just pass it through ``$(...)``::
-
-        ssh $(sac host ssh-opts) myhost cmd
-        rsync -e "ssh $(sac host ssh-opts)" src/ myhost:dst/
-        parallel ssh $(sac host ssh-opts) myhost ::: cmd1 cmd2 cmd3
-
-    Prints an empty line when multiplexing is opted out
-    (``SAC_SSH_CONTROL_MASTER=0``) so the splat is a no-op. The
-    underlying flags are documented under
-    :func:`scitex_agent_container._state.host_config.ssh_control_options`.
-    """
-    click.echo(ssh_control_options_str())
 
 
 # WSL → fleet-hub layered probe (folded from ``sac network probe``).

@@ -21,7 +21,7 @@ from pathlib import Path
 import click
 
 from .._logging import render_rich
-from ._helpers._json_flag import _json_flag
+from ._helpers import _json_flag
 
 DEFAULT_ALERT_THRESHOLD = 85.0
 NEVER_FIRES_THRESHOLD = 101.0

@@ -54,7 +54,12 @@ def _fits_socket_budget(control_dir: str | os.PathLike) -> bool:
 
     Pure (no mkdir): the byte budget is ``dir + 1 + 40 + 24 <= 107``.
     """
-    used = len(os.fsencode(os.fspath(control_dir))) + 1 + _HASH_CHARS + _MASTER_SUFFIX_RESERVE
+    used = (
+        len(os.fsencode(os.fspath(control_dir)))
+        + 1
+        + _HASH_CHARS
+        + _MASTER_SUFFIX_RESERVE
+    )
     return used <= _SOCKADDR_UN_BUDGET
 
 
@@ -164,13 +169,12 @@ def ssh_control_options(*, control_dir: str | os.PathLike | None = None) -> list
 def ssh_control_options_str(*, control_dir: str | os.PathLike | None = None) -> str:
     """Return :func:`ssh_control_options` flags as a shell-quoted string.
 
-    Convenience for agent prompts and shell wrappers that want to splat
-    the options into a literal ``ssh`` command::
+    Parse this string with ``shlex.split`` before building a subprocess argv.
+    Plain shell command substitution does not reapply embedded quotes and
+    can split a ControlPath containing spaces. The CLI's
+    ``sac host show-ssh-options --json`` exposes the option words directly.
 
-        ssh $(sac host ssh-opts) myhost cmd
-
-    Returns the empty string when multiplexing is opted out so the splat
-    has no effect.
+    Returns the empty string when multiplexing is opted out or unavailable.
     """
     import shlex
 
