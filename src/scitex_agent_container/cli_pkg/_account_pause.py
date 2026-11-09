@@ -218,7 +218,7 @@ def register_pause_commands(group: click.Group) -> None:
 
         For the workflow of stopping a subscription and putting it back
         later. Nothing is deleted and no credential is touched;
-        `sac accounts resume NAME` puts it back in one command.
+        `sac accounts resume NAME --yes` puts it back in one command.
 
         EXACTLY WHAT A PAUSE STOPS, stated narrowly on purpose. No NEW
         agent boot picks the account, quota rotation never lands on it,
@@ -302,7 +302,7 @@ def register_pause_commands(group: click.Group) -> None:
         click.echo(
             f"paused {name}: {record.reason}\n"
             f"  record: {pause_path(account_dir)}\n"
-            f"  nothing was deleted; `sac accounts resume {name}` lifts it."
+            f"  nothing was deleted; `sac accounts resume {name} --yes` lifts it."
         )
 
     @group.command("resume")
@@ -312,7 +312,13 @@ def register_pause_commands(group: click.Group) -> None:
         is_flag=True,
         help="Show the pause record that would be removed without changing it.",
     )
-    def account_resume(name: str, dry_run: bool) -> None:
+    @click.option(
+        "--yes",
+        "-y",
+        is_flag=True,
+        help="Confirm removal of the local pause record.",
+    )
+    def account_resume(name: str, dry_run: bool, yes: bool) -> None:
         """Put a paused account back in service. The inverse of `pause`.
 
         Prints the reason that was lifted, how long the pause stood, and
@@ -324,11 +330,12 @@ def register_pause_commands(group: click.Group) -> None:
 
         Preview validates the stored account and reads its pause record. It
         does not remove that record, query a provider or establish model access.
+        Removing a record requires --yes; an unpaused account remains a no-op.
 
         \b
         Example:
           $ sac accounts resume worker-account --dry-run
-          $ sac accounts resume worker-account
+          $ sac accounts resume worker-account --yes
         """
         from .._creds._account_health import account_health
         from .._creds._pause import clear_pause, pause_path, read_pause
@@ -346,6 +353,13 @@ def register_pause_commands(group: click.Group) -> None:
             else:
                 click.echo(f"{name} was not paused — nothing to lift (dry run).")
             return
+        if not yes and (
+            existing.active or existing.problem or pause_path(account_dir).exists()
+        ):
+            raise click.ClickException(
+                f"refusing to remove the pause record for '{name}' without --yes. "
+                "Use --dry-run to inspect it; pass --yes to resume the account."
+            )
         # :func:`clear_pause` deliberately propagates every OSError that
         # is not FileNotFoundError, because a permission-denied unlink
         # means the pause is STILL THERE and calling that "nothing to
@@ -355,7 +369,7 @@ def register_pause_commands(group: click.Group) -> None:
         # costs one command ended in a Python stack trace on a
         # read-only store.
         try:
-            removed = clear_pause(account_dir)
+            removed = clear_pause(account_dir) if yes else False
         except OSError as exc:
             raise click.ClickException(
                 f"could not remove {pause_path(account_dir)} ({exc}) — "

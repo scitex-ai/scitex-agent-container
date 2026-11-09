@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Require `accounts resume --yes` before removing a local pause record; keep
+  `--dry-run` read-only even with approval and preserve unpaused no-op behavior.
 - Expose CI inspection as `ci explain`, `ci list-runners` and `ci list-blocked`;
   retain hidden deprecated `why`, `runners` and `blocked` aliases with unchanged
   read behavior and JSON output.

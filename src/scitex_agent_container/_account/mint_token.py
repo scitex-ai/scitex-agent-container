@@ -145,7 +145,7 @@ def mint_access_only_artifact(
             raise MintError(
                 f"cannot mint: account '{account}' is PAUSED ({reason}) — "
                 "this is a decision, not a fault; nothing is broken and "
-                f"nothing was deleted. Run `sac accounts resume {account}` "
+                f"nothing was deleted. Run `sac accounts resume {account} --yes` "
                 "to put it back in service."
             )
         if health.state == "FORBIDDEN":

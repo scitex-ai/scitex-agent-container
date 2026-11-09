@@ -312,12 +312,12 @@ def pick_healthy_account(
             raise NoHealthyAccountError(
                 f"every stored account is PAUSED (probed at "
                 f"{_iso_utc(probe_ts)}): {_format_states(healths)}. Fix: "
-                f"`sac accounts resume {paused[0].name}` — this is a "
+                f"`sac accounts resume {paused[0].name} --yes` — this is a "
                 "decision you made, not a fault; nothing is broken and "
                 "nothing was deleted.",
                 brief=(
                     f"every stored account is PAUSED ({names}) — run "
-                    f"`sac accounts resume {paused[0].name}`"
+                    f"`sac accounts resume {paused[0].name} --yes`"
                 ),
             )
         raise NoHealthyAccountError(

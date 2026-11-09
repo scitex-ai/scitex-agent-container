@@ -154,3 +154,71 @@ def test_resume_preview_reports_the_record_without_changing_store(resume_preview
         "health now:" in result.output,
         _snapshot(store),
     ) == (expected_exit, True, False, before)
+
+
+@pytest.fixture(params=["active", "corrupt"])
+def resume_approval_store(pause_store, request):
+    group, env, store = pause_store
+    result = CliRunner().invoke(
+        group, ["pause", "alpha", "--reason", "subscription rest"], env=env
+    )
+    if result.exit_code:
+        pytest.fail(result.output)
+    if request.param == "corrupt":
+        (store / "alpha" / "pause.json").write_text("not valid JSON")
+    return group, env, store
+
+
+def test_resume_without_approval_preserves_every_account_file(resume_approval_store):
+    # Arrange
+    group, env, store = resume_approval_store
+    before = _snapshot(store)
+    # Act
+    result = CliRunner().invoke(group, ["resume", "alpha"], env=env)
+    # Assert
+    assert (result.exit_code, "--yes" in result.output, _snapshot(store)) == (
+        1,
+        True,
+        before,
+    )
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+def test_approved_resume_removes_only_the_pause_record(resume_approval_store, approval):
+    # Arrange
+    group, env, store = resume_approval_store
+    expected = {k: v for k, v in _snapshot(store).items() if k != "alpha/pause.json"}
+    # Act
+    result = CliRunner().invoke(group, ["resume", "alpha", approval], env=env)
+    # Assert
+    assert (result.exit_code, _snapshot(store)) == (0, expected)
+
+
+def test_approval_does_not_override_resume_preview(resume_approval_store):
+    # Arrange
+    group, env, store = resume_approval_store
+    before = _snapshot(store)
+    # Act
+    result = CliRunner().invoke(
+        group, ["resume", "alpha", "--yes", "--dry-run"], env=env
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        "would resume alpha" in result.output,
+        _snapshot(store),
+    ) == (0, True, before)
+
+
+def test_unpaused_resume_without_approval_is_a_read_only_noop(pause_store):
+    # Arrange
+    group, env, store = pause_store
+    before = _snapshot(store)
+    # Act
+    result = CliRunner().invoke(group, ["resume", "alpha"], env=env)
+    # Assert
+    assert (result.exit_code, "nothing to lift" in result.output, _snapshot(store)) == (
+        0,
+        True,
+        before,
+    )

@@ -73,7 +73,7 @@ sac accounts resume worker-account --dry-run
 ```
 
 This reads the named account's pause record without removing it or checking
-model access. Remove `--dry-run` to lift the pause through the normal command;
+model access. Replace `--dry-run` with `--yes` to approve lifting the pause;
 the account may still be expired or refused by its provider.
 
 The examples in [48](48_model-availability.md) are real network operations, not

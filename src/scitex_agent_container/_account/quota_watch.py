@@ -224,7 +224,7 @@ def check_and_rotate(
                         f"ALERT: quota {q5}% (5h) — no account to rotate to: "
                         f"{len(rested)} PAUSED ({', '.join(rested)}); staying "
                         f"put. Lift one with `sac accounts resume "
-                        f"{rested[0]}` if you want the headroom back."
+                        f"{rested[0]} --yes` if you want the headroom back."
                     ),
                 }
             return {
