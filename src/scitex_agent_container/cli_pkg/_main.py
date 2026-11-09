@@ -131,7 +131,7 @@ class _MainGroup(LazyGroup):
         "listen": f"{_PKG}.listen_cmds:listen",
         "gui": f"{_PKG}.gui_group:gui_group",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
-        # Mechanical gates over a DELEGATED code change. `guard deletions`
+        # Mechanical gates over a DELEGATED code change. `guard validate-deletions`
         # is the standing form of the detector that judged 36 local-model
         # trials: it names anything a change removed without being asked
         # to, and distinguishes "clean" from "could not tell" (exit 0 / 3
