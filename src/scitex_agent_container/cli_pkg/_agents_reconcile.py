@@ -65,10 +65,12 @@ def _print_report(report) -> None:
 @click.command(name="reconcile")
 @click.option(
     "--apply",
+    "--yes",
+    "-y",
     "apply",
     is_flag=True,
     default=False,
-    help="ACTUALLY restart the corpses. Without this, nothing is restarted.",
+    help="Approve restarting eligible failed agents. Without this, nothing is restarted.",
 )
 @click.option(
     "--limit",
@@ -85,7 +87,7 @@ def _print_report(report) -> None:
     "dry_run",
     is_flag=True,
     default=False,
-    help="Report only, mutate nothing. This is already the DEFAULT.",
+    help="Report without restarting agents. This is already the DEFAULT.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
 @click.option(
@@ -113,12 +115,16 @@ def reconcile(
     running ⇒ is running".
 
     \b
-    Detect (read-only — this is the DEFAULT, exits non-zero if anything is down):
+    Detect (no agent restarts — this is the DEFAULT, exits non-zero if anything is down):
       $ sac agents reconcile
       $ sac agents reconcile --json
     \b
-    Remedy:
-      $ sac agents reconcile --apply
+    Remedy (approve with --yes/-y; --apply remains an equivalent spelling):
+      $ sac agents reconcile --yes
+
+    Pass-heartbeat reporting is separate from agent restarts and may write to
+    configured storage in either mode. Explicit --dry-run cannot be combined
+    with any approval spelling.
 
     THE RULE — tmux is the fact, intent is sacred, and only corpses move:
 
@@ -145,8 +151,8 @@ def reconcile(
     """
     if apply and dry_run:
         raise click.UsageError(
-            "--apply and --dry-run are contradictory. Dry-run is the DEFAULT: "
-            "drop both flags to preview, pass --apply to restart."
+            "--apply/--yes/-y and --dry-run are contradictory. Dry-run is the DEFAULT: "
+            "drop both flags to preview, pass --yes to restart."
         )
 
     outcome = reconcile_pass(apply=apply, limit=limit)
@@ -185,7 +191,7 @@ def reconcile(
         render_rich(f"\n[yellow]{len(would)} agent(s) DIED and would be restarted:[/yellow] "
             f"{', '.join(r.name for r in would)}\n"
             "  Nothing was restarted — this is a dry-run. To act:\n"
-            "    sac agents reconcile --apply", __name__)
+            "    sac agents reconcile --yes", __name__)
     down = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
     if down:
         render_rich(f"\n[red]{len(down)} agent(s) are DOWN and sac could NOT recover "

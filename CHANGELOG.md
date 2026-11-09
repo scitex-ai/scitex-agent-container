@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Accept standard `--yes/-y` approval spellings for agent reconciliation
+  while retaining `--apply`, preview defaults and existing restart guards.
 - Add offline registry registration previews and require explicit approval
   before accessing the routing store; retain backend conflict checks.
 - Expose root diagnostics as `list-ports`, `list-versions` and
