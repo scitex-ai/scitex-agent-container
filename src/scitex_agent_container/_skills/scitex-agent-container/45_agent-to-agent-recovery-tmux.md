@@ -114,5 +114,5 @@ boot prompt whose queued input keeps returning (then `restart --fresh`).
 
 - [44_agent-to-agent-recovery.md](44_agent-to-agent-recovery.md) — WHEN to use this vs prompt / MCP / hook (the decision tree + the read-path caveat)
 - [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md) / [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md) — `tui-<name>` vs `sac-<name>` topology, the `tmux capture-pane` matcher
-- [03_auto-accept.md](03_auto-accept.md) — the `-L sac` startup-prompt pane (do NOT target it for recovery)
+- [50_core_03_auto-accept.md](50_core_03_auto-accept.md) — the `-L sac` startup-prompt pane (do NOT target it for recovery)
 - [27_credentials-relogin.md](27_credentials-relogin.md) / [28_credential-refresh.md](28_credential-refresh.md) — auth recovery a restart applies

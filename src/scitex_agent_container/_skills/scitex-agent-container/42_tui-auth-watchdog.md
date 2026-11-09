@@ -144,7 +144,7 @@ signature is stable **only when the agent has truly stopped producing output**.
 ## See also
 
 - [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md) — package matcher §5–§6, `auth-heal.py` guards, the extend-the-matcher runbook, and the blindness canary
-- [03_auto-accept.md](03_auto-accept.md) — the *other* pane matcher (`prompts.py`), for startup-prompt auto-accept on the `-L sac` server
+- [50_core_03_auto-accept.md](50_core_03_auto-accept.md) — the *other* pane matcher (`prompts.py`), for startup-prompt auto-accept on the `-L sac` server
 - [26_credentials-rotation.md](26_credentials-rotation.md) — the stale-in-memory-OAuth-token death this watchdog recovers from
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh without restart (running agents re-read on next turn)

@@ -10,7 +10,7 @@ tags: [scitex-agent-container-credentials-account-selection]
 > On-disk credential model, the binds, and preflight:
 > [26_credentials-rotation.md](26_credentials-rotation.md).
 > Refresh mechanics + host-side ops:
-> [26_credentials-rotation-host.md](26_credentials-rotation-host.md).
+> [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md).
 
 Which account an agent boots on is decided ONCE, at start
 (`_lifecycle/_start_preflight.py`). Two declarative options in the spec
@@ -61,7 +61,7 @@ restart it once its in-flight work allows.
 
 - [26_credentials-rotation.md](26_credentials-rotation.md) — on-disk
   model, binds, preflight.
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) —
+- [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md) —
   refresh mechanics + one-refresher invariant + host cron.
 - Source files cited: `_lifecycle/_start_preflight.py`,
   `_creds/_pick_healthy.py`, `_creds/_spend_policy.py`.

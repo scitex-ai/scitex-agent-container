@@ -149,7 +149,7 @@ The legacy `dot_claude/` layout was removed (ADR-0006). A spec that
 still ships a `dot_claude/` dir is rejected with an error pointing at
 `to_home/`.
 
-See `06_env-injection-ports.md` for the four distinct env-injection ports and when to use each.
+See `50_core_06_env-injection-ports.md` for the four distinct env-injection ports and when to use each.
 
 ## Migration from v2 → v3
 
@@ -163,4 +163,4 @@ If you have legacy YAMLs:
 ## See also
 
 - `08_templates.md` — six minimal pattern templates under `examples/agent-templates/`
-- `06_env-injection-ports.md` — yaml.env vs to_home/.mcp.json env vs to_home/.env vs hooks
+- `50_core_06_env-injection-ports.md` — yaml.env vs to_home/.mcp.json env vs to_home/.env vs hooks
