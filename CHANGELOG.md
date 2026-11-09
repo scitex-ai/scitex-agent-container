@@ -7,6 +7,9 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Expose CI inspection as `ci explain`, `ci list-runners` and `ci list-blocked`;
+  retain hidden deprecated `why`, `runners` and `blocked` aliases with unchanged
+  read behavior and JSON output.
 - Expose read-only role/grant/quota discovery as `agents list-roles`,
   `a2a list-grants` and `accounts get-quota`; retain hidden deprecated aliases for existing scripts.
 - Reserve the unspent 0.38.7 version for these pending changes.

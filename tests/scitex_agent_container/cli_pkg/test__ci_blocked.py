@@ -1,4 +1,4 @@
-"""Tests for the silent-block detector behind ``sac ci blocked``.
+"""Tests for the silent-block detector behind ``sac ci list-blocked``.
 
 THE REGRESSION THESE EXIST FOR, measured on this repo 2026-08-12 08:49Z:
 #1014, #1017 and #1005 were all ``MERGEABLE / BLOCKED`` with ``fail=0`` because
@@ -324,7 +324,7 @@ def test_unreadable_protection_raises_rather_than_reading_clean():
 
 def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
     """The sibling route to the same wrong verdict: `run_gh` raising was
-    swallowed here, which also defeated the CORRECT guard in `sac ci blocked`
+    swallowed here, which also defeated the CORRECT guard in `sac ci list-blocked`
     ("UNKNOWN is not green"). That guard could not fire for this path.
     """
     # Arrange
