@@ -81,3 +81,35 @@ def _temporary_attribute(owner, name, value):
             delattr(owner, name)
         else:
             setattr(owner, name, previous)
+
+
+@pytest.mark.parametrize(
+    "canonical,legacy",
+    [("list-ports", "ports"), ("list-versions", "versions"),
+     ("show-provenance", "provenance")],
+)
+def test_read_actions_are_discoverable_while_noun_aliases_stay_hidden(
+    canonical, legacy
+):
+    # Arrange
+    facade = _load_cli()
+    # Act
+    names = facade.list_commands(click.Context(facade))
+    # Assert
+    assert (canonical in names, legacy in names) == (True, False)
+
+
+@pytest.mark.parametrize(
+    "canonical,legacy",
+    [("list-ports", "ports"), ("list-versions", "versions"),
+     ("show-provenance", "provenance")],
+)
+def test_legacy_read_names_resolve_to_the_original_callback(canonical, legacy):
+    # Arrange
+    facade = _load_cli()
+    ctx = click.Context(facade)
+    # Act
+    current = facade.get_command(ctx, canonical)
+    old = facade.get_command(ctx, legacy)
+    # Assert
+    assert current is not None and old is not None and current.callback is old.callback

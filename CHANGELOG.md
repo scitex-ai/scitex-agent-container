@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Expose root diagnostics as `list-ports`, `list-versions` and
+  `show-provenance`; retain hidden legacy aliases with warnings on stderr.
 - Forward service/timer status JSON through the installed scitex-dev backend,
   refusing undeclared JSON capability; add grammar-derived job command examples.
 - Add an offline `a2a revoke --dry-run` plan and require `--yes` before

@@ -1,4 +1,4 @@
-"""Tests for ``cli_pkg.ports_cmds`` — the ``sac ports`` inventory.
+"""Tests for ``cli_pkg.ports_cmds`` — the ``sac list-ports`` inventory.
 
 PA-306 no-mocks: every collaborator is real.
 
@@ -91,7 +91,7 @@ def isolated_state(tmp_path, pg_schema):
     dependency rather than left to autouse ordering, for the same reason
     ``_isolate_state_store`` requests ``_assert_state_floor_intact`` by name.
 
-    ``sac ports`` takes no ``--db``. It used to resolve state.db from
+    ``sac list-ports`` takes no ``--db``. It used to resolve state.db from
     :data:`state_store.DEFAULT_DB_PATH`, a **module-level constant computed at
     import time**, so overriding ``$HOME`` alone did NOT redirect it — by the
     time a fixture ran, the constant already pointed at the developer's real
@@ -266,7 +266,7 @@ def test_cli_json_output_has_listen_key(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
+    result = runner.invoke(main, ["list-ports", "--json", "--timeout", "0.1"])
     payload = json.loads(result.stdout)
     # Assert
     assert "listen" in payload
@@ -276,7 +276,7 @@ def test_cli_json_output_has_reference_section(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
+    result = runner.invoke(main, ["list-ports", "--json", "--timeout", "0.1"])
     payload = json.loads(result.stdout)
     # Assert
     assert isinstance(payload["reference"], list) and payload["reference"]
@@ -286,7 +286,7 @@ def test_cli_human_render_exits_zero(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(main, ["ports", "--timeout", "0.1"])
+    result = runner.invoke(main, ["list-ports", "--timeout", "0.1"])
     # Assert
     assert result.exit_code == 0
 
@@ -297,7 +297,7 @@ def test_cli_json_includes_seeded_a2a_claim(isolated_state) -> None:
     pa.claim_port("cli-agent", range_=(20000, 20050))
     runner = CliRunner()
     # Act
-    result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
+    result = runner.invoke(main, ["list-ports", "--json", "--timeout", "0.1"])
     owners = {row["owner"] for row in json.loads(result.stdout)["a2a_claims"]}
     # Assert
     assert "cli-agent" in owners
@@ -310,3 +310,16 @@ def test_main_help_lists_ports_command() -> None:
     result = runner.invoke(main, ["--help"])
     # Assert
     assert "ports" in result.output
+
+
+
+def test_legacy_ports_preserves_json_and_warns_separately(isolated_state):
+    # Arrange
+    runner = CliRunner()
+    canonical = runner.invoke(main, ["list-ports", "--json", "--timeout", "0.1"])
+    # Act
+    legacy = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
+    # Assert
+    assert (legacy.exit_code, json.loads(legacy.stdout), "Use list-ports instead." in legacy.stderr) == (
+        canonical.exit_code, json.loads(canonical.stdout), True
+    )

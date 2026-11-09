@@ -76,8 +76,8 @@ COMMAND_CATEGORIES = [
         "Diagnostics",
         [
             "doctor",
-            "ports",
-            "provenance",
+            "list-ports",
+            "show-provenance",
             "freshness",
             "auth-events",
             "ci",
@@ -85,7 +85,7 @@ COMMAND_CATEGORIES = [
         ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["mcp", "list-python-apis", "versions"]),
+    ("Introspection", ["mcp", "list-python-apis", "list-versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -95,7 +95,7 @@ _PKG = "scitex_agent_container.cli_pkg"
 
 class _MainGroup(LazyGroup):
     command_categories = COMMAND_CATEGORIES
-    LAZY_HIDDEN = frozenset({"whoami"})
+    LAZY_HIDDEN = frozenset({"whoami", "ports", "versions", "provenance"})
 
     # User-facing top-level commands. Resolved on demand.
     LAZY_COMMANDS = {
@@ -141,14 +141,16 @@ class _MainGroup(LazyGroup):
         "ci": f"{_PKG}.ci_group:ci_group",
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
-        "ports": f"{_PKG}.ports_cmds:ports",
+        "list-ports": f"{_PKG}.ports_cmds:ports",
+        "ports": f"{_PKG}.ports_cmds:_legacy_ports",
         # READ-ONLY auth timeline: this host's auth-event log joined with the
         # credential rotations the accounts store already audits. Observes
         # only — auth-heal owns remediation.
         "auth-events": f"{_PKG}.auth_events_cmds:auth_events",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
-        "provenance": f"{_PKG}.provenance_cmds:provenance",
+        "show-provenance": f"{_PKG}.provenance_cmds:provenance",
+        "provenance": f"{_PKG}.provenance_cmds:_legacy_provenance",
         # Is the loaded code CURRENT? (`provenance` answers "which code",
         # this answers "is it what shipped".) Thin rendering over
         # scitex-dev's `versioning` primitive — sac owns the constants and
@@ -176,7 +178,8 @@ class _MainGroup(LazyGroup):
         # scitex-* version introspection across sac's base + overlay layers
         # (drift-report aggregation surface for scitex-dev ecosystem
         # check-versions — the 2 layers only sac can see).
-        "versions": f"{_PKG}.versions_cmds:versions",
+        "list-versions": f"{_PKG}.versions_cmds:versions",
+        "versions": f"{_PKG}.versions_cmds:_legacy_versions",
     }
 
     # Tracks whether scitex_dev._cli._completion has been attached.
@@ -247,6 +250,7 @@ class _MainGroup(LazyGroup):
     # ``21_cli-startup-budget.md`` to refresh after editing any
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
+        "list-versions": "Report package versions for base-image and overlay layers.",
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
         "store": "Inspect and maintain the shared sac state store.",
@@ -264,12 +268,12 @@ class _MainGroup(LazyGroup):
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
-        "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "show-provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
-        "ports": "List the ports sac/scitex uses, with live status.",
+        "list-ports": "List the ports sac/scitex uses, with live status.",
         "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",

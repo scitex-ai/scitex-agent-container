@@ -64,9 +64,15 @@ not). The servers start healthy and write nothing to stdout; the failure is a
 
 ## Not fixed here
 
-The ecosystem-wide `fastmcp` version pin is scitex-dev's domain. sac's
-`pyproject.toml` carries an unpinned `fastmcp>=2.0`; `sac versions --json --live
---base-only` reports the fastmcp version across SIFs.
+Runtime dependency bounds are declared in `pyproject.toml`
+(`fastmcp>=2.0,<4`), rather than an exact version pin. The read-only
+`sac list-versions --json --live --base-only` command lists SciTeX package
+versions across base images; it does not list dependencies such as `fastmcp`.
+To inspect `fastmcp`, use the Python interpreter from the target runtime:
+
+```bash
+python -c "from importlib.metadata import version; print(version('fastmcp'))"
+```
 
 ## See also
 
