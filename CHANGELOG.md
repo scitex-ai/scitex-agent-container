@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Forward service/timer status JSON through the installed scitex-dev backend,
+  refusing undeclared JSON capability; add grammar-derived job command examples.
 - Add an offline `a2a revoke --dry-run` plan and require `--yes` before
   withdrawing an explicit directed grant; preserve reverse grants and history.
 - Require `accounts resume --yes` before removing a local pause record; keep
