@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Add an offline `a2a revoke --dry-run` plan and require `--yes` before
+  withdrawing an explicit directed grant; preserve reverse grants and history.
 - Require `accounts resume --yes` before removing a local pause record; keep
   `--dry-run` read-only even with approval and preserve unpaused no-op behavior.
 - Expose CI inspection as `ci explain`, `ci list-runners` and `ci list-blocked`;
