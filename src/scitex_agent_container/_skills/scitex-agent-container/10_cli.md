@@ -67,6 +67,8 @@ sac agents health <name>                # Run a health check (heartbeat freshnes
 sac agents recall <name>                # Human-readable session summary
 sac agents check <name>                 # Preflight: validate yaml + probe runtime deps
 sac agents find <capability>            # Find agents with a specific capability label across YAML roots
+sac agents show-identity                # Inspect injected identity, spec and runtime context
+sac agents show-identity --json         # JSON facts; secret values are never printed
 ```
 
 ## Interact (resume an existing session)

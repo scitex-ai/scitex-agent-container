@@ -97,7 +97,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             ],
         ),
         ("Preflight", ["check"]),
-        ("Discovery", ["find", "list-roles", "whoami"]),
+        ("Discovery", ["find", "list-roles", "show-identity"]),
         (
             "Maintenance",
             [
@@ -145,10 +145,15 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 # fork-spawning skill + docs/adr/0019. The verb is `fork`; the noun "twin" is
 # retired (operator, 2026-09-19: a noun must not name a command).
 agent_group.add_command(_rebind(_fork_impl, "fork"))
-# `whoami` — in-container self-orientation (operator, 2026-09-29: an
+# `show-identity` — in-container self-orientation (operator, 2026-09-29: an
 # agent must know its own identity — how it was born, where it is
 # defined). Answers from injected env + resolvable spec.yaml.
-agent_group.add_command(_rebind(_whoami_impl, "whoami"))
+agent_group.add_command(_rebind(_whoami_impl, "show-identity"))
+agent_group.add_command(
+    _rebind(
+        _whoami_impl, "whoami", hidden=True, deprecated="Use sac agents show-identity."
+    )
+)
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the

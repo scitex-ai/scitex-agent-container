@@ -85,7 +85,7 @@ COMMAND_CATEGORIES = [
         ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["whoami", "mcp", "list-python-apis", "versions"]),
+    ("Introspection", ["mcp", "list-python-apis", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -95,6 +95,7 @@ _PKG = "scitex_agent_container.cli_pkg"
 
 class _MainGroup(LazyGroup):
     command_categories = COMMAND_CATEGORIES
+    LAZY_HIDDEN = frozenset({"whoami"})
 
     # User-facing top-level commands. Resolved on demand.
     LAZY_COMMANDS = {
@@ -259,7 +260,6 @@ class _MainGroup(LazyGroup):
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
-        "whoami": "Who am I? In-container identity, placement, execution, role, how-to.",
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",

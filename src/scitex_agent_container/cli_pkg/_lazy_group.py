@@ -96,6 +96,10 @@ class LazyGroup(HelpRecursiveGroup):
     # Map: user-facing name → "module.path:attribute"
     LAZY_COMMANDS: dict[str, str] = {}
 
+    # Hidden compatibility commands stay callable without importing them just
+    # to discover their Click ``hidden`` flag during help or completion.
+    LAZY_HIDDEN: frozenset[str] = frozenset()
+
     # Map: legacy_name → ("module.path:attribute", "new user-facing path")
     # Resolved lazily; the legacy name resolves to a hidden
     # renamed_redirect wrapper that prints "renamed to X" and exits.
@@ -139,7 +143,7 @@ class LazyGroup(HelpRecursiveGroup):
         # commands are merged and deduplicated.
         eager = set(super().list_commands(ctx))
         lazy = set(self.LAZY_COMMANDS)
-        return sorted(eager | lazy)
+        return sorted((eager | lazy) - self.LAZY_HIDDEN)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         # The ``_LazyCommandsDict`` installed in ``__init__`` already

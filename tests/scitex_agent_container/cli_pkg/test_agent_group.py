@@ -12,6 +12,9 @@ against the real Click group.
 
 from __future__ import annotations
 
+import json
+
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.agent_group import agent_group
@@ -112,10 +115,49 @@ def test_agents_relocate_lists_under_lifecycle_category() -> None:
     assert result.output.index("relocate") > result.output.index("Lifecycle:")
 
 
-def test_agents_whoami_lists_under_discovery_category() -> None:
+def test_agents_show_identity_lists_under_discovery_category() -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(agent_group, ["--help"])
-    # Assert — `whoami` follows the Discovery section header.
-    assert result.output.index("whoami") > result.output.index("Discovery:")
+    # Assert — the canonical read action follows the Discovery section header.
+    assert result.output.index("show-identity") > result.output.index("Discovery:")
+
+
+@pytest.mark.parametrize(
+    "route,deprecated",
+    [
+        (["agents", "show-identity"], False),
+        (["agents", "whoami"], True),
+        (["whoami"], True),
+    ],
+)
+def test_identity_routes_preserve_json_and_secret_hygiene(tmp_path, route, deprecated):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+    from tests.scitex_agent_container.cli_pkg.test__whoami import _blank_env
+
+    secret = "private-identity-fixture-bearer"
+    env = _blank_env(tmp_path, SAC_NAME="identity-fixture", SAC_LISTEN_BEARER=secret)
+    # Act
+    result = CliRunner().invoke(main, [*route, "--json"], env=env)
+    facts = json.loads(result.stdout) if result.exit_code == 0 else {}
+    # Assert
+    assert (
+        result.exit_code,
+        facts.get("identity", {}).get("agent"),
+        facts.get("execution", {}).get("listen_bearer"),
+        "Use sac agents show-identity" in result.stderr,
+        secret not in result.stdout + result.stderr,
+    ) == (0, "identity-fixture", "set", deprecated, True)
+
+
+@pytest.mark.parametrize("path", [[], ["agents"]])
+def test_public_help_hides_legacy_identity_spelling(path):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+
+    # Act
+    result = CliRunner().invoke(main, [*path, "--help"])
+    # Assert
+    assert (result.exit_code, "whoami" not in result.stdout) == (0, True)
