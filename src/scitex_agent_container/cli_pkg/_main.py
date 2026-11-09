@@ -79,7 +79,7 @@ COMMAND_CATEGORIES = [
             "list-ports",
             "show-provenance",
             "freshness",
-            "auth-events",
+            "list-auth-events",
             "ci",
             "guard",
         ],
@@ -95,7 +95,9 @@ _PKG = "scitex_agent_container.cli_pkg"
 
 class _MainGroup(LazyGroup):
     command_categories = COMMAND_CATEGORIES
-    LAZY_HIDDEN = frozenset({"whoami", "ports", "versions", "provenance"})
+    LAZY_HIDDEN = frozenset(
+        {"whoami", "ports", "versions", "provenance", "auth-events"}
+    )
 
     # User-facing top-level commands. Resolved on demand.
     LAZY_COMMANDS = {
@@ -146,7 +148,8 @@ class _MainGroup(LazyGroup):
         # READ-ONLY auth timeline: this host's auth-event log joined with the
         # credential rotations the accounts store already audits. Observes
         # only — auth-heal owns remediation.
-        "auth-events": f"{_PKG}.auth_events_cmds:auth_events",
+        "list-auth-events": f"{_PKG}.auth_events_cmds:auth_events",
+        "auth-events": f"{_PKG}.auth_events_cmds:_legacy_auth_events",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "show-provenance": f"{_PKG}.provenance_cmds:provenance",
@@ -274,7 +277,7 @@ class _MainGroup(LazyGroup):
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
         "list-ports": "List the ports sac/scitex uses, with live status.",
-        "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
+        "list-auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
