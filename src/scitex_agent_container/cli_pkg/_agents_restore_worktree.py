@@ -49,6 +49,12 @@ def restore_worktree(
     Preserve its primary checkout, ownership record, existing branch and
     history. This operation never starts or replaces an agent. General Git
     command policy remains unchanged. Output is a reviewable JSON receipt.
+    Replace FULL_COMMIT_SHA with the exact retained branch tip. Applying the
+    plan additionally requires --apply and its unchanged --receipt-sha256.
+
+    \b
+    Example (preview only; use the exact canonical agent name):
+      $ sac agents restore-worktree worker-agent --expected-tip FULL_COMMIT_SHA
     """
     if apply and not receipt_sha256:
         raise click.ClickException(
