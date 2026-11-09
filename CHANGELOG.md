@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Contain peer-token reads, writes and CLI removal to validated single host
+  identifiers; reject token-file symlinks while retaining directory symlinks.
+- Use exclusive private staging files for atomic token writes so a predictable
+  temporary-path symlink cannot redirect credential output.
+- Reserve the unspent 0.38.7 source version for these pending changes.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
