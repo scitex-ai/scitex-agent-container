@@ -52,7 +52,7 @@ readability; the short `SAC_*` alias is always available.
 Canonical agent YAML location (fleet shared via dotfiles):
 `~/.scitex/agent-container/agents/<name>/<name>.yaml` — the dir-as-SSoT
 resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
-`agents/`. See `01_config-v3.md` for the full search path.
+`agents/`. See `50_core_01_config-v3.md` for the full search path.
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|

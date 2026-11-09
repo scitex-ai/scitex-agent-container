@@ -128,7 +128,7 @@ breakage surfaces at the next manual fleet operation, not in CI.
   `sac-base.sif` the runner executes inside.
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how
   `to_home/`, settings, MCP, and credentials reach the in-container `$HOME`.
-- [03_auto-accept.md](03_auto-accept.md) — the auto-accept handler set is
+- [50_core_03_auto-accept.md](50_core_03_auto-accept.md) — the auto-accept handler set is
   vestigial for the SDK runner (it has no TUI prompts).
 - [13_observability.md](13_observability.md) — the broader status JSON
   contract; this leaf describes the SDK-specific addition.

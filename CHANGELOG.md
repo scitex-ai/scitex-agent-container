@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Run the dedicated skill-quality test against the verified checkout rather
+  than its tests directory. Give colliding skill topics grouped names, update
+  sibling references and retain prior topic-name lookup through their suffixes.
+  Correct the index's bundled MCP-server description.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

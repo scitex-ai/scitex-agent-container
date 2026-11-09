@@ -8,7 +8,7 @@ tags: [scitex-agent-container-telegram-one-token-one-poller]
 # One token, one poller — two checks, and neither is enough alone
 
 Companion to `23_telegram-integration.md` (how the token resolves) and
-`23_telegram-rail-verdict.md` (what happens when it doesn't). This leaf covers
+`51_delivery_23_telegram-rail-verdict.md` (what happens when it doesn't). This leaf covers
 the opposite failure: the token resolves for **two** agents.
 
 ## The invariant

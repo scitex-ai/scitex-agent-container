@@ -34,7 +34,7 @@ and [25_claude-setup-delivery.md](25_claude-setup-delivery.md)):
 The SDK runner does not use a terminal multiplexer (no tmux/screen, no
 pane scraping, no auto-accept) — but it still runs **inside the
 container**, not as a bare host process. The `spec.multiplexer` field is
-vestigial for agents (see [02_multiplexer.md](02_multiplexer.md)).
+vestigial for agents (see [50_core_02_multiplexer.md](50_core_02_multiplexer.md)).
 
 Same lifecycle CLI surface across every agent (`sac agents start`,
 `sac agents stop`, `sac agents status`, `sac agents tail`).
@@ -139,7 +139,7 @@ and the no-interactive-session constraint — lives in the sibling leaf
   `sac-base.sif` the runner executes inside.
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — how
   `to_home/`, settings, MCP, and credentials reach the in-container `$HOME`.
-- [03_auto-accept.md](03_auto-accept.md) — the auto-accept handler set is
+- [50_core_03_auto-accept.md](50_core_03_auto-accept.md) — the auto-accept handler set is
   vestigial for the SDK runner (it has no TUI prompts).
 - [13_observability.md](13_observability.md) — the broader status JSON
   contract; the state leaf describes the SDK-specific addition.

@@ -179,5 +179,5 @@ Run `sac list-python-apis -vv` for the full signature tree.
 
 ## See also
 
-- `01_config-v3.md` — the YAML schema the CLI consumes
+- `50_core_01_config-v3.md` — the YAML schema the CLI consumes
 - `40_troubleshooting.md` — common launch failures

@@ -9,7 +9,7 @@ tags: [scitex-agent-container-a2a-protocol]
 
 [A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no fleet hub, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.
 
-The per-card `x-scitex-agent-container.*` extension fields and a full JSON example live in [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md).
+The per-card `x-scitex-agent-container.*` extension fields and a full JSON example live in [`50_core_07_a2a-protocol-extension-fields.md`](50_core_07_a2a-protocol-extension-fields.md).
 
 ## Why sac knows A2A but not any fleet hub
 
@@ -151,6 +151,6 @@ If you want a fleet, use a fleet hub. If you want one agent on a laptop, use `sa
 
 ## Cross-references
 
-- [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` per-agent / fleet / proxy field enumeration + full JSON card example
+- [`50_core_07_a2a-protocol-extension-fields.md`](50_core_07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` per-agent / fleet / proxy field enumeration + full JSON card example
 - [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) — A2A v1.0 compliance
-- [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / to_home/.mcp.json env / to_home/.env / hooks)
+- [`50_core_06_env-injection-ports.md`](50_core_06_env-injection-ports.md) — the four env-injection ports (yaml.env / to_home/.mcp.json env / to_home/.env / hooks)

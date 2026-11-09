@@ -194,7 +194,7 @@ is impossible".
 ## See also
 
 - `docs/spec-reference.md` "Top-level shape" — host/hosts canonical reference
-- `07_a2a-protocol-extension-fields.md` — `x-scitex-agent-container.scheduling`
+- `50_core_07_a2a-protocol-extension-fields.md` — `x-scitex-agent-container.scheduling`
   card field derived from `spec.host` / `spec.hosts`
 - [24_image-build.md](24_image-build.md) — image build/rebuild + the
   bind-editable workaround for no-sudo/no-subuid HPCs

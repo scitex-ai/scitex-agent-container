@@ -51,7 +51,7 @@ spec:
     - command: '[ -x /opt/venv-agent/bin/python ] || { cd /work && uv venv /opt/venv-agent --python python3 && uv pip install --python /opt/venv-agent/bin/python -e ".[all]"; }'
 ```
 
-Drop any `multiplexer:` line (vestigial — [02_multiplexer.md](02_multiplexer.md))
+Drop any `multiplexer:` line (vestigial — [50_core_02_multiplexer.md](50_core_02_multiplexer.md))
 and any `spec.remote:` block (deleted — use `spec.host` / `sac --on <peer>`
 for cross-host placement).
 
@@ -66,4 +66,4 @@ obsolete. Cross-host work now goes through `spec.host` pinning and
 
 - [15_claude-session.md](15_claude-session.md) — the SDK runner inside apptainer.
 - [24_image-build.md](24_image-build.md) — building the `sac-base.sif`.
-- [01_config-v3.md](01_config-v3.md) — v3 config format.
+- [50_core_01_config-v3.md](50_core_01_config-v3.md) — v3 config format.

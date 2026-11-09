@@ -32,10 +32,14 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `Registry`; `agent.*`/`peer.*`/`host.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
+| MCP server | `scitex_agent_container._mcp.server` via `sac mcp`; see [05_mcp-tools.md](05_mcp-tools.md). Harness `to_home/.mcp.json` configuration is separate. |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
 
 ## Sub-skills
+
+Grouped topic names retain their previous filename suffix for Dev skill
+lookup. Use the current paths below for filesystem links. The onboarding
+interface guides keep their standard names.
 
 ### Onboarding & interfaces
 - [01_installation.md](01_installation.md) — pip install + auth + per-host hook
@@ -46,14 +50,14 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
 ### Core
-- [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT
-- [02_multiplexer.md](02_multiplexer.md) — vestigial; lead-only tmux wrap
-- [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
-- [04_resource-management.md](04_resource-management.md)
-- [05_resource-heartbeat.md](05_resource-heartbeat.md)
-- [06_env-injection-ports.md](06_env-injection-ports.md) — four env-injection ports
+- [50_core_01_config-v3.md](50_core_01_config-v3.md) — v3 format; dir-as-SSoT
+- [50_core_02_multiplexer.md](50_core_02_multiplexer.md) — vestigial; lead-only tmux wrap
+- [50_core_03_auto-accept.md](50_core_03_auto-accept.md) — modular prompt handlers
+- [50_core_04_resource-management.md](50_core_04_resource-management.md)
+- [50_core_05_resource-heartbeat.md](50_core_05_resource-heartbeat.md)
+- [50_core_06_env-injection-ports.md](50_core_06_env-injection-ports.md) — four env-injection ports
 - [07_a2a-protocol.md](07_a2a-protocol.md) — native A2A protocol (`sac a2a serve`)
-- [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
+- [50_core_07_a2a-protocol-extension-fields.md](50_core_07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
 - [08_templates.md](08_templates.md) — six pattern templates
 - [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence
 - [15_claude-session.md](15_claude-session.md) — SDK runner + `POST /v1/turn` inbound
@@ -72,8 +76,8 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay, settings hook
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron
-- [26-acct](26_credentials-account-selection.md) — boot account pin/picker + 7d policy
+- [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron
+- [26-acct](53_accounts_26_credentials-account-selection.md) — boot account pin/picker + 7d policy
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push via a2a_send
@@ -94,7 +98,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — troubleshooting
-- [40b](40_periodic-drive-consumer.md)
+- [40b](55_scheduling_40_periodic-drive-consumer.md)
 - [41](41_claude-worktree-relocation.md)
 
 ## Environment
@@ -103,8 +107,8 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [21](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env`; host fs/git/gh
 - [23](23_telegram-integration.md) — Telegram wake contract, token resolution
-- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `cct-audit`
-- [23-1t1p](23_telegram-one-token-one-poller.md) — one token, one consumer
+- [23-rail](51_delivery_23_telegram-rail-verdict.md) — rail up/down/unknown; `cct-audit`
+- [23-1t1p](52_ownership_23_telegram-one-token-one-poller.md) — one token, one consumer
 
 ## 30-second start
 

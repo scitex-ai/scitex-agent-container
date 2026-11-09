@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] scitex-agent-container — SAC OAuth credentials on-disk model + how the SDK reaches them inside the container.
-  [DETAILS] Per-account `~/.claude/.credentials-<acct>.json` canonicals + mode-0600 symlinks; the `:rw` dir-bind at `/tmp/sac-claude/.credentials.json` that lets the bundled CLI refresh access tokens in place (~5 min skew); the per-account snapshot bind (post-PR #262 — the COPY caveat is fixed); the preflight (300s skew, access-token only); access vs refresh token life stages. Refresh mechanics + host-side ops live in [26_credentials-rotation-host.md](26_credentials-rotation-host.md). Re-login flow in 27_credentials-relogin.md.
+  [DETAILS] Per-account `~/.claude/.credentials-<acct>.json` canonicals + mode-0600 symlinks; the `:rw` dir-bind at `/tmp/sac-claude/.credentials.json` that lets the bundled CLI refresh access tokens in place (~5 min skew); the per-account snapshot bind (post-PR #262 — the COPY caveat is fixed); the preflight (300s skew, access-token only); access vs refresh token life stages. Refresh mechanics + host-side ops live in [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md). Re-login flow in 27_credentials-relogin.md.
 tags: [scitex-agent-container-credentials-rotation]
 ---
 
@@ -10,7 +10,7 @@ tags: [scitex-agent-container-credentials-rotation]
 > Verified on `ywata-note-win` 2026-05-26.
 > Refresh + host-side ops (auto-refresh, the one-account-one-refresher
 > invariant, `sac.accounts-refresh` cron, `watch-live` daemon, CI
-> rotation): [26_credentials-rotation-host.md](26_credentials-rotation-host.md).
+> rotation): [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md).
 > Re-login (after refresh-token death):
 > [27_credentials-relogin.md](27_credentials-relogin.md).
 
@@ -106,7 +106,7 @@ Scope of the unpinned dir-bind: `~/.claude/` also contains
 settings.json, projects DB, chat history, MCP config — the dir-bind
 exposes (and now allows writes to) these. Recommended deployment is
 `spec.claude.account` pinning + the watch-live daemon
-([26_credentials-rotation-host.md §5](26_credentials-rotation-host.md))
+([54_refresh_26_credentials-rotation-host.md §5](54_refresh_26_credentials-rotation-host.md))
 so the unpinned dir-bind is a degraded fallback only.
 
 Target lives under `/tmp/` (not `$HOME`) because D2 hardened preflight
@@ -174,15 +174,15 @@ Stages of death:
 
 Refresh mechanics, the one-account-one-refresher invariant, and host-side
 ops (cron, watch-live daemon, CI rotation) are in
-[26_credentials-rotation-host.md](26_credentials-rotation-host.md).
+[54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md).
 
 ## See also
 
-- [26_credentials-account-selection.md](26_credentials-account-selection.md) —
+- [53_accounts_26_credentials-account-selection.md](53_accounts_26_credentials-account-selection.md) —
   which account an agent boots on (`claude.account` pin vs the boot
   picker) and the `SAC_CREDS_7D_POLICY: spread | burn` spend policy.
 
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) —
+- [54_refresh_26_credentials-rotation-host.md](54_refresh_26_credentials-rotation-host.md) —
   refresh mechanics + one-refresher invariant + host cron / watch-live /
   CI rotation.
 - [ADR-0017](../../../../docs/adr/0017-credential-rotation-and-refresh-race.md) —
