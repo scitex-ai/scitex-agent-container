@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Refuse a clear CI verdict when a workflow failed, was cancelled, or has no
+  final conclusion but exposes no failed-job details. `sac ci why` now exits
+  nonzero and links to workflow annotations in both text and JSON modes;
+  only an explicitly successful run can return an empty failure list.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed
