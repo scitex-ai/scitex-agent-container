@@ -29,6 +29,10 @@ versioning follows [SemVer](https://semver.org/).
   bootstrap facade. External CLI auditors can discover the Python API and MCP
   interfaces without invoking the console wrapper; execution still uses the
   existing source-authority guard and pre-Click processing.
+- Contain peer-token reads, writes and CLI removal to validated single host
+  identifiers; reject token-file symlinks while retaining directory symlinks.
+- Use exclusive private staging files for atomic token writes so a predictable
+  temporary-path symlink cannot redirect credential output.
 
 ## [0.38.6] - 2026-11-02
 
