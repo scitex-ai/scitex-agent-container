@@ -466,3 +466,20 @@ def test_library_warning_reaches_the_merged_cli_runner_output(
     merged = result.output + "\n" + "\n".join(result.emitted_warnings)
     # Assert
     assert _RETIRED_ALIAS_WARNING in merged
+
+
+
+def test_remove_peer_refuses_traversal_without_removing_sibling_file(tmp_path, env_save_restore):
+    # Arrange
+    from scitex_agent_container.cli_pkg.host_group import host_group
+
+    env_save_restore.set("HOME", str(tmp_path))
+    root = tmp_path / ".scitex/agent-container/peer-tokens"
+    root.mkdir(parents=True)
+    outside = root.parent / "outside.token"
+    outside.write_text("outside-fixture")
+    # Act
+    result = CliRunner().invoke(host_group, ["remove-peer", "../outside"])
+    content = outside.read_text() if outside.exists() else None
+    # Assert
+    assert (result.exit_code != 0, content) == (True, "outside-fixture")

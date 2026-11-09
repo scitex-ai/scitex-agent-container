@@ -423,13 +423,16 @@ def host_add_peer(peer_host: str, token: str) -> None:
       sac host add-peer host-a $(ssh host-a 'cat ~/.scitex/agent-container/tokens/listen-host-a.token')
       sac host add-peer head-spartan AAAAA-bearer-from-spartan-BBBBB
     """
-    from .._listen.peer_tokens import write_peer_token
+    from .._listen.peer_tokens import PeerTokenError, write_peer_token
 
     if not peer_host:
         raise click.UsageError("PEER_HOST must be non-empty")
     if not token:
         raise click.UsageError("TOKEN must be non-empty")
-    dst = write_peer_token(peer_host=peer_host, token=token)
+    try:
+        dst = write_peer_token(peer_host=peer_host, token=token)
+    except PeerTokenError as exc:
+        raise click.UsageError(str(exc)) from exc
     render_rich(f"[green]ok[/green]  wrote {dst}", __name__)
 
 
@@ -441,10 +444,17 @@ def host_list_peers() -> None:
     see the on-disk file paths run
     ``ls -la ~/.scitex/agent-container/peer-tokens/``.
     """
-    from .._listen.peer_tokens import default_peer_tokens_dir, list_peer_hosts
+    from .._listen.peer_tokens import (
+        PeerTokenError,
+        default_peer_tokens_dir,
+        list_peer_hosts,
+    )
 
     tdir = default_peer_tokens_dir()
-    hosts = list_peer_hosts()
+    try:
+        hosts = list_peer_hosts()
+    except PeerTokenError as exc:
+        raise click.ClickException(str(exc)) from exc
     if not hosts:
         render_rich(f"no peer tokens registered (dir: {tdir}). "
             "Add one with: sac host add-peer <host> <token>", __name__)
@@ -461,11 +471,14 @@ def host_remove_peer(peer_host: str) -> None:
 
     Idempotent — removing an absent peer is a no-op (returns 0).
     """
-    from .._listen.peer_tokens import default_peer_tokens_dir
+    from .._listen.peer_tokens import PeerTokenError, peer_token_path
 
     if not peer_host:
         raise click.UsageError("PEER_HOST must be non-empty")
-    path = default_peer_tokens_dir() / f"{peer_host}.token"
+    try:
+        path = peer_token_path(peer_host)
+    except PeerTokenError as exc:
+        raise click.UsageError(str(exc)) from exc
     if not path.exists():
         render_rich(f"no peer token to remove at {path}", __name__)
         return
