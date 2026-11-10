@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -30,10 +31,21 @@ def test_same_layer_refuses_second_process_with_owner_details(tmp_path: Path):
         target=_hold_lock,
         args=(str(artifact_dir), acquired, release),
     )
+    started = time.monotonic()
     process.start()
     try:
         if not acquired.wait(timeout=10):
-            raise RuntimeError("child process did not acquire the build lock")
+            diagnostics = {
+                "pid": process.pid,
+                "alive": process.is_alive(),
+                "exitcode": process.exitcode,
+                "start_method": context.get_start_method(),
+                "elapsed_seconds": time.monotonic() - started,
+            }
+            raise RuntimeError(
+                "child process did not acquire the build lock; diagnostics: "
+                + json.dumps(diagnostics, sort_keys=True)
+            )
         expected = re.compile(
             rf"refusing concurrent sac image build for layer 'base'.*"
             rf"pid={process.pid}.*host=.*started_at=.*"
