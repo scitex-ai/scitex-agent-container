@@ -39,6 +39,9 @@ _DISRUPTIVE = [
     ["systemctl", "restart", "sac-listen"],
     ["sac", "listen", "restart"],
     ["sac", "listen", "stop"],
+    ["sac", "listen", "stop", "--yes"],
+    ["scitex-agent-container", "listen", "stop"],
+    ["scitex-agent-container", "listen", "stop", "--yes"],
     ["/home/ywatanabe/.scitex/agent-container/venv/bin/sac", "listen", "restart"],
     ["pkill", "-f", "sac listen"],
     ["killall", "sac-listen"],
@@ -71,6 +74,7 @@ def test_a_detected_command_carries_a_reason(argv) -> None:
 # ---------------------------------------------------------------------------
 
 _SAFE = [
+    ["scitex-agent-container", "listen", "status"],
     # A read of the same unit: the caller wants the output, not a 202.
     ["systemctl", "--user", "status", "sac-listen.service"],
     ["systemctl", "--user", "is-active", "sac-listen.service"],

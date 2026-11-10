@@ -121,7 +121,11 @@ def targets_listen_plane(argv: list[str] | tuple[str, ...]) -> PlaneTargetVerdic
 
     # `sac listen restart` / `sac listen stop` — the CLI form scitex-storage
     # reported on 2026-07-28 (it returned HTTP 500 while SUCCEEDING).
-    if head.startswith("sac") and "listen" in lowered and has_verb:
+    if (
+        (head.startswith("sac") or head == "scitex-agent-container")
+        and "listen" in lowered
+        and has_verb
+    ):
         return PlaneTargetVerdict(
             True,
             "`sac listen` with a disruptive verb would end the daemon serving "

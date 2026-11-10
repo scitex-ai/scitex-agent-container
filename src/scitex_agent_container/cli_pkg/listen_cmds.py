@@ -137,7 +137,7 @@ def listen(
         sac listen start                    # boot the daemon (loopback only)
         sac listen status                   # health report; exit 1 if down
         sac listen status --json            # machine-readable envelope
-        sac listen stop                     # stop it (idempotent)
+        sac listen stop --yes               # stop it (idempotent)
         sac listen restart                  # atomic stop-clean-relaunch
         sac listen start --print-token      # echo the bearer token, then exit
 

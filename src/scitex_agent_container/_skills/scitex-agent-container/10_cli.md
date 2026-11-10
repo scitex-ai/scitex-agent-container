@@ -98,8 +98,8 @@ sac listen start --bind 127.0.0.1:7979    # Custom bind
 sac listen start --print-token            # Echo the bearer token & exit (does not boot)
 sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
-sac listen stop                           # Stop the daemon (idempotent — exit 0 if already down)
-sac listen stop --json                    # Machine-readable result envelope
+sac listen stop --yes                     # Stop (idempotent; exit 0 if already down)
+sac listen stop --yes --json              # Machine-readable result envelope
 sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
 ```
 

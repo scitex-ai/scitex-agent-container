@@ -314,7 +314,7 @@ def test_listen_stop_verb_exits_zero_after_stopping_daemon(tmp_path) -> None:
     recorder = _StopRecorder()
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -324,7 +324,7 @@ def test_listen_stop_verb_reports_the_stopped_pid(tmp_path) -> None:
     recorder = _StopRecorder(prior_pid=4242)
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert "4242" in result.output
 
@@ -337,7 +337,7 @@ def test_listen_stop_on_dead_daemon_exits_zero_idempotently(tmp_path) -> None:
     )
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -349,7 +349,7 @@ def test_listen_stop_on_dead_daemon_says_it_was_not_running(tmp_path) -> None:
     )
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert "not running" in result.output.lower()
 
@@ -359,7 +359,7 @@ def test_listen_stop_exits_non_zero_when_stop_fails(tmp_path) -> None:
     recorder = _StopRecorder(ok=False, error="ERROR: PID 4242 survived SIGKILL")
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert result.exit_code != 0
 
@@ -370,7 +370,7 @@ def test_listen_stop_failure_surfaces_the_real_cause(tmp_path) -> None:
     recorder = _StopRecorder(ok=False, error="ERROR: PID 4242 survived SIGKILL")
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert "survived SIGKILL" in result.output
 
@@ -380,7 +380,7 @@ def test_listen_stop_rejects_force_before_teardown(tmp_path) -> None:
     recorder = _StopRecorder()
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop", "--force"])
+        result = CliRunner().invoke(listen, ["stop", "--yes", "--force"])
     # Assert
     assert (result.exit_code, recorder.calls) == (2, [])
 
@@ -390,7 +390,7 @@ def test_listen_stop_forwards_grace_secs_to_stop_listen(tmp_path) -> None:
     recorder = _StopRecorder()
     # Act
     with _stop_harness(tmp_path, recorder):
-        CliRunner().invoke(listen, ["stop", "--grace-secs", "30"])
+        CliRunner().invoke(listen, ["stop", "--yes", "--grace-secs", "30"])
     # Assert
     assert recorder.calls[0]["grace_secs"] == 30.0
 
@@ -401,7 +401,7 @@ def test_listen_stop_resolves_port_from_the_group_bind(tmp_path) -> None:
     recorder = _StopRecorder()
     # Act
     with _stop_harness(tmp_path, recorder):
-        CliRunner().invoke(listen, ["--bind", "127.0.0.1:7999", "stop"])
+        CliRunner().invoke(listen, ["--bind", "127.0.0.1:7999", "stop", "--yes"])
     # Assert
     assert recorder.calls[0]["port"] == 7999
 
@@ -413,7 +413,7 @@ def test_listen_stop_json_emits_parseable_envelope_on_stdout(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = runner.invoke(listen, ["stop", "--json"])
+        result = runner.invoke(listen, ["stop", "--yes", "--json"])
     # Assert
     assert _json.loads(result.stdout)["prior_pid"] == 4242
 
@@ -424,7 +424,7 @@ def test_listen_stop_json_envelope_reports_ok_flag(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = runner.invoke(listen, ["stop", "--json"])
+        result = runner.invoke(listen, ["stop", "--yes", "--json"])
     # Assert
     assert _json.loads(result.stdout)["ok"] is True
 
@@ -434,7 +434,7 @@ def test_listen_stop_warns_loudly_on_sigkill_escalation(tmp_path) -> None:
     recorder = _StopRecorder(escalated_to_sigkill=True)
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert "SIGKILL" in result.output
 
@@ -445,6 +445,6 @@ def test_listen_stop_surfaces_force_killed_wedged_port_holder(tmp_path) -> None:
     recorder = _StopRecorder(port_holders_killed=(9191,))
     # Act
     with _stop_harness(tmp_path, recorder):
-        result = CliRunner().invoke(listen, ["stop"])
+        result = CliRunner().invoke(listen, ["stop", "--yes"])
     # Assert
     assert "9191" in result.output

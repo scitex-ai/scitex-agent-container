@@ -132,12 +132,14 @@ def listen_start(
 @click.option(
     "--dry-run", is_flag=True, help="Preview arguments as JSON without stopping."
 )
+@click.option("-y", "--yes", is_flag=True, help="Approve stopping the listener.")
 @click.pass_context
 def listen_stop(
     ctx: click.Context,
     grace_secs: float,
     as_json: bool,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Stop the running sac listen daemon.
 
@@ -155,15 +157,16 @@ def listen_stop(
 
     \b
     Example:
-        sac listen stop                  # SIGTERM, 10s grace, then SIGKILL
-        sac listen stop                  # stop the daemon
-        sac listen stop --json           # machine-readable envelope
+        sac listen stop --yes                  # SIGTERM, 10s grace, then SIGKILL
+        sac listen stop --yes                  # stop the daemon
+        sac listen stop --yes --json           # machine-readable envelope
         sac listen stop --dry-run        # argument preview
 
     \b
     Exit codes:
         0  argument preview, stopped or already down (idempotent)
         1  could not stop (PID survived SIGKILL / port still wedged)
+        2  missing --yes/-y approval
     """
     if dry_run:
         from ._listen_preview import show_listen_preview
@@ -174,6 +177,9 @@ def listen_stop(
             grace_secs=grace_secs,
         )
         return
+    from ._listen_stop_approval import require_listener_stop_approval
+
+    require_listener_stop_approval(yes)
     force = False
     import json as _json
 

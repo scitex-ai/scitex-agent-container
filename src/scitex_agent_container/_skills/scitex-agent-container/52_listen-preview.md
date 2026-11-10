@@ -2,7 +2,8 @@
 description: |
   [TOPIC] Listener lifecycle argument previews
   [DETAILS] Preview start, stop and restart arguments before token, pidfile,
-  socket, signal or supervisor work. Plans report unverified lifecycle state.
+  socket, signal or supervisor work. Plans report unverified lifecycle state;
+  actual stop requires explicit approval.
 tags: [scitex-agent-container-listen-preview]
 ---
 
@@ -34,12 +35,24 @@ covers credentials, live daemon/pidfile/socket state, supervisor/failover state
 and the lifecycle outcome. Exit zero means an argument plan was produced;
 it does not establish that a daemon can start, stop or restart.
 
-The existing bare-start compatibility path and ordinary lifecycle behavior are
-unchanged. Preview belongs to the explicit `start`, `stop` and `restart` verbs;
-this change does not migrate launchers or alter their approval policy.
+Actual `listen stop` requires `--yes/-y` before runtime lookup or signals;
+`SAC_ASSUME_YES=1` does not approve it. Preview takes precedence over approval.
+The existing stop backend and its result envelope remain unchanged.
 
-Source: `cli_pkg/_listen_preview.py`, `_listen_verbs.py` and `listen_cmds.py`.
+```bash
+sac listen stop --yes --json
+```
+
+Bare startup, start and restart retain their existing launch policy. Automation
+or external callers using CLI stop must adopt the explicit flag before upgrading;
+this source change does not migrate deployed callers. Preview belongs to the
+explicit `start`, `stop` and `restart` verbs.
+
+Source: `cli_pkg/_listen_preview.py`, `_listen_stop_approval.py`,
+`_listen_verbs.py` and `listen_cmds.py`.
 Behavioral controls: `tests/scitex_agent_container/cli_pkg/test__listen_preview.py`,
-`test__listen_verbs.py`, `test_listen_cmds.py` and the owning `_listen` stop/restart
-tests. Unit collaborators and owned argument checks do not qualify live host
+`test__listen_verbs.py`, `test__listen_stop_approval.py`, `test_listen_cmds.py`
+and the owning `_listen` stop/restart tests.
+`_listen/test__plane_targeting_argv.py` covers disruptive-command detection,
+including both CLI spellings with explicit stop approval. Unit collaborators and owned argument checks do not qualify live host
 services, real supervision, PostgreSQL peer registration or deployed clients.
