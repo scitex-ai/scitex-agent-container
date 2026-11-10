@@ -95,7 +95,7 @@ sac image rollback --layer base
 
 | Command | Purpose |
 |---|---|
-| `sac fleet launch SPECDIR --peer PEER --dry-run --json` | Discover agent layout directories and preview rsync plus remote starts. Repeat `--spec NAME` instead of SPECDIR when selecting existing remote specs; `--no-rsync` skips copying. Omit preview only to apply the launch. |
+| `sac fleet launch SPECDIR --peer PEER --dry-run --json` | Preview spec-directory copying and remote starts. Alternatively repeat `--spec NAME`; `--no-rsync` skips copying. Omit `--dry-run` to apply. |
 | `sac fleet notify done\|blocker\|status --summary "..." --yes` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. Sending requires `--yes`/`-y`; preview takes precedence and does not verify ACL or delivery. |
 
 ## State database / registry / events
@@ -103,7 +103,7 @@ sac image rollback --layer base
 | Command | Purpose |
 |---|---|
 | `sac store clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `sac store clean` replaces the legacy `sac registry clean`. |
-| `sac registry reconcile` | Preview singleton placement across hosts. `--execute` requests handover; this differs from `sac agents reconcile`, which considers unexpectedly dead agents and requires `--yes`/`--apply` for restarts. |
+| `sac registry reconcile` | Preview singleton placement across hosts; `--execute` requests handover. Separately, `sac agents reconcile` checks unexpected deaths and restarts only with `--yes`/`--apply`. |
 | `sac event ingest KIND --agent NAME` | Append a JSON hook payload from stdin to the per-agent ring buffer. KIND is `pretool`, `posttool`, `prompt`, `stop` or `other`; vendor hook labels such as `PreToolUse` are not CLI kind names. |
 
 ## Build / install / templates
