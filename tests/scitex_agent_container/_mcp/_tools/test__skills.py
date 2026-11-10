@@ -88,3 +88,40 @@ def test_skills_get_preserves_direct_and_internal_link_files(skills_root):
         ["alias", "safe"],
         ["safe skill", "safe skill"],
     )
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("description: |\n  First line\n  Second line", "First line\nSecond line"),
+        ("description: >-\n  First line\n  second line", "First line second line"),
+        ('description: "A colon: and \\"quotes\\""', 'A colon: and "quotes"'),
+        ("description: ''", ""),
+        ("description: 42", "Fallback body"),
+        ("description: [unfinished", "Fallback body"),
+        ("name: example", "Fallback body"),
+        ("- not a mapping", "Fallback body"),
+    ],
+)
+def test_skills_list_decodes_yaml_description(skills_root, header, expected):
+    # Arrange
+    text = f"---\n{header}\n---\n# Heading\n\nFallback body\n"
+    (skills_root / "example.md").write_text(text, encoding="utf-8")
+
+    # Act
+    result = _skills.skills_list()
+
+    # Assert
+    assert result["skills"][0]["description"] == expected
+
+
+def test_skills_list_accepts_crlf_frontmatter_and_exact_closing_fence(skills_root):
+    # Arrange
+    text = "---\r\ndescription: |-\r\n  First\r\n  ---inside description\r\n---\r\nBody"
+    (skills_root / "example.md").write_bytes(text.encode("utf-8"))
+
+    # Act
+    result = _skills.skills_list()
+
+    # Assert
+    assert result["skills"][0]["description"] == "First\n---inside description"

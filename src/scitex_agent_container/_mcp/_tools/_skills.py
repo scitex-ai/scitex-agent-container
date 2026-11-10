@@ -8,6 +8,7 @@ the filesystem itself.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,8 @@ def skills_list() -> dict[str, Any]:
 
     Returns a flat list of ``{name, path, description}`` entries.
     ``description`` is the YAML-frontmatter ``description`` field
-    when present, else the first non-blank line of the file.
+    when it is a string (including YAML block scalars), else the first
+    non-blank, non-heading body line. Surrounding whitespace is stripped.
     """
     skills = []
     if not _SKILLS_ROOT.is_dir():
@@ -80,12 +82,21 @@ def register_skills_tools(mcp) -> None:
 
 
 def _extract_description(text: str) -> str:
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            for line in text[3:end].splitlines():
-                if line.lstrip().startswith("description:"):
-                    return line.split(":", 1)[1].strip().strip("\"'")
+    block = re.match(
+        r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", text, re.DOTALL
+    )
+    if block is not None:
+        import yaml
+
+        try:
+            metadata = yaml.safe_load(block.group(1))
+        except yaml.YAMLError:
+            metadata = None
+        if isinstance(metadata, dict):
+            description = metadata.get("description")
+            if isinstance(description, str):
+                return description.strip()
+        text = text[block.end() :]
     for line in text.splitlines():
         s = line.strip()
         if s and not s.startswith("#") and not s.startswith("---"):
