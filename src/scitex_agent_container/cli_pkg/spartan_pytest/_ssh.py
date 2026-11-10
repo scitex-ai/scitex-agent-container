@@ -8,6 +8,7 @@ monkeypatching anything.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import time
@@ -34,11 +35,17 @@ def _run_ssh(
 
 
 def _extract_job_id(stdout: str) -> str | None:
-    """Pull the job id from ``Submitted batch job <id>``.  Pure function."""
-    for token in stdout.split():
-        if token.isdigit():
-            return token
-    return None
+    """Accept exactly one canonical positive-ASCII sbatch receipt line.
+
+    Numbers in diagnostics are not job IDs. Multiple receipts are ambiguous,
+    even when they repeat the same ID; never guess which job to observe.
+    """
+    receipts = [
+        match.group(1)
+        for line in stdout.splitlines()
+        if (match := re.fullmatch(r"Submitted batch job ([1-9][0-9]*)", line.strip()))
+    ]
+    return receipts[0] if len(receipts) == 1 else None
 
 
 def _submit_sbatch(

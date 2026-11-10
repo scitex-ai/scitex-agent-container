@@ -13,7 +13,11 @@ import subprocess
 import click
 import pytest
 
-from scitex_agent_container.cli_pkg.spartan_pytest import _extract_job_id, _poll_job
+from scitex_agent_container.cli_pkg.spartan_pytest import (
+    _extract_job_id,
+    _poll_job,
+    _submit_sbatch,
+)
 
 
 def test_extract_job_id_finds_canonical_sbatch_output():
@@ -32,6 +36,63 @@ def test_extract_job_id_returns_none_when_no_digits():
     job_id = _extract_job_id(stdout)
     # Assert
     assert job_id is None
+
+
+@pytest.mark.parametrize(
+    "stdout,expected",
+    [
+        ("warning: retry in 30 seconds\nSubmitted batch job 123456\n", "123456"),
+        ("warning: retry in 30 seconds\n", None),
+        ("123456", None),
+        ("Submitted batch job 0", None),
+        ("Submitted batch job -12", None),
+        ("Submitted batch job １２３", None),
+        ("Submitted batch job 123 trailing text", None),
+        ("prefix Submitted batch job 123", None),
+        ("Submitted batch job 123\nSubmitted batch job 456", None),
+        ("Submitted batch job 123\nSubmitted batch job 123", None),
+        ("\r\n Submitted batch job 123 \r\n", "123"),
+    ],
+)
+def test_submission_receipt_does_not_guess_from_diagnostics(stdout, expected):
+    # Arrange
+    output = stdout
+    # Act
+    job_id = _extract_job_id(output)
+    # Assert
+    assert job_id == expected
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "warning: retry in 30 seconds\n",
+        "Submitted batch job 123\nSubmitted batch job 456\n",
+    ],
+)
+def test_ambiguous_submission_is_refused_after_upload_without_retry(stdout):
+    # Arrange
+    calls = []
+    responses = iter([(0, "", ""), (0, stdout, "")])
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        code, output, stderr = next(responses)
+        return subprocess.CompletedProcess(argv, code, output, stderr)
+
+    # Act
+    error = _poll_failure(
+        lambda: _submit_sbatch(
+            "owned-host", "#!/bin/sh\ntrue", "/owned/run/job.sbatch", runner=runner
+        )
+    )
+    # Assert
+    assert (
+        isinstance(error, click.ClickException),
+        "could not parse SLURM job id" in str(error),
+        len(calls),
+        calls[-1][-1],
+    ) == (True, True, 2, "sbatch /owned/run/job.sbatch")
 
 
 def _poll_failure(action):

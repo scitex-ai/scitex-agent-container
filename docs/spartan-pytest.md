@@ -58,3 +58,17 @@ or artifact attestation. Real job/commit identity binding, branch resolution,
 remote scratch expansion and concurrent cluster execution remain separate
 qualification work. No live submission or cleanup is needed to change this
 client-side naming behavior.
+
+## Submission receipts
+
+The client accepts exactly one `Submitted batch job <positive ASCII integer>`
+line from successful `sbatch` output. Other diagnostic lines may surround it;
+their numbers are never interpreted as job IDs. Missing or multiple matching
+receipt lines are refused, including repeated identical receipts. Noncanonical
+output formats are not qualified by this parser.
+
+This check happens after upload and submission. A refusal does not prove that
+no job was created: inspect the retained script and scheduler records before
+deciding what to do. The client neither retries submission nor polls a guessed
+job ID. This receipt check is not cryptographic artifact/commit identity
+binding and does not change the separate result-qualification requirements.
