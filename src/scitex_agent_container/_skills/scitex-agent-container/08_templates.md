@@ -10,6 +10,7 @@ tags: [scitex-agent-container-templates]
 ## Installed scaffolding command
 
 ```bash
+sac agents create my-agent --template minimal --dry-run
 sac agents create my-agent --template minimal
 sac agents create --base-dir /path/to/agents --help
 ```
@@ -18,6 +19,13 @@ sac agents create --base-dir /path/to/agents --help
 spec and home skeleton; it does not start an agent. Inline creation may also
 attempt managed-home adoption. Review the target and emitted warnings before
 using its output for a launch.
+
+`--dry-run` reports arguments only and hides `--set` values. It does not read
+templates or credentials, resolve the default root, check destination state
+or qualify a launch. MCP `agent_create(dry_run=True)` also prevents `start=True`.
+Cold CLI startup may initialize shared logging; preview does not write agent files.
+The public Python entry point is
+`scitex_agent_container.agent.create(..., dry_run=True)`, the same callable as MCP.
 
 The built-in `minimal` and `full` definitions live in
 `cli_pkg/_create_templates.py`. They are available through the installed CLI.

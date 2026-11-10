@@ -216,6 +216,11 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
         "primary agents root (resolver search-chain entry #1)."
     ),
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview arguments without reading templates or credentials, or writing a scaffold.",
+)
 def create(
     name: str,
     template_name: str,
@@ -223,6 +228,7 @@ def create(
     agent_id: str | None,
     set_pairs: tuple[str, ...],
     base_dir: Path | None,
+    dry_run: bool,
 ) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
@@ -238,6 +244,7 @@ def create(
 
     \b
         sac agents create my-agent
+        sac agents create my-agent --dry-run
         sac agents create my-agent --template full
         sac agents create dev1 --template python_developer --project myproj
         sac agents create r1 --template researcher --project p --set TEAM=x
@@ -258,6 +265,19 @@ def create(
     reserved_msg = reserved_agent_name_error(name)
     if reserved_msg is not None:
         raise click.UsageError(reserved_msg)
+
+    if dry_run:
+        from ._create_preview import _show_creation_preview
+
+        _show_creation_preview(
+            name,
+            template_name=template_name,
+            project=project,
+            agent_id=agent_id,
+            set_pairs=set_pairs,
+            base_dir=base_dir,
+        )
+        return
 
     scaffold_agent(
         name,

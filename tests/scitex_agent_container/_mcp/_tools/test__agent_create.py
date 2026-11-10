@@ -25,7 +25,11 @@ from scitex_agent_container._mcp._tools._agent import agent_create
 
 scenario = sys.argv[1]
 spec = Path("state/agent-container/agents/owned-streams/spec.yaml")
-if scenario == "duplicate":
+if scenario == "preview":
+    import scitex_agent_container as sac
+    result = sac.agent.create("owned-streams", template="local-not-checked", start=True, dry_run=True)
+    unchanged = None
+elif scenario == "duplicate":
     agent_create("owned-streams", template="minimal", start=False)
     before = hashlib.sha256(spec.read_bytes()).hexdigest()
     try:
@@ -121,4 +125,27 @@ def test_agent_create_refuses_overwrite_before_requested_start(tmp_path):
         payload["spec_exists"],
         payload["unchanged"],
         "Refusing to overwrite existing spec" in payload["result"].get("refusal", ""),
+    ) == expected
+
+
+def test_agent_create_preview_never_scaffolds_or_starts(tmp_path):
+    # Arrange
+    expected = (0, "", [], False, 0, "", True, "arguments_only", "local-not-checked")
+
+    # Act
+    process, payload = _invoke_owned_case(tmp_path, "preview")
+    result = payload["result"]
+    plan = json.loads(result["stdout"])
+
+    # Assert
+    assert (
+        process.returncode,
+        process.stderr,
+        payload["blocked"],
+        payload["spec_exists"],
+        result["exit_code"],
+        result["stderr"],
+        plan["dry_run"],
+        plan["scope"],
+        plan["template"],
     ) == expected

@@ -333,6 +333,7 @@ def agent_create(
     template: str = "python_developer",
     project: str | None = None,
     start: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Scaffold an agent spec through ``sac agents create``.
 
@@ -347,6 +348,8 @@ def agent_create(
     ``start=True`` requests a subsequent CLI start only after creation exits
     successfully; that request still has separate lifecycle admission checks.
     A written spec does not establish that an agent has started or is ready.
+    ``dry_run=True`` previews arguments without writing a scaffold or starting
+    an agent, even when ``start=True``. It does not check template availability.
     """
     argv = [
         "agents",
@@ -359,8 +362,10 @@ def agent_create(
         "--agent-id",
         name,
     ]
+    if dry_run:
+        argv.append("--dry-run")
     result = invoke_cli_text(argv)
-    if start and result.get("exit_code") == 0:
+    if start and not dry_run and result.get("exit_code") == 0:
         start_result = invoke_cli_text(["agents", "start", name])
         result = {
             "exit_code": start_result.get("exit_code"),

@@ -18,6 +18,7 @@ Creating a Spec
 
 .. code-block:: bash
 
+    sac agents create my-agent --template minimal --dry-run
     sac agents create my-agent --template minimal
     sac agents create --base-dir /path/to/agents --help
 
@@ -26,6 +27,14 @@ The built-in ``minimal`` and ``full`` presets come from
 directories under the selected agents root. ``create`` writes a spec and
 home skeleton; it does not launch an agent. Review warnings and the resulting
 spec before starting it. Existing inline specs are not overwritten.
+
+``--dry-run`` reports arguments only and hides ``--set`` values. It does not
+read templates or credentials, resolve the default root, check destination
+state or qualify a launch. MCP ``agent_create(dry_run=True)`` also suppresses
+the optional follow-up start.
+Cold CLI startup may initialize shared logging; preview does not write agent files.
+Python callers use ``scitex_agent_container.agent.create(..., dry_run=True)``,
+the same callable registered for MCP.
 
 The shared implementation is ``cli_pkg/_create.py:scaffold_agent``. Its
 scaffolding and field controls are in
