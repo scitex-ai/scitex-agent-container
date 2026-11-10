@@ -160,9 +160,9 @@ class _MainGroup(LazyGroup):
         # the symbol registry, dev owns every verdict.
         "freshness": f"{_PKG}.freshness_cmds:freshness",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
-        # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
+        # surface: ``sac pytest spartan submit-run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
-        # by the ``spartan_pytest`` package; ``spartan run`` lives
+        # by the ``spartan_pytest`` package; ``spartan submit-run`` lives
         # underneath.
         "pytest": f"{_PKG}.spartan_pytest:pytest_group",
         # Top-level standalone

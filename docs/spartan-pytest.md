@@ -1,9 +1,8 @@
 # Spartan pytest result integrity
 
-The existing `sac pytest spartan run REPO@BRANCH --yes` command submits, observes
+The existing `sac pytest spartan submit-run REPO@BRANCH --yes` command submits, observes
 and collects a remote test job. It is a writing operation, not a local health
-check. Result qualification is described below; it does not rename the
-command, add retries, cancel jobs or change reservation, timeout, polling,
+check. Result qualification is described below; it does not add retries, cancel jobs or change reservation, timeout, polling,
 installation or test-selection defaults.
 
 `--timeout` and `--poll-interval` accept positive integer seconds only.
@@ -140,10 +139,10 @@ separate requirements.
 ## Argument preview
 
 ```bash
-sac pytest spartan run owned/example@main --dry-run
+sac pytest spartan submit-run owned/example@main --dry-run
 ```
 
-Preview emits JSON directly, with `dry_run=true` and
+Preview emits JSON directly, with `action="submit-run"`, `dry_run=true` and
 `scope="arguments_only"`. Target/header and positive timeout/poll argument
 checks still apply. It stops before remote scratch expansion, UUID allocation,
 script rendering, upload, submission, polling or result lookup. The requested
@@ -155,7 +154,10 @@ logging; this is not a whole-process no-I/O guarantee.
 Actual submission requires explicit `--yes/-y` after argument checks and
 preview, before remote scratch lookup or upload. `SAC_ASSUME_YES=1` is not
 approval. Preview takes precedence even with approval supplied. The approved
-submission backend remains unchanged; namespace migration remains separate.
+submission backend remains unchanged. The old `sac pytest spartan run` name
+is hidden from normal help and exits 2 with a redirect; it never forwards a
+submission or preview, even with `--yes`. Update name and approval flag in
+external callers before upgrading.
 External callers must adopt the flag before upgrading; no deployed caller
 migration or remote executable qualification is implied. Preview is not an
 authorization result. Source: `cli_pkg/spartan_pytest/_run_cmd.py` and `_preview.py`.

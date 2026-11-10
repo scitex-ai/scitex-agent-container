@@ -1,4 +1,4 @@
-"""Thin ssh/SLURM wrappers used by ``sac pytest spartan run``.
+"""Thin ssh/SLURM wrappers used by ``sac pytest spartan submit-run``.
 
 Every binary is reached via real ``subprocess.run`` so the tests can
 install a fake binary on PATH (via the shared ``subprocess_shim``

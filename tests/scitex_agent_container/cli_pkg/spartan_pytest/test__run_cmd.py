@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.spartan_pytest import pytest_group
+from scitex_agent_container.cli_pkg.spartan_pytest import pytest_group, spartan_group
 
 
 def test_pytest_group_help_lists_spartan_subgroup():
@@ -34,7 +34,7 @@ def test_spartan_run_help_documents_reservation_flag():
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(pytest_group, ["spartan", "run", "--help"])
+    result = runner.invoke(pytest_group, ["spartan", "submit-run", "--help"])
     # Assert
     assert "--reservation" in result.output
 
@@ -43,7 +43,7 @@ def test_spartan_run_rejects_target_without_at_sign():
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(pytest_group, ["spartan", "run", "bare-repo"])
+    result = runner.invoke(pytest_group, ["spartan", "submit-run", "bare-repo"])
     # Assert — UsageError translates to non-zero exit + the format hint.
     assert "REPO@BRANCH" in result.output
 
@@ -75,7 +75,7 @@ def test_invalid_poll_bounds_are_refused_before_any_remote_action(
     )
     # Act
     result = CliRunner().invoke(
-        pytest_group, ["spartan", "run", "owned/fixture@main", flag, value]
+        pytest_group, ["spartan", "submit-run", "owned/fixture@main", flag, value]
     )
     # Assert
     assert (result.exit_code, "x>=1" in result.output, calls.exists()) == (
@@ -110,7 +110,7 @@ def test_line_breaking_headers_are_refused_before_any_remote_action(
         "target": ["owned/fixture@" + bad],
     }
     # Act
-    result = CliRunner().invoke(pytest_group, ["spartan", "run", *cases[field]])
+    result = CliRunner().invoke(pytest_group, ["spartan", "submit-run", *cases[field]])
     # Assert
     assert (result.exit_code, "single-line" in result.output, calls.exists()) == (
         2,
@@ -138,7 +138,7 @@ def test_real_spartan_round_trip_against_live_host():
     # Act
     result = runner.invoke(
         pytest_group,
-        ["spartan", "run", target, "--yes", "--ssh-host", host, "--timeout", "1800"],
+        ["spartan", "submit-run", target, "--yes", "--ssh-host", host, "--timeout", "1800"],
     )
     # Assert — either green or operator-meaningful failure surface.
     assert "Spartan pytest" in result.output
@@ -320,7 +320,7 @@ def test_spartan_cli_never_passes_without_process_and_scheduler_evidence(
     # Act
     result = CliRunner().invoke(
         pytest_group,
-        ["spartan", "run", "owner/fixture@main", "--yes", "--ssh-host", "owned-fixture"],
+        ["spartan", "submit-run", "owner/fixture@main", "--yes", "--ssh-host", "owned-fixture"],
     )
     # Assert
     assert (
@@ -347,7 +347,7 @@ def test_repeated_submissions_have_distinct_uuid_paths_and_matching_summary(
         0,
     )
     scratch = tmp_path / "scratch with spaces"
-    args = ["spartan", "run", "owned/fixture@main", "--yes", "--scratch-root", str(scratch)]
+    args = ["spartan", "submit-run", "owned/fixture@main", "--yes", "--scratch-root", str(scratch)]
     runner = CliRunner()
     # Act
     first = runner.invoke(pytest_group, args)
@@ -413,7 +413,7 @@ def test_collected_summary_must_name_the_submitted_job(
     # Act
     result = CliRunner().invoke(
         pytest_group,
-        ["spartan", "run", "owned/fixture@main", "--yes", "--scratch-root", "/owned/explicit"],
+        ["spartan", "submit-run", "owned/fixture@main", "--yes", "--scratch-root", "/owned/explicit"],
     )
     # Assert
     assert (
@@ -421,3 +421,69 @@ def test_collected_summary_must_name_the_submitted_job(
         "Spartan pytest PASS:" in result.stdout,
         len(calls.read_text().splitlines()),
     ) == (code, passed, 5)
+
+
+def test_group_help_exposes_only_the_canonical_submission_name():
+    # Arrange
+    runner = CliRunner()
+    args = ["spartan", "--help"]
+
+    # Act
+    result = runner.invoke(pytest_group, args)
+
+    # Assert
+    assert (
+        result.exit_code,
+        "submit-run" in result.stdout,
+        "\n  run " in result.stdout,
+    ) == (0, True, False)
+
+
+@pytest.mark.parametrize(
+    "flags", [[], ["--yes"], ["--dry-run"], ["--yes", "--dry-run"]]
+)
+def test_legacy_name_refuses_instead_of_forwarding(flags):
+    # Arrange
+    args = ["spartan", "run", "owned/example@main", *flags]
+
+    # Act
+    result = CliRunner().invoke(pytest_group, args)
+
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        "Re-run with: sac pytest spartan submit-run" in result.stderr,
+    ) == (2, "", True)
+
+
+def test_canonical_preview_uses_the_canonical_action():
+    # Arrange
+    args = ["spartan", "submit-run", "owned/example@main", "--dry-run"]
+
+    # Act
+    result = CliRunner().invoke(pytest_group, args)
+    plan = json.loads(result.stdout)
+
+    # Assert
+    assert (result.exit_code, plan["action"], plan["slurm_job_id"]) == (
+        0,
+        "submit-run",
+        None,
+    )
+
+
+def test_redirect_retains_option_schema_but_has_its_own_callback():
+    # Arrange
+    commands = spartan_group.commands
+
+    # Act
+    legacy = commands["run"]
+    canonical = commands["submit-run"]
+
+    # Assert
+    assert (
+        legacy.hidden,
+        legacy.params == canonical.params,
+        legacy.callback is canonical.callback,
+    ) == (True, True, False)

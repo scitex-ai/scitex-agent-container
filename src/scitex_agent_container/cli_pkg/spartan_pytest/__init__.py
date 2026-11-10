@@ -1,4 +1,4 @@
-"""``sac pytest spartan run`` — submit + collect a Spartan SLURM pytest job.
+"""``sac pytest spartan submit-run`` — submit + collect a Spartan SLURM pytest job.
 
 Phase 1 of the "Spartan pytest runner" operator directive (2026-06-13):
 operator wants to STOP running the full pytest suite on their laptop.
@@ -12,7 +12,7 @@ Architecture::
   laptop                                       Spartan
   ┌──────────────────────┐                    ┌─────────────────────────┐
   │ sac pytest spartan   │  ssh + sbatch      │  scratch clone          │
-  │ run REPO@BRANCH      │ ─────────────────► │  pip install -e .[dev]  │
+  │ submit-run REPO@BRANCH│ ─────────────────► │  pip install -e .[dev]  │
   │ (this module)        │                    │  pytest → summary.json  │
   │   poll squeue        │ ◄──────────────────│  sacct state            │
   │   cat summary.json   │ ◄──────────────────│  summary.json           │

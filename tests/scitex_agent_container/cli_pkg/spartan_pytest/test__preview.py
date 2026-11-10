@@ -10,7 +10,7 @@ from scitex_agent_container.cli_pkg.spartan_pytest import pytest_group
 
 def test_preview_leaves_remote_paths_and_job_identity_unresolved():
     # Arrange
-    args = ["spartan", "run", "owned/example@main", "--dry-run"]
+    args = ["spartan", "submit-run", "owned/example@main", "--dry-run"]
 
     # Act
     result = CliRunner().invoke(pytest_group, args)
@@ -42,7 +42,7 @@ def test_preview_reports_supplied_options_without_remote_expansion():
     # Arrange
     args = [
         "spartan",
-        "run",
+        "submit-run",
         "owned/example@feature/topic",
         "--dry-run",
         "--ssh-host",
@@ -76,7 +76,7 @@ def test_preview_reports_supplied_options_without_remote_expansion():
 @pytest.mark.parametrize("flag", ["--timeout", "--poll-interval"])
 def test_preview_preserves_positive_deadline_admission(flag):
     # Arrange
-    args = ["spartan", "run", "owned/example@main", "--dry-run", flag, "0"]
+    args = ["spartan", "submit-run", "owned/example@main", "--dry-run", flag, "0"]
 
     # Act
     result = CliRunner().invoke(pytest_group, args)
@@ -90,7 +90,7 @@ def test_preview_preserves_scheduler_header_admission(control):
     # Arrange
     args = [
         "spartan",
-        "run",
+        "submit-run",
         "owned/example@main",
         "--dry-run",
         "--reservation",
@@ -110,7 +110,7 @@ def test_preview_preserves_scheduler_header_admission(control):
 
 def test_preview_preserves_target_format_admission():
     # Arrange
-    args = ["spartan", "run", "bare-repo", "--dry-run"]
+    args = ["spartan", "submit-run", "bare-repo", "--dry-run"]
 
     # Act
     result = CliRunner().invoke(pytest_group, args)

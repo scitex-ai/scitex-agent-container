@@ -1,4 +1,4 @@
-"""Click surface for ``sac pytest spartan run``.
+"""Click surface for ``sac pytest spartan submit-run``.
 
 Composes the pure renderer (``_render``), the summary parser
 (``_summary``), and the ssh/SLURM IO wrappers (``_ssh``) into the
@@ -12,7 +12,7 @@ import uuid
 
 import click
 
-from .._helpers import HelpRecursiveGroup
+from .._helpers import HelpRecursiveGroup, renamed_redirect
 from ._render import (
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_RESERVATION,
@@ -40,7 +40,7 @@ def spartan_group() -> None:
     """Spartan-backed pytest runner (sapphire reservation by default)."""
 
 
-@spartan_group.command(name="run")
+@spartan_group.command(name="submit-run")
 @click.argument("target")
 @click.option(
     "--ssh-host",
@@ -76,7 +76,9 @@ def spartan_group() -> None:
     "(default: $SCRATCH/sac-pytest; leading SCRATCH token resolved on SSH host).",
 )
 @click.option("--dry-run", is_flag=True, help="Preview arguments as JSON without SSH.")
-@click.option("-y", "--yes", is_flag=True, help="Approve remote upload and job submission.")
+@click.option(
+    "-y", "--yes", is_flag=True, help="Approve remote upload and job submission."
+)
 def run_cmd(
     target: str,
     ssh_host: str,
@@ -95,9 +97,9 @@ def run_cmd(
 
     \b
     Examples:
-      $ sac pytest spartan run owned/example@main --dry-run
-      $ sac pytest spartan run ywatanabe1989/sac@develop --yes
-      $ sac pytest spartan run git@github.com:me/repo.git@feature/x --yes --reservation sapphire
+      $ sac pytest spartan submit-run owned/example@main --dry-run
+      $ sac pytest spartan submit-run ywatanabe1989/sac@develop --yes
+      $ sac pytest spartan submit-run git@github.com:me/repo.git@feature/x --yes --reservation sapphire
     """
     repo, branch = _split_repo_at_branch(target)
     # SLURM caps job names at ~64 chars so we trim the branch suffix
@@ -175,6 +177,14 @@ def run_cmd(
         )
     click.echo(_format_summary(summary, repo=repo, branch=branch))
     raise SystemExit(_resolve_exit_code(summary))
+
+
+_legacy_run = renamed_redirect(
+    run_cmd, new_path="sac pytest spartan submit-run", old_path="sac pytest spartan run"
+)
+_legacy_run.name = "run"
+_legacy_run.hidden = True
+spartan_group.add_command(_legacy_run)
 
 
 __all__ = ["pytest_group", "run_cmd", "spartan_group"]

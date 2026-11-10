@@ -13,7 +13,7 @@ from scitex_agent_container.cli_pkg.spartan_pytest._approval import require_run_
 def test_submission_requires_explicit_approval(assume_yes):
     # Arrange
     runner = CliRunner(env={"SAC_ASSUME_YES": assume_yes})
-    args = ["spartan", "run", "owned/example@main"]
+    args = ["spartan", "submit-run", "owned/example@main"]
 
     # Act
     result = runner.invoke(pytest_group, args)
@@ -29,7 +29,7 @@ def test_submission_requires_explicit_approval(assume_yes):
 @pytest.mark.parametrize("flag", ["--yes", "-y"])
 def test_preview_precedes_explicit_approval(flag):
     # Arrange
-    args = ["spartan", "run", "owned/example@main", flag, "--dry-run"]
+    args = ["spartan", "submit-run", "owned/example@main", flag, "--dry-run"]
 
     # Act
     result = CliRunner().invoke(pytest_group, args)

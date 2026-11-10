@@ -19,7 +19,7 @@ def show_run_preview(
     click.echo(
         json.dumps(
             {
-                "action": "run",
+                "action": "submit-run",
                 "target": "spartan-pytest",
                 "dry_run": True,
                 "scope": "arguments_only",
