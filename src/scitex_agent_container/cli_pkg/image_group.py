@@ -6,7 +6,7 @@ Build/sandbox/version/rollback verbs delegate to ``scitex-container``;
 
 Verbs:
   build        Build SIF or sandbox from a layer's .def
-  sandbox      Create a writable sandbox from a SIF (mutable rootfs)
+  create-sandbox  Create a writable sandbox from a SIF (mutable rootfs)
   update       Refresh packages inside a sandbox (pip install --upgrade)
   freeze       Bake a sandbox back to an immutable SIF
   list         List installed SIF versions
@@ -33,6 +33,7 @@ from . import (
     _image_prune_cmd,
     _image_remote_bake,
     _image_repro_build,
+    _image_sandbox_cmd,
     _image_source_build,
     _image_update_cmd,
 )
@@ -388,30 +389,8 @@ def image_build(
 # ---------------------------------------------------------------------------
 # sandbox
 # ---------------------------------------------------------------------------
-@image_group.command("sandbox")
-@click.argument("source", type=str)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(file_okay=False, path_type=Path),
-    default=None,
-    help="Output dir (default: <source-stem>.sandbox/ next to the SIF).",
-)
-def image_sandbox(source: str, output: Path | None) -> None:
-    """Create a writable sandbox from SOURCE (a SIF path or layer name).
-
-    \b
-    Examples:
-      $ sac image sandbox scitex                          # use the :scitex SIF
-      $ sac image sandbox /path/to/scitex.sif --output /tmp/sandbox/
-    """
-    sandbox_create = _load_apptainer().sandbox_create
-
-    src_path = _resolve_source_to_sif(source)
-    result = sandbox_create(
-        source=src_path, containers_dir=_CONTAINERS_DIR, output_dir=output
-    )
-    render_rich(f"[green]sandbox[/green] {result}", __name__)
+image_sandbox = _image_sandbox_cmd.image_create_sandbox
+_image_sandbox_cmd.register(image_group)
 
 
 # ---------------------------------------------------------------------------

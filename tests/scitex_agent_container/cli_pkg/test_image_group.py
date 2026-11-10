@@ -855,7 +855,7 @@ def test_sandbox_from_layer_name_resolves_to_known_sif_and_calls_backend(home_tm
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "base"])
+        result = runner.invoke(image_group, ["sandbox", "base", "--yes"])
     # Assert
     assert (
         result.exit_code == 0
@@ -872,7 +872,7 @@ def test_sandbox_from_explicit_path_skips_layer_resolution(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", str(sif)])
+        result = runner.invoke(image_group, ["sandbox", str(sif), "--yes"])
     # Assert
     assert result.exit_code == 0
 
@@ -884,7 +884,7 @@ def test_sandbox_errors_when_layer_sif_not_built_yet(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "base"])
+        result = runner.invoke(image_group, ["sandbox", "base", "--yes"])
     # Assert
     assert result.exit_code != 0 and "Build it first" in result.output
 
@@ -895,7 +895,7 @@ def test_sandbox_errors_when_source_is_neither_path_nor_known_layer(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "totally-bogus-name"])
+        result = runner.invoke(image_group, ["sandbox", "totally-bogus-name", "--yes"])
     # Assert
     assert result.exit_code != 0 and "neither a path nor a known layer" in result.output
 
