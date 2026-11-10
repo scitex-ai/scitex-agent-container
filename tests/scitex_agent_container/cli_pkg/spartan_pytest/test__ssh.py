@@ -8,6 +8,8 @@ existing opt-in in test__run_cmd.
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
 
 import click
@@ -196,3 +198,73 @@ def test_real_shell_cannot_hide_failed_accounting_behind_head(failed_accounting_
         isinstance(error, click.ClickException),
         "accounting state for SLURM job 123 (7)" in str(error),
     ) == (True, True)
+
+
+@pytest.fixture
+def upload_shell(tmp_path, env_save_restore):
+    """Real shell/cat upload with an inert scheduler; never execute job text."""
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    submitted = tmp_path / "submitted"
+    real_cat = shutil.which("cat")
+    (binary / "ssh").write_text(
+        '#!/bin/sh\nfor command; do :; done\nexec sh -c "$command"\n'
+    )
+    (binary / "cat").write_text(
+        '#!/bin/sh\nif [ "${SAC_FIXTURE_UPLOAD_FAIL:-0}" -ne 0 ]; then\n'
+        '  exit "$SAC_FIXTURE_UPLOAD_FAIL"\nfi\n'
+        f'exec {shlex.quote(real_cat)} "$@"\n'
+    )
+    (binary / "sbatch").write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$1" >> {shlex.quote(str(submitted))}\n'
+        "echo 'Submitted batch job 123'\n"
+    )
+    for path in binary.iterdir():
+        path.chmod(0o700)
+    env_save_restore.set("PATH", str(binary) + os.pathsep + os.environ["PATH"])
+    env_save_restore.set("SAC_FIXTURE_UPLOAD_FAIL", "0")
+    return tmp_path, submitted
+
+
+@pytest.mark.parametrize("ending", ["", "\n"])
+def test_upload_preserves_script_as_data_without_executing_delimiter_text(
+    upload_shell, ending
+):
+    # Arrange
+    root, submitted = upload_shell
+    path = root / "remote root 'quoted $ value" / "job.sbatch"
+    marker = root / "upload-executed"
+    script = (
+        "#!/bin/sh\n# Unicode: é\n__SAC_SBATCH_EOF__\n"
+        f"printf injected > {shlex.quote(str(marker))}\n# remaining data" + ending
+    )
+    # Act
+    job_id = _submit_sbatch("owned", script, str(path))
+    # Assert
+    assert (
+        job_id,
+        path.read_text(),
+        bool(path.stat().st_mode & 0o100),
+        marker.exists(),
+        submitted.read_text(),
+    ) == ("123", script, True, False, str(path) + "\n")
+
+
+def test_failed_script_upload_never_chmods_or_submits_partial_file(
+    upload_shell, env_save_restore
+):
+    # Arrange
+    root, submitted = upload_shell
+    path = root / "job.sbatch"
+    path.write_text("owned previous artifact")
+    path.chmod(0o600)
+    env_save_restore.set("SAC_FIXTURE_UPLOAD_FAIL", "8")
+    # Act
+    error = _poll_failure(lambda: _submit_sbatch("owned", "new data", str(path)))
+    # Assert
+    assert (
+        isinstance(error, click.ClickException),
+        "failed to upload sbatch script (8)" in str(error),
+        bool(path.stat().st_mode & 0o100),
+        submitted.exists(),
+    ) == (True, True, False, False)

@@ -86,3 +86,15 @@ reports a usage error before printing the planned path or contacting SSH.
 Valid inputs retain the existing script and upload behavior. This check does
 not qualify Slurm whitespace/path parsing, arbitrary header semantics or a
 live scheduler; those remain separate from client-side field validation.
+
+## Script upload boundary
+
+The client sends script text on SSH stdin to a quoted `cat` destination;
+it does not embed the script in a remote shell heredoc. Delimiter-like text
+and shell expressions inside the job remain file contents during upload.
+Only a successful write proceeds to `chmod` and submission. A failed write
+may leave a partial file: this is not an atomic replacement or cleanup.
+
+Owned local-shell tests exercise text preservation, delimiter-like content,
+quoted paths and write failures with an inert `sbatch`. They do not execute
+the uploaded job or qualify an actual SSH server, scheduler or target install.

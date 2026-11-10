@@ -18,7 +18,11 @@ import click
 
 
 def _run_ssh(
-    host: str, remote_cmd: str, *, runner: Callable = subprocess.run
+    host: str,
+    remote_cmd: str,
+    *,
+    runner: Callable = subprocess.run,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run ``remote_cmd`` on ``host`` over ssh; return the CompletedProcess.
 
@@ -27,6 +31,13 @@ def _run_ssh(
     (real) ``subprocess.run`` and tests rely on the PATH-prepended
     shim fixture, no monkeypatching needed.
     """
+    if input_text is not None:
+        return runner(
+            ["ssh", "-o", "BatchMode=yes", host, remote_cmd],
+            capture_output=True,
+            text=True,
+            input=input_text,
+        )
     return runner(
         ["ssh", "-o", "BatchMode=yes", host, remote_cmd],
         capture_output=True,
@@ -64,12 +75,10 @@ def _submit_sbatch(
     parent = remote_path.rsplit("/", 1)[0]
     write_cmd = (
         f"mkdir -p {shlex.quote(parent)} && "
-        f"cat > {shlex.quote(remote_path)} <<'__SAC_SBATCH_EOF__'\n"
-        f"{script}\n"
-        f"__SAC_SBATCH_EOF__\n"
+        f"cat > {shlex.quote(remote_path)} && "
         f"chmod +x {shlex.quote(remote_path)}"
     )
-    write_res = _run_ssh(host, write_cmd, runner=runner)
+    write_res = _run_ssh(host, write_cmd, runner=runner, input_text=script)
     if write_res.returncode != 0:
         raise click.ClickException(
             f"failed to upload sbatch script ({write_res.returncode}): "
