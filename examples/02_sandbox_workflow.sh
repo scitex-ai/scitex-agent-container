@@ -22,8 +22,8 @@
 #        # → ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/
 #
 #   2. Refresh packages any time:
-#        sac image update ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/
-#        sac image update ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/ -p scitex-dsp
+#        sac image update ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/ --yes
+#        sac image update ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/ -p scitex-dsp --yes
 #
 #   3. When stable, freeze back to an immutable SIF:
 #        sac image freeze ~/.scitex/agent-container/containers/sac-scitex/sac-scitex.sandbox/ \
@@ -59,7 +59,7 @@ ls -ld "$SANDBOX_DIR" 2>/dev/null || echo "(no sandbox yet)"
 echo
 echo "── sac image verbs (dry-run; pass --apply to execute) ──"
 echo '$ sac image build scitex --sandbox'
-echo '$ sac image update '"$SANDBOX_DIR"
+echo '$ sac image update '"$SANDBOX_DIR"' --yes'
 echo '$ sac image freeze '"$SANDBOX_DIR"' sac-scitex-NEW.sif'
 
 if [[ "$APPLY" == "--apply" ]]; then
@@ -70,5 +70,5 @@ if [[ "$APPLY" == "--apply" ]]; then
     fi
     echo
     echo "── sac image update $SANDBOX_DIR (real) ──"
-    sac image update "$SANDBOX_DIR"
+    sac image update "$SANDBOX_DIR" --yes
 fi
