@@ -1,11 +1,12 @@
 """Packaged worktree policy works without host scripts or a source checkout."""
 
+import argparse
 import json
 import os
-from contextlib import contextmanager
-from pathlib import Path
 import subprocess
 import sys
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -260,3 +261,28 @@ def test_native_gate_refuses_existing_unowned_target(tmp_path, facet, expected):
         }
         # Assert
         assert observed[facet] == expected
+
+
+def test_parser_help_uses_explicit_command_path_without_generating_files(tmp_path):
+    # Arrange
+    from scitex_agent_container._worktree_policy_cli._cli import build_parser
+
+    parser = build_parser(prog="fixture-sac worktree policy")
+    # Act
+    help_text = parser.format_help()
+    # Assert
+    assert (
+        "usage: fixture-sac worktree policy" in help_text,
+        "$ fixture-sac worktree policy inspect --repo ." in help_text,
+        list(tmp_path.iterdir()),
+    ) == (True, True, [])
+
+
+def test_parser_default_retains_calling_program_name():
+    # Arrange
+    from scitex_agent_container._worktree_policy_cli._cli import build_parser
+
+    # Act
+    parser = build_parser()
+    # Assert
+    assert parser.prog == argparse.ArgumentParser().prog

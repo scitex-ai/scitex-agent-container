@@ -29,8 +29,21 @@ class JsonArgumentParser(argparse.ArgumentParser):
         raise SystemExit(3)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = JsonArgumentParser()
+def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
+    parser = JsonArgumentParser(
+        prog=prog,
+        description=(
+            "Inspect Git context and enforce the configured worktree policy. "
+            "Decisions are JSON; a denial exits 2 and a policy/argument error exits 3."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  $ %(prog)s inspect --repo .\n"
+            "  $ %(prog)s assert-context --repo . --intent edit\n"
+            "  $ %(prog)s check-projections"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--policy", type=Path, default=default_policy_path())
     sub = parser.add_subparsers(dest="operation", required=True)
     inspect = sub.add_parser("inspect")
@@ -54,8 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     try:
         # An explicit generation request initializes host configuration rather
         # than writing into Python's installed package directory.

@@ -146,3 +146,27 @@ The external-CLI opt-in boundary is tested with the executable fixture under
 `tests/scitex_agent_container/_lifecycle/_fixtures/worktree-policy/`. It models
 the CLI protocol and real Git worktree operations, not a second policy engine.
 The engine itself is tested in-process with real Git repositories.
+
+
+## Inspecting the policy interface
+
+```bash
+sac worktree policy --help
+sac worktree policy inspect --repo /path/to/repository
+sac worktree policy assert-context --repo /path/to/repository --intent edit
+sac worktree policy check-projections
+```
+
+The delegated help displays the full command path and concrete examples.
+Standalone policy entry points retain their own calling program name; the
+Python parser/main functions accept an optional keyword-only `prog` for host
+adapters. This controls help text, not policy admission or operations.
+
+Inspection reports Git context. Edit admission is a separate `assert-context`
+request; a successful inspection is not permission to edit. Policy decisions
+remain JSON on stdout, with diagnostics on stderr: allow exits 0, deny exits 2,
+and argument/policy errors exit 3. `--help` exits before executing an operation,
+including `generate-projections`; it does not generate policy files. Actual
+projection generation remains an explicit writing operation with its existing
+host-configuration semantics. This help correction changes no hook, projection,
+authority-checkout or launch-admission rule.

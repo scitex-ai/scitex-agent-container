@@ -39,14 +39,19 @@ def worktree_group() -> None:
     add_help_option=False,
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def policy(args: tuple[str, ...]) -> None:
+@click.pass_context
+def policy(ctx: click.Context, args: tuple[str, ...]) -> None:
     """Inspect and enforce the packaged Git worktree policy.
 
-    Example: sac worktree policy inspect --repo .
+    \b
+    Examples:
+      $ sac worktree policy inspect --repo .
+      $ sac worktree policy assert-context --repo . --intent edit
+      $ sac worktree policy check-projections
     """
     from .._worktree_policy_cli import main
 
-    raise SystemExit(main(list(args)))
+    raise SystemExit(main(list(args), prog=ctx.command_path))
 
 
 _worktree_gc.register(worktree_group)
