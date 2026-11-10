@@ -323,8 +323,10 @@ def deliver_prompt(
     """Hand ``prompt`` to the agent's live sidecar ON its own host.
 
     The text is base64'd across the wire (see the module docstring) and decoded
-    into a file on the target, which is then read into the CLI's positional
-    argument. Nothing about the prompt's content can reach a shell as syntax.
+    into a private mktemp file on the target. Staging/read failure stops before
+    the CLI is invoked, and an exit trap removes the file on normal shell exit.
+    Nothing about the prompt's content can reach a shell as syntax. Abrupt host
+    loss or untrappable signals are not covered by that cleanup.
 
     Return the CLI's exit status both as the run status and on a marker line;
     a successful trailing printf must not hide a refused send. CLI success is
@@ -332,10 +334,15 @@ def deliver_prompt(
     nonce and observed reply.
     """
     encoded = base64.b64encode(prompt.encode("utf-8")).decode("ascii")
-    payload = f"/tmp/sac-relocate-brief-{agent}.txt"
     body = (
-        f"printf '%s' {quote(encoded)} | base64 -d > {quote(payload)} 2>/dev/null\n"
-        f'sac agents send {quote(agent)} "$(cat {quote(payload)})" 2>&1; '
+        "command -v rm >/dev/null 2>&1 || exit 127\n"
+        '__sac_relocate_payload=$(umask 077; mktemp "${TMPDIR:-/tmp}/'
+        'sac-relocate-brief.XXXXXXXX") || exit $?\n'
+        "trap 'rm -f -- \"$__sac_relocate_payload\"' 0\n"
+        f"printf '%s' {quote(encoded)} | base64 -d > \"$__sac_relocate_payload\" "
+        "|| exit $?\n"
+        '__sac_relocate_prompt=$(cat "$__sac_relocate_payload") || exit $?\n'
+        f'sac agents send {quote(agent)} "$__sac_relocate_prompt" 2>&1; '
         "__sac_relocate_send_exit=$?; "
         f"printf '{MARK_BOOT}%s\\n' \"$__sac_relocate_send_exit\"; "
         'exit "$__sac_relocate_send_exit"'
