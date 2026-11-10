@@ -387,6 +387,22 @@ def mcp_list_tools(ctx: click.Context, as_json: bool) -> None:
             click.echo(f"    {first}")
 
 
+@mcp.command("show-tool")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True, help="Emit the MCP schema as JSON.")
+@click.pass_context
+def mcp_show_tool(ctx: click.Context, name: str, as_json: bool) -> None:
+    """Describe one exact tool name without invoking its domain operation.
+
+    \b
+    Example:
+      $ sac mcp show-tool agent_send --json
+    """
+    from ._mcp_tool_description import show_tool
+
+    show_tool(name, as_json=_json_flag(ctx, as_json))
+
+
 @mcp.command("install")
 @click.option(
     "--claude-code",

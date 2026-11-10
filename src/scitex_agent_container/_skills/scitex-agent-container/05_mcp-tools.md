@@ -20,7 +20,13 @@ sac mcp list-tools --json
 `doctor` checks the local MCP installation and registration. It does not prove
 that a client connected or that a particular agent operation will succeed.
 `list-tools --json` returns names/descriptions, not input schemas. An actual MCP
-client obtains schemas through `tools/list` after connecting.
+client obtains schemas through `tools/list` after connecting. For targeted CLI
+discovery, use `sac mcp show-tool agent_send --json`: it returns only that
+registered tool's name, description and `inputSchema`, without invoking the
+domain operation. Root `--json` also works. Exact standalone names are required;
+unregistered names exit 2, and unsupported schema backends fail explicitly.
+This still initializes the local registry and needs the MCP dependency; it is
+not proof that a tool can execute or that an external client is connected.
 
 ## Client configuration
 
@@ -109,3 +115,7 @@ Startup-key alias controls:
 Read-only connection controls: `cli_pkg/_mcp_connections.py` and
 `tests/scitex_agent_container/cli_pkg/test__mcp_connections.py`. The legacy
 `healthcheck` boot hook retains its recovery behavior and fail-open exit status.
+
+Targeted discovery controls: `cli_pkg/_mcp_tool_description.py` and
+`tests/scitex_agent_container/cli_pkg/test__mcp_tool_description.py`, including
+comparison with actual MCP `tools/list` schemas.
