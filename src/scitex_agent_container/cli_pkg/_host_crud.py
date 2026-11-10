@@ -216,6 +216,10 @@ def _emit_validation_failure(
 )
 @click.option("--via", default=None, help="Comma-separated ProxyJump peer chain.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments without reading config."
+)
+@click.option("--yes", "-y", is_flag=True, help="Approve adding the peer entry.")
 @click.pass_context
 def host_add(
     ctx: click.Context,
@@ -223,15 +227,40 @@ def host_add(
     ssh_target: str,
     via: str | None,
     as_json: bool,
+    dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Add a new peer entry to config.yaml.
 
+    ``--dry-run`` previews supplied arguments without reading config contents
+    or creating a scaffold. It does not verify duplicates, generated-file status
+    or routes. Preview takes precedence over approval. Applying requires
+    ``--yes``/``-y`` and retains validation, rollback and symlink handling.
+
     \b
     Examples:
-      $ sac host add gpu-box --ssh ywatanabe@gpu.lan
-      $ sac host add bm198 --ssh bm198 --via mba,spartan
+      $ sac host add gpu-box --ssh user@gpu.lan --dry-run --json
+      $ sac host add worker --ssh worker --via relay --yes
     """
+    if not dry_run and not yes:
+        raise click.UsageError(
+            "Adding a peer requires --yes; inspect arguments with --dry-run first."
+        )
     path = _default_config_path()
+    if dry_run:
+        report = {
+            "dry_run": True,
+            "action": "add",
+            "peer": name,
+            "ssh": ssh_target,
+            "via": _parse_via_csv(via),
+            "path": str(path),
+        }
+        if _json_flag(ctx, as_json):
+            click.echo(json.dumps(report))
+        else:
+            click.echo(f"would add peer {name!r} to {path}; argument preview only")
+        return
     _refuse_if_generated(path)
     pre_existing = path.is_file()
     _ensure_config_scaffold(path)

@@ -293,7 +293,7 @@ def _dispatch(
             False,
             None,
             f"peer '{peer}' is not defined in config.yaml — add it with:  "
-            f"sac host add {peer} --ssh <user@host>",
+            f"sac host add {peer} --ssh <user@host> --yes",
         )
     try:
         kwargs = {

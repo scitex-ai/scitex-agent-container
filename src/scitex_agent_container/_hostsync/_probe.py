@@ -310,7 +310,7 @@ def probe_peer(
             state=GraphState.UNREACHABLE,
             detail=(
                 f"peer '{peer}' is not defined in config.yaml — "
-                f"add it with:  sac host add {peer} --ssh <user@host>"
+                f"add it with:  sac host add {peer} --ssh <user@host> --yes"
             ),
         )
     try:

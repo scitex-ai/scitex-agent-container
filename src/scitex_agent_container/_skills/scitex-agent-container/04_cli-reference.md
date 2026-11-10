@@ -79,7 +79,8 @@ sac image rollback --layer base
 
 | Command | Purpose |
 |---|---|
-| `sac host list / add / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host list / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host add PEER --ssh TARGET --dry-run --json` | Preview supplied addition arguments without reading config or creating a scaffold. Does not validate duplicates or routes. Apply with `--yes`/`-y`; generated-config refusal, symlink handling and validation rollback still apply. |
 | `sac host remove PEER --dry-run --json` | Preview supplied removal arguments without reading config contents. Does not verify target existence or configuration validity. Apply with `sac host remove PEER --yes`; generated-config refusal, symlink handling and validation rollback still apply. |
 | `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
 | `sac host show-ssh-options --json` | Return SSH option words as `{"options": [...]}` for a subprocess argv. Human output needs `shlex.split`; plain shell command substitution does not preserve paths containing spaces. Hidden `ssh-opts` compatibility remains. |

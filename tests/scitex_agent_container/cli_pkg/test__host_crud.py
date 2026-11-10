@@ -43,7 +43,7 @@ def test_host_add_writes_ssh_target_to_yaml(cfg_path: Path):
     # Arrange
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert
     assert _read_peers(cfg_path)["gpu-box"]["ssh"] == "u@gpu.lan"
 
@@ -52,7 +52,7 @@ def test_host_add_exits_zero_on_success(cfg_path: Path):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    result = runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert
     assert result.exit_code == 0
 
@@ -62,7 +62,9 @@ def test_host_add_with_via_writes_list_under_via_key(cfg_path: Path):
     cfg_path.write_text("peers:\n  mba: {ssh: m}\n  spartan: {ssh: s}\n")
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["bm198", "--ssh", "bm198", "--via", "mba,spartan"])
+    runner.invoke(
+        host_add, ["--yes", "bm198", "--ssh", "bm198", "--via", "mba,spartan"]
+    )
     # Assert
     assert _read_peers(cfg_path)["bm198"]["via"] == ["mba", "spartan"]
 
@@ -72,7 +74,7 @@ def test_host_add_rejects_duplicate_name_with_exit_2(cfg_path: Path):
     cfg_path.write_text("peers:\n  gpu-box: {ssh: old}\n")
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["gpu-box", "--ssh", "new"])
+    result = runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "new"])
     # Assert
     assert result.exit_code == 2
 
@@ -151,7 +153,7 @@ def test_host_add_preserves_top_of_file_comment(cfg_path: Path):
     )
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["baz", "--ssh", "qux"])
+    runner.invoke(host_add, ["--yes", "baz", "--ssh", "qux"])
     # Assert
     assert "# top comment" in cfg_path.read_text()
 
@@ -163,7 +165,7 @@ def test_host_add_preserves_inline_comment(cfg_path: Path):
     )
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["baz", "--ssh", "qux"])
+    runner.invoke(host_add, ["--yes", "baz", "--ssh", "qux"])
     # Assert
     assert "# inline comment" in cfg_path.read_text()
 
@@ -180,7 +182,7 @@ def test_host_add_reverts_file_when_validation_fails(cfg_path: Path):
     cfg_path.write_text(original)
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["new-peer", "--ssh", "x", "--via", "ghost"])
+    runner.invoke(host_add, ["--yes", "new-peer", "--ssh", "x", "--via", "ghost"])
     # Assert
     assert cfg_path.read_text() == original
 
@@ -190,7 +192,9 @@ def test_host_add_exits_nonzero_when_validation_fails(cfg_path: Path):
     cfg_path.write_text("peers: {}\n")
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["new-peer", "--ssh", "x", "--via", "ghost"])
+    result = runner.invoke(
+        host_add, ["--yes", "new-peer", "--ssh", "x", "--via", "ghost"]
+    )
     # Assert
     assert result.exit_code != 0
 
@@ -225,7 +229,7 @@ def test_host_add_preserves_symlink_after_write(symlinked_cfg):
     link, _target = symlinked_cfg
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert — symlink invariant must hold: the link is still a link.
     assert link.is_symlink(), (
         "host add must not replace the symlink with a regular file"
@@ -237,7 +241,7 @@ def test_host_add_writes_through_symlink_to_target(symlinked_cfg):
     _link, target = symlinked_cfg
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert — content lands on the resolved target.
     assert "gpu-box" in target.read_text()
 
@@ -293,7 +297,7 @@ def test_host_add_refuses_generated_config_with_exit_2(cfg_path: Path):
     _write_generated(cfg_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    result = runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert
     assert result.exit_code == 2
 
@@ -303,7 +307,7 @@ def test_host_add_refusal_names_push_config(cfg_path: Path):
     _write_generated(cfg_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    result = runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert — the refusal must name the next command.
     assert "sac host push-config" in result.output
 
@@ -313,7 +317,7 @@ def test_host_add_leaves_generated_bytes_untouched(cfg_path: Path):
     original = _write_generated(cfg_path)
     runner = CliRunner()
     # Act
-    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert — a refused edit must not half-write anything.
     assert cfg_path.read_text() == original
 
@@ -343,7 +347,7 @@ def test_host_add_still_edits_a_hand_written_config(cfg_path: Path):
     cfg_path.write_text("# my config\npeers: {}\n")
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    result = runner.invoke(host_add, ["--yes", "gpu-box", "--ssh", "u@gpu.lan"])
     # Assert
     assert result.exit_code == 0
 
@@ -413,3 +417,55 @@ def test_host_remove_invalid_remaining_route_reverts_exact_bytes(cfg_path: Path)
     result = CliRunner().invoke(host_remove, ["relay", "--yes", "--json"])
     # Assert
     assert (result.exit_code, cfg_path.read_text()) == (1, original)
+
+
+@pytest.mark.parametrize("approval", [[], ["--yes"], ["-y"]])
+def test_host_add_preview_preserves_unreadable_config(cfg_path: Path, approval):
+    # Arrange
+    original = b"invalid UTF8 \xff"
+    cfg_path.write_bytes(original)
+    # Act
+    result = CliRunner().invoke(
+        host_add,
+        ["new", "--ssh", "user@host", "--via", "a,b", "--dry-run", "--json", *approval],
+    )
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout), cfg_path.read_bytes()) == (
+        0,
+        {
+            "dry_run": True,
+            "action": "add",
+            "peer": "new",
+            "ssh": "user@host",
+            "via": ["a", "b"],
+            "path": str(cfg_path),
+        },
+        original,
+    )
+
+
+def test_host_add_requires_approval_without_creating_scaffold(cfg_path: Path):
+    # Arrange
+    before = sorted(cfg_path.parent.iterdir())
+    # Act
+    result = CliRunner().invoke(host_add, ["new", "--ssh", "user@host", "--json"])
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        "requires --yes" in result.stderr,
+        sorted(cfg_path.parent.iterdir()),
+    ) == (2, "", True, before)
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+def test_host_add_approved_scaffold_keeps_expected_peer(cfg_path: Path, approval):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_add, ["new", "--ssh", "user@host", approval])
+    # Assert
+    assert (result.exit_code, _read_peers(cfg_path)) == (
+        0,
+        {"new": {"ssh": "user@host"}},
+    )

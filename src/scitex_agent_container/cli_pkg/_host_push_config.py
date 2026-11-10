@@ -312,7 +312,7 @@ def host_push_config(
         if rotate_peer not in cfg.peers:
             raise click.UsageError(
                 f"peer '{rotate_peer}' is not defined in {cfg.source_path} — add "
-                f"it on the MASTER with `sac host add {rotate_peer} --ssh <user@host>`"
+                f"it on the MASTER with `sac host add {rotate_peer} --ssh <user@host> --yes`"
             )
         _run_rotate(
             ctx,
@@ -332,7 +332,7 @@ def host_push_config(
     if missing:
         raise click.UsageError(
             f"peer '{missing[0]}' is not defined in {cfg.source_path} — add it "
-            f"on the MASTER with `sac host add {missing[0]} --ssh <user@host>`"
+            f"on the MASTER with `sac host add {missing[0]} --ssh <user@host> --yes`"
         )
 
     results: list[PushConfigResult] = []
