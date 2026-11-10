@@ -81,7 +81,8 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`
 - [32](32_nested-apptainer-builds.md)
 
-- [50](50_credential-distribution-preview.md) — credential distribution preview
+- [50](50_credential-distribution-preview.md) — credential preview
+- [51](51_send-preview.md) — send plan
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
