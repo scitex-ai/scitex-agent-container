@@ -816,7 +816,11 @@ path = "scripts/hatch_build.py"
 # path, which is the one release CI actually takes.
 exclude = [".git"]
 
+[tool.hatch.build.targets.sdist.force-include]
+".scitex/dev/cli-audit-dict.yaml" = ".scitex/dev/cli-audit-dict.yaml"
+
 [tool.hatch.build.targets.wheel.force-include]
+".scitex/dev/cli-audit-dict.yaml" = "scitex_agent_container/_cli_audit_dict.yaml"
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
 # In-process worktree policy assets. They must be reachable from an INSTALLED
 # sac on hosts where the repo is not on disk: the engine resolves them via
