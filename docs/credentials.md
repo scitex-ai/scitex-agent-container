@@ -192,3 +192,30 @@ From `~/.claude/settings.json`:
 
 Any addition to this list requires updating both this doc and the
 whitelist in `src/scitex_agent_container/credentials.py`.
+
+
+## Cards store credential synchronization
+
+`sac agents sync-cards-store-credential --agent worker --to peer-a --dry-run --json`
+previews one role's canonical Cards store credential. The role is derived as
+`<current OS user>__<agent argument>`. `--pgpass` selects the owned private source
+passfile (default `~/.pgpass`). Preview reads that file and sends the credential
+over SSH stdin to each explicitly selected peer's SAC receiver. It validates
+remote passfiles without changing them; it is not an offline argument preview.
+Only use peers authorized to receive this credential.
+
+After reviewing the peer results, replace `--dry-run` with `--yes` (`-y` or
+`--apply`). All peers must pass preflight before any apply begins. This does not
+make the later writes across hosts transactional: a failure during apply can
+leave earlier peers updated. Each receiver atomically writes only the exact
+`(host, port, database, role)` row, retains unrelated rows, and uses mode `0600`.
+Source credentials that disagree for the same role are refused. Passwords are
+excluded from argv and result output. Root-level and command-level `--json`
+select the same structured result. Conflicting preview/approval flags are
+refused before identity derivation, passfile reads or SSH.
+
+The implementation is `cli_pkg/_agents_sync_cards_store_credential.py`;
+`tests/scitex_agent_container/cli_pkg/test__agents_sync_cards_store_credential.py`
+covers passfile preservation, source ambiguity, all-peer preflight and CLI
+approval/JSON forwarding. These controls do not establish live fleet access or
+PostgreSQL authentication.

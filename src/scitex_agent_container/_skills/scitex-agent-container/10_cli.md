@@ -9,6 +9,14 @@ tags: [scitex-agent-container-cli]
 
 Both the long form `scitex-agent-container` and the short alias `sac` are entry points to the same Click app. Examples below use `sac` for brevity.
 
+## Cards store credentials
+
+`sac agents sync-cards-store-credential --agent worker --to peer-a --dry-run`
+reads the private source passfile and sends its credential to each trusted peer
+via SSH stdin for validation, without passfile writes. Replace `--dry-run` with
+`--yes` (`-y`, `--apply`) to write after all peers validate. The flags conflict.
+Cross-host apply is not transactional. See [credential synchronization](../../../../docs/credentials.md#cards-store-credential-synchronization).
+
 ## Lifecycle
 
 ```bash
