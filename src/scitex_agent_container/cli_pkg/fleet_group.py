@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from copy import copy
 from pathlib import Path
 
 import click
@@ -179,9 +180,12 @@ def fleet_launch(
             click.echo(json.dumps({"plan": plan, "rows": []}, indent=2))
             return
         render_rich("[bold]DRY RUN[/bold]", __name__)
-        render_rich(f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
+        render_rich(
+            f"  rsync:           {specdir} -> {peer}:{remote_agents_dir}/"
             if plan["rsync"]
-            else "  rsync:           (skipped)", __name__)
+            else "  rsync:           (skipped)",
+            __name__,
+        )
         for n in names:
             render_rich(f"  start on {peer}: {n}", __name__)
         return
@@ -203,7 +207,10 @@ def fleet_launch(
                 rsync_argv.insert(1, "-e")
                 rsync_argv.insert(2, f"ssh -J {','.join(chain)}")
         if not as_json:
-            render_rich(f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/", __name__)
+            render_rich(
+                f"[bold]rsync[/bold]  {specdir} -> {peer}:{remote_agents_dir}/",
+                __name__,
+            )
         rc = subprocess.run(rsync_argv).returncode
         if rc != 0:
             click.echo(f"error: rsync failed (exit {rc})", err=True)
@@ -250,6 +257,12 @@ def fleet_launch(
 # their own modules to keep this file under the project line-budget.
 fleet_group.add_command(fleet_sync)
 fleet_group.add_command(fleet_sync_code)
+for _command, _legacy_name in [(fleet_sync, "sync"), (fleet_sync_code, "sync-code")]:
+    _legacy = copy(_command)
+    _legacy.name = _legacy_name
+    _legacy.hidden = True
+    _legacy.deprecated = f"Use fleet {_command.name} instead."
+    fleet_group.add_command(_legacy)
 
 
 # EOF

@@ -355,7 +355,7 @@ sac host probe-hub                        # WSL → fleet-hub layered connectivi
 # Fleet (peer-aware multi-agent orchestration)
 sac fleet launch  PEER <name>...          # rsync specs to PEER, start each remotely
 sac fleet notify  done|blocker|status --summary "..." --yes   # agent→lead push (ADR-0013)
-sac fleet sync                            # cross-host spec audit (fails loud on drift)
+sac fleet validate-specs                  # cross-host spec audit (fails loud on drift)
 
 # Diagnostics / introspection
 sac doctor [--fleet]                      # diagnose agent-spec source drift

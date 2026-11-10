@@ -35,8 +35,6 @@ Global flags:
 
 Multi-target: `sac agents start a b c` works for daemon mode; `--foreground` is single-target only.
 
-The earlier verbs `validate`, `take-snapshot`, `check-priority`, `inspect`, `logs`, `list` were folded into `check`, `status --snapshot`, `status --priority`, `status` (per-agent), `tail`, and `status` (fleet view) respectively.
-
 ## Image lifecycle (`sac image`)
 
 Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
@@ -96,6 +94,8 @@ sac image rollback --layer base
 | Command | Purpose |
 |---|---|
 | `sac fleet launch SPECDIR --peer PEER --dry-run --json` | Preview spec-directory copying and remote starts. Alternatively repeat `--spec NAME`; `--no-rsync` skips copying. Omit `--dry-run` to apply. |
+| `sac fleet validate-specs` | Compare spec/to_home manifests across hosts. Hidden `sync` alias remains. |
+| `sac fleet validate-checkouts` | Compare checkout state; git fetch refreshes origin refs without merging. Hidden `sync-code` remains. |
 | `sac fleet notify done\|blocker\|status --summary "..." --yes` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. Sending requires `--yes`/`-y`; preview takes precedence and does not verify ACL or delivery. |
 
 ## State database / registry / events

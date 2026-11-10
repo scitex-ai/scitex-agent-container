@@ -1,8 +1,9 @@
-"""``sac fleet sync-code`` — cross-host checkout drift audit (NO auto-merge).
+"""``sac fleet validate-checkouts`` — cross-host checkout drift audit (NO auto-merge).
 
 Behaviour
 ---------
-* Read-only: never pulls / merges / installs anything on any host.
+* Never pulls / merges / installs anything on any host. Collection uses
+  git fetch to refresh origin refs; it does not edit checked-out files.
   The eco_sync.sh triple gate (clean + develop + 0 ahead) stays the
   operator's explicit action; this command only REPORTS drift.
 * For ``~/.dotfiles`` + every ``~/proj/scitex-*`` checkout + the
@@ -47,6 +48,7 @@ from ._fleet_sync import (
     _is_unresolvable,
 )
 from ._fleet_sync_code_collect import collect_checkout_state, emit_collect
+from ._helpers import _json_flag
 
 log = slogging.getLogger(__name__)
 
@@ -60,7 +62,9 @@ def _fetch_peer_manifest(
     remote_sac: str,
 ) -> dict[str, Any]:
     """Run ``ssh peer -- sac fleet sync-code --collect`` and parse."""
-    argv = build_ssh_argv(peer_name, [remote_sac, "fleet", "sync-code", "--collect"], cfg.peers)
+    argv = build_ssh_argv(
+        peer_name, [remote_sac, "fleet", "sync-code", "--collect"], cfg.peers
+    )
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     if proc.returncode not in (0, 2):
         _fail_loud_unreachable(
@@ -231,7 +235,7 @@ def _sync_code_impl(
         raise SystemExit(diff["exit_code"])
 
 
-@click.command("sync-code")
+@click.command("validate-checkouts")
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON envelope.")
 @click.option(
     "--only",
@@ -268,7 +272,9 @@ def _sync_code_impl(
     help="Worker mode: emit this host's manifest as JSON and exit. Used "
     "internally by ssh-dispatched calls.",
 )
+@click.pass_context
 def fleet_sync_code(
+    ctx: click.Context,
     as_json: bool,
     only: tuple[str, ...],
     peer_filter: tuple[str, ...],
@@ -276,7 +282,18 @@ def fleet_sync_code(
     collect: bool,
     remote_sac: str,
 ) -> None:
-    """Audit checkout drift across the fleet (read-only, no auto-merge)."""
+    """Compare checkout state across the fleet without merging.
+
+    Collection refreshes origin refs with git fetch. Checked-out files,
+    branches and installed packages are not changed. Remote worker calls
+    keep the legacy sync-code spelling for compatibility with older hosts.
+
+    \b
+    Examples:
+      sac fleet validate-checkouts --json
+      sac fleet validate-checkouts --peer worker --json
+    """
+    as_json = _json_flag(ctx, as_json)
     _sync_code_impl(
         as_json=as_json,
         only=only,
