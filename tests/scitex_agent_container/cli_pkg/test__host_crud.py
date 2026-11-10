@@ -8,6 +8,7 @@ override. Each test follows AAA (TQ002), asserts a single fact
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,7 @@ def test_host_remove_deletes_existing_peer_from_yaml(cfg_path: Path):
     cfg_path.write_text("peers:\n  gpu-box: {ssh: u@gpu}\n")
     runner = CliRunner()
     # Act
-    runner.invoke(host_remove, ["gpu-box"])
+    runner.invoke(host_remove, ["gpu-box", "--yes"])
     # Assert
     assert "gpu-box" not in _read_peers(cfg_path)
 
@@ -96,7 +97,7 @@ def test_host_remove_rejects_missing_peer_with_exit_2(cfg_path: Path):
     cfg_path.write_text("peers: {}\n")
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_remove, ["nope"])
+    result = runner.invoke(host_remove, ["nope", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -247,7 +248,7 @@ def test_host_remove_preserves_symlink_after_write(symlinked_cfg):
     target.write_text("peers:\n  gpu-box: {ssh: u@gpu}\n")
     runner = CliRunner()
     # Act
-    runner.invoke(host_remove, ["gpu-box"])
+    runner.invoke(host_remove, ["gpu-box", "--yes"])
     # Assert
     assert link.is_symlink()
 
@@ -332,7 +333,7 @@ def test_host_remove_refuses_generated_config_with_exit_2(cfg_path: Path):
     _write_generated(cfg_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_remove, ["master-x"])
+    result = runner.invoke(host_remove, ["master-x", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -345,3 +346,70 @@ def test_host_add_still_edits_a_hand_written_config(cfg_path: Path):
     result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
     # Assert
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("approval", [[], ["--yes"], ["-y"]])
+def test_host_remove_preview_never_reads_config(cfg_path: Path, approval):
+    # Arrange
+    original = b"invalid UTF8 \xff"
+    cfg_path.write_bytes(original)
+    # Act
+    result = CliRunner().invoke(
+        host_remove, ["owned-peer", "--dry-run", "--json", *approval]
+    )
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout), cfg_path.read_bytes()) == (
+        0,
+        {
+            "dry_run": True,
+            "action": "remove",
+            "peer": "owned-peer",
+            "path": str(cfg_path),
+        },
+        original,
+    )
+
+
+def test_host_remove_requires_approval_before_config_access(cfg_path: Path):
+    # Arrange
+    original = b"invalid UTF8 \xff"
+    cfg_path.write_bytes(original)
+    # Act
+    result = CliRunner().invoke(host_remove, ["owned-peer", "--json"])
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        "requires --yes" in result.stderr,
+        cfg_path.read_bytes(),
+    ) == (2, "", True, original)
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+def test_host_remove_approval_preserves_comments_and_other_peers(
+    cfg_path: Path, approval
+):
+    # Arrange
+    cfg_path.write_text(
+        "# owned config\npeers:\n  gone: {ssh: g}\n  kept: {ssh: k} # keep\n"
+    )
+    # Act
+    result = CliRunner().invoke(host_remove, ["gone", approval, "--json"])
+    # Assert
+    assert (
+        result.exit_code,
+        _read_peers(cfg_path),
+        "# keep" in cfg_path.read_text(),
+    ) == (0, {"kept": {"ssh": "k"}}, True)
+
+
+def test_host_remove_invalid_remaining_route_reverts_exact_bytes(cfg_path: Path):
+    # Arrange
+    original = (
+        "# preserve me\npeers:\n  relay: {ssh: r}\n  target: {ssh: t, via: [relay]}\n"
+    )
+    cfg_path.write_text(original)
+    # Act
+    result = CliRunner().invoke(host_remove, ["relay", "--yes", "--json"])
+    # Assert
+    assert (result.exit_code, cfg_path.read_text()) == (1, original)

@@ -49,9 +49,12 @@ def _refuse_if_generated(path: Path) -> None:
         return
     if not is_generated(path.read_text()):
         return
-    render_rich("[red]error:[/red] this host's config is GENERATED (client). "
+    render_rich(
+        "[red]error:[/red] this host's config is GENERATED (client). "
         "Edit the MASTER's config.yaml and run "
-        "`sac host push-config <this-host>` from the master.", __name__)
+        "`sac host push-config <this-host>` from the master.",
+        __name__,
+    )
     raise SystemExit(2)
 
 
@@ -201,7 +204,9 @@ def _emit_validation_failure(
     else:
         for e in errors:
             render_rich(f"[red]error:[/red] {e}", __name__)
-        render_rich("[red]aborted[/red]  config.yaml reverted to pre-edit state", __name__)
+        render_rich(
+            "[red]aborted[/red]  config.yaml reverted to pre-edit state", __name__
+        )
 
 
 @click.command("add")
@@ -252,15 +257,42 @@ def host_add(
 @click.command("remove")
 @click.argument("name", required=True)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments without reading config."
+)
+@click.option("--yes", "-y", is_flag=True, help="Approve removing the peer entry.")
 @click.pass_context
-def host_remove(ctx: click.Context, name: str, as_json: bool) -> None:
+def host_remove(
+    ctx: click.Context,
+    name: str,
+    as_json: bool,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> None:
     """Remove a peer entry from config.yaml.
 
+    ``--dry-run`` previews supplied arguments without reading config contents;
+    it does not verify existence, generated-file status or remaining routes.
+    Preview takes precedence over approval. Applying requires ``--yes``/``-y``
+    and retains generated-config refusal, symlink handling and validation rollback.
+
     \b
-    Example:
-      $ sac host remove gpu-box
+    Examples:
+      $ sac host remove gpu-box --dry-run --json
+      $ sac host remove gpu-box --yes
     """
+    if not dry_run and not yes:
+        raise click.UsageError(
+            "Removal requires --yes; inspect arguments with --dry-run first."
+        )
     path = _default_config_path()
+    if dry_run:
+        report = {"dry_run": True, "action": "remove", "peer": name, "path": str(path)}
+        if _json_flag(ctx, as_json):
+            click.echo(json.dumps(report))
+        else:
+            click.echo(f"would remove peer {name!r} from {path}; argument preview only")
+        return
     _refuse_if_generated(path)
     if not path.is_file():
         click.echo(f"error: no config.yaml found at {path}.", err=True)

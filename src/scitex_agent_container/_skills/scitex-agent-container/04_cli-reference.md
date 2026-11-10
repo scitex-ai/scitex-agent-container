@@ -79,9 +79,10 @@ sac image rollback --layer base
 
 | Command | Purpose |
 |---|---|
-| `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host list / add / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host remove PEER --dry-run --json` | Preview supplied removal arguments without reading config contents. Does not verify target existence or configuration validity. Apply with `sac host remove PEER --yes`; generated-config refusal, symlink handling and validation rollback still apply. |
 | `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
-| `sac host ssh-opts` | Print sac's ssh ControlMaster flags shell-quoted — use as `ssh $(sac host ssh-opts) host cmd`. |
+| `sac host show-ssh-options --json` | Return SSH option words as `{"options": [...]}` for a subprocess argv. Human output needs `shlex.split`; plain shell command substitution does not preserve paths containing spaces. Hidden `ssh-opts` compatibility remains. |
 | `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
