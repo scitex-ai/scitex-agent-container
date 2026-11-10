@@ -95,9 +95,9 @@ def _poll_job(
 ) -> str:
     """Poll ``squeue -j <job_id>`` until the job leaves the queue.
 
-    Returns the final ``sacct`` state (or ``"COMPLETED"`` when squeue
-    has already dropped the job and we can't fetch sacct).  Raises
-    :class:`click.ClickException` on timeout.
+    Returns the observed accounting state. Failed queries and missing
+    accounting records are errors, never inferred completion. Existing
+    timeout and poll bounds remain unchanged; no retry is added.
     """
     deadline = clock() + timeout_s
     while clock() < deadline:
@@ -106,15 +106,24 @@ def _poll_job(
             f"squeue -h -j {shlex.quote(job_id)} -o %T",
             runner=runner,
         )
+        if res.returncode != 0:
+            raise click.ClickException(
+                f"failed to query SLURM job {job_id} ({res.returncode}): "
+                f"{res.stderr.strip()[:400]}"
+            )
         state = res.stdout.strip()
         if not state:
             sacct = _run_ssh(
                 host,
-                f"sacct -j {shlex.quote(job_id)} -n -o State -X | head -n1",
+                f"sacct -j {shlex.quote(job_id)} -n -o State -X",
                 runner=runner,
             )
-            final = sacct.stdout.strip() or "COMPLETED"
-            return final.split()[0] if final else "COMPLETED"
+            if sacct.returncode != 0 or not sacct.stdout.strip():
+                raise click.ClickException(
+                    f"could not determine accounting state for SLURM job {job_id} "
+                    f"({sacct.returncode}): {sacct.stderr.strip()[:400]}"
+                )
+            return sacct.stdout.strip().split()[0]
         sleeper(interval_s)
     raise click.ClickException(f"SLURM job {job_id} did not finish within {timeout_s}s")
 

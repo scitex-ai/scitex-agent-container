@@ -14,7 +14,7 @@ Architecture::
   │ sac pytest spartan   │  ssh + sbatch      │  scratch clone          │
   │ run REPO@BRANCH      │ ─────────────────► │  pip install -e .[dev]  │
   │ (this module)        │                    │  pytest → summary.json  │
-  │   poll squeue        │ ◄──────────────────│  squeue COMPLETED       │
+  │   poll squeue        │ ◄──────────────────│  sacct state            │
   │   cat summary.json   │ ◄──────────────────│  summary.json           │
   │   parse + print      │                    │                         │
   └──────────────────────┘                    └─────────────────────────┘
@@ -38,6 +38,10 @@ Phase 1 simplifications (each is a Phase 2 follow-up):
   **Phase 2**: ``sac pytest spartan install-pre-push`` writes
   ``.git/hooks/pre-push`` that runs this command against the
   about-to-be-pushed branch and blocks the push on failure.
+
+Result qualification is documented in ``docs/spartan-pytest.md``. Queue
+disappearance is not completion evidence; the CLI requires explicit process
+exit metadata before printing PASS.
 
 Public API is re-exported here so callers can keep a single import
 path; the implementation is split across :mod:`_summary`, :mod:`_render`,

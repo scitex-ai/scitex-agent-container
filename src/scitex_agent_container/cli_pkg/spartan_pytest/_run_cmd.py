@@ -122,10 +122,20 @@ def run_cmd(
         timeout_s=timeout_s,
         interval_s=interval_s,
     )
-    click.echo(f"[spartan] job {job_id} finished in state: {final_state}")
+    click.echo(f"[spartan] job {job_id} accounting state: {final_state}")
 
     blob = _fetch_summary(ssh_host, remote_summary_path)
     summary = _parse_summary(blob)
+    if summary.pytest_exit is None or summary.capture_exit is None:
+        raise click.ClickException(
+            "Spartan pytest cannot qualify this summary: it is invalid or lacks "
+            "pytest/capture exit evidence. Inspect the retained job logs."
+        )
+    if summary.all_passed and (final_state != "COMPLETED" or summary.passed == 0):
+        raise click.ClickException(
+            "Spartan pytest cannot PASS without COMPLETED accounting and "
+            "at least one passing test. Inspect the retained job logs."
+        )
     click.echo(_format_summary(summary, repo=repo, branch=branch))
     raise SystemExit(_resolve_exit_code(summary))
 

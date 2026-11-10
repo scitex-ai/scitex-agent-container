@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 
 import click as _click
+import pytest
 
 from scitex_agent_container.cli_pkg.spartan_pytest import (
     PytestSummary,
@@ -178,3 +179,85 @@ def test_split_repo_at_branch_rejects_missing_at():
         raised = exc
     # Assert
     assert isinstance(raised, _click.UsageError)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"passed": 3},
+        {"passed": True, "failed": 0, "errors": 0},
+        {"passed": "3", "failed": 0, "errors": 0},
+        {"passed": -1, "failed": 0, "errors": 0},
+        {"passed": 3, "failed": -1, "errors": 0},
+        {"passed": 3, "failed": 0, "errors": None},
+        {"passed": 3, "failed": 0, "errors": 0, "duration_s": float("nan")},
+        {"passed": 3, "failed": 0, "errors": 0, "duration_s": float("inf")},
+        {"passed": 3, "failed": 0, "errors": 0, "duration_s": -1},
+        {"passed": 3, "failed": 0, "errors": 0, "duration_s": True},
+        {"passed": 3, "failed": 0, "errors": 0, "failed_tests": "bad"},
+        {"passed": 3, "failed": 0, "errors": 0, "failed_tests": [1]},
+        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": None},
+        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": True},
+        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": -1},
+        {"passed": 3, "failed": 0, "errors": 0, "capture_exit": 256},
+    ],
+)
+def test_incomplete_or_invalid_summary_cannot_be_green(payload):
+    # Arrange
+    blob = json.dumps(payload)
+    # Act
+    summary = _parse_summary(blob)
+    # Assert
+    assert (summary.errors, _resolve_exit_code(summary)) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "pytest_exit,capture_exit,expected",
+    [
+        (0, 0, 0),
+        (1, 0, 1),
+        (2, 0, 1),
+        (3, 0, 1),
+        (4, 0, 1),
+        (5, 0, 1),
+        (6, 0, 1),
+        (42, 0, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    ],
+)
+def test_explicit_process_failure_overrides_clean_counts(
+    pytest_exit, capture_exit, expected
+):
+    # Arrange
+    blob = json.dumps(
+        {
+            "passed": 3,
+            "failed": 0,
+            "errors": 0,
+            "pytest_exit": pytest_exit,
+            "capture_exit": capture_exit,
+        }
+    )
+    # Act
+    summary = _parse_summary(blob)
+    # Assert
+    assert (_resolve_exit_code(summary), summary.pytest_exit, summary.capture_exit) == (
+        expected,
+        pytest_exit,
+        capture_exit,
+    )
+
+
+def test_valid_legacy_counts_are_readable_without_process_evidence():
+    # Arrange
+    blob = '{"passed": 3, "failed": 0, "errors": 0}'
+    # Act
+    summary = _parse_summary(blob)
+    # Assert
+    assert (summary.passed, summary.pytest_exit, summary.capture_exit) == (
+        3,
+        None,
+        None,
+    )

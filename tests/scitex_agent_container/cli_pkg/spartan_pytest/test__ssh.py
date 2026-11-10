@@ -1,17 +1,19 @@
-"""Tests for the ssh-side helpers in :mod:`spartan_pytest._ssh`.
+"""SSH result parsing and scheduler-query refusal controls.
 
-The pure helper ``_extract_job_id`` parses sbatch stdout into the
-SLURM job id; the rest of the ssh leg (submit / poll / fetch) hits a
-real cluster and is exercised behind ``$SAC_SPARTAN_HOST`` from
-:mod:`test__run_cmd`.
-
-Style: STX-TQ002 AAA markers, STX-TQ007 one assert per test, no mocks
-(the parser is a pure function).
+Use explicit transport responses and an owned SSH/accounting shell fixture.
+No live cluster is contacted; the separate real round-trip retains its
+existing opt-in in test__run_cmd.
 """
 
 from __future__ import annotations
 
-from scitex_agent_container.cli_pkg.spartan_pytest import _extract_job_id
+import os
+import subprocess
+
+import click
+import pytest
+
+from scitex_agent_container.cli_pkg.spartan_pytest import _extract_job_id, _poll_job
 
 
 def test_extract_job_id_finds_canonical_sbatch_output():
@@ -30,3 +32,86 @@ def test_extract_job_id_returns_none_when_no_digits():
     job_id = _extract_job_id(stdout)
     # Assert
     assert job_id is None
+
+
+@pytest.mark.parametrize(
+    "responses,fragment",
+    [
+        ([(255, "", "refused")], "failed to query"),
+        ([(1, "RUNNING", "refused")], "failed to query"),
+        ([(0, "", ""), (1, "COMPLETED", "failed")], "accounting state"),
+        ([(0, "", ""), (0, "", "")], "accounting state"),
+    ],
+)
+def test_failed_or_missing_scheduler_query_never_implies_completion(
+    responses, fragment
+):
+    # Arrange
+    calls = []
+    pending = iter(responses)
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        code, stdout, stderr = next(pending)
+        return subprocess.CompletedProcess(argv, code, stdout, stderr)
+
+    # Act
+    with pytest.raises(click.ClickException) as caught:
+        _poll_job(
+            "owned",
+            "123",
+            timeout_s=10,
+            interval_s=1,
+            runner=runner,
+            clock=lambda: 0,
+            sleeper=lambda _: None,
+        )
+    # Assert
+    assert (fragment in str(caught.value), len(calls)) == (True, len(responses))
+
+
+def test_observed_completion_retains_poll_interval_and_accounting_state():
+    # Arrange
+    responses = iter([(0, "RUNNING", ""), (0, "", ""), (0, "COMPLETED", "")])
+    sleeps = []
+
+    def runner(argv, **kwargs):
+        code, stdout, stderr = next(responses)
+        return subprocess.CompletedProcess(argv, code, stdout, stderr)
+
+    # Act
+    state = _poll_job(
+        "owned",
+        "123",
+        timeout_s=10,
+        interval_s=7,
+        runner=runner,
+        clock=lambda: 0,
+        sleeper=sleeps.append,
+    )
+    # Assert
+    assert (state, sleeps) == ("COMPLETED", [7])
+
+
+@pytest.fixture
+def failed_accounting_shell(tmp_path, env_save_restore):
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    (binary / "ssh").write_text(
+        '#!/bin/sh\nfor command; do :; done\nexec sh -c "$command"\n'
+    )
+    (binary / "squeue").write_text("#!/bin/sh\nexit 0\n")
+    (binary / "sacct").write_text("#!/bin/sh\necho COMPLETED\nexit 7\n")
+    for path in binary.iterdir():
+        path.chmod(0o700)
+    env_save_restore.set("PATH", str(binary) + os.pathsep + os.environ["PATH"])
+
+
+def test_real_shell_cannot_hide_failed_accounting_behind_head(failed_accounting_shell):
+    # Arrange
+    host = "owned-fixture"
+    # Act
+    with pytest.raises(click.ClickException) as caught:
+        _poll_job(host, "123", timeout_s=10, interval_s=1)
+    # Assert
+    assert "accounting state for SLURM job 123 (7)" in str(caught.value)

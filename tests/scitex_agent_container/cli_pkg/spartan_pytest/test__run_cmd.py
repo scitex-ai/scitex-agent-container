@@ -9,7 +9,9 @@ Style: STX-TQ002 AAA markers, STX-TQ007 one assert per test, no mocks.
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 
 import pytest
 from click.testing import CliRunner
@@ -67,3 +69,174 @@ def test_real_spartan_round_trip_against_live_host():
     )
     # Assert — either green or operator-meaningful failure surface.
     assert "Spartan pytest" in result.output
+
+
+@pytest.fixture
+def scheduler_fixture(tmp_path, env_save_restore):
+    """Owned SSH executable reports staged scheduler/summary observations."""
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    calls = tmp_path / "calls"
+    state_file = tmp_path / "state"
+    summary_file = tmp_path / "summary.json"
+    queue_code = tmp_path / "queue-code"
+    script = directory / "ssh"
+    script.write_text(
+        "#!/bin/sh\nfor command; do :; done\n"
+        f'case "$command" in\n'
+        f"  'mkdir -p '*) echo upload >> {shlex.quote(str(calls))};;\n"
+        f"  'sbatch '*) echo submit >> {shlex.quote(str(calls))}; echo 'Submitted batch job 123';;\n"
+        f"  'squeue '*) echo queue >> {shlex.quote(str(calls))}; exit \"$(cat {shlex.quote(str(queue_code))})\";;\n"
+        f"  'sacct '*) echo accounting >> {shlex.quote(str(calls))}; cat {shlex.quote(str(state_file))};;\n"
+        f"  'cat '*) echo summary >> {shlex.quote(str(calls))}; cat {shlex.quote(str(summary_file))};;\n"
+        "  *) exit 99;;\nesac\n"
+    )
+    script.chmod(0o700)
+    env_save_restore.set("PATH", str(directory) + os.pathsep + os.environ["PATH"])
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / ".scitex"))
+
+    def configure(payload, state, queue_exit):
+        summary_file.write_text(json.dumps(payload))
+        state_file.write_text(state + "\n")
+        queue_code.write_text(str(queue_exit))
+        return calls
+
+    return configure
+
+
+@pytest.mark.parametrize(
+    "payload,state,queue_exit,code,passed,call_count",
+    [
+        (
+            {
+                "passed": 3,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 0,
+            },
+            "COMPLETED",
+            0,
+            0,
+            True,
+            5,
+        ),
+        (
+            {
+                "passed": 3,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 0,
+            },
+            "FAILED",
+            0,
+            1,
+            False,
+            5,
+        ),
+        (
+            {
+                "passed": 3,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 0,
+            },
+            "RUNNING",
+            0,
+            1,
+            False,
+            5,
+        ),
+        ({}, "COMPLETED", 0, 1, False, 5),
+        ({"passed": 3, "failed": 0, "errors": 0}, "COMPLETED", 0, 1, False, 5),
+        (
+            {
+                "passed": 0,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 5,
+                "capture_exit": 0,
+            },
+            "COMPLETED",
+            0,
+            1,
+            False,
+            5,
+        ),
+        (
+            {
+                "passed": 3,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 1,
+            },
+            "COMPLETED",
+            0,
+            1,
+            False,
+            5,
+        ),
+        (
+            {
+                "passed": 0,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 0,
+            },
+            "COMPLETED",
+            0,
+            1,
+            False,
+            5,
+        ),
+        (
+            {
+                "passed": 2,
+                "failed": 1,
+                "errors": 0,
+                "pytest_exit": 1,
+                "capture_exit": 0,
+            },
+            "FAILED",
+            0,
+            1,
+            False,
+            5,
+        ),
+        (
+            {
+                "passed": 3,
+                "failed": 0,
+                "errors": 0,
+                "pytest_exit": 0,
+                "capture_exit": 0,
+            },
+            "COMPLETED",
+            255,
+            1,
+            False,
+            3,
+        ),
+    ],
+)
+def test_spartan_cli_never_passes_without_process_and_scheduler_evidence(
+    scheduler_fixture, payload, state, queue_exit, code, passed, call_count
+):
+    # Arrange
+    calls = scheduler_fixture(payload, state, queue_exit)
+    # Act
+    result = CliRunner().invoke(
+        pytest_group,
+        ["spartan", "run", "owner/fixture@main", "--ssh-host", "owned-fixture"],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        "Spartan pytest PASS:" in result.stdout,
+        len(calls.read_text().splitlines()),
+    ) == (code, passed, call_count)

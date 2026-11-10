@@ -94,7 +94,9 @@ def _render_sbatch_script(
         "set +e\n"
         "python -m pytest -q --no-cov --maxfail=20 2>&1 "
         f"| tee {quoted_scratch}/pytest.log\n"
-        "PYTEST_EXIT=$?\n"
+        'PIPE_RESULTS=("${PIPESTATUS[@]}")\n'
+        "PYTEST_EXIT=${PIPE_RESULTS[0]}\n"
+        "CAPTURE_EXIT=${PIPE_RESULTS[1]}\n"
         "set -e\n"
         "END_TS=$(date +%s)\n"
         "DURATION=$((END_TS - START_TS))\n"
@@ -124,12 +126,15 @@ def _render_sbatch_script(
         "    'failed': failed,\n"
         "    'errors': errors,\n"
         "    'duration_s': $DURATION,\n"
+        "    'pytest_exit': $PYTEST_EXIT,\n"
+        "    'capture_exit': $CAPTURE_EXIT,\n"
         "    'failed_tests': failed_tests,\n"
         "}\n"
         f"out = pathlib.Path({scratch_repr}) / 'summary.json'\n"
         "out.write_text(json.dumps(summary, indent=2))\n"
         "PYEOF\n"
         "\n"
+        'if [[ "$CAPTURE_EXIT" -ne 0 ]]; then exit "$CAPTURE_EXIT"; fi\n'
         "exit $PYTEST_EXIT\n"
     )
 
