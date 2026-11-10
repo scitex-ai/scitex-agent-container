@@ -261,3 +261,34 @@ def test_valid_legacy_counts_are_readable_without_process_evidence():
         None,
         None,
     )
+
+
+@pytest.mark.parametrize("job_id", ["123", "987654"])
+def test_job_id_metadata_is_preserved_when_canonical(job_id):
+    # Arrange
+    blob = json.dumps({"passed": 3, "failed": 0, "errors": 0, "slurm_job_id": job_id})
+    # Act
+    summary = _parse_summary(blob)
+    # Assert
+    assert (summary.slurm_job_id, summary.errors) == (job_id, 0)
+
+
+@pytest.mark.parametrize(
+    "job_id", [None, True, 123, "0", "-1", "0123", "1_2", "１２３", "123\n"]
+)
+def test_invalid_job_id_metadata_cannot_be_green(job_id):
+    # Arrange
+    blob = json.dumps({"passed": 3, "failed": 0, "errors": 0, "slurm_job_id": job_id})
+    # Act
+    summary = _parse_summary(blob)
+    # Assert
+    assert (summary.errors, _resolve_exit_code(summary)) == (1, 1)
+
+
+def test_existing_positional_summary_fields_remain_compatible():
+    # Arrange
+    summary = PytestSummary(3, 0, 0, 1.0, [], 0, 0)
+    # Act
+    result = (summary.slurm_job_id, _resolve_exit_code(summary))
+    # Assert
+    assert result == (None, 0)

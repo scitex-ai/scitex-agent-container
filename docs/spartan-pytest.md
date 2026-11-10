@@ -13,7 +13,8 @@ this does not add a whole-command timeout around SSH transport calls.
 
 The CLI prints PASS only when the collected summary has explicit valid test
 counts, pytest and log-capture exit codes of zero, at least one passing test,
-and observed `COMPLETED` accounting. A failed `squeue` query, failed `sacct`
+a recorded job ID matching submission, and observed `COMPLETED` accounting.
+A failed `squeue` query, failed `sacct`
 query or absent accounting result is an error, never inferred completion.
 Accounting failures may leave the submitted job running; this command does
 not add automatic cancellation or resubmission.
@@ -43,7 +44,7 @@ these fixtures.
 This is not a replacement for required CI or release qualification. Existing
 branch-based cloning, dependency-install fallback, terminal-log count
 extraction and transport-call bounds retain their prior semantics. Exact
-commit/job identity binding, complete dependency/coverage acceptance and
+independent commit/artifact provenance, complete dependency/coverage acceptance and
 remote login/compute filesystem agreement require separate evidence.
 No old artifact is rewritten and no failed job is retried automatically.
 
@@ -114,3 +115,24 @@ Client-side quoting preserves spaces and literal metacharacters in the value;
 Slurm header parsing and shared visibility between login and compute nodes
 still require separate evidence. No real cluster environment is qualified by
 the local-shell fixtures, and transport timeout/retry behavior is unchanged.
+
+## Summary/job consistency
+
+The generated job records `SLURM_JOB_ID` from its environment as
+`slurm_job_id` in the summary. Slurm documents this variable as the
+[job allocation ID](https://slurm.schedmd.com/sbatch.html).
+The parser accepts a positive ASCII decimal string when this field is
+present; invalid types or values produce an error record. Missing metadata
+remains readable through the Python helper and its existing positional fields.
+
+The CLI requires the recorded ID to match its parsed submission receipt,
+including for failed test runs. Missing or mismatched IDs leave the result
+unqualified; they never trigger resubmission or rewriting of old artifacts.
+Legacy summaries without this field therefore cannot qualify through the
+updated CLI. Retain their logs for inspection.
+
+This is a consistency check on self-reported metadata, not independent or
+cryptographic provenance. A matching ID does not establish an exact source
+commit, an honest target repository, correct dependency installation or full
+test/coverage acceptance. Those checks and live-cluster qualification remain
+separate requirements.

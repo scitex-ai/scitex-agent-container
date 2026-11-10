@@ -142,6 +142,11 @@ def run_cmd(
             "Spartan pytest cannot qualify this summary: it is invalid or lacks "
             "pytest/capture exit evidence. Inspect the retained job logs."
         )
+    if summary.slurm_job_id != job_id:
+        raise click.ClickException(
+            "Spartan pytest cannot qualify this summary: missing or mismatched "
+            "scheduler job ID. Inspect the retained job logs."
+        )
     if summary.all_passed and (final_state != "COMPLETED" or summary.passed == 0):
         raise click.ClickException(
             "Spartan pytest cannot PASS without COMPLETED accounting and "

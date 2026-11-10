@@ -62,7 +62,14 @@ def test_invalid_poll_bounds_are_refused_before_any_remote_action(
 ):
     # Arrange
     calls = scheduler_fixture(
-        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": 0, "capture_exit": 0},
+        {
+            "passed": 3,
+            "failed": 0,
+            "errors": 0,
+            "pytest_exit": 0,
+            "capture_exit": 0,
+            "slurm_job_id": "123",
+        },
         "COMPLETED",
         0,
     )
@@ -85,7 +92,14 @@ def test_line_breaking_headers_are_refused_before_any_remote_action(
 ):
     # Arrange
     calls = scheduler_fixture(
-        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": 0, "capture_exit": 0},
+        {
+            "passed": 3,
+            "failed": 0,
+            "errors": 0,
+            "pytest_exit": 0,
+            "capture_exit": 0,
+            "slurm_job_id": "123",
+        },
         "COMPLETED",
         0,
     )
@@ -181,6 +195,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "COMPLETED",
             0,
@@ -195,6 +210,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "FAILED",
             0,
@@ -209,6 +225,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "RUNNING",
             0,
@@ -225,6 +242,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 5,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "COMPLETED",
             0,
@@ -239,6 +257,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 1,
+                "slurm_job_id": "123",
             },
             "COMPLETED",
             0,
@@ -253,6 +272,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "COMPLETED",
             0,
@@ -267,6 +287,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 1,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "FAILED",
             0,
@@ -281,6 +302,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
                 "errors": 0,
                 "pytest_exit": 0,
                 "capture_exit": 0,
+                "slurm_job_id": "123",
             },
             "COMPLETED",
             255,
@@ -313,7 +335,14 @@ def test_repeated_submissions_have_distinct_uuid_paths_and_matching_summary(
 ):
     # Arrange
     calls = scheduler_fixture(
-        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": 0, "capture_exit": 0},
+        {
+            "passed": 3,
+            "failed": 0,
+            "errors": 0,
+            "pytest_exit": 0,
+            "capture_exit": 0,
+            "slurm_job_id": "123",
+        },
         "COMPLETED",
         0,
     )
@@ -357,3 +386,38 @@ def test_repeated_submissions_have_distinct_uuid_paths_and_matching_summary(
         True,
         True,
     )
+
+
+@pytest.mark.parametrize(
+    "metadata,code,passed",
+    [
+        ({"slurm_job_id": "123"}, 0, True),
+        ({"slurm_job_id": "999"}, 1, False),
+        ({}, 1, False),
+        ({"slurm_job_id": 123}, 1, False),
+    ],
+)
+def test_collected_summary_must_name_the_submitted_job(
+    scheduler_fixture, metadata, code, passed
+):
+    # Arrange
+    payload = {
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pytest_exit": 0,
+        "capture_exit": 0,
+        **metadata,
+    }
+    calls = scheduler_fixture(payload, "COMPLETED", 0)
+    # Act
+    result = CliRunner().invoke(
+        pytest_group,
+        ["spartan", "run", "owned/fixture@main", "--scratch-root", "/owned/explicit"],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        "Spartan pytest PASS:" in result.stdout,
+        len(calls.read_text().splitlines()),
+    ) == (code, passed, 5)

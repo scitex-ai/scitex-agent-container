@@ -134,6 +134,7 @@ def rendered_job_tools(tmp_path, env_save_restore):
         path.chmod(0o700)
     env_save_restore.set("PATH", str(binary) + os.pathsep + os.environ["PATH"])
     env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("SLURM_JOB_ID", "123")
     return tmp_path
 
 
@@ -179,3 +180,32 @@ def test_rendered_bash_retains_real_pipeline_exit_evidence(
         summary["passed"],
         _resolve_exit_code(_parse_summary(json.dumps(summary))),
     ) == (expected, pytest_exit, capture_exit, 3, int(expected != 0))
+
+
+def test_rendered_job_records_scheduler_id_from_environment(
+    rendered_job_tools, env_save_restore
+):
+    # Arrange
+    root = rendered_job_tools
+    env_save_restore.set("SAC_FIXTURE_PYTEST_LOG", "3 passed in 0.1s")
+    env_save_restore.set("SAC_FIXTURE_PYTEST_EXIT", "0")
+    env_save_restore.set("SAC_FIXTURE_CAPTURE_EXIT", "0")
+    env_save_restore.set("SLURM_JOB_ID", "987654")
+    scratch = root / "scratch"
+    script = root / "job.sh"
+    script.write_text(
+        _render_sbatch_script(
+            repo="owned/fixture",
+            branch="main",
+            reservation="owned",
+            scratch_dir=str(scratch),
+            job_tag="fixture",
+        )
+    )
+    # Act
+    result = subprocess.run(
+        ["bash", str(script)], cwd=root, capture_output=True, text=True, timeout=30
+    )
+    summary = _parse_summary((scratch / "summary.json").read_text())
+    # Assert
+    assert (result.returncode, summary.slurm_job_id) == (0, "987654")

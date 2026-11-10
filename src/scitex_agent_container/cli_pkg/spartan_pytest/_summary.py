@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 
 import click
@@ -29,13 +30,14 @@ class PytestSummary:
     failed_tests: list[str] = field(default_factory=list)
     pytest_exit: int | None = None
     capture_exit: int | None = None
+    slurm_job_id: str | None = None
 
     @property
     def all_passed(self) -> bool:
         """No count or explicit process/capture failures.
 
         Legacy count-only Python records remain readable. CLI acceptance
-        additionally requires process evidence and successful accounting.
+        additionally requires process evidence, matching job ID and successful accounting.
         """
         return (
             self.failed == 0
@@ -81,12 +83,18 @@ def _parse_summary(blob: str) -> PytestSummary:
         if key in data and (type(value) is not int or not 0 <= value <= 255):
             return PytestSummary(errors=1)
         exits[key] = value
+    job_id = data.get("slurm_job_id")
+    if "slurm_job_id" in data and (
+        not isinstance(job_id, str) or re.fullmatch(r"[1-9][0-9]*", job_id) is None
+    ):
+        return PytestSummary(errors=1)
     return PytestSummary(
         passed=counters[0],
         failed=counters[1],
         errors=counters[2],
         duration_s=duration,
         failed_tests=failed_tests,
+        slurm_job_id=job_id,
         **exits,
     )
 
@@ -102,6 +110,7 @@ def _format_summary(summary: PytestSummary, *, repo: str, branch: str) -> str:
         f"  duration_s: {summary.duration_s:.1f}",
         f"  pytest_exit: {summary.pytest_exit if summary.pytest_exit is not None else 'not recorded'}",
         f"  capture_exit: {summary.capture_exit if summary.capture_exit is not None else 'not recorded'}",
+        f"  slurm_job_id: {summary.slurm_job_id if summary.slurm_job_id is not None else 'not recorded'}",
     ]
     if summary.failed_tests:
         lines.append("  failed tests:")
