@@ -10,8 +10,10 @@ from __future__ import annotations
 import json as json_mod
 
 import click
+from scitex_dev.ecosystem import SpecCommand
 
 from ._helpers import _json_flag
+from ._mcp_help import CONNECTION_HELP, TOOL_DESCRIPTION_HELP
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -272,22 +274,13 @@ def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
     raise SystemExit(0)
 
 
-@mcp.command("validate-connections")
+@mcp.command("validate-connections", cls=SpecCommand, help_spec=CONNECTION_HELP)
 @click.option(
     "--json", "as_json", is_flag=True, help="Emit the provider result as JSON."
 )
 @click.pass_context
 def mcp_validate_connections(ctx: click.Context, as_json: bool) -> None:
-    """Validate critical Claude Code MCP connections without requesting a restart.
-
-    Exits 0 only for verified connections; unknown, disabled or failed checks exit 1.
-    This runs `claude mcp list`; it is not a universal vendor-client probe.
-
-    \b
-    Examples:
-      $ sac mcp validate-connections
-      $ sac mcp validate-connections --json
-    """
+    """Observe critical Claude Code MCP connections without boot recovery."""
     from ._mcp_connections import check_connections
 
     raise SystemExit(check_connections(as_json=_json_flag(ctx, as_json)))
@@ -321,7 +314,9 @@ def mcp_doctor() -> None:
         tools = _list_tool_names(server)
         click.secho("  OK ", fg="green", nl=False)
         click.echo(f"sac MCP server ({len(tools)} tools)")
-    except Exception as exc:  # stx-allow: fallback (reason: doctor exits non-zero on any registration failure — surface the reason without crashing)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: doctor exits non-zero on any registration failure — surface the reason without crashing)
         click.secho("  NG ", fg="red", nl=False)
         click.echo(f"MCP server error: {exc}")
         raise SystemExit(1)
@@ -387,17 +382,12 @@ def mcp_list_tools(ctx: click.Context, as_json: bool) -> None:
             click.echo(f"    {first}")
 
 
-@mcp.command("show-tool")
+@mcp.command("show-tool", cls=SpecCommand, help_spec=TOOL_DESCRIPTION_HELP)
 @click.argument("name")
 @click.option("--json", "as_json", is_flag=True, help="Emit the MCP schema as JSON.")
 @click.pass_context
 def mcp_show_tool(ctx: click.Context, name: str, as_json: bool) -> None:
-    """Describe one exact tool name without invoking its domain operation.
-
-    \b
-    Example:
-      $ sac mcp show-tool agent_send --json
-    """
+    """Describe one exact tool name without invoking its domain operation."""
     from ._mcp_tool_description import show_tool
 
     show_tool(name, as_json=_json_flag(ctx, as_json))
