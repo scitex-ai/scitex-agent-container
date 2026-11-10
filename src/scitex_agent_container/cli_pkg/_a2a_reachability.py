@@ -60,7 +60,7 @@ def _print_report(report, *, alarm_line: str | None) -> None:
         render_rich(
             "[magenta]nothing measurable[/magenta] — every host is UNKNOWN, so "
             "this pass proves nothing about the fleet. Fix the reasons above "
-            "(peer tokens: `sac host add-peer <host> <token>`; aliases: "
+            "(peer tokens: `sac host add-peer <host> <token> --yes`; aliases: "
             "hosts.yaml / config.yaml peers).",
             __name__,
         )

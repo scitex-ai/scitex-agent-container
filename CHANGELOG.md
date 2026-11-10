@@ -7,6 +7,8 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Require explicit approval for peer-token CLI writes; add token-free argument
+  previews and JSON metadata while preserving containment and idempotent removal.
 - Accept standard `--yes/-y` approval spellings for agent reconciliation
   while retaining `--apply`, preview defaults and existing restart guards.
 - Add offline registry registration previews and require explicit approval

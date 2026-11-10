@@ -6,7 +6,7 @@ Aligns with peer.py's host-registry pattern and gives per-host
 blast radius."):
 
   * Each host stores ``peer-tokens/<peer-host>.token`` populated by
-    ``sac host add-peer <host> <token>`` (CLI to add).
+    ``sac host add-peer <host> <token> --yes`` (CLI to add).
   * The cross-host forwarder calls peer host with **the destination's
     bearer** pulled from that registry, not the forwarding host's
     own bearer.
@@ -33,6 +33,7 @@ existing ``listen-<host>.token`` shape one level up.
 from __future__ import annotations
 
 import os
+import shlex
 import tempfile
 from ipaddress import IPv6Address
 from pathlib import Path, PureWindowsPath
@@ -159,7 +160,7 @@ def read_peer_token(
     if not src.is_file():
         raise PeerTokenError(
             f"no peer token for host {peer_host!r} at {src}. "
-            f"Add one with: sac host add-peer {peer_host} <token>"
+            f"Add one with: sac host add-peer --yes -- {shlex.quote(peer_host)} TOKEN"
         )
     try:
         descriptor = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -170,7 +171,7 @@ def read_peer_token(
     if not token:
         raise PeerTokenError(
             f"peer token file {src} is empty. "
-            f"Re-add with: sac host add-peer {peer_host} <token>"
+            f"Re-add with: sac host add-peer --yes -- {shlex.quote(peer_host)} TOKEN"
         )
     return token
 

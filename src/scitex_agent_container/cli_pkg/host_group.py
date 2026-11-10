@@ -31,6 +31,10 @@ from .._state.host_config import (
 )
 from ._helpers import _json_flag
 from ._host_list_cmd import host_list, register_list_command
+from ._host_peer_tokens import host_add_peer as host_add_peer
+from ._host_peer_tokens import host_list_peers as host_list_peers
+from ._host_peer_tokens import host_remove_peer as host_remove_peer
+from ._host_peer_tokens import register_peer_token_commands
 from ._host_ssh_options import host_ssh_opts as host_ssh_opts
 from ._host_ssh_options import register_ssh_options_command
 from ._host_validate_cmd import host_validate, register_validate_command
@@ -387,106 +391,4 @@ _register_host_push_config(host_group)
 _register_host_sync(host_group)
 
 
-# WI-4 Q4(b) — peer bearer-token registry. ``sac host add-peer`` /
-# ``list-peers`` / ``remove-peer`` manage the
-# ``peer-tokens/<peer-host>.token`` files the cross-host forwarder
-# consults to authenticate at a destination ``sac listen``. Each
-# entry is per-host scoped, so leaking one host's token compromises
-# only that host (the per-host blast radius the lead asked for).
-
-
-@host_group.command("add-peer")
-@click.argument("peer_host")
-@click.argument("token")
-def host_add_peer(peer_host: str, token: str) -> None:
-    """Register a peer host's listen bearer for cross-host forwarding.
-
-    Writes ``~/.scitex/agent-container/peer-tokens/<PEER_HOST>.token``
-    mode 0600. The cross-host forwarder reads this file when
-    forwarding ``message:send`` to ``<PEER_HOST>``.
-
-    \b
-    Examples:
-      sac host add-peer host-a $(ssh host-a 'cat ~/.scitex/agent-container/tokens/listen-host-a.token')
-      sac host add-peer head-spartan AAAAA-bearer-from-spartan-BBBBB
-    """
-    from .._listen.peer_tokens import PeerTokenError, write_peer_token
-
-    if not peer_host:
-        raise click.UsageError("PEER_HOST must be non-empty")
-    if not token:
-        raise click.UsageError("TOKEN must be non-empty")
-    try:
-        dst = write_peer_token(peer_host=peer_host, token=token)
-    except PeerTokenError as exc:
-        raise click.UsageError(str(exc)) from exc
-    render_rich(f"[green]ok[/green]  wrote {dst}", __name__)
-
-
-@host_group.command("list-peers")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit peer names as JSON, never token values.",
-)
-@click.pass_context
-def host_list_peers(ctx: click.Context, as_json: bool) -> None:
-    """List the peer hosts that have a registered listen bearer.
-
-    Token values are NEVER printed — only the peer-host names. To
-    see the on-disk file paths run
-    ``ls -la ~/.scitex/agent-container/peer-tokens/``.
-
-    \b
-    Examples:
-      sac host list-peers
-      sac host list-peers --json
-      sac --json host list-peers
-    """
-    from .._listen.peer_tokens import (
-        PeerTokenError,
-        default_peer_tokens_dir,
-        list_peer_hosts,
-    )
-
-    tdir = default_peer_tokens_dir()
-    try:
-        hosts = list_peer_hosts()
-    except PeerTokenError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if _json_flag(ctx, as_json):
-        click.echo(json.dumps({"peer_hosts": hosts}, indent=2))
-        return
-    if not hosts:
-        render_rich(
-            f"no peer tokens registered (dir: {tdir}). "
-            "Add one with: sac host add-peer <host> <token>",
-            __name__,
-        )
-        return
-    render_rich(f"peer-tokens dir: {tdir}", __name__)
-    for h in hosts:
-        render_rich(f"  {h}", __name__)
-
-
-@host_group.command("remove-peer")
-@click.argument("peer_host")
-def host_remove_peer(peer_host: str) -> None:
-    """Remove a peer host's listen bearer from the registry.
-
-    Idempotent — removing an absent peer is a no-op (returns 0).
-    """
-    from .._listen.peer_tokens import PeerTokenError, peer_token_path
-
-    if not peer_host:
-        raise click.UsageError("PEER_HOST must be non-empty")
-    try:
-        path = peer_token_path(peer_host)
-    except PeerTokenError as exc:
-        raise click.UsageError(str(exc)) from exc
-    if not path.exists():
-        render_rich(f"no peer token to remove at {path}", __name__)
-        return
-    path.unlink()
-    render_rich(f"[green]ok[/green]  removed {path}", __name__)
+register_peer_token_commands(host_group)

@@ -176,7 +176,9 @@ def test_list_peer_hosts_returns_sorted_names(peer_tokens_dir: Path) -> None:
     assert hosts == ["host-a", "host-b"]
 
 
-@pytest.fixture(params=["../outside", "..\\outside", "absolute", ".", "..", "host\nname"])
+@pytest.fixture(
+    params=["../outside", "..\\outside", "absolute", ".", "..", "host\nname"]
+)
 def unsafe_peer_name(peer_tokens_dir, request):
     """Even a broken implementation can only reach owned fixture files."""
     peer_tokens_dir.mkdir()
@@ -200,7 +202,9 @@ def test_peer_writes_cannot_supply_paths(peer_tokens_dir, unsafe_peer_name):
     # Assert
     with pytest.raises(PeerTokenError):
         write_peer_token(
-            peer_host=unsafe_peer_name, token="fixture-token", tokens_dir=peer_tokens_dir
+            peer_host=unsafe_peer_name,
+            token="fixture-token",
+            tokens_dir=peer_tokens_dir,
         )
 
 
@@ -301,3 +305,29 @@ def test_safe_host_aliases_and_ip_literals_keep_their_identity(peer_tokens_dir, 
     value = read_peer_token(peer_host=name, tokens_dir=peer_tokens_dir)
     # Assert
     assert (destination.name, value) == (name + ".token", "fixture-token")
+
+
+def _missing_peer_hint(peer_host, directory):
+    try:
+        read_peer_token(peer_host=peer_host, tokens_dir=directory)
+    except PeerTokenError as error:
+        return str(error).partition("Add one with: ")[2]
+    return ""
+
+
+@pytest.mark.parametrize(
+    "peer_host",
+    ["peer name", "peer;touch owned-marker", "$(touch owned-marker)", "--peer-option"],
+)
+def test_missing_peer_remediation_preserves_one_literal_host(
+    peer_tokens_dir, peer_host
+):
+    # Arrange
+    import shlex
+
+    expected = ["sac", "host", "add-peer", "--yes", "--", peer_host, "TOKEN"]
+    # Act
+    hint = _missing_peer_hint(peer_host, peer_tokens_dir)
+    parsed = shlex.split(hint)
+    # Assert
+    assert parsed == expected
