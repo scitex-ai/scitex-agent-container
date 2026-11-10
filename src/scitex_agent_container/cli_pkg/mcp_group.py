@@ -272,21 +272,21 @@ def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
     raise SystemExit(0)
 
 
-@mcp.command("check-connections")
+@mcp.command("validate-connections")
 @click.option(
     "--json", "as_json", is_flag=True, help="Emit the provider result as JSON."
 )
 @click.pass_context
-def mcp_check_connections(ctx: click.Context, as_json: bool) -> None:
-    """Check critical Claude Code MCP connections without requesting a restart.
+def mcp_validate_connections(ctx: click.Context, as_json: bool) -> None:
+    """Validate critical Claude Code MCP connections without requesting a restart.
 
     Exits 0 only for verified connections; unknown, disabled or failed checks exit 1.
     This runs `claude mcp list`; it is not a universal vendor-client probe.
 
     \b
     Examples:
-      $ sac mcp check-connections
-      $ sac mcp check-connections --json
+      $ sac mcp validate-connections
+      $ sac mcp validate-connections --json
     """
     from ._mcp_connections import check_connections
 

@@ -11,7 +11,7 @@ from scitex_agent_container.cli import main
 @pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
 def test_disabled_connection_check_is_structured_and_unverified(prefix, suffix):
     # Arrange
-    args = [*prefix, "mcp", "check-connections", *suffix]
+    args = [*prefix, "mcp", "validate-connections", *suffix]
     runner = CliRunner(env={"SAC_MCP_HEALTHCHECK_DISABLED": "1"})
 
     # Act
@@ -26,7 +26,7 @@ def test_disabled_connection_check_is_structured_and_unverified(prefix, suffix):
 
 def test_disabled_connection_text_does_not_report_healthy():
     # Arrange
-    args = ["mcp", "check-connections"]
+    args = ["mcp", "validate-connections"]
     runner = CliRunner(env={"SAC_MCP_HEALTHCHECK_DISABLED": "1"})
 
     # Act

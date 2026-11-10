@@ -56,7 +56,7 @@ sac mcp start --http --port 8970      # HTTP; loopback bind by default
 HTTP startup validates `--port` in the range 0–65535 before preview or backend
 loading. Stdio ignores this HTTP-only option.
 
-`sac mcp check-connections --json` observes critical connections reported by
+`sac mcp validate-connections --json` observes critical connections reported by
 Claude Code without requesting a restart. It runs `claude mcp list`; it is not
 a universal client probe. Exit 0 requires verified connected results; unknown,
 disabled, failed or errored observations exit 1. Global `--json` is also accepted.
