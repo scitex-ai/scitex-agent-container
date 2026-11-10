@@ -55,6 +55,8 @@ loading. Stdio ignores this HTTP-only option.
 a read-only replacement for discovery. Connectivity parsing requires an
 identified server row and a recognized status after ` - `. Command arguments,
 other server names, and ambiguous status text do not establish connectivity.
+The `sac` server key is recognized as `scitex-agent-container`, matching startup
+reliability configuration; the legacy `scitex-todo` key resolves to `scitex-cards`.
 Unrecognized vendor output remains unknown; this parser is not a vendor
 format or live-client qualification.
 
@@ -93,3 +95,6 @@ HTTP argument controls: `tests/scitex_agent_container/cli_pkg/test__port_options
 Connectivity parsing controls:
 `tests/scitex_agent_container/_mcp/test__healthcheck_status_identity.py` and
 `tests/scitex_agent_container/_mcp/test__healthcheck.py`.
+
+Startup-key alias controls:
+`tests/scitex_agent_container/_mcp/test__healthcheck_sac_alias.py`.

@@ -75,6 +75,8 @@ CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
 # which alarms. That is a false alarm manufactured by the rename itself.
 # Drop the old entry once no deployed ``.mcp.json`` declares it.
 SERVER_ALIASES: dict[str, tuple[str, ...]] = {
+    # The startup reliability policy also recognizes this short server key.
+    "scitex-agent-container": ("sac",),
     "scitex-cards": ("scitex-todo",),
 }
 
