@@ -46,8 +46,8 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 | `sac image update SANDBOX [-p PKG] --yes` | Upgrade sandbox packages (default `scitex[all]`); `--dry-run` previews arguments offline. |
 | `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
 | `sac image list` | Installed SIF versions on disk. |
-| `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |
-| `sac image rollback [--layer base]` | Restore the immediately older image for one SAC layer. |
+| `sac image switch <version> [--layer base] --yes` | Switch SAC live links; `--dry-run` previews arguments only. |
+| `sac image rollback [--layer base] --yes` | Restore the immediately older SAC image. |
 | `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
 | `sac image show-snapshot [-o env.json]` | Backend metadata + lock hashes; use `image status` for named SAC layers. |
 
@@ -56,8 +56,8 @@ Typical "scitex updates often" cycle:
 ```
 sac image build base -y                # create a managed timestamped artifact
 sac image status                       # read its active version
-sac image switch 2026-0914-152140 --layer base
-sac image rollback --layer base
+sac image switch 2026-0914-152140 --layer base --yes
+sac image rollback --layer base --yes
 ```
 
 ## Account / quota (`sac accounts`)

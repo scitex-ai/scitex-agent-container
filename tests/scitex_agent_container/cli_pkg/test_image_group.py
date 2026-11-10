@@ -1076,7 +1076,7 @@ def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
     # Act
     result = runner.invoke(
         image_group,
-        ["switch", "2026-0914-010000", "--layer", "scitex"],
+        ["switch", "2026-0914-010000", "--layer", "scitex", "--yes"],
     )
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-scitex" / "sac-scitex.sif"
@@ -1098,7 +1098,7 @@ def test_rollback_activates_immediately_older_base_image(home_tmp):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(image_group, ["rollback"])
+    result = runner.invoke(image_group, ["rollback", "--yes"])
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
     top = ig._CONTAINERS_DIR / "sac-base.sif"
@@ -1122,7 +1122,7 @@ def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
     top.symlink_to(Path("sac-base") / artifacts[0].name)
 
     # Act
-    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base"])
+    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base", "--yes"])
 
     # Assert
     actual = (
@@ -1141,7 +1141,7 @@ def test_switch_rejects_path_traversal_version(home_tmp):
     runner = CliRunner()
 
     # Act
-    result = runner.invoke(image_group, ["switch", "../outside"])
+    result = runner.invoke(image_group, ["switch", "../outside", "--yes"])
 
     # Assert
     actual = (
@@ -1170,7 +1170,7 @@ def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
     # Act
     try:
         result = CliRunner().invoke(
-            image_group, ["switch", "2026-0914-010000", "--layer", "base"]
+            image_group, ["switch", "2026-0914-010000", "--layer", "base", "--yes"]
         )
     finally:
         _image_activation._atomic_symlink = saved_atomic_symlink

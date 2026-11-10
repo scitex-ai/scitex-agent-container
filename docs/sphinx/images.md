@@ -53,15 +53,17 @@ sac image update sandbox/ --yes         # any time: pip install --upgrade scitex
 sac image freeze sandbox/ candidate.sif # bake an explicit immutable SIF
 
 # Managed timestamped artifacts already under the SAC layer store:
-sac image switch 2026-0914-152140 --layer base  # atomic dual-link flip
-sac image rollback --layer base                  # restore previous version
-sac image snapshot -o env.json         # full reproducibility capsule
+sac image switch 2026-0914-152140 --layer base --yes  # atomic dual-link flip
+sac image rollback --layer base --yes                  # restore previous version
+sac image show-snapshot -o env.json --json  # generic backend metadata
 ```
 
 Build, sandbox, and freeze delegate their container operations to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
 Switch and rollback operate on SAC's layered `sac-<layer>-<version>.sif`
-store and update both stable links together.
+store and update both stable links together. `show-snapshot` reads the generic
+backend's `current.sif` layout; it does not inventory named SAC layers. Use
+`image status` to inspect those layers.
 
 ## Distributing one verified artifact to a fleet
 

@@ -333,10 +333,10 @@ sac image create-sandbox SOURCE --yes                  # SIF → writable sandbo
 sac image update  SANDBOX [-p PKG] --yes        # pip install --upgrade
 sac image freeze  SANDBOX OUT.sif         # sandbox → SIF
 sac image list                            # installed versions
-sac image switch VERSION [--layer base]   # atomic dual-link flip
-sac image rollback [--layer base]         # restore previous layer image
+sac image switch VERSION [--layer base] --yes   # atomic dual-link flip
+sac image rollback [--layer base] --yes         # restore previous layer image
 sac image status                          # unified dashboard
-sac image snapshot [-o env.json]          # reproducibility capsule
+sac image show-snapshot [-o env.json]     # generic backend metadata
 
 # Accounts / quota (multi-account rotation)
 sac accounts list / save / delete / switch        # stored-credential rotation
