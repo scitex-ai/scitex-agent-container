@@ -75,6 +75,7 @@ def spartan_group() -> None:
     help="Spartan scratch root for clones + summary.json "
     "(default: $SCRATCH/sac-pytest; leading SCRATCH token resolved on SSH host).",
 )
+@click.option("--dry-run", is_flag=True, help="Preview arguments as JSON without SSH.")
 def run_cmd(
     target: str,
     ssh_host: str,
@@ -82,6 +83,7 @@ def run_cmd(
     timeout_s: int,
     interval_s: int,
     scratch_root: str,
+    dry_run: bool = False,
 ) -> None:
     """Submit + collect a Spartan pytest job for ``REPO@BRANCH``.
 
@@ -91,6 +93,7 @@ def run_cmd(
 
     \b
     Examples:
+      $ sac pytest spartan run owned/example@main --dry-run
       $ sac pytest spartan run ywatanabe1989/sac@develop
       $ sac pytest spartan run git@github.com:me/repo.git@feature/x --reservation sapphire
     """
@@ -104,6 +107,19 @@ def run_cmd(
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
+    if dry_run:
+        from ._preview import show_run_preview
+
+        show_run_preview(
+            repo=repo,
+            branch=branch,
+            ssh_host=ssh_host,
+            reservation=reservation,
+            timeout_s=timeout_s,
+            interval_s=interval_s,
+            scratch_root=scratch_root,
+        )
+        return
     scratch_root = _resolve_scratch_root(ssh_host, scratch_root)
     # Allocate the namespace before upload: a scheduler job ID is not yet
     # available, and equal wall-clock milliseconds are not distinct runs.

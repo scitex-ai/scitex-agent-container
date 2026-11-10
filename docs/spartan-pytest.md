@@ -136,3 +136,25 @@ cryptographic provenance. A matching ID does not establish an exact source
 commit, an honest target repository, correct dependency installation or full
 test/coverage acceptance. Those checks and live-cluster qualification remain
 separate requirements.
+
+## Argument preview
+
+```bash
+sac pytest spartan run owned/example@main --dry-run
+```
+
+Preview emits JSON directly, with `dry_run=true` and
+`scope="arguments_only"`. Target/header and positive timeout/poll argument
+checks still apply. It stops before remote scratch expansion, UUID allocation,
+script rendering, upload, submission, polling or result lookup. The requested
+scratch root stays literal (including `$SCRATCH`); artifact directory and job ID
+are null. Exit zero means a plan was produced, not that a job is ready or passed.
+Global CLI startup may read configuration/version metadata and initialize
+logging; this is not a whole-process no-I/O guarantee.
+
+The ordinary submission path remains unchanged. Explicit write approval and
+namespace migration remain separate work; preview is not an authorization
+result. Source: `cli_pkg/spartan_pytest/_run_cmd.py` and `_preview.py`.
+Controls: `tests/scitex_agent_container/cli_pkg/spartan_pytest/test__preview.py`
+and the existing renderer, SSH, summary and run-command tests. Owned fixtures
+do not qualify an actual SSH peer, cluster filesystem, reservation or live job.
