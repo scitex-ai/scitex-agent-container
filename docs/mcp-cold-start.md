@@ -52,6 +52,10 @@ not). The servers start healthy and write nothing to stdout; the failure is a
    run at boot via a `SessionStart` hook: logs the expected capability surface,
    detects failed critical MCPs via `claude mcp list`, and on failure alarms +
    requests a rate-limited `--fresh` self-restart. FAIL-OPEN — never blocks boot.
+   This includes recovery; it is not a passive status read. The preferred server
+   keys are `scitex-agent-container` and `scitex-cards`; the legacy `scitex-todo`
+   Cards key remains accepted. `SAC_MCP_HEALTHCHECK_NO_RESTART=1` suppresses
+   self-restart while retaining alarms.
 
 ## Knobs
 

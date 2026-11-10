@@ -216,13 +216,16 @@ def mcp_channel(
 def mcp_healthcheck(as_json: bool) -> None:
     """Boot self-check + auto-heal for the critical MCP connections.
 
-    Verifies the ``scitex-agent-container`` + ``scitex-todo`` stdio MCP
+    Verifies the ``scitex-agent-container`` + ``scitex-cards`` stdio MCP
     servers actually CONNECTED (via ``claude mcp list``), logs the expected
     capability surface so a missing tool reads as "MCP broken → heal" rather
     than "I lack capability", and — if a critical server failed to connect —
     raises a loud alarm and requests a rate-limited ``--fresh`` self-restart
     through the host ``sac listen`` plane. FAIL-OPEN: always exits 0, so a
     ``SessionStart`` hook that runs this never blocks the agent's boot.
+    The legacy ``scitex-todo`` server key is also accepted for Cards.
+    This command includes recovery, not just observation. Set
+    ``SAC_MCP_HEALTHCHECK_NO_RESTART=1`` for alarms without self-restart.
 
     \b
     Example (SessionStart hook):
