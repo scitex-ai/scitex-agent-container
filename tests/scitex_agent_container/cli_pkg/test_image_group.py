@@ -913,7 +913,7 @@ def test_update_with_no_package_flag_defaults_to_scitex_all(tmp_path):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["update", str(sb)])
+        result = runner.invoke(image_group, ["update", str(sb), "--yes"])
     # Assert
     assert (
         result.exit_code == 0
@@ -931,7 +931,7 @@ def test_update_passes_explicit_packages_through_to_backend(tmp_path):
     # Act
     with _use_backend(backend):
         result = runner.invoke(
-            image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy"]
+            image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy", "--yes"]
         )
     # Assert
     assert result.exit_code == 0 and backend.calls["sandbox_update"][0][1][

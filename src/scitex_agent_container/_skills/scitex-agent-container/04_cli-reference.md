@@ -43,7 +43,7 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 |---|---|
 | `sac image build [base\|scitex] [--sandbox]` | Build a layered Apptainer image. Default target: `base`. `--sandbox` builds a writable rootfs directory instead of an immutable SIF. Sac is apptainer-only since 2026-05-13 — no `--runtime` flag. |
 | `sac image sandbox SOURCE` | Convert an existing SIF (or layer name) into a writable sandbox. |
-| `sac image update SANDBOX [-p PKG]` | Refresh packages inside a sandbox via `pip install --upgrade`. Default: `scitex[all]`. |
+| `sac image update SANDBOX [-p PKG] --yes` | Upgrade sandbox packages (default `scitex[all]`); `--dry-run` previews arguments offline. |
 | `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
 | `sac image list` | Installed SIF versions on disk. |
 | `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |

@@ -18,7 +18,6 @@ Verbs:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -35,6 +34,7 @@ from . import (
     _image_remote_bake,
     _image_repro_build,
     _image_source_build,
+    _image_update_cmd,
 )
 from ._helpers import HelpRecursiveGroup
 from ._helpers._console import logger
@@ -417,30 +417,8 @@ def image_sandbox(source: str, output: Path | None) -> None:
 # ---------------------------------------------------------------------------
 # update (refresh packages inside a sandbox)
 # ---------------------------------------------------------------------------
-@image_group.command("update")
-@click.argument(
-    "sandbox_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
-)
-@click.option(
-    "--package",
-    "-p",
-    "packages",
-    multiple=True,
-    help="Specific package(s) to upgrade. Default: scitex[all].",
-)
-def image_update(sandbox_dir: Path, packages: tuple[str, ...]) -> None:
-    """Refresh packages inside a writable sandbox.
-
-    \b
-    Examples:
-      $ sac image update /opt/containers/scitex.sandbox/
-      $ sac image update sandbox/ -p scitex -p numpy
-    """
-    sandbox_update = _load_apptainer().sandbox_update
-
-    pkgs = packages or ("scitex[all]",)
-    result = sandbox_update(sandbox_dir=sandbox_dir, packages=pkgs)
-    click.echo(json.dumps(result, indent=2, default=str))
+image_update = _image_update_cmd.image_update
+image_group.add_command(image_update)
 
 
 # ---------------------------------------------------------------------------
