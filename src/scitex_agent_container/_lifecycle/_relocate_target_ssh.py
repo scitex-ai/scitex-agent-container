@@ -326,16 +326,19 @@ def deliver_prompt(
     into a file on the target, which is then read into the CLI's positional
     argument. Nothing about the prompt's content can reach a shell as syntax.
 
-    Returns the run. Acceptance is the CLI's exit status, printed on a marker
-    line rather than inferred: ``sac agents send`` streams, so its stdout is the
-    agent's business and only the marker is ours.
+    Return the CLI's exit status both as the run status and on a marker line;
+    a successful trailing printf must not hide a refused send. CLI success is
+    not proof of completed agent work: the handshake still needs its matching
+    nonce and observed reply.
     """
     encoded = base64.b64encode(prompt.encode("utf-8")).decode("ascii")
     payload = f"/tmp/sac-relocate-brief-{agent}.txt"
     body = (
         f"printf '%s' {quote(encoded)} | base64 -d > {quote(payload)} 2>/dev/null\n"
-        f'sac agents send {quote(agent)} "$(cat {quote(payload)})" --no-stream 2>&1; '
-        f"printf '{MARK_BOOT}%s\\n' \"$?\""
+        f'sac agents send {quote(agent)} "$(cat {quote(payload)})" 2>&1; '
+        "__sac_relocate_send_exit=$?; "
+        f"printf '{MARK_BOOT}%s\\n' \"$__sac_relocate_send_exit\"; "
+        'exit "$__sac_relocate_send_exit"'
     )
     return shell.run(body, exec_fn=exec_fn, timeout_s=timeout_s)
 
