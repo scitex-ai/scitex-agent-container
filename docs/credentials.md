@@ -219,3 +219,11 @@ The implementation is `cli_pkg/_agents_sync_cards_store_credential.py`;
 covers passfile preservation, source ambiguity, all-peer preflight and CLI
 approval/JSON forwarding. These controls do not establish live fleet access or
 PostgreSQL authentication.
+
+
+## Cards direct notification credentials
+
+For the separate session endpoint used by PostgreSQL LISTEN, see
+[Cards notification credentials](cards-notify-credentials.md). That command
+derives local passfile rows from declared pooled/direct endpoints; it does
+not synchronize them to peers or verify database authentication.
