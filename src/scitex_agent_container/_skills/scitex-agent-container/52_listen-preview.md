@@ -30,7 +30,8 @@ Shared CLI startup can still read global configuration and the version cache
 and initialize logging, as with `sac --version`.
 
 The plan preserves start's non-loopback opt-in requirement and rejects malformed
-binds. Grace periods must be finite for portable JSON. Its `unverified` list
+binds. Bind ports must be in 0–65535, using the same private port policy as MCP
+HTTP startup. Grace periods must be finite for portable JSON. Its `unverified` list
 covers credentials, live daemon/pidfile/socket state, supervisor/failover state
 and the lifecycle outcome. Exit zero means an argument plan was produced;
 it does not establish that a daemon can start, stop or restart.
@@ -59,7 +60,7 @@ explicit `start`, `stop` and `restart` verbs.
 
 Source: `cli_pkg/_listen_preview.py`, `_listen_stop_approval.py`,
 `_listen_restart_approval.py`, `_listen_start_approval.py`,
-`_listen_verbs.py` and `listen_cmds.py`.
+`_listen_verbs.py`, `_port_options.py` and `listen_cmds.py`.
 Behavioral controls: `tests/scitex_agent_container/cli_pkg/test__listen_preview.py`,
 `test__listen_verbs.py`, `test__listen_stop_approval.py`,
 `test__listen_restart_approval.py`, `test__listen_start_approval.py`,
@@ -68,3 +69,5 @@ and the owning `_listen` stop/restart tests.
 `_listen/test__plane_targeting_argv.py` covers disruptive-command detection,
 including both CLI spellings with explicit stop approval. Unit collaborators and owned argument checks do not qualify live host
 services, real supervision, PostgreSQL peer registration or deployed clients.
+
+Shared port controls: `tests/scitex_agent_container/cli_pkg/test__port_options.py`.

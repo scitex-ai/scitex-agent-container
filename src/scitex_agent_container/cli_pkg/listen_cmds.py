@@ -22,13 +22,19 @@ import click
 
 def _split_bind(spec: str) -> tuple[str, int]:
     """Split ``host:port`` (or ``[ipv6]:port``) into a tuple."""
+    from ._port_options import validate_port
+
     if spec.startswith("["):
         host, _, port = spec[1:].partition("]:")
-        return host, int(port)
+        value = int(port)
+        validate_port(value, option="--bind")
+        return host, value
     host, _, port = spec.rpartition(":")
     if not host or not port:
         raise click.UsageError(f"--bind must be 'host:port', got {spec!r}")
-    return host, int(port)
+    value = int(port)
+    validate_port(value, option="--bind")
+    return host, value
 
 
 def _is_loopback(host: str) -> bool:
