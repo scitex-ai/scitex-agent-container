@@ -40,12 +40,7 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-# ADR-0014 comms_nodes registry hooks — extracted to a sibling module to
-# keep this file under the per-file line cap. Re-exported here so the
-# historical import path
-# ``from scitex_agent_container.cli_pkg.listen_cmds import
-# _register_self_comms_node`` (used by tests + the boot path below)
-# keeps working unchanged.
+# Keep the historical registry-hook import available to tests and boot callers.
 from ._listen_registry_hooks import _register_self_comms_node  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -348,8 +343,13 @@ def _do_start_listen(
     show_default=True,
     help="SIGTERM-to-SIGKILL escalation deadline (seconds).",
 )
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments as JSON without restarting."
+)
 @click.pass_context
-def listen_restart(ctx: click.Context, grace_secs: float) -> None:
+def listen_restart(
+    ctx: click.Context, grace_secs: float, dry_run: bool = False
+) -> None:
     """Atomically stop, self-heal, and relaunch the sac listen daemon.
 
     Deterministic incident recovery (card
@@ -374,8 +374,13 @@ def listen_restart(ctx: click.Context, grace_secs: float) -> None:
     Example:
         sac listen restart                  # 10s grace, then SIGKILL
         sac listen restart --grace-secs 30  # longer TERM window
-        sac listen restart                  # stop, wait, then relaunch
+        sac listen restart --dry-run        # argument preview
     """
+    if dry_run:
+        from ._listen_preview import show_listen_preview
+
+        show_listen_preview("restart", bind=ctx.obj["bind"], grace_secs=grace_secs)
+        return
     force = False
     from .._listen._restart import (
         format_escalation_warning,
@@ -485,15 +490,8 @@ def listen_status(ctx: click.Context, as_json: bool) -> None:
         ctx.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# ``sac listen start`` / ``sac listen stop`` — the explicit lifecycle verbs.
-#
-# Defined in a sibling module to keep THIS file under the 512-line cap (the
-# same extraction ``_listen_registry_hooks`` made) and attached here so they
-# resolve on the group. ``_listen_verbs`` imports its boot primitives lazily,
-# inside the command bodies, so importing it here is not a cycle.
-# ---------------------------------------------------------------------------
-
+# Attach the explicit verbs from their sibling module. Its lazy imports avoid
+# a cycle and keep this module within the file-size budget.
 from ._listen_verbs import listen_start, listen_stop  # noqa: E402
 
 listen.add_command(listen_start)

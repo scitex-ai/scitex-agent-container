@@ -18,8 +18,8 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Define `spec.yaml`, choose a harness/mode, run via Apptainer/SSH, and observe
-with `sac agents list`/`tail`/`health`.
+Run from `spec.yaml` via Apptainer/SSH; observe with
+`sac agents list`/`tail`/`health`.
 
 Claude and direct Codex support TUI/headless; Hermes and OpenCode support
 TUI. Authentication is separate from harness selection. OpenAI Agents SDK
@@ -32,7 +32,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `Registry`; `agent.*`/`peer.*`/`host.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP | Bundled `sac mcp start`; agent-owned servers use `to_home/.mcp.json` |
+| MCP | `sac mcp start`; per-agent `to_home/.mcp.json` |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
 
 ## Sub-skills
@@ -83,6 +83,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 
 - [50](50_credential-distribution-preview.md) — credential preview
 - [51](51_send-preview.md) — send plan
+- [52](52_listen-preview.md) — listener preview
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
