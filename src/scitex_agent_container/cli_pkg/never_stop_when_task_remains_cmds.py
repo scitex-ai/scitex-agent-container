@@ -1,4 +1,4 @@
-"""``sac never-stop-when-task-remains`` — the Stop hook that converts a stop into work.
+"""``sac never-stop-when-task-remains`` — board-directed Stop-hook continuation.
 
 Wired into every agent's deployed ``.claude/settings.json`` by
 :mod:`~scitex_agent_container.runtimes.settings_json`::
@@ -44,6 +44,7 @@ from .._never_stop_when_task_remains._identity import resolve_agent
 
 log = slogging.getLogger(__name__)
 
+
 def _drain_stdin() -> dict:
     """Read the Stop-hook payload so the hook never blocks on a full pipe.
 
@@ -77,7 +78,16 @@ def _drain_stdin() -> dict:
     help="Override the agent id resolved from the environment.",
 )
 def never_stop_when_task_remains(agent_flag: str) -> None:
-    """Stop hook: take the next runnable board item instead of going idle.
+    """Relay the board provider's Stop decision with a bounded loop guard.
+
+    The harness supplies a Stop-event JSON object on stdin, terminated by
+    EOF. This invokes the configured board provider and can update hook
+    state; it is not a passive status check. A block requests continuation,
+    not proof that an agent claimed, started or completed the next task.
+
+    \b
+    Example (harness event captured in stop-event.json):
+      $ sac never-stop-when-task-remains --agent example-agent < stop-event.json
 
     \b
     Exit 0 + no stdout  → the stop is allowed.
@@ -96,12 +106,16 @@ def never_stop_when_task_remains(agent_flag: str) -> None:
         verdict = probe(agent)
         decision = decide(agent, verdict)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment above)
-        log.error(f"never-stop-when-task-remains: gate crashed ({exc!r}); allowing the stop (fail-open)")
+        log.error(
+            f"never-stop-when-task-remains: gate crashed ({exc!r}); allowing the stop (fail-open)"
+        )
         return
 
     if decision.log:
         if payload.get("stop_hook_active"):
-            log.error("never-stop-when-task-remains: (continuing from a prior stop hook)")
+            log.error(
+                "never-stop-when-task-remains: (continuing from a prior stop hook)"
+            )
         log.error(decision.log)
 
     # The executable's decision, forwarded verbatim — we add only what sac
