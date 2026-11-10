@@ -364,7 +364,10 @@ sac doctor [--fleet]                      # diagnose agent-spec source drift
 sac agents start <name>                   # fail-closed source authority (docs/spec-authority.md)
 sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
-sac mcp list-tools                        # MCP introspection
+sac mcp list-tools --json                 # registered names/descriptions
+sac mcp show-tool agent_send --json       # one registered input schema
+sac mcp doctor                           # installation/registration checks
+sac mcp validate-connections --json       # Claude Code observation; no restart request
 sac skills list / get                     # bundled agent-facing skills
 sac dev skills install [--dry-run]        # → ~/.scitex/dev/skills/ (canonical store) + Hermes exposure
 

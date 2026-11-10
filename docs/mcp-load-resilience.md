@@ -119,6 +119,23 @@ The **reconnect** half is Claude Code's domain and cannot be fixed from sac:
 
 ## Structured CLI results
 
+Check `sac mcp --help` first: older installations may lack `show-tool` or
+`validate-connections`. These interfaces have different scopes:
+
+| command | purpose | what success establishes |
+|---|---|---|
+| `mcp list-tools --json` | enumerate registered names and descriptions | registry metadata, subject to the payload's `error` field |
+| `mcp show-tool NAME --json` | describe one exact registered tool | its name, description and MCP `inputSchema` |
+| `mcp doctor` | inspect the local installation and tool registration | local dependencies and registration, not a client connection |
+| `mcp validate-connections --json` | observe critical connections reported by Claude Code, with SAC restart requests disabled | exit 0 only for verified connected results; exit 1 for unverified observations |
+| `mcp healthcheck --json` | run the existing boot observation/recovery hook | inspect the payload; fail-open exit 0 does not establish health |
+
+Discovery does not invoke the domain operation. It still initializes the
+registry and Python dependencies, so it is not a whole-process no-I/O claim.
+Neither registration nor a tool schema proves permission, delivery, completion,
+or model, agent or remote-service availability.
+
+
 Both `sac mcp list-tools --json` and `sac --json mcp list-tools` return the
 same tool inventory shape (`count`, `tools`). Tool discovery registers and
 lists tools; it does not execute those tools or establish model, agent or
@@ -136,3 +153,39 @@ allows boot to proceed and does not certify health. Read `action`, `statuses`,
 connectivity; `SAC_MCP_HEALTHCHECK_NO_RESTART=1` permits the normal observations
 and alarms but suppresses the self-restart request. Neither is proof of a
 healthy MCP connection. The JSON flag changes rendering, not those policies.
+
+`mcp show-tool` returns one object's `name`, `description` and `inputSchema`,
+using the registered backend's MCP metadata conversion. It accepts both
+`sac mcp show-tool agent_send --json` and
+`sac --json mcp show-tool agent_send`. Names must match exactly; an unknown or
+guessed prefix is a usage error (exit 2), not an empty successful schema.
+Missing dependencies or unsupported schema conversion fail explicitly.
+Use `list-tools` to discover names, then load only the descriptions needed.
+The MCP dependency is still required; this does not reduce registry startup cost.
+
+`mcp validate-connections` calls the same health provider with
+`allow_restart=False`. It runs `claude mcp list`, rather than performing a
+universal vendor-client check. Both root and local JSON flags preserve the
+provider result. Unknown, disabled, failed and errored observations exit 1;
+only verified connected results exit 0. The external client probe's behavior
+is governed by that client and its configuration. SAC's boot hook and its
+recovery policy are unchanged.
+
+For a safe rendering check without probing a client, an explicit disable flag
+returns `action="disabled"` and exit 1:
+
+```bash
+SAC_MCP_HEALTHCHECK_DISABLED=1 sac mcp validate-connections --json
+```
+
+That disabled result does not test active connectivity or recovery. Normal
+observations can invoke the external client probe; `--json` controls rendering,
+not authority or readiness.
+
+Source: `cli_pkg/mcp_group.py`, `cli_pkg/_mcp_tool_description.py`,
+`cli_pkg/_mcp_connections.py`, and `_mcp/_healthcheck.py`.
+Controls: `tests/scitex_agent_container/cli_pkg/test__mcp_tool_description.py`,
+`test__mcp_connections.py`, and `tests/scitex_agent_container/_mcp/test__healthcheck.py`.
+Tool descriptions are compared with actual MCP `tools/list` schemas; the
+connection controls do not qualify current external vendor behavior or a
+live deployment. Packaged agent guidance is in `05_mcp-tools.md`.
