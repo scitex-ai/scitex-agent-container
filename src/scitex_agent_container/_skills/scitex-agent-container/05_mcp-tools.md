@@ -52,7 +52,11 @@ loading. Stdio ignores this HTTP-only option.
 
 `mcp channel` is a separate A2A channel adapter, not this server's entry point.
 `mcp healthcheck` includes alarms and possible self-restart requests; it is not
-a read-only replacement for discovery.
+a read-only replacement for discovery. Connectivity parsing requires an
+identified server row and a recognized status after ` - `. Command arguments,
+other server names, and ambiguous status text do not establish connectivity.
+Unrecognized vendor output remains unknown; this parser is not a vendor
+format or live-client qualification.
 
 ## Discover capabilities before calling
 
@@ -85,3 +89,7 @@ Source: `_mcp/server.py`, `_mcp/_tools/__init__.py`, `_mcp/_tools/_skills.py` an
 external vendor configuration or a deployed server's availability.
 
 HTTP argument controls: `tests/scitex_agent_container/cli_pkg/test__port_options.py`.
+
+Connectivity parsing controls:
+`tests/scitex_agent_container/_mcp/test__healthcheck_status_identity.py` and
+`tests/scitex_agent_container/_mcp/test__healthcheck.py`.
