@@ -3,7 +3,7 @@ description: |
   [TOPIC] Listener lifecycle argument previews
   [DETAILS] Preview start, stop and restart arguments before token, pidfile,
   socket, signal or supervisor work. Plans report unverified lifecycle state;
-  actual stop/restart requires explicit approval.
+  explicit start/stop/restart require approval.
 tags: [scitex-agent-container-listen-preview]
 ---
 
@@ -35,27 +35,35 @@ covers credentials, live daemon/pidfile/socket state, supervisor/failover state
 and the lifecycle outcome. Exit zero means an argument plan was produced;
 it does not establish that a daemon can start, stop or restart.
 
-Actual `listen stop` and `listen restart` require `--yes/-y` before runtime lookup or signals;
+Explicit `listen start`, `listen stop` and `listen restart` require `--yes/-y` before runtime lookup or signals;
 `SAC_ASSUME_YES=1` does not approve it. Preview takes precedence over approval.
-The existing stop/restart backends and result handling remain unchanged.
+Start approval also covers `--print-token`, which may create a token.
+The existing lifecycle backends and result handling remain unchanged.
 
 ```bash
+sac listen start --yes
+sac listen start --yes --print-token
 sac listen stop --yes --json
 sac listen restart --yes
 ```
 
-Bare startup and start retain their existing launch policy. CLI stop/restart
-callers must adopt the explicit flag before upgrading. Token rotation now sends
+Bare startup retains its existing compatibility policy for the systemd unit
+and direct respawn argv; it still reaches the shared backend without this
+explicit-verb gate. This is not universal startup admission. Migrating/removing
+that path requires launcher rollout. Explicit lifecycle callers must adopt
+the flag before upgrading. Token rotation now sends
 `restart --yes`; coordinate caller and peer executable versions before rollout.
 An older peer lacking the flag refuses it; no unapproved retry is made.
 This source change does not migrate deployed callers or peer executables. Preview belongs to the
 explicit `start`, `stop` and `restart` verbs.
 
 Source: `cli_pkg/_listen_preview.py`, `_listen_stop_approval.py`,
-`_listen_restart_approval.py`, `_listen_verbs.py` and `listen_cmds.py`.
+`_listen_restart_approval.py`, `_listen_start_approval.py`,
+`_listen_verbs.py` and `listen_cmds.py`.
 Behavioral controls: `tests/scitex_agent_container/cli_pkg/test__listen_preview.py`,
 `test__listen_verbs.py`, `test__listen_stop_approval.py`,
-`test__listen_restart_approval.py`, `test_listen_cmds.py`
+`test__listen_restart_approval.py`, `test__listen_start_approval.py`,
+`test_listen_cmds.py`
 and the owning `_listen` stop/restart tests.
 `_listen/test__plane_targeting_argv.py` covers disruptive-command detection,
 including both CLI spellings with explicit stop approval. Unit collaborators and owned argument checks do not qualify live host

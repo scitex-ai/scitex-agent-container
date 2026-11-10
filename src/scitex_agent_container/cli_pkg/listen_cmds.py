@@ -75,7 +75,7 @@ def _warn_bare_boot_deprecated() -> None:
     not need.
     """
     click.echo(
-        "WARN: bare `sac listen` is DEPRECATED — use `sac listen start` "
+        "WARN: bare `sac listen` is DEPRECATED — use `sac listen start --yes` "
         f"(removed in {BARE_BOOT_REMOVAL_VERSION}).",
         err=True,
     )
@@ -134,17 +134,17 @@ def listen(
 
     \b
     Example:
-        sac listen start                    # boot the daemon (loopback only)
+        sac listen start --yes              # boot the daemon (loopback only)
         sac listen status                   # health report; exit 1 if down
         sac listen status --json            # machine-readable envelope
         sac listen stop --yes               # stop it (idempotent)
         sac listen restart --yes            # atomic stop-clean-relaunch
-        sac listen start --print-token      # echo the bearer token, then exit
+        sac listen start --yes --print-token # echo the bearer token, then exit
 
     \b
     DEPRECATED: bare `sac listen` still BOOTS the daemon, so the systemd unit
     and every existing launcher keep working — but it now warns. Use
-    `sac listen start`. The warning still names the historical v0.23.0
+    `sac listen start --yes`. The warning still names the historical v0.23.0
     removal target; removal has not been implemented. Existing launchers
     must migrate before bare startup can be removed.
     """

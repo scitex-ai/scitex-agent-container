@@ -210,7 +210,7 @@ def test_listen_start_verb_boots_uvicorn_on_default_bind(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path) as fake_uvicorn:
-        runner.invoke(listen, ["start"])
+        runner.invoke(listen, ["start", "--yes"])
     # Assert
     assert fake_uvicorn.calls == [{"host": "127.0.0.1", "port": 7878}]
 
@@ -220,7 +220,7 @@ def test_listen_start_verb_exits_zero_on_clean_shutdown(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path):
-        result = runner.invoke(listen, ["start"])
+        result = runner.invoke(listen, ["start", "--yes"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -231,7 +231,7 @@ def test_listen_start_accepts_bind_option_on_the_verb(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path) as fake_uvicorn:
-        runner.invoke(listen, ["start", "--bind", "127.0.0.1:7999"])
+        runner.invoke(listen, ["start", "--yes", "--bind", "127.0.0.1:7999"])
     # Assert
     assert fake_uvicorn.calls == [{"host": "127.0.0.1", "port": 7999}]
 
@@ -242,7 +242,7 @@ def test_listen_start_accepts_bind_option_on_the_group(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path) as fake_uvicorn:
-        runner.invoke(listen, ["--bind", "127.0.0.1:7999", "start"])
+        runner.invoke(listen, ["--bind", "127.0.0.1:7999", "start", "--yes"])
     # Assert
     assert fake_uvicorn.calls == [{"host": "127.0.0.1", "port": 7999}]
 
@@ -253,7 +253,7 @@ def test_listen_start_verb_emits_no_deprecation_warning(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path):
-        result = runner.invoke(listen, ["start"])
+        result = runner.invoke(listen, ["start", "--yes"])
     # Assert
     assert "DEPRECATED" not in result.output.upper()
 
@@ -263,7 +263,7 @@ def test_listen_start_print_token_writes_token_to_stdout(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path):
-        result = runner.invoke(listen, ["start", "--print-token"])
+        result = runner.invoke(listen, ["start", "--yes", "--print-token"])
     # Assert
     assert "tok" in result.output
 
@@ -273,7 +273,7 @@ def test_listen_start_print_token_does_not_boot_uvicorn(tmp_path) -> None:
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path) as fake_uvicorn:
-        runner.invoke(listen, ["start", "--print-token"])
+        runner.invoke(listen, ["start", "--yes", "--print-token"])
     # Assert
     assert fake_uvicorn.calls == []
 
@@ -285,7 +285,7 @@ def test_listen_start_non_loopback_bind_without_flag_exits_non_zero(
     runner = CliRunner()
     # Act
     with _boot_harness(tmp_path):
-        result = runner.invoke(listen, ["start", "--bind", "8.8.8.8:7878"])
+        result = runner.invoke(listen, ["start", "--yes", "--bind", "8.8.8.8:7878"])
     # Assert
     assert result.exit_code != 0
 
@@ -298,7 +298,7 @@ def test_listen_start_non_loopback_bind_with_flag_passes_host_to_uvicorn(
     # Act
     with _boot_harness(tmp_path) as fake_uvicorn:
         runner.invoke(
-            listen, ["start", "--bind", "8.8.8.8:7878", "--allow-non-loopback"]
+            listen, ["start", "--yes", "--bind", "8.8.8.8:7878", "--allow-non-loopback"]
         )
     # Assert
     assert fake_uvicorn.calls == [{"host": "8.8.8.8", "port": 7878}]

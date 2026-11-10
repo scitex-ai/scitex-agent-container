@@ -93,9 +93,9 @@ Uses HTTP to the live agent, directly or through host listen; never a host-side 
 four verbs are the whole lifecycle:
 
 ```bash
-sac listen start                          # Boot the control-plane daemon (loopback only by default)
-sac listen start --bind 127.0.0.1:7979    # Custom bind
-sac listen start --print-token            # Print token and exit
+sac listen start --yes                    # Boot the daemon (loopback by default)
+sac listen start --yes --bind 127.0.0.1:7979    # Bind
+sac listen start --yes --print-token            # Print token and exit
 sac listen status                         # Health report; exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
 sac listen stop --yes                     # Stop (idempotent; exit 0 if already down)
@@ -103,8 +103,8 @@ sac listen stop --yes --json              # Machine-readable result envelope
 sac listen restart --yes                  # Self-healing restart
 ```
 
-Options may be given on the verb (`sac listen start --bind …`) or on the
-group (`sac listen --bind … start`); the verb wins.
+Options may be given on the verb (`sac listen start --yes --bind …`) or on the
+group (`sac listen --bind … start --yes`); the verb wins.
 
 `restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis. `stop` is `restart`'s stop half on its own — they share one implementation (`_listen._stop.stop_listen`), so they cannot drift.
 
@@ -112,7 +112,7 @@ group (`sac listen --bind … start`); the verb wins.
 > unit and default direct respawn still invoke it bare), but prints a
 > deprecation warning to stderr. The jobs provider deliberately excludes
 > listen to avoid a second supervisor (ADR 0022). Use
-> **`sac listen start`**. The warning still names the historical **v0.23.0**
+> **`sac listen start --yes`**. The warning still names the historical **v0.23.0**
 > removal target; removal has not been implemented. Existing launchers must
 > migrate before bare startup can be removed. See `cli_pkg/listen_cmds.py`
 > and `tests/scitex_agent_container/cli_pkg/test_listen_cmds.py` for the

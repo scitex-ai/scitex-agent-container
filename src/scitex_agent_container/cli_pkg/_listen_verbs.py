@@ -54,6 +54,7 @@ DEFAULT_BIND = "127.0.0.1:7878"
 @click.option(
     "--dry-run", is_flag=True, help="Preview arguments as JSON without starting."
 )
+@click.option("-y", "--yes", is_flag=True, help="Approve starting or creating a token.")
 @click.pass_context
 def listen_start(
     ctx: click.Context,
@@ -62,6 +63,7 @@ def listen_start(
     allow_non_loopback: bool,
     print_token: bool,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Boot the sac listen HTTP/JSON control-plane daemon.
 
@@ -74,25 +76,23 @@ def listen_start(
     the port, this one does NOT crash — it stands by as a warm spare and
     fails over the moment the holder dies.
 
-    Options may be given on the verb (`sac listen start --bind ...`) or on
-    the group (`sac listen --bind ... start`); the verb wins.
+    Options may be given on the verb (`sac listen start --yes --bind ...`) or on
+    the group (`sac listen --bind ... start --yes`); the verb wins.
 
     \b
     Example:
-        sac listen start                                  # 127.0.0.1:7878
-        sac listen start --bind 127.0.0.1:7979            # custom port
-        sac listen start --bind 100.64.1.2:7878 --allow-non-loopback
-        sac listen start --print-token                    # echo token, exit
+        sac listen start --yes                            # 127.0.0.1:7878
+        sac listen start --yes --bind 127.0.0.1:7979            # custom port
+        sac listen start --yes --bind 100.64.1.2:7878 --allow-non-loopback
+        sac listen start --yes --print-token              # echo token, exit
         sac listen start --dry-run                        # argument preview
 
     \b
     Exit codes:
         0  argument preview, clean shutdown or --print-token printed
         1  uvicorn/starlette missing, or the bind failed
-        2  non-loopback --bind without --allow-non-loopback
+        2  missing --yes/-y, or non-loopback bind without opt-in
     """
-    from .listen_cmds import _do_start_listen
-
     obj = ctx.obj or {}
     if dry_run:
         from ._listen_preview import show_listen_preview
@@ -106,6 +106,11 @@ def listen_start(
             print_token=print_token or bool(obj.get("print_token")),
         )
         return
+    from ._listen_start_approval import require_listener_start_approval
+
+    require_listener_start_approval(yes)
+    from .listen_cmds import _do_start_listen
+
     _do_start_listen(
         bind=bind or obj.get("bind") or DEFAULT_BIND,
         token_file=token_file or obj.get("token_file"),
