@@ -138,7 +138,9 @@ def agent_group() -> None:
 # already has `delete`). Use
 # `sac agents create <name> --template python_developer|researcher|generalist
 # --project <p>`.
-agent_group.add_command(_rebind(_create_impl, "create"))
+# Keep _CreateCommand's raw-argument capture and live template help. Rebinding
+# it as a plain click.Command would discard both overrides.
+agent_group.add_command(_create_impl)
 agent_group.add_command(_rebind(_start_impl, "start"))
 # `fork` — spawn a context-inheriting child of a running agent (forks the
 # parent's live session, then diverges; parent never stops). See the

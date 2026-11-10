@@ -1,39 +1,61 @@
 Templates and Examples
 ======================
 
-``examples/agents/`` ships pattern templates as agent directories
-(``hello-agent``, ``minimal-agent``, ``full-agent``, ``proxy-agent``).
+The source checkout contains examples under ``examples/agents/`` as agent
+directories, including ``hello-agent``, ``minimal-agent``, ``full-agent`` and
+``proxy-agent``. These are separate from the installed CLI's inline presets
+and locally discovered directory templates.
 Each directory holds a ``spec.yaml`` (plus an optional ``to_home/``
-sibling) and demonstrates one deployment pattern with the smallest
-manifest that exercises it. Copy-and-adapt is the intended workflow.
+sibling) and demonstrates a deployment pattern. Copy-and-adapt is the
+intended workflow.
 
-The shipped YAML must round-trip through ``load_config`` cleanly so
-YAML-key drift fails loudly in CI rather than at a user's first
-``sac agents start``.
+These repository examples must round-trip through ``load_config`` cleanly so
+YAML-key drift fails loudly in CI. Loading a spec is not evidence that its
+credentials, images, engine or host are ready for ``sac agents start``.
 
-Pattern Templates
------------------
+Creating a Spec
+---------------
+
+.. code-block:: bash
+
+    sac agents create my-agent --template minimal
+    sac agents create --base-dir /path/to/agents --help
+
+The built-in ``minimal`` and ``full`` presets come from
+``cli_pkg/_create_templates.py``. Help also discovers ``_template_<kind>/``
+directories under the selected agents root. ``create`` writes a spec and
+home skeleton; it does not launch an agent. Review warnings and the resulting
+spec before starting it. Existing inline specs are not overwritten.
+
+The shared implementation is ``cli_pkg/_create.py:scaffold_agent``. Its
+scaffolding and field controls are in
+``tests/scitex_agent_container/cli_pkg/test__create.py`` and
+``test__create_templates.py``. Repository examples have separate loader and
+asset checks in ``tests/integration/test_templates_v3_valid.py``.
+
+.. _pattern-templates:
+
+Selected Repository Examples
+----------------------------
 
 .. list-table::
    :header-rows: 1
    :widths: 18 22 60
 
-   * - Template
+   * - Example
      - Pattern
      - When to use
    * - ``minimal-agent``
      - Smallest valid ``spec.yaml``
-     - Starting point. The fewest fields that load and start.
+     - Starting point for review and configuration; loading does not prove launch readiness.
    * - ``hello-agent``
-     - ``claude-session`` runner inside an Apptainer SIF
-     - **Default harness** (``harness: anthropic``). F-CS17 made sac
-       container-only; this is the canonical single-turn pattern. It is
-       the default because it is the harness the fleet runs, not because
-       it is the only one sac knows — see :doc:`spec-reference` for
-       ``spec.harness``.
+     - Anthropic harness inside an Apptainer SIF
+     - An explicit ``harness: anthropic`` example. Choose the harness and
+       engine for the intended environment; see :doc:`spec-reference`.
    * - ``full-agent``
-     - Fully-featured agent
-     - Health, restart, A2A, and ``to_home/`` wiring all enabled.
+     - Broader configuration example
+     - Review its health, restart, A2A and ``to_home/`` settings for the
+       intended environment.
    * - ``proxy-agent``
      - ``kind: AgentProxy``
      - HTTP forwarder with no SDK runner — routes ``/v1/turn`` to
@@ -43,17 +65,21 @@ MCP tool wiring is no longer a separate template — drop a
 ``.mcp.json`` into the agent's ``to_home/`` directory and it lands at
 ``$HOME/.mcp.json`` at start (ADR-0006).
 
-Instantiating a Template
-------------------------
+.. _instantiating-a-template:
+
+Copying a Repository Example
+----------------------------
 
 The v3 loader uses ``dir-as-SSoT`` — the agent name is derived from the
-parent directory of the YAML, not from a ``metadata.name`` field. To
-instantiate:
+parent directory of the YAML, not from a ``metadata.name`` field.
+
+As an alternative to CLI scaffolding, copy an example into a new directory
+from a source checkout. Review the copied spec and home assets and qualify
+runtime prerequisites before starting the agent.
 
 .. code-block:: bash
 
-    cp -r examples/agents/hello-agent \\
-       ~/.scitex/agent-container/agents/my-agent
+    mkdir -p ~/.scitex/agent-container/agents
+    cp -r examples/agents/hello-agent ~/.scitex/agent-container/agents/copied-agent
     # The to_home/ sibling (AGENTS.md / .mcp.json / .env / state.md /
     # .claude/{commands,skills,hooks}/) is all optional.
-    sac agents start my-agent

@@ -161,3 +161,31 @@ def test_public_help_hides_legacy_identity_spelling(path):
     result = CliRunner().invoke(main, [*path, "--help"])
     # Assert
     assert (result.exit_code, "whoami" not in result.stdout) == (0, True)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--base-dir", "{base}", "--help"],
+        ["--help", "--base-dir", "{base}"],
+        ["--base-dir={base}", "--help"],
+    ],
+)
+def test_registered_create_help_keeps_live_template_discovery(tmp_path, options):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+
+    base = tmp_path / "agents"
+    template = base / "_template_owned_kind"
+    template.mkdir(parents=True)
+    (template / "spec.yaml").write_text("owned discovery fixture")
+    args = [item.format(base=base) for item in options]
+    # Act
+    result = CliRunner().invoke(main, ["agents", "create", *args])
+    # Assert
+    assert (
+        result.exit_code,
+        "inline: full, minimal" in result.stdout,
+        "owned_kind" in result.stdout,
+        "Available templates (live-scanned)" in result.stdout,
+    ) == (0, True, True, True)

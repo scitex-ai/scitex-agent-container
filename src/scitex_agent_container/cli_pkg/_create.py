@@ -1,45 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``sac agents create NAME`` — scaffold a fresh v3 agent spec.
+"""Agent-spec scaffolding shared by the CLI and Agents GUI.
 
-Card sac-fresh-agent-specs (2026-06-13). "Author fresh specs from a
-clean template, not in-place repair" — operators get a v3-clean
-``spec.yaml`` + ``to_home/`` skeleton next to it, ready to edit. The
-templates here are the canonical reference; they must always satisfy
-:func:`scitex_agent_container.config._validation.validate_config`
-without any operator edits (the tests assert this invariant).
+``create`` validates CLI agent names and reserved slots, then delegates
+writes to ``scaffold_agent``. The GUI uses that same backend and must apply
+its own caller-side name validation; the backend does not repeat it.
 
-Two templates ship out of the box:
+Built-in ``minimal`` (default) and ``full`` field definitions live in
+``_create_templates``. They emit explicit specs with model and endpoint
+selection delegated to the engine. The full preset uses the canonical
+``SCITEX_CARDS_AGENT_ID`` identity. Consult those definitions and the
+matching template tests for current runtime, harness and channel settings.
 
-  * ``minimal`` (default) — bare-minimum spec mirroring
-    ``examples/agents/minimal-agent/``. Three blocks: ``apptainer.image``,
-    ``claude.model``, ``claude.flags``. Use as the starting point for new
-    agents you'll customise yourself.
-  * ``full`` — the PROVEN developer shape the fleet's live dev agents
-    use (card sac-agents-new-template-stale, operator 2026-06-25:
-    "very general, just developer like existing ones"). NOT a bare
-    knob-tour: it renders a ready-to-run project-maintainer agent —
-    runtime: tui, relaxed + persistent directory overlay,
-    full-home reach at the canonical path, the fleet push channels
-    (``server:sac`` + ``server:scitex-todo`` + telegrammer),
-    ``SCITEX_TODO_AGENT_ID`` wired to the agent, an editable install of
-    the agent's own repo, a generic "Start or continue." kick, opus
-    model, and metadata.labels. Parameterised by ``{name}`` (the agent
-    == project) and ``{home}`` (the operator's home, filled at render
-    time so the whole-home bind + workdir are absolute yet
-    operator-agnostic). Edit the labels + prompt for the real mission;
-    delete blocks you don't need.
+Directory templates are discovered under the selected agents root. Their
+placeholders are filled through ``_new_dir_template``; unresolved tokens
+fail rather than leaving an incomplete successful scaffold. Existing inline
+specs are not overwritten, and force replacement is unsupported.
 
-The CLI refuses to overwrite an existing ``spec.yaml``. Edit that spec
-explicitly or choose a different agent name.
-
-Named ``create`` (renamed from ``new``, card
-refactor/consolidate-create-into-new-templates): CRUD naming
-(Create/Read/Update/Delete) lines up with the existing ``delete``
-verb. The old narrow ``sac agents create`` (auto-detected
-editable-install toggle, marker-block machinery) was retired in the
-same card and folded into this command's dir-template system, which
-freed the ``create`` name back up.
+Scaffolding writes a spec and home skeleton; it does not launch an agent or
+qualify credentials, images, engine availability or a live host. Missing
+credentials and failed managed-home adoption are reported separately.
 """
 
 from __future__ import annotations
