@@ -69,7 +69,7 @@ fallback.
 
 ## Recovering an absent owned checkout
 
-`sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID` is an explicit
+`sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID --dry-run` is an explicit
 dry-run operation on the agent's declared owning host. It reads the existing
 canonical runtime ownership record and asks the policy engine's
 `check-owned-restore` verb to approve only that recorded missing path and
@@ -79,7 +79,9 @@ the owner digest, primary branch/HEAD/status, retained full tip, worktree
 registration digest, policy/projection hashes, exact Git argv and receipt hash.
 
 After reviewing that receipt, apply the same operation with
-`--apply --receipt-sha256 RECEIPT_SHA256`. SAC refuses changed receipts,
+`--yes --receipt-sha256 RECEIPT_SHA256` (`-y` and `--apply` are aliases).
+Explicit `--dry-run` conflicts with approval and is refused before inspection.
+SAC refuses changed receipts,
 serializes official restores, repeats neutral approval immediately before
 normal `git worktree add PATH EXISTING_BRANCH`, and verifies the result. It
 preserves primary branch/content/HEAD, ownership bytes, retained branch tip

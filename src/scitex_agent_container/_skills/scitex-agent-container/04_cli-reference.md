@@ -87,7 +87,7 @@ sac image rollback --layer base
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
 | `sac a2a doctor AGENT` | Probe an agent's A2A AgentCard endpoint and report health. |
-| `sac agents reconcile-turn-bridge AGENT [--apply]` | Resolve an existing TUI agent's `a2a.port: auto` from authoritative live registry/claim state and reload only its turn bridge. Dry-run by default; never starts or restarts the TUI. |
+| `sac agents reconcile-turn-bridge AGENT [--dry-run / --yes]` | Inspect live TUI/port state by default; `--yes` (`-y`, `--apply`) reloads only its bridge. Approval conflicts with `--dry-run`; never starts/restarts the TUI. |
 
 ## Fleet (`sac fleet`)
 
