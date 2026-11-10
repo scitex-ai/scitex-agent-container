@@ -137,7 +137,7 @@ _HOOKS_CONFIG = {
                 # Unreadable decisions allow the stop and produce an alarm.
                 {
                     "type": "command",
-                    "command": "scitex-agent-container never-stop-when-task-remains",
+                    "command": "scitex-agent-container dev hooks decide-stop",
                 },
             ],
         }

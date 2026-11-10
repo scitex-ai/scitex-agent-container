@@ -1,10 +1,10 @@
-"""``sac never-stop-when-task-remains`` — board-directed Stop-hook continuation.
+"""Board-directed Stop-hook continuation, with a retained legacy entry point.
 
 Wired into every agent's deployed ``.claude/settings.json`` by
 :mod:`~scitex_agent_container.runtimes.settings_json`::
 
     "Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "scitex-agent-container never-stop-when-task-remains"}
+        {"type": "command", "command": "scitex-agent-container dev hooks decide-stop"}
     ]}]
 
 Protocol (Claude Code hooks reference, "Stop decision control"): a Stop hook
@@ -86,12 +86,14 @@ def never_stop_when_task_remains(agent_flag: str) -> None:
     not proof that an agent claimed, started or completed the next task.
 
     \b
-    Example (harness event captured in stop-event.json):
+    Alternative entries (choose one; event captured in stop-event.json):
+    Example:
+      $ sac dev hooks decide-stop --agent example-agent < stop-event.json
       $ sac never-stop-when-task-remains --agent example-agent < stop-event.json
 
     \b
     Exit 0 + no stdout  → the stop is allowed.
-    Exit 0 + {"decision":"block","reason":...} → the stop becomes the next item.
+    Exit 0 + {"decision":"block","reason":...} → request continuation with the supplied reason.
 
     Fails OPEN (allows the stop, logs loudly) when the detector is missing,
     times out, crashes, or when this agent's identity cannot be resolved

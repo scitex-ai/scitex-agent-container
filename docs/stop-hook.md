@@ -1,6 +1,6 @@
 # Board-directed Stop-hook continuation
 
-`never-stop-when-task-remains` is the Stop-hook adapter emitted by
+`dev hooks decide-stop` is the Stop-hook adapter emitted by
 [`runtimes/settings_json.py`](../src/scitex_agent_container/runtimes/settings_json.py).
 The configured board provider reports whether work calls for continuation.
 SAC resolves agent identity, invokes that provider,
@@ -15,8 +15,8 @@ error and is treated as unknown, not a positive block.
 For a harness event captured in `stop-event.json`:
 
 ```bash
-sac never-stop-when-task-remains --help
-sac never-stop-when-task-remains --agent example-agent < stop-event.json
+sac dev hooks decide-stop --help
+sac dev hooks decide-stop --agent example-agent < stop-event.json
 ```
 
 Replace the example agent with the intended agent identity. The command reads
@@ -35,5 +35,31 @@ allow the stop. These are distinct from an observed clear board.
 The CLI and detector tests exercise real owned provider executables, stdin,
 loop-state files, protocol forwarding, unknown results and operator-queue
 reports. They do not establish that a live agent followed a continuation
-instruction. This clarification changes no emitted hook command, provider
-selection, deadline, identity rule, decision, state transition or retry limit.
+instruction. The shared backend retains provider selection, deadlines,
+identity rules, decisions, state transitions and retry limits. The settings
+command migration is described below.
+
+## Canonical runtime entry point
+
+New generated settings use `scitex-agent-container dev hooks decide-stop`.
+It shares the existing callback and options with the retained
+`never-stop-when-task-remains` protocol entry point: stdin payload consumption,
+provider interpretation, fail-open alarms, bounded continuation counter and
+stdout JSON remain unchanged. A block requests continuation; it does not prove
+that a task was claimed or executed. The command invokes the configured provider
+and may update hook state; it is not a passive inspection command.
+
+The old entry point remains registered and visible during rollout. It does not
+use an ordinary exit-2 rename redirect, which could itself block a deployed Stop
+hook. Its CLI naming finding remains reported rather than waived.
+
+Settings composition prunes both historical Stop names and the new spelling
+before reinjection, preserving unrelated hooks. Existing `exclude_hooks`
+substring opt-outs for historical Stop names also match the canonical spelling.
+This source migration does not rewrite deployed settings or qualify a vendor
+harness, external provider, live board, wheel or fleet rollout. Upgrade executable
+and generated settings together before rollout.
+
+Source: `cli_pkg/hooks_group.py`, `never_stop_when_task_remains_cmds.py`,
+`runtimes/settings_json.py` and `_settings_hooks.py`. Controls live in their
+matching CLI/settings tests and the existing provider/loop-guard tests.
