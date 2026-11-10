@@ -95,12 +95,12 @@ four verbs are the whole lifecycle:
 ```bash
 sac listen start                          # Boot the control-plane daemon (loopback only by default)
 sac listen start --bind 127.0.0.1:7979    # Custom bind
-sac listen start --print-token            # Echo the bearer token & exit (does not boot)
-sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
+sac listen start --print-token            # Print token and exit
+sac listen status                         # Health report; exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
 sac listen stop --yes                     # Stop (idempotent; exit 0 if already down)
 sac listen stop --yes --json              # Machine-readable result envelope
-sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
+sac listen restart                        # Self-healing restart
 ```
 
 Options may be given on the verb (`sac listen start --bind …`) or on the
@@ -185,10 +185,14 @@ Run `sac list-python-apis -vv` for the full signature tree.
 ## Conventions
 
 - **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac store clean`).
-- **`--json` always available** on inspection commands so dashboards can consume them.
+- **JSON:** use `--json` where advertised; policy emits JSON decisions directly.
 - **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart` — the CLI resolves yaml paths to agent names internally.
 
 ## See also
 
 - `01_config-v3.md` — the YAML schema the CLI consumes
 - `40_troubleshooting.md` — common launch failures
+
+## Policy projection preview
+
+`sac worktree policy generate-projections --dry-run` previews arguments, without granting edit permission.

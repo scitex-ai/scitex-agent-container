@@ -155,6 +155,7 @@ sac worktree policy --help
 sac worktree policy inspect --repo /path/to/repository
 sac worktree policy assert-context --repo /path/to/repository --intent edit
 sac worktree policy check-projections
+sac worktree policy generate-projections --dry-run
 ```
 
 The delegated help displays the full command path and concrete examples.
@@ -170,3 +171,23 @@ including `generate-projections`; it does not generate policy files. Actual
 projection generation remains an explicit writing operation with its existing
 host-configuration semantics. This help correction changes no hook, projection,
 authority-checkout or launch-admission rule.
+
+`generate-projections --dry-run` exits 0 with a JSON argument plan, including
+`allowed=false`, `decision="preview"`, `dry_run=true` and
+`scope="arguments_only"`. It reports supplied policy/output paths without
+resolving defaults, reading policy contents, checking projections or creating
+files. Omitted paths remain null. No policy/projection hash or edit permission
+is established. The existing lifecycle CLI adapter rejects this preview as an
+authorization result, despite its zero exit code.
+
+CLI startup may still read its global configuration/version cache and initialize
+logging. This is not a whole-process no-I/O guarantee. Ordinary generation keeps
+its host-configuration behavior; its normal policy selection occurs after
+argument parsing. This does not change the engine's admission rules, generated
+rule contents, hashes, hooks or custom-CLI opt-in.
+
+Source and controls: `_worktree_policy_cli/_cli.py`, `_cli_preview.py`,
+`tests/scitex_agent_container/_worktree_policy_cli/test__cli_preview.py`,
+`test__cli.py`, and `_lifecycle/_worktree_policy.py`'s CLI result admission.
+These scoped checks do not qualify arbitrary external policy executables,
+deployed hooks, launch supervision or served documentation.

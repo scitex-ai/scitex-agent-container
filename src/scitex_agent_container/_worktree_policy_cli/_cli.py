@@ -44,7 +44,7 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--policy", type=Path, default=default_policy_path())
+    parser.add_argument("--policy", type=Path, default=None)
     sub = parser.add_subparsers(dest="operation", required=True)
     inspect = sub.add_parser("inspect")
     inspect.add_argument("--repo", type=Path, required=True)
@@ -62,6 +62,11 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     shell.add_argument("--command", required=True)
     generate = sub.add_parser("generate-projections")
     generate.add_argument("--output-dir", type=Path, default=None)
+    generate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview supplied arguments without reading policy or generating files.",
+    )
     check = sub.add_parser("check-projections")
     check.add_argument("--output-dir", type=Path, default=None)
     return parser
@@ -70,6 +75,12 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
     args = build_parser(prog=prog).parse_args(argv)
     try:
+        if args.operation == "generate-projections" and args.dry_run:
+            from ._cli_preview import projection_argument_preview
+
+            return emit(projection_argument_preview(args.policy, args.output_dir), 0)
+        if args.policy is None:
+            args.policy = default_policy_path()
         # An explicit generation request initializes host configuration rather
         # than writing into Python's installed package directory.
         if (
