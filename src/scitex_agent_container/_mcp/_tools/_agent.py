@@ -279,8 +279,12 @@ def agent_send(
     model: str | None = None,
     max_turns: int | None = None,
     wait: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Send a prompt or control key; preserve the helper's structured result.
+
+    ``dry_run=True`` previews arguments before endpoint/auth/lifecycle work,
+    hiding prompt/control-key contents. It does not send or qualify readiness.
 
     Supply exactly one of ``prompt`` or ``key``. Prompts in a container or
     with a declared host listener submit once through that authenticated
@@ -312,6 +316,7 @@ def agent_send(
         model=model,
         max_turns=max_turns,
         wait=wait,
+        dry_run=dry_run,
     )
 
 

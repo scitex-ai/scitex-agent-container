@@ -107,6 +107,7 @@ def send_to_agent(
     wait: bool = False,
     ssh_runner: SshRunner | None = None,
     lead_creds_path: Any = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Dispatch a prompt or control key and return a structured result.
 
@@ -142,11 +143,22 @@ def send_to_agent(
 
     Raises:
         ValueError: Both prompt/key supplied, or neither is truthy.
+
+    ``dry_run=True`` returns an argument-only plan before endpoint resolution,
+    credential reads or lifecycle work. Prompt/control-key contents are hidden;
+    no readiness, delivery or completion is established.
     """
     if prompt and key:
         raise ValueError("prompt and key are mutually exclusive")
     if not prompt and not key:
         raise ValueError("either prompt or key is required")
+
+    if dry_run:
+        from ._send_preview import build_send_preview
+
+        return build_send_preview(
+            name, prompt=prompt, key=key, model=model, max_turns=max_turns, wait=wait
+        )
 
     from ._send_host import host_authority_declared, send_to_host
 

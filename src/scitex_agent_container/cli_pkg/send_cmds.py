@@ -366,16 +366,21 @@ def _refuse_unknown_agent(name: str) -> NoReturn:
 # ``claude`` argv this command no longer builds. Keeping flags that
 # reach nothing is the same doubt the container-engine choice was
 # abolished for — an option a reader cannot tell does anything.
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments without resolving or sending."
+)
 def send(
     name: str,
     prompt: str | None,
     model: str | None,
     max_turns: int | None,
+    dry_run: bool = False,
 ) -> None:
     """Send a follow-up PROMPT to an agent's live session.
 
     \b
     Examples:
+      sac agents send worker "review this change" --dry-run
       sac agent send coverage-runner "now bump the threshold to 95%"
       sac agent send coverage-runner --model opus --max-turns 3 "..."
 
@@ -387,6 +392,17 @@ def send(
     """
     if not prompt:
         raise click.UsageError("PROMPT is required.")
+
+    if dry_run:
+        import json
+
+        from ._send_preview import build_send_preview
+
+        plan = build_send_preview(
+            name, prompt=prompt, model=model, max_turns=max_turns, wait=True
+        )
+        click.echo(json.dumps(plan, indent=2))
+        return
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
     # sending a PROMPT, auto-proxy to ``POST /agents/<name>/send``
