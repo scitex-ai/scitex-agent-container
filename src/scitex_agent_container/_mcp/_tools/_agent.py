@@ -280,40 +280,27 @@ def agent_send(
     max_turns: int | None = None,
     wait: bool = False,
 ) -> dict[str, Any]:
-    """Dispatch one prompt (or control key) to ``name``'s live session.
+    """Send a prompt or control key; preserve the helper's structured result.
 
-    Container prompts submit once through the authenticated host send route.
-    A validated HTTP202 exchange returns ``status="pending"`` even when
-    ``wait=True``; poll its authored exchange to establish completion. There
-    is no local credential or transport fallback after a host refusal.
+    Supply exactly one of ``prompt`` or ``key``. Prompts in a container or
+    with a declared host listener submit once through that authenticated
+    host. A validated HTTP 202 returns ``status="pending"`` even with
+    ``wait=True``: poll its exchange; do not resend. Admission and completion
+    remain unproven, and a host refusal has no local fallback.
 
-    On a bare host without a declared host listener, ``wait=False`` validates
-    reachability and returns ``status="dispatched"`` with a backgroundable
-    ``track_command``. ``wait=True`` waits for that runner's reply.
+    Without that host authority, prompt ``wait=False`` returns a delivery
+    plan with ``status="dispatched"`` and ``track_command``; the prompt has
+    NOT been delivered. Remote reachability may remain unverified. A local
+    TCP probe is not delivery or completion evidence. ``wait=True`` attempts
+    delivery and waits for a reply; accepted unfinished exchanges can still
+    return ``pending``. Eligible stopped local agents may be auto-started
+    under the existing lifecycle policy.
 
-    Library-grade dispatch to the agent's A2A sidecar. Unlike the
-    other ``agent_*`` tools this does NOT go through the CLI runner
-    surface — it calls
-    :func:`scitex_agent_container.cli_pkg._send.send_to_agent` directly
-    so the structured payload survives MCP transport intact (the CLI
-    prints the reply as free text, which would lose the metadata).
-
-    Returns the helper's dict verbatim. ``status`` is one of:
-
-      * ``"pending"`` — host queued the canonical exchange; admission and
-        completion remain unproven
-      * ``"dispatched"`` — (bare host, ``wait=False``) reachability
-        validated; ``track_command`` carries the backgroundable
-        ``sac agents send ...`` CLI to deliver + await the reply
-      * ``"ok"`` — (``wait=True``) reply received; ``response_text``
-        populated
-      * ``"error"`` — agent not running / no a2a_port / sidecar
-        unreachable / HTTP failure
-      * ``"creds-expired"`` — selected local Claude credential expired
-      * ``"timeout"`` — (``wait=True``) no response in ``timeout_seconds``
-
-    ``prompt`` and ``key`` are mutually exclusive; passing both raises
-    ``ValueError`` (surfaced to the MCP host as a tool-input error).
+    Control keys use the resolved endpoint directly, independently of
+    ``wait``. An ``ok`` control result is not a prompt reply. Other results
+    include ``error``, ``creds-expired`` and ``timeout``. Inspect the receipt,
+    ``status_code`` and diagnosis when present; a status label alone does
+    not establish successful task execution.
     """
     from ...cli_pkg._send import send_to_agent
 

@@ -1,54 +1,26 @@
-"""Library-facing send helper shared by ``sac agents send`` + MCP ``agent_send``.
+"""Structured prompt/control dispatch shared by Python and MCP callers.
 
-Single responsibility: POST one turn to a named agent's live A2A
-sidecar (``/v1/turn``) and return a structured ``{"status", ...}``
-dict. Reuses :func:`scitex_agent_container._network.peer.post_turn_to_url`
-for the actual HTTP / ssh dispatch so there's exactly one place that
-owns the transport (no duplication of urllib / ssh subprocess code).
+Container prompts and explicit host-listener requests submit through the
+host's authenticated send route. A validated HTTP 202 is pending, not
+completion, even for wait=True; poll the authored exchange without resending.
+No local credential or transport fallback follows a host refusal.
 
-Failure surfaces are sharp — no silent fallbacks:
+Without that authority, send_to_agent resolves an endpoint and can attempt
+policy-controlled autostart for a stopped local target. Prompt wait=False
+returns a delivery plan, not a sent prompt. Remote reachability may remain
+unknown; a local TCP probe also does not prove delivery. Prompt wait=True
+attempts the turn and waits for a reply or reports a pending exchange/error.
+Control keys use the resolved endpoint directly, independently of wait.
 
-  * Agent has no active state.db row     -> status="error", agent not running
-  * Row has no a2a_port                  -> status="error", no a2a_port
-  * Selected local Claude creds expired  -> status="creds-expired" (loud)
-  * Transport timeout                    -> status="timeout", informative msg
-  * Sidecar returns non-200              -> status="error", HTTP code + body
-  * Sidecar returns malformed JSON       -> status="error", malformed body
-  * Cross-host (row.host != current)     -> ssh://<host>:<port> via peer.py
+Transport belongs to _network.peer. Selected local Claude specs own their
+credential preflight; foreign endpoints retain peer-owned provider authority.
+A synthetic lead_creds_path applies only when no account/file is declared.
+The accepted ssh_runner argument no longer probes guessed peer OAuth files.
 
-Container prompts and an explicit host listen URL submit to the authenticated
-host send route first. The host owns the selected spec, provider and ACL; a
-validated HTTP 202 remains pending. Bare-host local targets validate their
-selected spec and its genuine Claude credentials. Foreign live endpoints keep
-the canonical SSH route and its peer-owned provider authority.
-
-For unit testing without hitting the OS network stack, callers can
-swap :data:`_post_turn` for a fake at the module level — the helper
-resolves the symbol at call time, so the swap takes effect. The
-local preflight accepts a synthetic ``lead_creds_path`` only when the selected
-Claude spec has no declared account/file. Legacy ``ssh_runner`` remains an
-accepted argument but dispatch no longer probes guessed peer Claude files.
-
-``status_code`` (ADR-0007, added 2026-08-29)
----------------------------------------------
-Every returned dict that reports a verdict about the TARGET (not a
-local refusal like ``creds-expired``, and not a transport error whose
-real HTTP code we cannot honestly recover) now also carries
-``status_code`` — a :class:`scitex_dev.status.StatusCode` (as
-``.to_dict()``): ``{"kind", "code", "message"}``. See
-:mod:`._send_status_code`. This is additive — every existing string
-``status`` value is unchanged — so callers that only read ``status``
-keep working exactly as before; a caller that wants the honest
-ok/final distinction reads ``status_code`` instead. The scitex-hpc
-incident (2026-08-29: a card routed three times to a defined-but-
-never-started agent, every ``agent_send`` call reporting
-``status="dispatched"``) is why: the OLD payload's
-``delivered_subscriber_count: 1`` was a hardcoded literal, not a
-measurement, on the brokered/cross-host path where reachability
-cannot be locally probed. It is now ``1`` only when a probe actually
-confirmed the sidecar is listening (``None`` otherwise), and
-``status_code`` carries the honest verdict either way — see
-:mod:`._send_dispatch_nonblocking` for the full account.
+Inspect receipts, diagnosis and status_code when present. Labels and transport
+success do not establish task execution. Behavioral controls are in
+cli_pkg/test__send_host.py, test__send_dispatch_nonblocking.py,
+test__send_exchange_pending.py, test__send_preflight.py and test__send.py.
 """
 
 from __future__ import annotations
@@ -136,73 +108,40 @@ def send_to_agent(
     ssh_runner: SshRunner | None = None,
     lead_creds_path: Any = None,
 ) -> dict[str, Any]:
-    """Dispatch a turn to ``name``'s live A2A sidecar; return a structured dict.
+    """Dispatch a prompt or control key and return a structured result.
 
-    Two modes, selected by ``wait``:
+    Supply exactly one truthy prompt or key. Container/declared-host prompts
+    use the authenticated host route first. A validated 202 is pending even
+    with wait=True; poll that exchange, do not resend, and do not infer
+    admission or completion. Host refusal has no local fallback.
 
-    * ``wait=False`` (DEFAULT, non-blocking) — validate that the agent is
-      reachable (running, has a bound a2a_port, fresh creds, sidecar
-      port accepting connections), then return PROMPTLY with
-      ``status="dispatched"`` WITHOUT blocking on the agent's turn. The
-      payload carries a ``track_command`` — a backgroundable ``sac
-      agents send ...`` CLI the caller runs in a background shell to
-      actually deliver the prompt and stream the reply. This is the path
-      the MCP ``agent_send`` tool uses so the lead's turn never hangs on
-      the agent's processing. Validation still fails LOUD: an agent that
-      cannot possibly receive the turn (not running, no a2a_port, expired
-      creds, sidecar port unreachable, recorded pid dead) returns the
-      same ``error`` / ``creds-expired`` payload as the blocking path —
-      never a misleading "dispatched".
+    Otherwise resolve the target endpoint, retaining policy-controlled local
+    autostart and selected-spec credential checks. For prompts:
 
-    * ``wait=True`` (legacy synchronous) — POST the turn and BLOCK until
-      the agent finishes the turn, then return its reply. Use only when
-      the caller genuinely needs the response inline.
+    * wait=False returns a dispatched delivery plan and track_command; no
+      prompt has been delivered. Explicitly dead local probes refuse the
+      plan, while unknown remote reachability remains unverified.
+      delivered_subscriber_count is 1 after a successful local TCP probe,
+      None otherwise; neither value proves prompt delivery.
+    * wait=True attempts delivery and waits for the reply. Accepted unfinished
+      exchanges return pending with exchange_id and poll_hint. A transport
+      timeout is not evidence that the peer rejected or did not run the turn.
 
-    Returns:
-        ``{"status": "dispatched", "agent": str, "host": str, "url": str,
-        "a2a_port": int, "track_command": str, "track_command_argv":
-        [str, ...], "delivered_subscriber_count": 1 | None,
-        "status_code": {...}}`` in the default non-blocking mode once
-        reachability is validated — ``delivered_subscriber_count`` is
-        ``1`` only when a local probe confirmed the sidecar is
-        listening, ``None`` when unverified (see
-        :mod:`._send_dispatch_nonblocking`); ``status_code`` is always
-        ``http/202, final=False`` here, either way, and its message
-        says which case applies;
-        ``{"status": "ok", "response_text": str, "response_metadata":
-        {...}, "status_code": {...}}`` on a successful blocking
-        (``wait=True``) reply — ``status_code`` is ``http/200,
-        final=True``;
-        ``{"status": "error", "error": "...", "status_code": {...} | absent}``
-        when the agent isn't running, the row has no a2a_port, the
-        sidecar is unreachable, transport fails, or the sidecar returns
-        non-200 — ``status_code`` is ``scitex/AGENT_UNAVAILABLE`` for a
-        registered-but-not-running agent, ``scitex/NOT_RESOLVABLE`` for a
-        name the host fleet registry has never heard of, and ABSENT for
-        the cases this module cannot honestly label (a demonstrably
-        unreachable /v1/turn port, or a non-timeout transport error —
-        see the PR body for why);
-        ``{"status": "creds-expired", "error": "...", "agent": str}``
-        when the lead's OAuth token (or the peer's, via ssh probe) is
-        expired / near-expiry. Refuses to dispatch.
-        ``{"status": "timeout", "error": "no response in <N>s",
-        "status_code": {...}}`` when a blocking send's sidecar doesn't
-        reply within ``timeout_seconds`` — ``status_code`` is
-        ``http/504`` (§4: "I stopped waiting", never a peer verdict).
+    Control keys post directly after endpoint resolution, independent of wait,
+    and return control metadata rather than a prompt reply. Results can include
+    ok, pending, dispatched, error, creds-expired or timeout. status_code and
+    diagnosis are present only where the helper can supply them; consult those
+    fields and receipts instead of promoting a label into completion evidence.
 
     Args:
-        wait: When ``True`` block on the agent's turn and return the
-            reply inline (legacy behavior). When ``False`` (default)
-            validate reachability and return a ``dispatched`` payload
-            with a backgroundable ``track_command``.
+        wait: Select delivery planning or inline prompt delivery. Does not
+            override host pending receipts or change control-key behavior.
         ssh_runner: Legacy accepted argument; no peer OAuth probe is issued.
-        lead_creds_path: Synthetic fallback seam for an unpinned local Claude
-            spec. A declared account/file always owns its credential check.
+        lead_creds_path: Synthetic fallback for an unpinned local Claude spec;
+            a declared account/file always owns its credential check.
 
     Raises:
-        ValueError: When ``prompt`` and ``key`` are both passed (or
-            both omitted). The MCP layer surfaces this as a tool
-            validation error.
+        ValueError: Both prompt/key supplied, or neither is truthy.
     """
     if prompt and key:
         raise ValueError("prompt and key are mutually exclusive")
@@ -314,7 +253,9 @@ def send_to_agent(
                 return {
                     "status": "error",
                     "error": f"agent {name!r} not running ({reason})",
-                    "status_code": agent_unavailable_status_code(name, reason).to_dict(),
+                    "status_code": agent_unavailable_status_code(
+                        name, reason
+                    ).to_dict(),
                     "diagnosis": diagnose_send_failure(
                         name,
                         a2a_port=None,
