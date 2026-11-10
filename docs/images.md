@@ -64,6 +64,11 @@ sac image build scitex    # :scitex SIF (FROM :base + scitex[all], ~10-20 min)
 sac image build --sandbox # writable sandbox dir instead of frozen SIF
 ```
 
+Builds and activation use a per-layer `.build.lock`. Keep each lock as its own
+regular file: symlinked, hard-linked, and non-regular entries are refused before
+owner metadata is written. This checks the opened final entry, not ancestor
+directory containment.
+
 Image builds have a stricter source-authority check than read-only commands.
 When SAC is editable-installed from one checkout but ``PYTHONPATH`` would load
 another, the console entry point stops before importing the build command or

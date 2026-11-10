@@ -97,3 +97,36 @@ def test_different_layers_can_build_concurrently(tmp_path: Path):
 
             # Assert
             assert [owner["pid"] for owner in owners] == [os.getpid(), os.getpid()]
+
+
+@pytest.fixture(params=["symlink", "hardlink", "fifo"])
+def inadmissible_lock_entry(tmp_path, request):
+    """Owned filesystem entries must not redirect a destructive lock write."""
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    canary = tmp_path / "owned-canary"
+    canary.write_text("owned contents must survive\n")
+    lock = artifact / ".build.lock"
+    if request.param == "symlink":
+        lock.symlink_to(canary)
+    elif request.param == "hardlink":
+        os.link(canary, lock)
+    else:
+        os.mkfifo(lock)
+    return artifact, canary
+
+
+def test_refused_lock_entry_preserves_unrelated_file(inadmissible_lock_entry):
+    # Arrange
+    artifact, canary = inadmissible_lock_entry
+    accepted = False
+
+    # Act
+    try:
+        with image_build_lock(artifact, layer="base"):
+            accepted = True
+    except OSError:
+        pass
+
+    # Assert
+    assert (accepted, canary.read_text()) == (False, "owned contents must survive\n")
