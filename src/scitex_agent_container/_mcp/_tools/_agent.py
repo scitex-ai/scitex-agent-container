@@ -125,48 +125,24 @@ def agent_recall(name: str) -> dict[str, Any]:
 def agent_start(
     name: str, foreground: bool = False, session: str | None = None
 ) -> dict[str, Any]:
-    """Start an agent by name. Mirrors ``sac agents start <name>``.
+    """Start an agent through the local CLI or declared host authority.
 
-    JSON-friendly wrapper around the CLI. For programmatic callers
-    that need to share a Registry instance, use
-    :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
-    directly.
+    Passes ``--yes`` to carry the explicit start request through the CLI.
+    The local preview/confirmation gate applies to interactive TTY calls;
+    noninteractive callers are exempt from that preview. Spec, credential,
+    host-policy and lifecycle admission checks still apply.
 
-    Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
-    start against a non-running agent (exit 2, "refusing to start ...
-    without --yes/-y"), but an MCP tool call has no TTY to prompt on,
-    so the call itself IS the confirmation. Without this the tool
-    always failed the same way ``agent_restart`` did before it was
-    patched (no-surprise: the documented MCP surface must actually
-    work, not dead-end on an interactive guard that can never be
-    satisfied over MCP).
+    Container markers or a configured host-authority URL select the host
+    route; otherwise this tool invokes the local CLI. Use ``agent_spawn``
+    for an inline spec. A start response alone does not qualify readiness.
 
     Args:
         name: The agent to start.
-        foreground: Attach to the caller's terminal (claude-session only).
-        session: Optional session-continuity override for THIS start,
-            mirroring the CLI ``--session`` / ``--continue`` / ``--fresh``.
-            One of ``"fresh"`` (independent session — the default for
-            experiment trials), ``"continue"`` (resume the latest session —
-            for long-lived coordinators), or ``"resume"``. ``None`` leaves
-            the spec's resolved ``claude.session`` (which role-defaults to
-            ``continue`` for coordinators, ``fresh`` otherwise) untouched.
-            ``"new-session"`` is accepted as a back-compat alias for
-            ``"fresh"``.
+        foreground: Attach to the caller's terminal where supported.
+        session: Optional ``fresh``, ``continue`` or ``resume`` override.
+            ``new-session`` remains an alias for ``fresh``; ``None`` leaves
+            the spec's resolved session mode unchanged.
 
-    .. note::
-       In-SIF dispatch: as of the SAC-from-SAC broker (operator-
-       mandated 2026-06-01), an ``agent_start`` call from inside an
-       apptainer SIF (``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER``
-       set) auto-redirects to the host-side ``sac listen`` control
-       plane via :mod:`_lifecycle._in_sif_broker`. The host re-runs
-       ``check_spawn``, records the parent→child lineage edge, and
-       shells the real ``sac agent start`` against the bare host's
-       apptainer. On the bare host the local lifecycle is unchanged.
-       Use :func:`agent_spawn` when you need to pass an *inline*
-       spec dict (the host materialises it) or to be explicit about
-       broker semantics in a hybrid script that might also run on
-       the bare host.
     """
     argv = ["agents", "start", name, "--yes"]
     if foreground:

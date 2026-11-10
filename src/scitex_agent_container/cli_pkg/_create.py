@@ -139,36 +139,16 @@ def _accounts_root() -> Path:
 
 
 def _discover_credentials_pool_block() -> tuple[str, bool]:
-    """Render ``credentials_files:`` as the FULL pool, and say if it is empty.
+    """Return ``(yaml_block, found_any)`` for every discovered OAuth file.
 
-    Returns ``(yaml_block, found_any)``.
+    Include the complete creating user's pool; a single entry is valid.
+    File presence does not establish validity, remaining capacity or model
+    availability. An empty pool means no OAuth files were discovered here,
+    not that an explicit provider/API-key authentication path is unusable.
 
-    EMIT EVERY ACCOUNT THE STORE HAS. ``credentials_files`` is the list the
-    selector rotates over by headroom, so the scaffold's job is simply not to
-    under-report what is available.
-
-    A ONE-ENTRY LIST IS PERFECTLY VALID and is the correct output for anyone
-    with a single account — which is most people. Rotation not happening with
-    one account is arithmetic, not a defect, and an earlier version of this
-    docstring wrongly called that shape "quiet failure". What actually bit us
-    on 2026-08-05 was not the COUNT: an agent was pinned to a single account
-    that happened to be at 7d 100%, so auth succeeded and every model call
-    died. A three-account pool with all three exhausted fails identically. The
-    hazard is the HEADROOM, not the length.
-
-    ``[]`` is the genuinely broken shape: no credential bind is emitted at all,
-    so the agent falls through to the host default and parks on the interactive
-    OAuth login screen while ``agent_start`` reports success.
-
-    So a non-empty check is NOT a sufficient gate, and neither is this
-    discovery — only invoking a model distinguishes "authenticated" from
-    "able to do work" (card sac-preflight-must-invoke-a-model-20260805).
-
-    Discovery is deliberately conservative. It globs the CREATING user's
-    account store; run inside a container ``Path.home()`` is the container
-    home, which holds no accounts, so we return ``found_any=False`` and let
-    the caller say so LOUDLY rather than emitting a plausible-looking path
-    that resolves to nothing on the target host.
+    Discovery uses the creating process's home, which may differ from the
+    target host's home inside a container. Scaffolding reports the missing
+    pool; start-time checks and actual provider requests remain separate.
     """
     root = _accounts_root()
     try:
@@ -398,19 +378,16 @@ def scaffold_agent(
 
     creds_block, creds_found = _discover_credentials_pool_block()
     if not creds_found:
-        # LOUD, because the spec we are about to write CANNOT BOOT. A scaffold
-        # whose output parks on the OAuth login screen is the defect; it cost
-        # the operator two manual logins on 2026-08-05 before anyone traced it
-        # back to here.
+        # Report discovery without inferring the target's auth or readiness.
         click.echo(
             click.style(
                 f"WARNING: no account credentials found under "
                 f"{_accounts_root()} — writing `credentials_files: []`.\n"
-                f"         {name!r} WILL NOT BOOT with this spec: with no "
-                f"credential bind it falls through to the host default and "
-                f"parks on the interactive OAuth login screen.\n"
-                f"         Populate spec.claude.credentials_files with EVERY "
-                f"healthy account before starting it.",
+                f"         OAuth credentials were not discovered for {name!r}. "
+                f"Configure the intended account pool or an explicit "
+                f"provider/API-key authentication path before starting.\n"
+                f"         Scaffolding does not verify credentials or "
+                f"provider availability.",
                 fg="red",
             ),
             err=True,
