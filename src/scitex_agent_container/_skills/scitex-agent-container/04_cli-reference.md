@@ -49,7 +49,7 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 | `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |
 | `sac image rollback [--layer base]` | Restore the immediately older image for one SAC layer. |
 | `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
-| `sac image snapshot [-o env.json]` | Reproducibility capsule: pip + apt + conda + git + active SIF hash. |
+| `sac image show-snapshot [-o env.json]` | Backend metadata + lock hashes; use `image status` for named SAC layers. |
 
 Typical "scitex updates often" cycle:
 

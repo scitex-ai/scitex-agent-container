@@ -13,7 +13,7 @@ Verbs:
   switch       Atomically switch to a different version
   rollback     Restore the previous version
   status       Unified container dashboard
-  snapshot     Capture a reproducibility snapshot (pip + apt + git + ...)
+  show-snapshot  Collect backend container/host metadata and lockfile hashes
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def image_group() -> None:
 # surface is unchanged.
 image_group.add_command(_image_inventory_cmds.image_list)
 image_group.add_command(_image_inventory_cmds.image_status)
-image_group.add_command(_image_inventory_cmds.image_snapshot)
+_image_inventory_cmds.register_snapshot_command(image_group)
 image_group.add_command(_image_prune_cmd.image_prune)
 image_group.add_command(_image_disk_cmd.image_disk)
 image_group.add_command(_image_disk_cmd._legacy_disk)
