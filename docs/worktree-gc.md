@@ -89,8 +89,8 @@ sac worktree clean --yes --all
 | `--yes` / `-y` / `--apply` | off | remove what the predicate proved safe |
 | `--repo PATH` | — | sweep this repo (repeatable) |
 | `--all` | — | sweep every declared repo (see below) |
-| `--min-age-hours N` | 24 | keep any worktree whose HEAD commit is younger |
-| `--cap N` | 20 | alarm when a repo *still* has more than N after the pass |
+| `--min-age-hours N` | 24 | keep any worktree whose HEAD commit is younger; finite, non-negative |
+| `--cap N` | 20 | alarm when a repo *still* has more than N after the pass; non-negative |
 | `--alarm/--no-alarm` | on with `--apply` | record cap verdicts in sac's event log |
 | `--json` | off | structured output |
 
@@ -216,3 +216,11 @@ change neither installs nor runs that job. The four-leg predicate, no-force
 removal, unknown-as-keep behavior, exit-zero verdict payload and alarm policy
 are unchanged. A bounded temporary-repository test does not qualify cleanup
 of an operator's live research worktrees.
+
+Cleanup CLI thresholds are checked before repository discovery: invalid ages
+(non-finite or negative) and negative caps exit 2 without inspecting repositories.
+Zero remains valid. This applies to `clean` and its compatible `gc` spelling;
+it does not add validation to direct Python maintenance-provider calls.
+Controls: `cli_pkg/_worktree_gc_options.py`,
+`tests/scitex_agent_container/cli_pkg/test__worktree_gc_options.py`, and the
+existing real-repository controls in `test__worktree_gc.py`.

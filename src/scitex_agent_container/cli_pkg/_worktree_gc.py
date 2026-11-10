@@ -259,6 +259,9 @@ def worktree_gc(
             "--apply and --dry-run are opposites; --dry-run is already the default"
         )
 
+    from ._worktree_gc_options import validate_cleanup_options
+
+    validate_cleanup_options(min_age_hours, cap)
     targets = list(discover_repos()) if all_repos else list(repos)
     if not targets:
         raise click.UsageError(

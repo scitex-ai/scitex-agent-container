@@ -196,4 +196,4 @@ Source and controls: `_worktree_policy_cli/_cli.py`, `_cli_preview.py`,
 These scoped checks do not qualify arbitrary external policy executables,
 deployed hooks, launch supervision or served documentation. Existing external
 generation callers must add explicit approval before adopting this change.
-Generation approval controls: `test__generation_approval.py`.
+Generation approval controls are in the existing `test__cli.py` module.
