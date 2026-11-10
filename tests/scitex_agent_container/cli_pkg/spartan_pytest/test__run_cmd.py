@@ -138,7 +138,7 @@ def test_real_spartan_round_trip_against_live_host():
     # Act
     result = runner.invoke(
         pytest_group,
-        ["spartan", "run", target, "--ssh-host", host, "--timeout", "1800"],
+        ["spartan", "run", target, "--yes", "--ssh-host", host, "--timeout", "1800"],
     )
     # Assert — either green or operator-meaningful failure surface.
     assert "Spartan pytest" in result.output
@@ -320,7 +320,7 @@ def test_spartan_cli_never_passes_without_process_and_scheduler_evidence(
     # Act
     result = CliRunner().invoke(
         pytest_group,
-        ["spartan", "run", "owner/fixture@main", "--ssh-host", "owned-fixture"],
+        ["spartan", "run", "owner/fixture@main", "--yes", "--ssh-host", "owned-fixture"],
     )
     # Assert
     assert (
@@ -347,7 +347,7 @@ def test_repeated_submissions_have_distinct_uuid_paths_and_matching_summary(
         0,
     )
     scratch = tmp_path / "scratch with spaces"
-    args = ["spartan", "run", "owned/fixture@main", "--scratch-root", str(scratch)]
+    args = ["spartan", "run", "owned/fixture@main", "--yes", "--scratch-root", str(scratch)]
     runner = CliRunner()
     # Act
     first = runner.invoke(pytest_group, args)
@@ -413,7 +413,7 @@ def test_collected_summary_must_name_the_submitted_job(
     # Act
     result = CliRunner().invoke(
         pytest_group,
-        ["spartan", "run", "owned/fixture@main", "--scratch-root", "/owned/explicit"],
+        ["spartan", "run", "owned/fixture@main", "--yes", "--scratch-root", "/owned/explicit"],
     )
     # Assert
     assert (

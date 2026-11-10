@@ -1,8 +1,8 @@
 # Spartan pytest result integrity
 
-The existing `sac pytest spartan run REPO@BRANCH` command submits, observes
+The existing `sac pytest spartan run REPO@BRANCH --yes` command submits, observes
 and collects a remote test job. It is a writing operation, not a local health
-check. This correction changes result qualification; it does not rename the
+check. Result qualification is described below; it does not rename the
 command, add retries, cancel jobs or change reservation, timeout, polling,
 installation or test-selection defaults.
 
@@ -152,9 +152,13 @@ are null. Exit zero means a plan was produced, not that a job is ready or passed
 Global CLI startup may read configuration/version metadata and initialize
 logging; this is not a whole-process no-I/O guarantee.
 
-The ordinary submission path remains unchanged. Explicit write approval and
-namespace migration remain separate work; preview is not an authorization
-result. Source: `cli_pkg/spartan_pytest/_run_cmd.py` and `_preview.py`.
-Controls: `tests/scitex_agent_container/cli_pkg/spartan_pytest/test__preview.py`
-and the existing renderer, SSH, summary and run-command tests. Owned fixtures
+Actual submission requires explicit `--yes/-y` after argument checks and
+preview, before remote scratch lookup or upload. `SAC_ASSUME_YES=1` is not
+approval. Preview takes precedence even with approval supplied. The approved
+submission backend remains unchanged; namespace migration remains separate.
+External callers must adopt the flag before upgrading; no deployed caller
+migration or remote executable qualification is implied. Preview is not an
+authorization result. Source: `cli_pkg/spartan_pytest/_run_cmd.py` and `_preview.py`.
+Controls: `tests/scitex_agent_container/cli_pkg/spartan_pytest/test__preview.py`,
+`test__approval.py` and the existing renderer, SSH, summary and run-command tests. Owned fixtures
 do not qualify an actual SSH peer, cluster filesystem, reservation or live job.

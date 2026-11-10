@@ -76,6 +76,7 @@ def spartan_group() -> None:
     "(default: $SCRATCH/sac-pytest; leading SCRATCH token resolved on SSH host).",
 )
 @click.option("--dry-run", is_flag=True, help="Preview arguments as JSON without SSH.")
+@click.option("-y", "--yes", is_flag=True, help="Approve remote upload and job submission.")
 def run_cmd(
     target: str,
     ssh_host: str,
@@ -84,6 +85,7 @@ def run_cmd(
     interval_s: int,
     scratch_root: str,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Submit + collect a Spartan pytest job for ``REPO@BRANCH``.
 
@@ -94,8 +96,8 @@ def run_cmd(
     \b
     Examples:
       $ sac pytest spartan run owned/example@main --dry-run
-      $ sac pytest spartan run ywatanabe1989/sac@develop
-      $ sac pytest spartan run git@github.com:me/repo.git@feature/x --reservation sapphire
+      $ sac pytest spartan run ywatanabe1989/sac@develop --yes
+      $ sac pytest spartan run git@github.com:me/repo.git@feature/x --yes --reservation sapphire
     """
     repo, branch = _split_repo_at_branch(target)
     # SLURM caps job names at ~64 chars so we trim the branch suffix
@@ -120,6 +122,9 @@ def run_cmd(
             scratch_root=scratch_root,
         )
         return
+    from ._approval import require_run_approval
+
+    require_run_approval(yes)
     scratch_root = _resolve_scratch_root(ssh_host, scratch_root)
     # Allocate the namespace before upload: a scheduler job ID is not yet
     # available, and equal wall-clock milliseconds are not distinct runs.
