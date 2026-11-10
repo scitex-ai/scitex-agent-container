@@ -52,9 +52,8 @@ from ._listen_registry_hooks import _register_self_comms_node  # noqa: E402
 # Bare-boot deprecation — scitex CLI convention §5, phase W (warn + forward)
 # ---------------------------------------------------------------------------
 
-#: The release that REMOVES boot-on-bare-``sac listen``. Every warning names
-#: it, so callers always know the deadline (§5: "each phase names the removal
-#: version").
+#: Historical removal target retained in the compatibility warning. Bare
+#: invocation still boots; removal requires migration of existing launchers.
 BARE_BOOT_REMOVAL_VERSION = "v0.23.0"
 
 
@@ -62,11 +61,12 @@ def _warn_bare_boot_deprecated() -> None:
     """Warn that bare ``sac listen`` booted a daemon, and name the verb.
 
     Phase W: the bare form still FORWARDS to the boot, so every caller keeps
-    working — and three still invoke it bare TODAY (the systemd unit's
-    ``ExecStart``, ``_listen._restart``'s direct-spawn argv, and the systemd
-    JobSpec in PR #543). ``sac listen`` IS the host control plane; flipping
+    working — the shipped systemd unit's ``ExecStart`` and
+    ``_listen._restart``'s default direct-spawn argv still invoke it bare.
+    The jobs provider deliberately excludes listen (ADR 0022), avoiding a
+    second supervisor. ``sac listen`` IS the host control plane; flipping
     the bare form to show-help would take the fleet's host access down with
-    it. Removing the bare boot is a FOLLOW-UP, only after all three migrate.
+    it. Removing bare startup requires migration of the existing launchers.
 
     DELIBERATE DEVIATION from §5a's once-per-shell suppression: §5a keys its
     marker on ``$PPID`` to give one warning per interactive shell, but this
@@ -149,7 +149,9 @@ def listen(
     \b
     DEPRECATED: bare `sac listen` still BOOTS the daemon, so the systemd unit
     and every existing launcher keep working — but it now warns. Use
-    `sac listen start`. The bare form is removed in v0.23.0.
+    `sac listen start`. The warning still names the historical v0.23.0
+    removal target; removal has not been implemented. Existing launchers
+    must migrate before bare startup can be removed.
     """
     # Stash group-level options so subcommands (``start`` / ``stop`` /
     # ``restart`` / ``status``) can mirror ``sac listen``'s own bind

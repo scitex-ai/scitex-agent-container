@@ -89,7 +89,7 @@ Reads `session_id` from the per-agent state dir and shells out to `claude --resu
 
 ## sac listen (HTTP/JSON control plane)
 
-`listen` is a **noun** — a command group like `agents` / `db` / `host`. Its
+`listen` is a command group like `agents` / `db` / `host`. Its
 four verbs are the whole lifecycle:
 
 ```bash
@@ -99,10 +99,8 @@ sac listen start --print-token            # Echo the bearer token & exit (does n
 sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
 sac listen stop                           # Stop the daemon (idempotent — exit 0 if already down)
-sac listen stop                          # stop the daemon
 sac listen stop --json                    # Machine-readable result envelope
 sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
-sac listen restart                       # stop, wait, then relaunch
 ```
 
 Options may be given on the verb (`sac listen start --bind …`) or on the
@@ -111,11 +109,14 @@ group (`sac listen --bind … start`); the verb wins.
 `restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis. `stop` is `restart`'s stop half on its own — they share one implementation (`_listen._stop.stop_listen`), so they cannot drift.
 
 > **DEPRECATED — bare `sac listen`.** It still BOOTS the daemon (the systemd
-> unit, `sac listen restart`'s respawn, and the systemd JobSpec all still
-> invoke it bare), but it now prints a deprecation warning to stderr. Use
-> **`sac listen start`**. The bare form is removed in **v0.23.0**; every
-> launcher must move to `sac listen start` before then. Booting a daemon off a
-> bare noun is a footgun — a typo or a stray tab-complete starts a server.
+> unit and default direct respawn still invoke it bare), but prints a
+> deprecation warning to stderr. The jobs provider deliberately excludes
+> listen to avoid a second supervisor (ADR 0022). Use
+> **`sac listen start`**. The warning still names the historical **v0.23.0**
+> removal target; removal has not been implemented. Existing launchers must
+> migrate before bare startup can be removed. See `cli_pkg/listen_cmds.py`
+> and `tests/scitex_agent_container/cli_pkg/test_listen_cmds.py` for the
+> compatibility behavior and its regression controls.
 
 When running, exposes (bearer-token authenticated, except the public health route):
 
