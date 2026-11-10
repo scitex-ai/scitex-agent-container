@@ -1,4 +1,4 @@
-# Host code synchronization
+# Host synchronization
 
 `sac host sync PEER --dry-run --json` prints an argument-only plan. It does
 not load host config, contact a peer, refresh Git refs, inspect CI or record
@@ -30,3 +30,27 @@ The `_hostsync/_probe.py` probe refreshes refs; `_hostsync/_apply.py` owns the
 fast-forward. Existing CLI, exit-status, alarm, probe, policy and apply tests
 remain the behavioral controls. Source checks and isolated fixtures do not
 qualify live SSH, CI availability, service installation or fleet deployment.
+
+
+## Generated client configuration and bearers
+
+`sac host push-config PEER --dry-run --json` describes arguments without reading
+config or token files, resolving peers, contacting hosts, writing files or
+restarting a listener. It does not verify topology, token state or availability.
+It can describe `--all`, single-peer `--adopt`, `--with-tokens` and
+`--rotate-tokens PEER` modes. Structural conflicts still refuse preview.
+
+Replace `--dry-run` with `--yes` (`-y`) to perform a guarded push or rotation.
+Plain push writes generated config only; `--with-tokens` also sends the master's
+own bearer. `--adopt` remains single-peer and backs up the hand-edited remote
+config before replacing it. Rotation remains single-peer, validates state,
+updates both sides, restarts the peer listener and verifies authentication;
+argument preview does none of those steps. Existing failure preservation and
+verification remain in the owning backend.
+
+`--check` still inspects config and token digests over SSH without writes or
+restarts. `--no-tokens` skips token inspection. Check reports drift or unknown
+state as a nonzero verdict; approval conflicts with check or dry-run. Bearer
+values are excluded from result output; writes carry them on stdin rather
+than argv. New approval checks do not establish live host authentication or
+qualify an actual token rotation.

@@ -42,7 +42,7 @@ one author, the master.
    readers do not consume them, and emitting them would re-create
    distributed topology.
 
-2. **`sac host push-config <peer> | --all`** renders and reconciles,
+2. **`sac host push-config <peer> --yes | --all --yes`** renders and reconciles,
    one-way master → peer, as the sibling of `sac host sync` (same
    registration, same `--check`/`--json` shape, same three-state
    honesty): CURRENT / STALE_GENERATED / ABSENT are reconciled or
@@ -152,8 +152,8 @@ the generated config says so in a comment beside it.
 ## Consequences
 
 - ADR-0020's manual placement steps 5–6 collapse into commands run from
-  the master: `sac host push-config <peer>` replaces the hand-typed
-  peers block (step 6), and `sac host push-config <peer> --with-tokens`
+  the master: `sac host push-config <peer> --yes` replaces the hand-typed
+  peers block (step 6), and `sac host push-config <peer> --yes --with-tokens`
   replaces the hand cross-registration of the master's bearer (step 5's
   `ssh spartan cat <token> > …` dance). The peer's OWN bearer is minted
   and distributed by `--rotate-tokens <peer>`, which additionally does

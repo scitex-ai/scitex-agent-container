@@ -52,7 +52,7 @@ def _refuse_if_generated(path: Path) -> None:
     render_rich(
         "[red]error:[/red] this host's config is GENERATED (client). "
         "Edit the MASTER's config.yaml and run "
-        "`sac host push-config <this-host>` from the master.",
+        "`sac host push-config <this-host> --yes` from the master.",
         __name__,
     )
     raise SystemExit(2)
