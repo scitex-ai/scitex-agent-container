@@ -16,6 +16,16 @@ _SKILLS_ROOT = (
 )
 
 
+def _skill_files() -> list[Path]:
+    """Admit direct skill files whose resolved target stays in the skill root."""
+    root = _SKILLS_ROOT.resolve()
+    return [
+        path
+        for path in sorted(_SKILLS_ROOT.glob("*.md"))
+        if path.is_file() and path.resolve().parent == root
+    ]
+
+
 def skills_list() -> dict[str, Any]:
     """Enumerate the markdown skill files this package ships under
     ``_skills/scitex-agent-container/``.
@@ -27,7 +37,7 @@ def skills_list() -> dict[str, Any]:
     skills = []
     if not _SKILLS_ROOT.is_dir():
         return {"count": 0, "skills": []}
-    for md in sorted(_SKILLS_ROOT.glob("*.md")):
+    for md in _skill_files():
         text = md.read_text(encoding="utf-8", errors="replace")
         skills.append(
             {
@@ -44,15 +54,18 @@ def skills_get(name: str) -> dict[str, Any]:
     ``"02_quick-start"``). Reverse of :func:`skills_list`.
 
     ``name`` is matched against ``<stem>``; pass without the ``.md``
-    extension. Returns ``{"name", "path", "content"}`` when found,
+    extension. Only listed files resolving inside the skill directory are
+    admitted; paths and external symlinks are not skill names.
+    Returns ``{"name", "path", "content"}`` when found,
     or ``{"error", "name", "available"}`` when not.
     """
-    target = _SKILLS_ROOT / f"{name}.md"
-    if not target.is_file():
+    files = _skill_files()
+    target = next((path for path in files if path.stem == name), None)
+    if target is None:
         return {
             "error": "skill not found",
             "name": name,
-            "available": [p.stem for p in sorted(_SKILLS_ROOT.glob("*.md"))],
+            "available": [path.stem for path in files],
         }
     return {
         "name": name,
