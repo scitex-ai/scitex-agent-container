@@ -3,7 +3,7 @@ description: |
   [TOPIC] Listener lifecycle argument previews
   [DETAILS] Preview start, stop and restart arguments before token, pidfile,
   socket, signal or supervisor work. Plans report unverified lifecycle state;
-  actual stop requires explicit approval.
+  actual stop/restart requires explicit approval.
 tags: [scitex-agent-container-listen-preview]
 ---
 
@@ -35,23 +35,27 @@ covers credentials, live daemon/pidfile/socket state, supervisor/failover state
 and the lifecycle outcome. Exit zero means an argument plan was produced;
 it does not establish that a daemon can start, stop or restart.
 
-Actual `listen stop` requires `--yes/-y` before runtime lookup or signals;
+Actual `listen stop` and `listen restart` require `--yes/-y` before runtime lookup or signals;
 `SAC_ASSUME_YES=1` does not approve it. Preview takes precedence over approval.
-The existing stop backend and its result envelope remain unchanged.
+The existing stop/restart backends and result handling remain unchanged.
 
 ```bash
 sac listen stop --yes --json
+sac listen restart --yes
 ```
 
-Bare startup, start and restart retain their existing launch policy. Automation
-or external callers using CLI stop must adopt the explicit flag before upgrading;
-this source change does not migrate deployed callers. Preview belongs to the
+Bare startup and start retain their existing launch policy. CLI stop/restart
+callers must adopt the explicit flag before upgrading. Token rotation now sends
+`restart --yes`; coordinate caller and peer executable versions before rollout.
+An older peer lacking the flag refuses it; no unapproved retry is made.
+This source change does not migrate deployed callers or peer executables. Preview belongs to the
 explicit `start`, `stop` and `restart` verbs.
 
 Source: `cli_pkg/_listen_preview.py`, `_listen_stop_approval.py`,
-`_listen_verbs.py` and `listen_cmds.py`.
+`_listen_restart_approval.py`, `_listen_verbs.py` and `listen_cmds.py`.
 Behavioral controls: `tests/scitex_agent_container/cli_pkg/test__listen_preview.py`,
-`test__listen_verbs.py`, `test__listen_stop_approval.py`, `test_listen_cmds.py`
+`test__listen_verbs.py`, `test__listen_stop_approval.py`,
+`test__listen_restart_approval.py`, `test_listen_cmds.py`
 and the owning `_listen` stop/restart tests.
 `_listen/test__plane_targeting_argv.py` covers disruptive-command detection,
 including both CLI spellings with explicit stop approval. Unit collaborators and owned argument checks do not qualify live host

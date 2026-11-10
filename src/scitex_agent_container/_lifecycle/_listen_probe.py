@@ -11,7 +11,7 @@ THE BUG THIS CLOSES (card ``sac-restart-prints-success-after-start-failed``,
 
     cannot reach listen at 'http://127.0.0.1:7878' (timed out) — the host
     listen broker is unreachable; it may be flapping. Restart it on the
-    host with `sac listen restart`.
+    host with `sac listen restart --yes`.
 
 Every clause after the parenthesis was invented. The reporter measured::
 
@@ -50,7 +50,7 @@ AUTHENTICATED route and compare.
 This is the SECOND wrong story this message has carried. The first
 ("unreachable; it may be flapping") was corrected in 2026-07 by replacing
 it with the pool story — a better-sounding cause rather than no cause. Both
-prescribed ``sac listen restart``, which interrupts every agent on the box.
+prescribed ``sac listen restart --yes``, which interrupts every agent on the box.
 The lesson is not "find the right explanation"; it is that this module is
 not positioned to have one.
 
@@ -332,7 +332,7 @@ def transport_failure_message(
                 f"that {route} is faulty, since a route merely slower than "
                 f"{timeout_s:.0f}s looks identical from outside. If it also "
                 f"hangs, the fault is shared and a restart is worth trying — "
-                f"`sac listen restart` on the host, which interrupts EVERY "
+                f"`sac listen restart --yes` on the host, which interrupts EVERY "
                 f"agent mid-operation, so establish that it is shared first."
             )
         if not authed_probe.serving:
@@ -341,7 +341,7 @@ def transport_failure_message(
                 f"authenticated route on a DIFFERENT prefix hung too, while "
                 f"the public path answered — the fault is SHARED across "
                 f"authenticated work, not specific to {route}.\n"
-                f"On this evidence `sac listen restart` on the host is worth "
+                f"On this evidence `sac listen restart --yes` on the host is worth "
                 f"its cost. It interrupts EVERY agent mid-operation, so say "
                 f"so when you run it."
             )
@@ -373,7 +373,7 @@ def transport_failure_message(
             f"running / startup_failed with started_at and failed_at, which "
             f"distinguishes 'never began', 'still in flight' and 'failed on "
             f"its own merits'. This timeout distinguishes none of them.\n"
-            f"Do NOT run `sac listen restart` for this — it interrupts every "
+            f"Do NOT run `sac listen restart --yes` for this — it interrupts every "
             f"agent on the box, and the one thing actually established here "
             f"is that whatever is wrong is not daemon-wide, which is the only "
             f"condition that remedy addresses.\n"
@@ -387,7 +387,7 @@ def transport_failure_message(
         f"{verb} of {name!r} failed: cannot reach listen at {base!r} ({exc}).\n"
         f"MEASURED (not guessed): {probe.evidence()} — nothing is serving HTTP "
         f"at this URL, so the daemon is DOWN or the URL/port is wrong.\n"
-        f"Fix: start it on the host with `sac listen restart` (an atomic "
+        f"Fix: start it on the host with `sac listen restart --yes` (an atomic "
         f"stop-clean-relaunch) and retry; escalate to the operator only if it "
         f"stays down."
     )

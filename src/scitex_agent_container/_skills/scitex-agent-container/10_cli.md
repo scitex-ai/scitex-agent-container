@@ -100,7 +100,7 @@ sac listen status                         # Health report; exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
 sac listen stop --yes                     # Stop (idempotent; exit 0 if already down)
 sac listen stop --yes --json              # Machine-readable result envelope
-sac listen restart                        # Self-healing restart
+sac listen restart --yes                  # Self-healing restart
 ```
 
 Options may be given on the verb (`sac listen start --bind …`) or on the

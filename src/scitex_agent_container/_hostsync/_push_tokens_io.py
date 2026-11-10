@@ -380,7 +380,7 @@ def restart_peer_listen(
 ) -> tuple[bool, str]:
     """Restart the peer's ``sac listen``. Returns ``(ok, detail)``.
 
-    Dispatches ``sac listen restart`` — the peer's OWN verb, which owns
+    Dispatches ``sac listen restart --yes`` — the peer's OWN verb, which owns
     the stop/self-heal/relaunch/health sequence (:mod:`.._listen._restart`).
     We deliberately do not re-implement any of it here: a second
     restart implementation on the master would be a copy that drifts, and
@@ -391,7 +391,7 @@ def restart_peer_listen(
     nothing in memory until the process restarts.
     """
     ok, proc, detail = _dispatch(
-        peer, peers, ["sac", "listen", "restart"], timeout=timeout, runner=runner
+        peer, peers, ["sac", "listen", "restart", "--yes"], timeout=timeout, runner=runner
     )
     if not ok or proc is None:
         return False, detail

@@ -138,7 +138,7 @@ def listen(
         sac listen status                   # health report; exit 1 if down
         sac listen status --json            # machine-readable envelope
         sac listen stop --yes               # stop it (idempotent)
-        sac listen restart                  # atomic stop-clean-relaunch
+        sac listen restart --yes            # atomic stop-clean-relaunch
         sac listen start --print-token      # echo the bearer token, then exit
 
     \b
@@ -346,9 +346,10 @@ def _do_start_listen(
 @click.option(
     "--dry-run", is_flag=True, help="Preview arguments as JSON without restarting."
 )
+@click.option("-y", "--yes", is_flag=True, help="Approve restarting the listener.")
 @click.pass_context
 def listen_restart(
-    ctx: click.Context, grace_secs: float, dry_run: bool = False
+    ctx: click.Context, grace_secs: float, dry_run: bool = False, yes: bool = False
 ) -> None:
     """Atomically stop, self-heal, and relaunch the sac listen daemon.
 
@@ -372,8 +373,8 @@ def listen_restart(
 
     \b
     Example:
-        sac listen restart                  # 10s grace, then SIGKILL
-        sac listen restart --grace-secs 30  # longer TERM window
+        sac listen restart --yes            # 10s grace, then SIGKILL
+        sac listen restart --yes --grace-secs 30  # longer TERM window
         sac listen restart --dry-run        # argument preview
     """
     if dry_run:
@@ -381,6 +382,9 @@ def listen_restart(
 
         show_listen_preview("restart", bind=ctx.obj["bind"], grace_secs=grace_secs)
         return
+    from ._listen_restart_approval import require_listener_restart_approval
+
+    require_listener_restart_approval(yes)
     force = False
     from .._listen._restart import (
         format_escalation_warning,
