@@ -79,13 +79,13 @@ sac agents show-identity                # Inspect injected identity, spec and ru
 sac agents show-identity --json         # JSON facts; secret values are never printed
 ```
 
-## Interact (resume an existing session)
+## Interact (send a follow-up)
 
 ```bash
-sac agents send <name> "<prompt>"          # Resume the agent's session for one more turn
+sac agents send <name> "<prompt>"          # Follow-up to a live agent
 ```
 
-Reads `session_id` from the per-agent state dir and shells out to `claude --resume <sid> -p ...` inside the agent's `workdir`. See `15_claude-session.md` for the long-lived alternative that keeps the SDK client open across turns.
+Uses HTTP to the live agent, directly or through host listen; never a host-side `claude --resume`. A valid HTTP 202 means accepted, still pending: follow the returned exchange poll hint before claiming completion. Source and controls: `cli_pkg/send_cmds.py`, `tests/scitex_agent_container/cli_pkg/test_send_cmds.py`.
 
 ## sac listen (HTTP/JSON control plane)
 
