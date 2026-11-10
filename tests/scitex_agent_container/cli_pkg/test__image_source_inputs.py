@@ -22,8 +22,10 @@ def project_data():
 
 
 def test_checkout_resolves_canonical_vocabulary(project_data):
+    # Arrange
+    pyproject = _REPO / "pyproject.toml"
     # Act
-    source = locate_cli_dictionary(_PACKAGE, _REPO / "pyproject.toml", project_data)
+    source = locate_cli_dictionary(_PACKAGE, pyproject, project_data)
     # Assert
     assert source == _DICTIONARY
 
@@ -49,12 +51,14 @@ def test_installed_vocabulary_reconstructs_canonical_build_input(
 
 
 def test_missing_declared_dictionary_is_refused(tmp_path, project_data):
+    # Arrange
+    package = tmp_path / "package"
+    pyproject = tmp_path / "pyproject.toml"
+    # Act
+    refusal = pytest.raises(FileNotFoundError, match="dictionary is missing")
     # Assert
-    with pytest.raises(FileNotFoundError, match="dictionary is missing"):
-        # Act
-        locate_cli_dictionary(
-            tmp_path / "package", tmp_path / "pyproject.toml", project_data
-        )
+    with refusal:
+        locate_cli_dictionary(package, pyproject, project_data)
 
 
 def test_dictionary_symlink_cannot_escape_source_root(tmp_path, project_data):
@@ -63,9 +67,10 @@ def test_dictionary_symlink_cannot_escape_source_root(tmp_path, project_data):
     dictionary = project / ".scitex/dev/cli-audit-dict.yaml"
     dictionary.parent.mkdir(parents=True)
     dictionary.symlink_to(_DICTIONARY)
+    # Act
+    refusal = pytest.raises(ValueError, match="escapes its source root")
     # Assert
-    with pytest.raises(ValueError, match="escapes its source root"):
-        # Act
+    with refusal:
         locate_cli_dictionary(
             project / "src/scitex_agent_container",
             project / "pyproject.toml",
