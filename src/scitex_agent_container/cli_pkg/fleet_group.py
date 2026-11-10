@@ -47,7 +47,7 @@ def fleet_group() -> None:
       $ sac fleet launch ~/specs/quality-fanout/ --peer spartan
       $ sac fleet launch --peer spartan --spec res-canary --no-rsync
       $ sac fleet launch ~/specs/ --peer spartan --dry-run
-      $ sac fleet notify done --summary "PR #224 merged"
+      $ sac fleet notify done --summary "PR #224 merged" --yes
     """
 
 

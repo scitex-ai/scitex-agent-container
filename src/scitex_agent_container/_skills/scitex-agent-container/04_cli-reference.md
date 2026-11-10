@@ -94,7 +94,7 @@ sac image rollback --layer base
 | Command | Purpose |
 |---|---|
 | `sac fleet launch PEER <name>...` | Rsync each agent's spec to PEER and run `sac agents start <name>` there. |
-| `sac fleet notify done\|blocker\|status --summary "..."` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. |
+| `sac fleet notify done\|blocker\|status --summary "..." --yes` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. Sending requires `--yes`/`-y`; preview takes precedence and does not verify ACL or delivery. |
 
 ## State database / registry / events
 

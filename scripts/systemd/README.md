@@ -260,7 +260,7 @@ so instead of thrashing.
 1. logs a **LOUD ERROR** to the journal (`journalctl --user -u
    sac-listen-health`) so the restart is VISIBLE, not silent;
 2. best-effort emits the anomaly on the **one** operator alarm path
-   (`sac fleet notify blocker`) — this may fail (the listen is the transport
+   (`sac fleet notify blocker --yes`) — this may fail (the listen is the transport
    for that notify), but is tried so a peer/lead listen or a recovered inbox
    still surfaces it;
 3. runs `systemctl --user reset-failed && restart sac-listen.service` (the
