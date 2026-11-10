@@ -500,7 +500,7 @@ real `claude /login` is finally needed.
 
 A SECOND federated `scitex_dev.jobs` job (same mechanism as above;
 `_jobs_plugin.py`). Runs `sac host sync --check --all --alarm` hourly:
-the **read-only** one-way-sync drift detector (mutates no peer), with
+the one-way-sync drift detector (fetches peer Git refs; never merges), with
 `--alarm` recording each verdict in sac's own append-only event log
 (`sac-events.jsonl`, subsystem `host-sync`) as `subject-degraded` /
 `subject-unknown` / `subject-recovered`. This makes the Stage-0 detector
