@@ -78,6 +78,33 @@ def test_invalid_poll_bounds_are_refused_before_any_remote_action(
     )
 
 
+@pytest.mark.parametrize("field", ["reservation", "scratch-root", "target"])
+@pytest.mark.parametrize("control", ["\r", "\n", "\x00"])
+def test_line_breaking_headers_are_refused_before_any_remote_action(
+    scheduler_fixture, field, control
+):
+    # Arrange
+    calls = scheduler_fixture(
+        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": 0, "capture_exit": 0},
+        "COMPLETED",
+        0,
+    )
+    bad = "main" + control + "#SBATCH --time=99:00:00"
+    cases = {
+        "reservation": ["owned/fixture@main", "--reservation", bad],
+        "scratch-root": ["owned/fixture@main", "--scratch-root", "/owned/" + bad],
+        "target": ["owned/fixture@" + bad],
+    }
+    # Act
+    result = CliRunner().invoke(pytest_group, ["spartan", "run", *cases[field]])
+    # Assert
+    assert (result.exit_code, "single-line" in result.output, calls.exists()) == (
+        2,
+        True,
+        False,
+    )
+
+
 @pytest.mark.skipif(
     not os.environ.get("SAC_SPARTAN_HOST"),
     reason="Set SAC_SPARTAN_HOST=<ssh-alias> to run the real Spartan round-trip.",

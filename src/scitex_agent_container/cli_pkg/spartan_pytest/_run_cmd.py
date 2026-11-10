@@ -101,14 +101,17 @@ def run_cmd(
     # available, and equal wall-clock milliseconds are not distinct runs.
     submission_id = uuid.uuid4().hex
     scratch_dir = f"{scratch_root}/{submission_id}"
+    try:
+        script = _render_sbatch_script(
+            repo=repo,
+            branch=branch,
+            reservation=reservation,
+            scratch_dir=scratch_dir,
+            job_tag=job_tag,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     click.echo(f"[spartan] planned artifact directory: {scratch_dir}")
-    script = _render_sbatch_script(
-        repo=repo,
-        branch=branch,
-        reservation=reservation,
-        scratch_dir=scratch_dir,
-        job_tag=job_tag,
-    )
     remote_script_path = f"{scratch_dir}/job.sbatch"
     remote_summary_path = f"{scratch_dir}/summary.json"
 

@@ -94,6 +94,24 @@ def test_default_reservation_is_operator_sapphire_pool():
     assert actual == expected
 
 
+@pytest.mark.parametrize("field", ["reservation", "scratch_dir", "job_tag"])
+@pytest.mark.parametrize("control", ["\r", "\n", "\x00"])
+def test_render_refuses_line_breaking_header_values(field, control):
+    # Arrange
+    fields = dict(
+        repo="owned/fixture",
+        branch="main",
+        reservation="owned",
+        scratch_dir="/owned/run",
+        job_tag="main",
+    )
+    fields[field] += control + "#SBATCH --time=99:00:00"
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match=field + " must be single-line"):
+        _render_sbatch_script(**fields)
+
+
 @pytest.fixture
 def rendered_job_tools(tmp_path, env_save_restore):
     """Use inert install/test tools around the actual rendered Bash pipeline."""

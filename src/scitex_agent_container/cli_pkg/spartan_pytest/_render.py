@@ -32,6 +32,13 @@ DEFAULT_TIMEOUT_S = 30 * 60
 DEFAULT_POLL_INTERVAL_S = 15
 
 
+def _validate_header_fields(**fields: str) -> None:
+    """Refuse line-breaking controls in values embedded in Slurm headers."""
+    for name, value in fields.items():
+        if any(control in value for control in ("\r", "\n", "\x00")):
+            raise ValueError(f"{name} must be single-line text without NUL characters")
+
+
 def _render_sbatch_script(
     *,
     repo: str,
@@ -55,6 +62,9 @@ def _render_sbatch_script(
     4. Runs ``pytest -q --no-cov --maxfail=20``, capturing pass/fail
        counts to ``summary.json``.
     """
+    _validate_header_fields(
+        reservation=reservation, scratch_dir=scratch_dir, job_tag=job_tag
+    )
     scratch_repr = repr(scratch_dir)
     quoted_scratch = shlex.quote(scratch_dir)
     quoted_repo = shlex.quote(repo)

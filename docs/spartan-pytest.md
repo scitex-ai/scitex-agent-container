@@ -77,3 +77,12 @@ no job was created: inspect the retained script and scheduler records before
 deciding what to do. The client neither retries submission nor polls a guessed
 job ID. This receipt check is not cryptographic artifact/commit identity
 binding and does not change the separate result-qualification requirements.
+
+## Header input boundaries
+
+The renderer rejects CR, LF and NUL in reservation names, scratch paths and
+job labels, rather than inserting them into Slurm header lines. The CLI
+reports a usage error before printing the planned path or contacting SSH.
+Valid inputs retain the existing script and upload behavior. This check does
+not qualify Slurm whitespace/path parsing, arbitrary header semantics or a
+live scheduler; those remain separate from client-side field validation.
