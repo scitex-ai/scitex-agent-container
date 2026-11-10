@@ -1,4 +1,4 @@
-# `sac worktree gc` — worktree-sprawl GC + cap alarm
+# `sac worktree clean` — safe cleanup and cap reporting
 
 Agent-tool isolation worktrees auto-clean **only when nothing edited
 them**. Anything an agent actually TOUCHED persisted forever, and until
@@ -75,18 +75,18 @@ destructively by accident exactly once.
 
 ```bash
 # Report (read-only — removes nothing)
-sac worktree gc --repo ~/proj/scitex-todo
-sac worktree gc --all
-sac worktree gc --all --json          # machine-readable, for cron
+sac worktree clean --repo ~/proj/example-project
+sac worktree clean --all
+sac worktree clean --all --json          # machine-readable, for cron
 
 # Act
-sac worktree gc --apply --all
+sac worktree clean --yes --all
 ```
 
 | flag | default | meaning |
 |---|---|---|
 | `--dry-run` | **on** | read-only report (explicit form, for scripts) |
-| `--apply` | off | remove what the predicate proved safe |
+| `--yes` / `-y` / `--apply` | off | remove what the predicate proved safe |
 | `--repo PATH` | — | sweep this repo (repeatable) |
 | `--all` | — | sweep every declared repo (see below) |
 | `--min-age-hours N` | 24 | keep any worktree whose HEAD commit is younger |
@@ -142,7 +142,7 @@ never crashes the GC that feeds it.
 
 ## The daily timer
 
-`sac.worktree-gc` is a federated `scitex_dev.jobs` JobSpec
+`scitex-agent-container-worktree-gc` is a federated `scitex_dev.jobs` JobSpec
 (`_jobs_plugin.py`), `kind="timer"`, running `sac worktree gc --apply
 --all` daily. This is what makes the countermeasure *periodic* — a GC
 nobody schedules is a script, not a countermeasure, which is precisely
@@ -154,27 +154,29 @@ could not remove anything a daily pass would miss.
 Install (operator-side). sac's own wrapper works again — it used to query
 a dead kind (`jobs_of_kind("systemd")`) and report "No sac systemd-kind
 jobs to install." forever, so this page told you to route around it. Both
-forms below are equivalent; the wrapper just filters `sac.*` for you.
+installation forms below select the same declared timer; the wrapper
+selects this package's declared jobs for you.
 
 The group name is the JobSpec **kind** (`sac dev {service,timer,cron}`).
 The former `systemd` alias was removed after its October 2026 deprecation
 window; use `timer` for the scheduled worktree-GC job.
 
 ```bash
-sac dev timer install worktree-gc --yes       # or, equivalently:
-scitex-dev ecosystem systemd install --name sac.worktree-gc --yes
+sac dev timer install worktree-gc --dry-run   # inspect the generated unit text
+sac dev timer install worktree-gc --yes       # or use the dispatcher:
+scitex-dev ecosystem dev timer install --name scitex-agent-container-worktree-gc --yes
 systemctl --user daemon-reload
-systemctl --user enable --now sac.worktree-gc.timer
+systemctl --user enable --now scitex-agent-container-worktree-gc.timer
 
 # Verify
-systemctl --user list-timers sac.worktree-gc.timer
-journalctl --user -u sac.worktree-gc.service -n 50
+systemctl --user list-timers scitex-agent-container-worktree-gc.timer
+journalctl --user -u scitex-agent-container-worktree-gc.service -n 50
 ```
 
 Before enabling it, look at what it *would* do — the default is read-only:
 
 ```bash
-sac worktree gc --all
+sac worktree clean --all
 ```
 
 ## Where the code lives
@@ -187,8 +189,30 @@ sac worktree gc --all
 | `_maintenance/_worktree_gc.py` | the engine (dry-run/apply, remove, prune) |
 | `_maintenance/_worktree_gc_alarm.py` | the cap verdict record |
 | `_maintenance/_worktree_gc_repos.py` | `--all`'s repo discovery |
-| `cli_pkg/_worktree_gc.py` | the `sac worktree gc` verb |
+| `cli_pkg/_worktree_gc.py` | canonical `sac worktree clean` and compatible `gc` alias |
 
 Tests drive **real** temp git repos with **real** `git worktree add` (and
 a real child process for the in-use leg) — no mocks. Only the merged-PR
 lookup and the `/proc` scan are injected, so the suite needs no network.
+
+
+## Command compatibility and observation scope
+
+`worktree clean` is the public spelling. `worktree gc` remains a hidden
+compatibility alias with the same options; its deprecation warning goes to
+stderr, including when JSON is selected. Existing `--apply` callers remain
+valid, and `--yes`/`-y` are aliases for that same approval flag. Approval
+conflicts with explicit `--dry-run`.
+
+Default/`--dry-run` performs the actual Git, merged-PR and process checks and
+runs Git's prune in dry-run mode. It is not an offline argument preview;
+merged-PR checks may contact GitHub. It removes no worktrees. Default reporting
+does not record cap events, but an explicit `--alarm` still records them even
+with `--dry-run`. Keep `--no-alarm` when no event writes are wanted.
+
+The daily JobSpec still uses its published `worktree gc --apply --all
+--exit-zero` command, with the same deadline and cadence. This interface
+change neither installs nor runs that job. The four-leg predicate, no-force
+removal, unknown-as-keep behavior, exit-zero verdict payload and alarm policy
+are unchanged. A bounded temporary-repository test does not qualify cleanup
+of an operator's live research worktrees.

@@ -28,8 +28,8 @@ def worktree_group() -> None:
 
     \b
     Examples:
-      $ sac worktree gc --repo ~/proj/scitex-todo    # read-only report
-      $ sac worktree gc --apply --all                # act
+      $ sac worktree clean --repo ~/proj/example-project    # read-only report
+      $ sac worktree clean --yes --all                # act
     """
 
 
