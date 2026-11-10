@@ -115,3 +115,24 @@ The **reconnect** half is Claude Code's domain and cannot be fixed from sac:
   include `host_exec`), so it is a larger, separate change; this PR lands the
   prevention layer that keeps the *stdio* transport from dropping in the first
   place.
+
+
+## Structured CLI results
+
+Both `sac mcp list-tools --json` and `sac --json mcp list-tools` return the
+same tool inventory shape (`count`, `tools`). Tool discovery registers and
+lists tools; it does not execute those tools or establish model, agent or
+remote-service availability. If the optional MCP backend cannot be imported,
+the existing result contains `count: 0`, an empty `tools` list and an `error`;
+the CLI retains its existing zero exit status for that case. Consumers must
+inspect the payload rather than treating status zero as dependency readiness.
+
+Both `sac mcp healthcheck --json` and `sac --json mcp healthcheck` select the
+backend result as JSON. This is the existing boot recovery hook, not a passive
+probe: it may request a rate-limited self-restart. Its fail-open status zero
+allows boot to proceed and does not certify health. Read `action`, `statuses`,
+`failed` and any returned diagnostic fields. An explicit
+`SAC_MCP_HEALTHCHECK_DISABLED=1` returns `action: disabled` without checking
+connectivity; `SAC_MCP_HEALTHCHECK_NO_RESTART=1` permits the normal observations
+and alarms but suppresses the self-restart request. Neither is proof of a
+healthy MCP connection. The JSON flag changes rendering, not those policies.

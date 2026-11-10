@@ -11,6 +11,8 @@ import json as json_mod
 
 import click
 
+from ._helpers import _json_flag
+
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
@@ -52,8 +54,7 @@ def _default_load_fastmcp_version():
         import fastmcp
     except ImportError as exc:
         raise ImportError(
-            "SAC MCP dependencies are unavailable; install "
-            "scitex-agent-container[mcp]."
+            "SAC MCP dependencies are unavailable; install scitex-agent-container[mcp]."
         ) from exc
 
     return fastmcp.__version__
@@ -213,7 +214,8 @@ def mcp_channel(
     default=False,
     help="Emit the result as JSON.",
 )
-def mcp_healthcheck(as_json: bool) -> None:
+@click.pass_context
+def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
     """Boot self-check + auto-heal for the critical MCP connections.
 
     Verifies the ``scitex-agent-container`` + ``scitex-cards`` stdio MCP
@@ -230,13 +232,14 @@ def mcp_healthcheck(as_json: bool) -> None:
     \b
     Example (SessionStart hook):
       $ sac mcp healthcheck
+      $ sac --json mcp healthcheck
     """
     # Lazy import: keep this out of the cold-start path and out of the CLI's
     # module-import budget. ``_healthcheck`` pulls no heavy deps (no fastmcp).
     from .._mcp._healthcheck import run_healthcheck
 
     result = run_healthcheck()
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(json_mod.dumps(result))
     else:
         action = result.get("action", "ok")
@@ -309,20 +312,22 @@ def mcp_doctor() -> None:
     default=False,
     help="Output as JSON (for programmatic consumers).",
 )
-def mcp_list_tools(as_json: bool) -> None:
+@click.pass_context
+def mcp_list_tools(ctx: click.Context, as_json: bool) -> None:
     """List MCP tools exposed by the sac server.
 
     \b
     Example:
       $ sac mcp list-tools
       $ sac mcp list-tools --json
+      $ sac --json mcp list-tools
     """
     try:
         get_server = _load_get_server()
         server = get_server()
         tools = _list_tools(server)
     except ImportError:
-        if as_json:
+        if _json_flag(ctx, as_json):
             click.echo(
                 json_mod.dumps(
                     {"count": 0, "tools": [], "error": "fastmcp not installed"}
@@ -334,7 +339,7 @@ def mcp_list_tools(as_json: bool) -> None:
         )
         return
 
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(
             json_mod.dumps(
                 {
