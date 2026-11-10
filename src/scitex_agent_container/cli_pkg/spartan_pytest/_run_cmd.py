@@ -56,14 +56,14 @@ def spartan_group() -> None:
 @click.option(
     "--timeout",
     "timeout_s",
-    type=int,
+    type=click.IntRange(min=1),
     default=DEFAULT_TIMEOUT_S,
     help=f"Max seconds to wait for the SLURM job (default: {DEFAULT_TIMEOUT_S}).",
 )
 @click.option(
     "--poll-interval",
     "interval_s",
-    type=int,
+    type=click.IntRange(min=1),
     default=DEFAULT_POLL_INTERVAL_S,
     help=f"Seconds between squeue polls (default: {DEFAULT_POLL_INTERVAL_S}).",
 )

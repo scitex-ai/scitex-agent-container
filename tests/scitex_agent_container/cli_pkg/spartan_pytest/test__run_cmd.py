@@ -48,6 +48,36 @@ def test_spartan_run_rejects_target_without_at_sign():
     assert "REPO@BRANCH" in result.output
 
 
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--timeout", "0"),
+        ("--timeout", "-1"),
+        ("--poll-interval", "0"),
+        ("--poll-interval", "-1"),
+    ],
+)
+def test_invalid_poll_bounds_are_refused_before_any_remote_action(
+    scheduler_fixture, flag, value
+):
+    # Arrange
+    calls = scheduler_fixture(
+        {"passed": 3, "failed": 0, "errors": 0, "pytest_exit": 0, "capture_exit": 0},
+        "COMPLETED",
+        0,
+    )
+    # Act
+    result = CliRunner().invoke(
+        pytest_group, ["spartan", "run", "owned/fixture@main", flag, value]
+    )
+    # Assert
+    assert (result.exit_code, "x>=1" in result.output, calls.exists()) == (
+        2,
+        True,
+        False,
+    )
+
+
 @pytest.mark.skipif(
     not os.environ.get("SAC_SPARTAN_HOST"),
     reason="Set SAC_SPARTAN_HOST=<ssh-alias> to run the real Spartan round-trip.",

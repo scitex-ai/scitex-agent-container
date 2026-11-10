@@ -6,6 +6,11 @@ check. This correction changes result qualification; it does not rename the
 command, add retries, cancel jobs or change reservation, timeout, polling,
 installation or test-selection defaults.
 
+`--timeout` and `--poll-interval` accept positive integer seconds only.
+Zero or negative values are usage errors, rejected before any upload or job
+submission. Existing positive defaults and polling behavior are unchanged;
+this does not add a whole-command timeout around SSH transport calls.
+
 The CLI prints PASS only when the collected summary has explicit valid test
 counts, pytest and log-capture exit codes of zero, at least one passing test,
 and observed `COMPLETED` accounting. A failed `squeue` query, failed `sacct`
