@@ -158,3 +158,13 @@ Paths are relative to the installed `scitex_agent_container` package:
 
 Use the pinned/deployed Hermes implementation for auxiliary-cache and goal
 semantics; the host checkout alone does not establish what an existing SIF runs.
+
+
+## Recovery CLI preview versus observation
+
+`agents restart-login-expired --dry-run` and
+`agents resume-rate-limited --dry-run` describe arguments without running a pass. They do not prove live
+health or reset eligibility. Default/`--check` observes and can record pass
+state. `--yes`/`-y` aliases existing `--apply`; approval conflicts with check or
+preview and never bypasses auth report-only admission or rate-limit guards.
+See [recovery modes](../../../../docs/systemic-recovery.md#recovery-command-modes).
