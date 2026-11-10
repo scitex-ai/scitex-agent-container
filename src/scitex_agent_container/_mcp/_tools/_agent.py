@@ -358,29 +358,20 @@ def agent_create(
     project: str | None = None,
     start: bool = False,
 ) -> dict[str, Any]:
-    """Create a proven-shape agent spec from a template. Mirrors
-    ``sac agents create <name> --template python_developer|researcher|generalist
-    --project <p>``.
+    """Scaffold an agent spec through ``sac agents create``.
 
-    ``create`` was folded into ``new``'s dir-template system (card
-    refactor/consolidate-create-into-new-templates), and ``new`` was in
-    turn renamed to ``create`` (CRUD naming, reusing the vacated verb).
-    There is no ``developer``/``scientist`` template — those were the
-    planned-then-dropped names; the fleet's PROVEN dir-templates already
-    cover the same ground: use ``python_developer`` for a developer-role
-    agent and ``researcher`` for a research-role agent (``generalist`` for
-    anything else). The underscore-agent skeleton is copied wholesale and
-    its ``SAC_PLACEHOLDER_PROJECT`` / ``SAC_PLACEHOLDER_AGENT_ID`` tokens
-    filled from ``project`` (defaults to ``name``) and ``name``
-    respectively. The old auto-detected editable-install toggle is gone —
-    the install step is now unconditional in the template (delete it by
-    hand if the target repo ships no Python package). For Telegram, add
-    ``server:claude-code-telegrammer`` to the spec by hand after creation;
-    the BOT TOKEN itself is then auto-resolved at start from the fleet
-    pool (``CCT_BOT_TOKEN_<SLOT>`` via ``SAC_SECRETS_ENVRC`` — see
-    ``runtimes/_cct_token_pool.py``), so no per-project ``.envrc`` is
-    required anymore. ``start=True`` launches the agent afterwards. The
-    developer group is authorized to CRUD agents."""
+    Built-in presets are ``minimal`` and ``full``. Other names, including
+    this tool's default ``python_developer``, require a local
+    ``_template_<kind>/`` directory under the selected agents root. Use
+    ``sac agents create --help`` to discover that host's available choices.
+
+    The project token defaults to ``name``; the agent-ID token is ``name``.
+    CLI template validation, overwrite refusal and managed-home checks apply.
+    Scaffolding does not qualify credentials, images, engines or a live host.
+    ``start=True`` requests a subsequent CLI start only after creation exits
+    successfully; that request still has separate lifecycle admission checks.
+    A written spec does not establish that an agent has started or is ready.
+    """
     argv = [
         "agents",
         "create",
