@@ -34,8 +34,10 @@ Ordinary Python/MCP `wait=False` is different: it may inspect state, probe a
 local endpoint or attempt policy-controlled autostart, then return a delivery
 plan. `status="dispatched"` alone is not evidence a prompt was delivered.
 A validated host HTTP 202 is pending even with `wait=True`; poll the authored
-exchange without resending. CLI write approval is a separate contract; this
-preview does not change ordinary sends or authorize an operation.
+exchange without resending. Ordinary CLI sends require explicit `--yes/-y`;
+preview takes precedence and is available without approval. Python/MCP sends
+already express a send request and retain their authenticated host/transport
+checks. Approval is not evidence of delivery or completion.
 
 The owning implementations are `cli_pkg/_send_preview.py`, `_send.py`,
 `send_cmds.py` and `_mcp/_tools/_agent.py`. Behavioral controls are in

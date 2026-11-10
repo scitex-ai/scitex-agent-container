@@ -115,7 +115,7 @@ sac agents status
 
 # Start in background, send a follow-up turn, tail, stop, delete
 sac agents start  hello-agent-1 hello-agent-2
-sac agents send   hello-agent-1 "What is 2+2? Reply with just the number."
+sac agents send --yes   hello-agent-1 "What is 2+2? Reply with just the number."
 sac agents tail   hello-agent-1 hello-agent-2 --json
 sac agents stop   hello-agent-1 hello-agent-2
 sac agents delete hello-agent-1 hello-agent-2 -y
@@ -288,7 +288,7 @@ sac agents delete <name>                  # stop + remove spec dir + runtime dir
 sac agents forget <name>        # shared-store bookkeeping cleanup for the
                                            # "agent is gone, only stale rows persist" case
                                            # (no ssh, no signal)
-sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
+sac agents send --yes   <name> "<prompt>"       # send a follow-up turn to a running session
 sac agents status [<name>] [--snapshot] [--priority]   # FLEET-WIDE view if no name;
                                                        # per-agent JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)

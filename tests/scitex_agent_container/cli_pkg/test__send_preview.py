@@ -94,3 +94,22 @@ def test_cli_preview_still_requires_prompt():
 
     # Assert
     assert (result.exit_code, "PROMPT is required" in result.stderr) == (2, True)
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+def test_send_preview_takes_precedence_over_approval(env_save_restore, flag):
+    # Arrange
+    env_save_restore.set("SAC_LISTEN_BASE_URL", "http://127.0.0.1:1")
+    args = ["agents", "send", "unresolved", "owned-sensitive-prompt", flag, "--dry-run"]
+
+    # Act
+    result = CliRunner().invoke(main, args)
+    payload = json.loads(result.stdout)
+
+    # Assert
+    assert (
+        result.exit_code,
+        payload["scope"],
+        payload["dry_run"],
+        "owned-sensitive-prompt" in result.output,
+    ) == (0, "arguments_only", True, False)

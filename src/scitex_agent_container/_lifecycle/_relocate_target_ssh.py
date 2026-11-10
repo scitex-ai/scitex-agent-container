@@ -342,7 +342,7 @@ def deliver_prompt(
         f"printf '%s' {quote(encoded)} | base64 -d > \"$__sac_relocate_payload\" "
         "|| exit $?\n"
         '__sac_relocate_prompt=$(cat "$__sac_relocate_payload") || exit $?\n'
-        f'sac agents send {quote(agent)} "$__sac_relocate_prompt" 2>&1; '
+        f'sac agents send --yes -- {quote(agent)} "$__sac_relocate_prompt" 2>&1; '
         "__sac_relocate_send_exit=$?; "
         f"printf '{MARK_BOOT}%s\\n' \"$__sac_relocate_send_exit\"; "
         'exit "$__sac_relocate_send_exit"'

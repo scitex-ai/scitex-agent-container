@@ -134,7 +134,7 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
             f"records no a2a_port for it (a2a_port={a2a_port!r}). The "
             f"remote agent did not register an A2A port; cannot send. "
             f"Restart the agent on the peer with spec.a2a.port set, or "
-            f"shell into the peer and run `sac agent send {name} ...` "
+            f"shell into the peer and run `sac agents send --yes {name} ...` "
             f"directly."
         )
     url = f"ssh://{peer}:{a2a_port}/v1/turn"
@@ -369,26 +369,29 @@ def _refuse_unknown_agent(name: str) -> NoReturn:
 @click.option(
     "--dry-run", is_flag=True, help="Preview arguments without resolving or sending."
 )
+@click.option("--yes", "-y", is_flag=True, help="Approve sending this prompt.")
 def send(
     name: str,
     prompt: str | None,
     model: str | None,
     max_turns: int | None,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Send a follow-up PROMPT to an agent's live session.
 
     \b
     Examples:
       sac agents send worker "review this change" --dry-run
-      sac agent send coverage-runner "now bump the threshold to 95%"
-      sac agent send coverage-runner --model opus --max-turns 3 "..."
+      sac agents send coverage-runner "now bump the threshold to 95%" --yes
+      sac agents send coverage-runner --model opus --max-turns 3 "..." --yes
 
     Delivery is always HTTP to the running (containerized) agent. Async
     adapters return a SciTeX http/202 exchange receipt which this command
     reports immediately. Poll its named exchange when final delivery evidence
     is required. If no A2A port is recorded the command refuses — it will not
     inject a prompt into tmux or run the turn on the bare host.
+    Sending requires explicit ``--yes/-y``; argument preview takes precedence.
     """
     if not prompt:
         raise click.UsageError("PROMPT is required.")
@@ -403,6 +406,11 @@ def send(
         )
         click.echo(json.dumps(plan, indent=2))
         return
+
+    if not yes:
+        raise click.UsageError(
+            "Sending requires --yes/-y; use --dry-run to preview arguments."
+        )
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
     # sending a PROMPT, auto-proxy to ``POST /agents/<name>/send``

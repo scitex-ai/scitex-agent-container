@@ -28,7 +28,7 @@ agent, not the host's interactive login):
   #262 the live snapshot bind is automatic — no manual bind / custom
   `CLAUDE_CONFIG_DIR` override needed.
 - **A 30-minute keepalive cron** that posts an A2A turn to each
-  refresher: `sac agents send <refresher> hello`. The turn forces the
+  refresher: `sac agents send --yes <refresher> hello`. The turn forces the
   bundled CLI to spin a session, observe the impending expiry, and
   rotate the access token through the bind back to the snapshot.
 
