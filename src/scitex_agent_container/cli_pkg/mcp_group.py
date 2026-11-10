@@ -97,7 +97,7 @@ def mcp() -> None:
     "--port",
     default=8970,
     show_default=True,
-    help="HTTP bind port (only with --http).",
+    help="HTTP bind port, 0-65535 (only with --http).",
 )
 @click.option(
     "--dry-run",
@@ -122,6 +122,9 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
       $ sac mcp start --http --port 8970       # HTTP transport
       $ sac mcp start --dry-run
     """
+    from ._mcp_start_options import validate_http_port
+
+    validate_http_port(use_http, port)
     del yes  # reserved
     transport = "http" if use_http else "stdio"
     if dry_run:

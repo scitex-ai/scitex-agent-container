@@ -47,6 +47,9 @@ sac mcp start                         # stdio, normally launched by the client
 sac mcp start --http --port 8970      # HTTP; loopback bind by default
 ```
 
+HTTP startup validates `--port` in the range 0–65535 before preview or backend
+loading. Stdio ignores this HTTP-only option.
+
 `mcp channel` is a separate A2A channel adapter, not this server's entry point.
 `mcp healthcheck` includes alarms and possible self-restart requests; it is not
 a read-only replacement for discovery.
@@ -80,3 +83,5 @@ Source: `_mcp/server.py`, `_mcp/_tools/__init__.py`, `_mcp/_tools/_skills.py` an
 `tests/scitex_agent_container/_mcp/_tools/test__skills.py` and
 `tests/scitex_agent_container/cli_pkg/test_mcp_group.py`. These do not establish
 external vendor configuration or a deployed server's availability.
+
+HTTP argument controls: `tests/scitex_agent_container/cli_pkg/test__mcp_start_options.py`.
