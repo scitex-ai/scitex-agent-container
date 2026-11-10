@@ -34,6 +34,15 @@ def test_extract_job_id_returns_none_when_no_digits():
     assert job_id is None
 
 
+def _poll_failure(action):
+    """Capture only the expected refusal type as data for one assertion."""
+    try:
+        action()
+    except click.ClickException as exc:
+        return exc
+    return None
+
+
 @pytest.mark.parametrize(
     "responses,fragment",
     [
@@ -56,8 +65,8 @@ def test_failed_or_missing_scheduler_query_never_implies_completion(
         return subprocess.CompletedProcess(argv, code, stdout, stderr)
 
     # Act
-    with pytest.raises(click.ClickException) as caught:
-        _poll_job(
+    error = _poll_failure(
+        lambda: _poll_job(
             "owned",
             "123",
             timeout_s=10,
@@ -66,8 +75,17 @@ def test_failed_or_missing_scheduler_query_never_implies_completion(
             clock=lambda: 0,
             sleeper=lambda _: None,
         )
+    )
     # Assert
-    assert (fragment in str(caught.value), len(calls)) == (True, len(responses))
+    assert (
+        isinstance(error, click.ClickException),
+        fragment in str(error),
+        len(calls),
+    ) == (
+        True,
+        True,
+        len(responses),
+    )
 
 
 def test_observed_completion_retains_poll_interval_and_accounting_state():
@@ -111,7 +129,9 @@ def test_real_shell_cannot_hide_failed_accounting_behind_head(failed_accounting_
     # Arrange
     host = "owned-fixture"
     # Act
-    with pytest.raises(click.ClickException) as caught:
-        _poll_job(host, "123", timeout_s=10, interval_s=1)
+    error = _poll_failure(lambda: _poll_job(host, "123", timeout_s=10, interval_s=1))
     # Assert
-    assert "accounting state for SLURM job 123 (7)" in str(caught.value)
+    assert (
+        isinstance(error, click.ClickException),
+        "accounting state for SLURM job 123 (7)" in str(error),
+    ) == (True, True)

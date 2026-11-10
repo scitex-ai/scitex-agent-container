@@ -36,8 +36,25 @@ installation, scheduler availability or operator repository is qualified by
 these fixtures.
 
 This is not a replacement for required CI or release qualification. Existing
-branch-based cloning, timestamp scratch paths, dependency-install fallback,
-terminal-log count extraction and transport-call bounds retain their prior
-semantics. Exact commit/job identity binding, complete dependency/coverage
-acceptance and default remote scratch expansion require separate evidence.
+branch-based cloning, dependency-install fallback, terminal-log count
+extraction and transport-call bounds retain their prior semantics. Exact
+commit/job identity binding, complete dependency/coverage acceptance and
+default remote scratch expansion require separate evidence.
 No old artifact is rewritten and no failed job is retried automatically.
+
+
+## Fresh submission directories
+
+Fresh CLI submissions use `<scratch-root>/<uuid4-hex>/` for both `job.sbatch`
+and `summary.json`. The namespace is allocated before upload and no longer
+depends on wall-clock milliseconds. The CLI prints the planned directory
+before upload so partial failures can be investigated without guessing it.
+Client upload/fetch quoting is preserved, including supplied roots with
+spaces. This does not qualify Slurm directive parsing or remote expansion.
+
+Existing timestamp directories are not renamed, reused or deleted by this
+change. A UUID is a request namespace, not a secret, lock, scheduler receipt
+or artifact attestation. Real job/commit identity binding, branch resolution,
+remote scratch expansion and concurrent cluster execution remain separate
+qualification work. No live submission or cleanup is needed to change this
+client-side naming behavior.

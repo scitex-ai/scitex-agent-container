@@ -8,7 +8,7 @@ architecture + Phase-2 follow-ups.
 
 from __future__ import annotations
 
-import time
+import uuid
 
 import click
 
@@ -97,11 +97,11 @@ def run_cmd(
     # SLURM caps job names at ~64 chars so we trim the branch suffix
     # aggressively to keep ``sac-pytest-<tag>`` well under the limit.
     job_tag = branch.replace("/", "-")[:32]
-    # Per-submission scratch namespace so concurrent runs don't
-    # stomp each other.  ``$SLURM_JOB_ID`` isn't available before
-    # sbatch picks one up, so we use a wall-clock millisecond stamp.
-    stamp = str(int(time.time() * 1000))
-    scratch_dir = f"{scratch_root}/{stamp}"
+    # Allocate the namespace before upload: a scheduler job ID is not yet
+    # available, and equal wall-clock milliseconds are not distinct runs.
+    submission_id = uuid.uuid4().hex
+    scratch_dir = f"{scratch_root}/{submission_id}"
+    click.echo(f"[spartan] planned artifact directory: {scratch_dir}")
     script = _render_sbatch_script(
         repo=repo,
         branch=branch,
