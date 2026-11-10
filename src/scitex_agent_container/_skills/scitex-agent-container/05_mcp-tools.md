@@ -50,6 +50,13 @@ sac mcp start --http --port 8970      # HTTP; loopback bind by default
 HTTP startup validates `--port` in the range 0–65535 before preview or backend
 loading. Stdio ignores this HTTP-only option.
 
+`sac mcp check-connections --json` observes critical connections reported by
+Claude Code without requesting a restart. It runs `claude mcp list`; it is not
+a universal client probe. Exit 0 requires verified connected results; unknown,
+disabled, failed or errored observations exit 1. Global `--json` is also accepted.
+The provider may read client configuration and emit logs; this is not a
+whole-process no-I/O guarantee. It does not establish tool execution readiness.
+
 `mcp channel` is a separate A2A channel adapter, not this server's entry point.
 `mcp healthcheck` includes alarms and possible self-restart requests; it is not
 a read-only replacement for discovery. Connectivity parsing requires an
@@ -98,3 +105,7 @@ Connectivity parsing controls:
 
 Startup-key alias controls:
 `tests/scitex_agent_container/_mcp/test__healthcheck_sac_alias.py`.
+
+Read-only connection controls: `cli_pkg/_mcp_connections.py` and
+`tests/scitex_agent_container/cli_pkg/test__mcp_connections.py`. The legacy
+`healthcheck` boot hook retains its recovery behavior and fail-open exit status.
