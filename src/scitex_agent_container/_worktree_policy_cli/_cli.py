@@ -67,6 +67,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="Preview supplied arguments without reading policy or generating files.",
     )
+    generate.add_argument(
+        "--yes", "-y", action="store_true", help="Approve writing policy projections."
+    )
     check = sub.add_parser("check-projections")
     check.add_argument("--output-dir", type=Path, default=None)
     return parser
@@ -79,6 +82,11 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
             from ._cli_preview import projection_argument_preview
 
             return emit(projection_argument_preview(args.policy, args.output_dir), 0)
+        if args.operation == "generate-projections" and not args.yes:
+            message = "Projection generation requires --yes; use --dry-run to preview."
+            return emit(
+                {"allowed": False, "decision": "error", "error": message}, 3, message
+            )
         if args.policy is None:
             args.policy = default_policy_path()
         # An explicit generation request initializes host configuration rather

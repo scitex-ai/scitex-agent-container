@@ -156,6 +156,7 @@ sac worktree policy inspect --repo /path/to/repository
 sac worktree policy assert-context --repo /path/to/repository --intent edit
 sac worktree policy check-projections
 sac worktree policy generate-projections --dry-run
+sac worktree policy generate-projections --yes
 ```
 
 The delegated help displays the full command path and concrete examples.
@@ -168,7 +169,10 @@ request; a successful inspection is not permission to edit. Policy decisions
 remain JSON on stdout, with diagnostics on stderr: allow exits 0, deny exits 2,
 and argument/policy errors exit 3. `--help` exits before executing an operation,
 including `generate-projections`; it does not generate policy files. Actual
-projection generation remains an explicit writing operation with its existing
+projection generation requires explicit `--yes` (or `-y`) before policy selection
+or filesystem access. Without approval it returns a typed JSON error with exit 3;
+`SAC_ASSUME_YES` does not bypass this check. The preview runs before approval
+and remains non-authorizing even with `--yes`. Approved generation retains its
 host-configuration semantics. This help correction changes no hook, projection,
 authority-checkout or launch-admission rule.
 
@@ -190,4 +194,6 @@ Source and controls: `_worktree_policy_cli/_cli.py`, `_cli_preview.py`,
 `tests/scitex_agent_container/_worktree_policy_cli/test__cli_preview.py`,
 `test__cli.py`, and `_lifecycle/_worktree_policy.py`'s CLI result admission.
 These scoped checks do not qualify arbitrary external policy executables,
-deployed hooks, launch supervision or served documentation.
+deployed hooks, launch supervision or served documentation. Existing external
+generation callers must add explicit approval before adopting this change.
+Generation approval controls: `test__generation_approval.py`.

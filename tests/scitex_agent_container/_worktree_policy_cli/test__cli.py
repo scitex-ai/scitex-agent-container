@@ -129,7 +129,7 @@ def test_generation_initializes_host_configuration(tmp_path, facet):
         "projection_exit": 0,
     }
     # Act
-    result = _run(tmp_path, "generate-projections")
+    result = _run(tmp_path, "generate-projections", "--yes")
     observed = {
         "exit_code": result.returncode,
         "host_policy": configured.read_bytes(),
