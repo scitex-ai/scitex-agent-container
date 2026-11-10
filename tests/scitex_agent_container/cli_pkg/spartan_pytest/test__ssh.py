@@ -20,6 +20,7 @@ from scitex_agent_container.cli_pkg.spartan_pytest import (
     _poll_job,
     _submit_sbatch,
 )
+from scitex_agent_container.cli_pkg.spartan_pytest._ssh import _resolve_scratch_root
 
 
 def test_extract_job_id_finds_canonical_sbatch_output():
@@ -268,3 +269,72 @@ def test_failed_script_upload_never_chmods_or_submits_partial_file(
         bool(path.stat().st_mode & 0o100),
         submitted.exists(),
     ) == (True, True, False, False)
+
+
+@pytest.mark.parametrize("path", ["/owned/root", "relative/root", "~/$OTHER"])
+def test_explicit_scratch_path_does_not_query_or_expand_environment(path):
+    # Arrange
+    def forbidden_runner(*args, **kwargs):
+        raise RuntimeError("explicit path must not contact SSH")
+
+    # Act
+    result = _resolve_scratch_root("owned", path, runner=forbidden_runner)
+    # Assert
+    assert result == path
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("$SCRATCH/sac-pytest", "/remote/owned root 'quoted $ value/sac-pytest"),
+        ("${SCRATCH}/sac-pytest", "/remote/owned root 'quoted $ value/sac-pytest"),
+        ("$SCRATCH", "/remote/owned root 'quoted $ value/"),
+        ("${SCRATCH}", "/remote/owned root 'quoted $ value/"),
+    ],
+)
+def test_scratch_token_resolves_only_the_remote_variable(path, expected):
+    # Arrange
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, "/remote/owned root 'quoted $ value/\n", ""
+        )
+
+    # Act
+    result = _resolve_scratch_root("owned", path, runner=runner)
+    # Assert
+    assert (result, len(calls), calls[0][-1]) == (
+        expected,
+        1,
+        "printf '%s\\n' \"${SCRATCH-}\"",
+    )
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["", "\n", "relative\n", "/owned\nnoise\n", "/owned\r\n", "/owned\x00bad\n"],
+)
+def test_missing_or_malformed_remote_scratch_is_refused(stdout):
+    # Arrange
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    # Act
+    # Assert
+    with pytest.raises(click.ClickException, match="remote SCRATCH must be"):
+        _resolve_scratch_root("owned", "$SCRATCH/sac-pytest", runner=runner)
+
+
+def test_failed_remote_scratch_read_is_not_replaced_by_local_guess():
+    # Arrange
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 255, "/untrusted\n", "refused")
+
+    # Act
+    # Assert
+    with pytest.raises(
+        click.ClickException, match=r"failed to read remote SCRATCH \(255\)"
+    ):
+        _resolve_scratch_root("owned", "$SCRATCH/sac-pytest", runner=runner)

@@ -145,6 +145,8 @@ def scheduler_fixture(tmp_path, env_save_restore):
     script.write_text(
         "#!/bin/sh\nfor command; do :; done\n"
         f'case "$command" in\n'
+        f"  'printf '*) echo scratch >> {shlex.quote(str(calls))}; "
+        f"printf '%s\\n' {shlex.quote(str(tmp_path / 'remote-scratch'))};;\n"
         f"  'mkdir -p '*) echo upload >> {shlex.quote(str(calls))}; "
         f"printf '%s\\n' \"$command\" > {shlex.quote(str(upload))};;\n"
         f"  'sbatch '*) echo submit >> {shlex.quote(str(calls))}; echo 'Submitted batch job 123';;\n"
@@ -184,7 +186,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             0,
             True,
-            5,
+            6,
         ),
         (
             {
@@ -198,7 +200,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
         (
             {
@@ -212,10 +214,10 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
-        ({}, "COMPLETED", 0, 1, False, 5),
-        ({"passed": 3, "failed": 0, "errors": 0}, "COMPLETED", 0, 1, False, 5),
+        ({}, "COMPLETED", 0, 1, False, 6),
+        ({"passed": 3, "failed": 0, "errors": 0}, "COMPLETED", 0, 1, False, 6),
         (
             {
                 "passed": 0,
@@ -228,7 +230,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
         (
             {
@@ -242,7 +244,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
         (
             {
@@ -256,7 +258,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
         (
             {
@@ -270,7 +272,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             0,
             1,
             False,
-            5,
+            6,
         ),
         (
             {
@@ -284,7 +286,7 @@ def scheduler_fixture(tmp_path, env_save_restore):
             255,
             1,
             False,
-            3,
+            4,
         ),
     ],
 )

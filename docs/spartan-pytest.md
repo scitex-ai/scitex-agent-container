@@ -44,7 +44,7 @@ This is not a replacement for required CI or release qualification. Existing
 branch-based cloning, dependency-install fallback, terminal-log count
 extraction and transport-call bounds retain their prior semantics. Exact
 commit/job identity binding, complete dependency/coverage acceptance and
-default remote scratch expansion require separate evidence.
+remote login/compute filesystem agreement require separate evidence.
 No old artifact is rewritten and no failed job is retried automatically.
 
 
@@ -60,7 +60,7 @@ spaces. This does not qualify Slurm directive parsing or remote expansion.
 Existing timestamp directories are not renamed, reused or deleted by this
 change. A UUID is a request namespace, not a secret, lock, scheduler receipt
 or artifact attestation. Real job/commit identity binding, branch resolution,
-remote scratch expansion and concurrent cluster execution remain separate
+remote login/compute filesystem agreement and concurrent cluster execution remain separate
 qualification work. No live submission or cleanup is needed to change this
 client-side naming behavior.
 
@@ -98,3 +98,19 @@ may leave a partial file: this is not an atomic replacement or cleanup.
 Owned local-shell tests exercise text preservation, delimiter-like content,
 quoted paths and write failures with an inert `sbatch`. They do not execute
 the uploaded job or qualify an actual SSH server, scheduler or target install.
+
+## Remote scratch environment
+
+The default `$SCRATCH/sac-pytest` resolves the leading `$SCRATCH` token from
+the SSH host's environment through one fixed `printf` query before upload.
+`${SCRATCH}` is also supported at the start of a root. Explicit paths are
+preserved and need no environment lookup. This is not general shell expansion
+or `eval`; other variables, substitutions and tildes are not expanded.
+
+The remote value must be a nonempty absolute path without CR, LF or NUL.
+Missing, malformed or failed reads stop before upload or submission, with no
+local-path fallback. Header inputs are checked before the query as well.
+Client-side quoting preserves spaces and literal metacharacters in the value;
+Slurm header parsing and shared visibility between login and compute nodes
+still require separate evidence. No real cluster environment is qualified by
+the local-shell fixtures, and transport timeout/retry behavior is unchanged.

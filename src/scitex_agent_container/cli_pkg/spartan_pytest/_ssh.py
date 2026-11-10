@@ -59,6 +59,40 @@ def _extract_job_id(stdout: str) -> str | None:
     return receipts[0] if len(receipts) == 1 else None
 
 
+def _resolve_scratch_root(
+    host: str, scratch_root: str, *, runner: Callable = subprocess.run
+) -> str:
+    """Resolve only a leading literal SCRATCH token through one remote read.
+
+    Explicit paths are preserved without a query. Never eval caller input or
+    expand local environment variables into a remote filesystem path.
+    """
+    token = next(
+        (
+            token
+            for token in ("$SCRATCH", "${SCRATCH}")
+            if scratch_root == token or scratch_root.startswith(token + "/")
+        ),
+        None,
+    )
+    if token is None:
+        return scratch_root
+    result = _run_ssh(host, "printf '%s\\n' \"${SCRATCH-}\"", runner=runner)
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"failed to read remote SCRATCH ({result.returncode}); "
+            "set it on the SSH host or pass an explicit --scratch-root"
+        )
+    root = result.stdout.removesuffix("\n")
+    if not root.startswith("/") or any(char in root for char in ("\r", "\n", "\x00")):
+        raise click.ClickException(
+            "remote SCRATCH must be one nonempty absolute single-line path; "
+            "set it on the SSH host or pass an explicit --scratch-root"
+        )
+    suffix = scratch_root[len(token) :]
+    return root.rstrip("/") + suffix if suffix else root
+
+
 def _submit_sbatch(
     host: str,
     script: str,

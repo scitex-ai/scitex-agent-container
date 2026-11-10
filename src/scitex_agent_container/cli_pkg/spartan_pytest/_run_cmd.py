@@ -19,8 +19,9 @@ from ._render import (
     DEFAULT_SSH_HOST,
     DEFAULT_TIMEOUT_S,
     _render_sbatch_script,
+    _validate_header_fields,
 )
-from ._ssh import _fetch_summary, _poll_job, _submit_sbatch
+from ._ssh import _fetch_summary, _poll_job, _resolve_scratch_root, _submit_sbatch
 from ._summary import (
     _format_summary,
     _parse_summary,
@@ -72,7 +73,7 @@ def spartan_group() -> None:
     "scratch_root",
     default="$SCRATCH/sac-pytest",
     help="Spartan scratch root for clones + summary.json "
-    "(default: $SCRATCH/sac-pytest).",
+    "(default: $SCRATCH/sac-pytest; leading SCRATCH token resolved on SSH host).",
 )
 def run_cmd(
     target: str,
@@ -97,6 +98,13 @@ def run_cmd(
     # SLURM caps job names at ~64 chars so we trim the branch suffix
     # aggressively to keep ``sac-pytest-<tag>`` well under the limit.
     job_tag = branch.replace("/", "-")[:32]
+    try:
+        _validate_header_fields(
+            reservation=reservation, scratch_dir=scratch_root, job_tag=job_tag
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    scratch_root = _resolve_scratch_root(ssh_host, scratch_root)
     # Allocate the namespace before upload: a scheduler job ID is not yet
     # available, and equal wall-clock milliseconds are not distinct runs.
     submission_id = uuid.uuid4().hex
