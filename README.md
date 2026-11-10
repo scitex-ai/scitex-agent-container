@@ -314,10 +314,11 @@ sac agents validate-telegram --help       # inspect declared and resolved Telegr
 sac a2a list-grants --json                 # inspect directional send permissions
 
 # Control plane (HTTP/JSON, loopback-only)
-sac listen [--bind 127.0.0.1:7878]        # boot per-host REST API (bearer-auth)
+sac listen --bind 127.0.0.1:7878 start --yes  # boot per-host REST API (bearer-auth)
                                            # single-instance flock guard fails loud
                                            # on a duplicate launch (PID + lockfile shown)
-sac listen restart                        # atomic stop-clean-relaunch
+sac listen restart --dry-run               # preview arguments; no runtime inspection
+sac listen restart --yes                   # approved stop, cleanup, relaunch
 sac peer post-turn <to> "<msg>"           # local agent-to-agent message via sac listen
 sac peer resolve-url <to>                 # print URL post-turn would target
 
