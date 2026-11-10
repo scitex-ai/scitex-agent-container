@@ -220,7 +220,13 @@ of an operator's live research worktrees.
 Cleanup CLI thresholds are checked before repository discovery: invalid ages
 (non-finite or negative) and negative caps exit 2 without inspecting repositories.
 Zero remains valid. This applies to `clean` and its compatible `gc` spelling;
-it does not add validation to direct Python maintenance-provider calls.
+the Python `gc_repo` and `gc_repos` providers use the same validation and raise
+`ValueError` before repository access, including for an empty bulk request.
+The CLI converts those errors to usage errors with exit 2. Valid thresholds and
+the cleanup predicates remain unchanged.
 Controls: `cli_pkg/_worktree_gc_options.py`,
 `tests/scitex_agent_container/cli_pkg/test__worktree_gc_options.py`, and the
 existing real-repository controls in `test__worktree_gc.py`.
+
+Shared provider admission: `_maintenance/_worktree_gc_options.py`, with controls
+in `tests/scitex_agent_container/_maintenance/test__worktree_gc_options.py`.
