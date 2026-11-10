@@ -100,6 +100,10 @@ _COPY_IGNORE = shutil.ignore_patterns(
     # new image build context: once .git disappears inside Apptainer, the
     # wheel build treats this file as authoritative sdist-style provenance.
     "_build_info.py",
+    # Reconstructed at the source root, then force-included by Hatch. Copying
+    # installed copies too produces duplicate ZIP members in the next wheel.
+    "_bundled",
+    "_cli_audit_dict.yaml",
 )
 
 
