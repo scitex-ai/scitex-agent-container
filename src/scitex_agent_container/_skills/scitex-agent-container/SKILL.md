@@ -32,7 +32,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `Registry`; `agent.*`/`peer.*`/`host.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
+| MCP | Bundled `sac mcp start`; agent-owned servers use `to_home/.mcp.json` |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
 
 ## Sub-skills
