@@ -51,6 +51,17 @@ mechanisms. Do not copy an API key into an OAuth store to silence a warning.
    running client's cache was replaced or that a different image contains the
    source fix. Verify the actual judge after recovery.
 
+## Collect a local Codex login
+
+```bash
+sac accounts sync-openai --dry-run
+sac accounts sync-openai --yes
+```
+
+Preview reports arguments without reading login material or deriving an account
+slug. Approval copies the active local login to the provider-qualified store;
+it does not log in, renew a subscription or prove model availability.
+
 ## Probe and recover within a bounded budget
 
 For a deliberate subscription rest, preview the local account pause before
