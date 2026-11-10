@@ -140,7 +140,7 @@ def env(tmp_path: Path) -> dict[str, str]:
 def _run(cli: click.Group, env: dict[str, str], *extra: str):
     return CliRunner().invoke(
         cli,
-        ["send-credentials", "--all", "--to", _ABSENT_PEER, *extra],
+        ["send-credentials", "--yes", "--all", "--to", _ABSENT_PEER, *extra],
         env=env,
     )
 
@@ -188,7 +188,7 @@ def named_account_result(keepalive_cli, env, two_accounts: Path):
     _write_pause(two_accounts / BETA, BETA, "quota rest")
     return CliRunner().invoke(
         keepalive_cli,
-        ["send-credentials", "--account", BETA, "--to", _ABSENT_PEER],
+        ["send-credentials", "--yes", "--account", BETA, "--to", _ABSENT_PEER],
         env=env,
     )
 

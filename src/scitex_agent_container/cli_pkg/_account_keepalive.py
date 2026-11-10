@@ -218,6 +218,7 @@ def register_keepalive_command(group: click.Group) -> None:
         is_flag=True,
         help="Preview arguments without reading credentials or contacting peers.",
     )
+    @click.option("-y", "--yes", is_flag=True, help="Approve credential distribution.")
     def account_keepalive(
         account_labels: tuple[str, ...],
         all_accounts: bool,
@@ -228,18 +229,15 @@ def register_keepalive_command(group: click.Group) -> None:
         optional_peers: tuple[str, ...],
         as_json: bool,
         dry_run: bool = False,
+        yes: bool = False,
     ) -> None:
         """Copy this host's CURRENT access token to peers, access-only.
 
-        COPIES — it never mints or refreshes. Minting ROTATES the
-        single-use refresh token, which revokes the access token every
-        running agent is holding; that is what killed ten agents on
-        2026-08-10. This reads the master's stored credential as it
-        stands, strips the refreshToken (via the same
-        ``mint_access_only_artifact`` the ``mint-token`` verb uses),
-        refuses to send it if it is nearly dead, backs up whatever it
-        replaces on the peer, publishes at 0600, and PROVES the peer's own
-        copy answers HTTP 200 before anything is restarted.
+        Copies stored access material without minting or refreshing. The
+        backend strips refresh material, refuses nearly expired credentials,
+        backs up the destination, publishes privately and verifies the peer's
+        own copy before an optional sweep. Explicit --yes/-y is required;
+        --dry-run takes precedence and establishes no transfer readiness.
 
         Every refusal is loud and names the account and the peer. No token
         value is ever printed — only paths, hostnames, seconds and opaque
@@ -247,9 +245,9 @@ def register_keepalive_command(group: click.Group) -> None:
 
         \b
         Examples (peer keys below are real; run --help to see THIS host's):
-          $ sac accounts send-credentials --account alpha-example-com --to scitex-compute-04
-          $ sac accounts send-credentials --all --to scitex-compute-04 --to ywata-note-win
-          $ sac accounts send-credentials --all --to scitex-compute-04 --sweep
+          $ sac accounts send-credentials --yes --account alpha-example-com --to scitex-compute-04
+          $ sac accounts send-credentials --yes --all --to scitex-compute-04 --to ywata-note-win
+          $ sac accounts send-credentials --yes --all --to scitex-compute-04 --sweep
           $ sac accounts send-credentials --all --to scitex-compute-04 --dry-run
         """
         force = False
@@ -274,6 +272,16 @@ def register_keepalive_command(group: click.Group) -> None:
             )
             click.echo(_json.dumps(plan, ensure_ascii=False, indent=2))
             return
+
+        from ._credential_approval import require_distribution_approval
+
+        require_distribution_approval(
+            yes=yes,
+            account_labels=account_labels,
+            all_accounts=all_accounts,
+            peers=peers,
+            optional_peers=optional_peers,
+        )
 
         from .._account.snapshot_push import SnapshotPushError
         from .._account.token_keepalive import (
@@ -456,12 +464,8 @@ def register_keepalive_command(group: click.Group) -> None:
 
     group.add_command(account_keepalive, "send-credentials")
 
-    # ``keepalive`` is a PUBLISHED contract, so this is a migration, not a
-    # rename: the old name keeps WORKING and is merely hidden from --help.
-    # A redirect that printed "renamed to X" and exited would break the
-    # systemd units and operator muscle memory that already call it, which
-    # is the opposite of what a rename is for. Remove the alias only once
-    # nothing on any host invokes it.
+    # Keep the published alias and shared options. Both names require approval;
+    # installed timers must migrate before this candidate is released.
     legacy = click.Command(
         name="keepalive",
         callback=_deprecated(account_keepalive.callback),
@@ -475,12 +479,7 @@ def register_keepalive_command(group: click.Group) -> None:
 
 
 def _deprecated(callback):
-    """Wrap ``callback`` so the legacy name says so — on stderr, then runs.
-
-    stderr, not stdout: ``--json`` consumers parse stdout, and a warning
-    that lands there would turn a working script into a JSON parse error.
-    That is the whole failure this alias exists to prevent.
-    """
+    """Warn on stderr, preserving JSON stdout, then invoke the shared callback."""
     import functools
 
     @functools.wraps(callback)
@@ -488,8 +487,8 @@ def _deprecated(callback):
         click.echo(
             "warning: `sac accounts keepalive` is now "
             "`sac accounts send-credentials` — it copies credentials to "
-            "peers, which is what the new name says. The old name still "
-            "works and will be removed once nothing calls it.",
+            "peers. The alias shares --dry-run and --yes; migrate callers "
+            "to the canonical command.",
             err=True,
         )
         return callback(*args, **kwargs)

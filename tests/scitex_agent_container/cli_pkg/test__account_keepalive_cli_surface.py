@@ -154,7 +154,7 @@ def test_the_legacy_name_is_hidden_from_help():
 def test_the_legacy_name_warns_that_it_was_renamed():
     # Arrange — args that reach the callback, then fail on their own merits
     group = _group()
-    args = ["keepalive", "--account", "no-such-account", "--to", "no-such-peer"]
+    args = ["keepalive", "--yes", "--account", "no-such-account", "--to", "no-such-peer"]
 
     # Act
     result = CliRunner().invoke(group, args)
@@ -166,7 +166,7 @@ def test_the_legacy_name_warns_that_it_was_renamed():
 def test_the_legacy_warning_never_lands_on_stdout():
     # Arrange — `--json` consumers parse stdout; a warning there breaks them
     group = _group()
-    args = ["keepalive", "--account", "no-such-account", "--to", "no-such-peer"]
+    args = ["keepalive", "--yes", "--account", "no-such-account", "--to", "no-such-peer"]
 
     # Act
     result = CliRunner().invoke(group, args)
@@ -178,7 +178,7 @@ def test_the_legacy_warning_never_lands_on_stdout():
 def test_the_new_name_does_not_warn():
     # Arrange — the control: proves the warning is bound to the alias only
     group = _group()
-    args = ["send-credentials", "--account", "no-such-account", "--to", "no-such"]
+    args = ["send-credentials", "--yes", "--account", "no-such-account", "--to", "no-such"]
 
     # Act
     result = CliRunner().invoke(group, args)

@@ -60,7 +60,7 @@ def undeclared_target_result(keepalive_cli):
     return CliRunner().invoke(
         keepalive_cli,
         [
-            "keepalive",
+            "keepalive", "--yes",
             "--account", "alpha-example-com",
             "--to", "compute-04",
             "--optional-peer", "a-host-not-in-to",
@@ -74,7 +74,7 @@ def declared_target_result(keepalive_cli):
     return CliRunner().invoke(
         keepalive_cli,
         [
-            "keepalive",
+            "keepalive", "--yes",
             "--account", "alpha-example-com",
             "--to", "ywata-note-win",
             "--optional-peer", "ywata-note-win",

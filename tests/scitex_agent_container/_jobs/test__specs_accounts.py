@@ -55,7 +55,7 @@ def test_accounts_keepalive_command_pushes_to_every_access_only_peer() -> None:
     bound, _payload, rest = _split_command(job.command)
     assert (bound, rest) == (
         "/usr/bin/timeout 300",
-        "accounts keepalive --all "
+        "accounts send-credentials --yes --all "
         "--to ywata-note-win --to scitex-compute-03 --to scitex-compute-04 "
         "--optional-peer ywata-note-win",
     )
@@ -139,7 +139,7 @@ def test_accounts_keepalive_command_runs_the_copying_verb_not_a_minting_one() ->
     job = _job("scitex-agent-container-accounts-keepalive")
     # Assert
     _bound, _payload, rest = _split_command(job.command)
-    assert rest.split()[:2] == ["accounts", "keepalive"]
+    assert rest.split()[:2] == ["accounts", "send-credentials"]
 
 def test_accounts_keepalive_cadence_bounds_the_follower_outage() -> None:
     # Arrange — the cadence IS the worst-case follower outage, not a guess at
