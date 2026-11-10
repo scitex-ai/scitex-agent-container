@@ -125,3 +125,92 @@ def test_create_preview_retains_name_admission(tmp_path, name, reason):
         True,
         {},
     )
+
+
+@pytest.mark.parametrize("assume_yes", ["0", "1"])
+def test_create_requires_explicit_approval_before_backend_reads(tmp_path, assume_yes):
+    # Arrange
+    args = [
+        "owned",
+        "--base-dir",
+        str(tmp_path),
+        "--template",
+        "not-checked",
+        "--set",
+        "TOKEN=owned-secret",
+    ]
+
+    # Act
+    result = CliRunner().invoke(create, args, env={"SAC_ASSUME_YES": assume_yes})
+
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        "requires --yes/-y" in result.stderr,
+        "owned-secret" in result.output,
+        _files(tmp_path),
+    ) == (2, "", True, False, {})
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+def test_create_approval_writes_scaffold(tmp_path, flag):
+    # Arrange
+    base = tmp_path / "agents"
+    env = {"HOME": str(tmp_path / "home"), "SCITEX_DIR": str(tmp_path / "state")}
+    args = ["approved", flag, "--base-dir", str(base), "--template", "minimal"]
+
+    # Act
+    result = CliRunner().invoke(create, args, env=env)
+
+    # Assert
+    assert (
+        result.exit_code,
+        (base / "approved/spec.yaml").is_file(),
+        (base / "approved/to_home").is_dir(),
+    ) == (0, True, True)
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+def test_create_preview_takes_precedence_over_approval(tmp_path, flag):
+    # Arrange
+    args = [
+        "owned",
+        flag,
+        "--dry-run",
+        "--base-dir",
+        str(tmp_path),
+        "--template",
+        "not-checked",
+    ]
+
+    # Act
+    result = CliRunner().invoke(create, args)
+    plan = json.loads(result.stdout)
+
+    # Assert
+    assert (result.exit_code, plan["dry_run"], plan["scope"], _files(tmp_path)) == (
+        0,
+        True,
+        "arguments_only",
+        {},
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "reason"),
+    [("bad/name", "Invalid agent name"), (HOST_PROCESS_AGENT_NAME, "reserved")],
+)
+def test_create_unapproved_name_refusal_retains_existing_reason(tmp_path, name, reason):
+    # Arrange
+    args = [name, "--base-dir", str(tmp_path)]
+
+    # Act
+    result = CliRunner().invoke(create, args)
+
+    # Assert
+    assert (result.exit_code, reason in result.stderr, _files(tmp_path)) == (
+        2,
+        True,
+        {},
+    )

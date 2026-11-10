@@ -11,7 +11,7 @@ tags: [scitex-agent-container-templates]
 
 ```bash
 sac agents create my-agent --template minimal --dry-run
-sac agents create my-agent --template minimal
+sac agents create my-agent --template minimal --yes
 sac agents create --base-dir /path/to/agents --help
 ```
 
@@ -19,6 +19,10 @@ sac agents create --base-dir /path/to/agents --help
 spec and home skeleton; it does not start an agent. Inline creation may also
 attempt managed-home adoption. Review the target and emitted warnings before
 using its output for a launch.
+
+Normal CLI creation requires `--yes/-y`. Scripts must supply it explicitly.
+An explicit Python/MCP creation call forwards approval; preview takes precedence.
+Approval does not permit overwriting a spec or bypass other backend checks.
 
 `--dry-run` reports arguments only and hides `--set` values. It does not read
 templates or credentials, resolve the default root, check destination state

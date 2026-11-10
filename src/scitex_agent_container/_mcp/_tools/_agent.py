@@ -350,6 +350,8 @@ def agent_create(
     A written spec does not establish that an agent has started or is ready.
     ``dry_run=True`` previews arguments without writing a scaffold or starting
     an agent, even when ``start=True``. It does not check template availability.
+    An explicit Python/MCP creation request supplies the CLI's write approval;
+    it does not authorize replacing an existing spec.
     """
     argv = [
         "agents",
@@ -364,6 +366,8 @@ def agent_create(
     ]
     if dry_run:
         argv.append("--dry-run")
+    else:
+        argv.append("--yes")
     result = invoke_cli_text(argv)
     if start and not dry_run and result.get("exit_code") == 0:
         start_result = invoke_cli_text(["agents", "start", name])

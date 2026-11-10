@@ -3,7 +3,8 @@
 """Agent-spec scaffolding shared by the CLI and Agents GUI.
 
 ``create`` validates CLI agent names and reserved slots, then delegates
-writes to ``scaffold_agent``. The GUI uses that same backend and must apply
+writes to ``scaffold_agent`` after explicit approval. Preview returns first.
+The GUI uses that same backend and must apply
 its own caller-side name validation; the backend does not repeat it.
 
 Built-in ``minimal`` (default) and ``full`` field definitions live in
@@ -221,6 +222,7 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
     is_flag=True,
     help="Preview arguments without reading templates or credentials, or writing a scaffold.",
 )
+@click.option("--yes", "-y", is_flag=True, help="Approve writing a new scaffold.")
 def create(
     name: str,
     template_name: str,
@@ -229,6 +231,7 @@ def create(
     set_pairs: tuple[str, ...],
     base_dir: Path | None,
     dry_run: bool,
+    yes: bool,
 ) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
@@ -239,15 +242,16 @@ def create(
     ``SAC_PLACEHOLDER_*`` tokens filled from ``--project``/``--agent-id``/
     ``--set``. Any surviving placeholder fails the command loud and
     removes the partial output.
+    Normal creation requires ``--yes/-y``; ``--dry-run`` takes precedence.
 
     Examples:
 
     \b
-        sac agents create my-agent
+        sac agents create my-agent --yes
         sac agents create my-agent --dry-run
-        sac agents create my-agent --template full
-        sac agents create dev1 --template python_developer --project myproj
-        sac agents create r1 --template researcher --project p --set TEAM=x
+        sac agents create my-agent --template full --yes
+        sac agents create dev1 --template python_developer --project myproj --yes
+        sac agents create r1 --template researcher --project p --set TEAM=x --yes
     """
     force = False
     if not _is_valid_agent_name(name):
@@ -278,6 +282,11 @@ def create(
             base_dir=base_dir,
         )
         return
+
+    if not yes:
+        raise click.UsageError(
+            "Creation requires --yes/-y; use --dry-run to preview arguments."
+        )
 
     scaffold_agent(
         name,
