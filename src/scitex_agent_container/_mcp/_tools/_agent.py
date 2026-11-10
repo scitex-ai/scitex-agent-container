@@ -389,6 +389,7 @@ def agent_create(
         result = {
             "exit_code": start_result.get("exit_code"),
             "stdout": result.get("stdout", "") + start_result.get("stdout", ""),
+            "stderr": result.get("stderr", "") + start_result.get("stderr", ""),
         }
     return result
 
