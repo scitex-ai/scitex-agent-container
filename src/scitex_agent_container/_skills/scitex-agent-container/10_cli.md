@@ -143,7 +143,7 @@ sac host probe-hub               # Probe WSL → fleet-hub connectivity (DNS, ga
 ```bash
 sac accounts list                     # Stored accounts + active one + freshness column
 sac accounts save <name>              # Snapshot current credentials for rotation
-sac accounts sync-live                # Mirror the live credential into its matching store (idempotent; fails loud on stale/absent)
+sac accounts sync-live --yes                # Mirror the live credential into its matching store (idempotent; fails loud on stale/absent)
 sac accounts watch-live               # Daemon: auto-sync the moment `claude /login` rewrites the live credential
 sac accounts switch <name>            # Switch active credentials
 sac accounts watch-quota              # Monitor quota and auto-rotate credentials

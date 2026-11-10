@@ -334,7 +334,7 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # a SCHEDULED one permanently red: 720 failures a day that protect
             # nothing and drown out any real problem. --poll turns "nothing to
             # snapshot" into exit 0 and leaves every safety refusal intact.
-            command=f"/usr/bin/timeout 60 {sac} accounts sync-live --poll",
+            command=f"/usr/bin/timeout 60 {sac} accounts sync-live --poll --yes",
             description=(
                 "Snapshots a `claude /login` performed in ANY host's TUI into "
                 "that host's account store, so logging in from an arbitrary "

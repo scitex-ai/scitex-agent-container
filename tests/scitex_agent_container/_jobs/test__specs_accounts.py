@@ -232,3 +232,12 @@ def test_accounts_key_liveness_cadence_bounds_slot_outage() -> None:
     job = _job("scitex-agent-container-accounts-key-liveness")
     # Assert
     assert job.on_unit_active_sec == "15min"
+
+
+def test_snapshot_live_timer_explicitly_approves_credential_collection() -> None:
+    # Arrange
+    job = _job("scitex-agent-container-accounts-snapshot-live")
+    # Act
+    bound, _payload, rest = _split_command(job.command)
+    # Assert
+    assert (bound, rest) == ("/usr/bin/timeout 60", "accounts sync-live --poll --yes")

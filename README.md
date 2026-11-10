@@ -343,7 +343,8 @@ sac accounts list / save / delete / switch        # stored-credential rotation
 sac accounts status                       # one-shot quota snapshot (5h%, 7d%, tier)
 sac accounts get-quota                        # this agent's own live quota
 sac accounts refresh                      # mint fresh access_token from refresh_token
-sac accounts sync-live / watch-live       # auto-snapshot live cred on `claude /login`
+sac accounts sync-live --yes              # snapshot the active login
+sac accounts watch-live                   # watch for refreshed credentials
 sac accounts watch-quota                  # auto-rotate when quota threshold hit
 
 # Network / peers

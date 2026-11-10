@@ -130,9 +130,13 @@ Implementation: `cli_pkg/_account_refresh.py::account_refresh` (CLI wiring — `
 
 Non-negotiables:
 
-- **NOT auto-started** — no systemd / launchd unit ships. If the daemon isn't running when `claude /login` refreshes, the sac store stays stale until `sac accounts sync-live` (one-shot fallback) or the daemon starts.
+- **Watcher and timer are distinct.** The package does not declare a watcher
+  service. It does declare the `scitex-agent-container-accounts-snapshot-live`
+  timer, whose command uses `sync-live --poll --yes`. A declaration does not
+  prove that a job is installed or running. Without an active watcher or timer,
+  use `sac accounts sync-live --yes` to capture a fresh login.
 
-Implementation: `_account/creds_watch.py` L140-152 (`watch_inotify()`), L99-133 (`watch_poll()` fallback); `_account/creds_sync.py` L141-244 (`sync_live()`), L69-77 (`slugify_email()`); `cli_pkg/_account_sync_live.py` L82-100+ (`account_watch_live` command).
+Implementation: `_account/creds_watch.py` (`watch_inotify`, `watch_poll`, `run_watch`), `_account/creds_sync.py::sync_live`, `cli_pkg/_account_sync_live.py::account_watch_live`, and `_jobs/_specs_accounts.py::accounts_jobs`.
 
 ## See also
 

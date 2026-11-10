@@ -168,7 +168,7 @@ def mint_access_only_artifact(
             detail = " (no credential snapshot on disk)"
         raise MintError(
             f"cannot mint: account '{account}' credential is unhealthy"
-            f"{detail} — run `claude /login` then `sac accounts sync-live`"
+            f"{detail} — run `claude /login` then `sac accounts sync-live --yes`"
         )
 
     # --- read FRESH tokens at call time (mint-on-demand) -------------------

@@ -66,8 +66,8 @@ sac image rollback --layer base
 |---|---|
 | `sac accounts list` | Stored Claude Code accounts + active block; per-store freshness column (`VALID (+Xh)` / `EXPIRED (-Xh)` / `ABSENT`). |
 | `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
-| `sac accounts sync-live` | Snapshot the live credential into its matching store (store-name = email slugified). Idempotent; fails loud on an expired/absent live cred (never saves a stale token). |
-| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and auto-run `sync-live` on every change — "the moment I log in → auto-saved". |
+| `sac accounts sync-live --yes` | Snapshot a valid live login; `--dry-run` previews arguments. `--poll` treats invalid/absent input as a no-op after approval. |
+| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and run the sync engine on every change — "the moment I log in → auto-saved". |
 | `sac accounts switch <name>` | Switch active credentials to a stored account. |
 | `sac accounts delete <name>` | Remove a stored account. |
 | `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |

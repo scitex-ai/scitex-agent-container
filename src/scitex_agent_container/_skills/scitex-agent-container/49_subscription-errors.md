@@ -62,6 +62,20 @@ Preview reports arguments without reading login material or deriving an account
 slug. Approval copies the active local login to the provider-qualified store;
 it does not log in, renew a subscription or prove model availability.
 
+## Collect a local Claude Code login
+
+```bash
+sac accounts sync-live --dry-run
+sac accounts sync-live --yes
+sac accounts sync-live --poll --yes
+```
+
+Preview never reads credentials or checks identity/expiry. Approval retains the
+existing OAuth identity lookup and snapshot safeguards. `--poll` changes invalid
+input into an expected no-op after approval; it does not bypass the write guard.
+The snapshot timer declares both `--poll` and `--yes`. This does not verify model
+availability or renew a login.
+
 ## Probe and recover within a bounded budget
 
 For a deliberate subscription rest, preview the local account pause before
