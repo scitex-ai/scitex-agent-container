@@ -28,7 +28,6 @@ store.
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +58,7 @@ from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_ack import inbox_ack_route
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
+from scitex_agent_container.a2a._serve import serve
 
 log = slogging.getLogger(__name__)
 # ---------------------------------------------------------------------
@@ -462,50 +462,6 @@ def build_app(
 
     ctx = _ServerCtx(yamls=yamls, dispatchers=dispatchers)
     return _build_app(ctx)
-
-
-def serve(
-    agent_yamls: list[Path],
-    *,
-    host: str = "127.0.0.1",
-    port: int = 8888,  # stx-allow: STX-NL001
-    handler: str = "echo",
-) -> None:
-    """Run the A2A HTTP server in the foreground via uvicorn.
-
-    ``handler`` is the *default* selector — agents whose yaml sets
-    ``spec.a2a.handler: <key>`` override it.
-    """
-    try:
-        import uvicorn
-    except Exception as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
-        # Broaden: uvicorn import can fail with non-ImportError if a
-        # transitive dep (httptools, websockets) is mis-built. Surface
-        # any such failure as an actionable ImportError.
-        raise ImportError(
-            "uvicorn is required to run 'sac a2a serve'; install with "
-            "'pip install uvicorn'."
-        ) from exc
-
-    base_url = f"http://{host}:{port}"
-    app = build_app(
-        agent_yamls,
-        default_handler=handler,
-        base_url=base_url,
-        listen_port=port,
-    )
-
-    log.info(
-        "sac-a2a (a2a-sdk) listening on http://%s:%d (default handler: %s)",
-        host,
-        port,
-        handler,
-    )
-    socket.setdefaulttimeout(60)
-    # ``ws="none"`` — A2A is HTTP/JSON-RPC + SSE only. Skipping the
-    # websockets protocol avoids the uvicorn 0.27 ↔ websockets 15
-    # incompatibility (``websockets.legacy`` removed in 14+).
-    uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
 
 
 __all__ = ["build_app", "serve"]

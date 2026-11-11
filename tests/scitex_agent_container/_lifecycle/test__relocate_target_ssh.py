@@ -82,13 +82,21 @@ def _owned_delivery(tmp_path, status, *, missing_tool=None):
             env[key] = os.environ[key]
 
     def execute(argv, *, timeout_s):
-        result = subprocess.run(
-            [argv[0], "-x", *argv[1:]],
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=min(timeout_s, 10),
-        )
+        try:
+            result = subprocess.run(
+                [argv[0], "-x", *argv[1:]],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=min(timeout_s, 10),
+            )
+        except subprocess.TimeoutExpired as exc:
+            exc.add_note(
+                "Owned relocation shell captured tails (4096 bytes per stream): "
+                f"stdout={exc.stdout[-4096:] if exc.stdout else b''!r}; "
+                f"stderr={exc.stderr[-4096:] if exc.stderr else b''!r}"
+            )
+            raise
         traces.append(result.stdout + result.stderr)
         return {
             "exit_code": result.returncode,
@@ -243,3 +251,29 @@ def test_payload_write_failure_stops_before_cli_invocation(tmp_path):
         "sac agents send" in trace,
         remaining,
     ) == (True, [], True, False, [])
+
+
+def test_owned_shell_timeout_retains_captured_diagnostics(tmp_path):
+    # Arrange
+    with _owned_delivery(tmp_path, 200) as (_agent, execute, calls):
+        command = [
+            "sh",
+            "-c",
+            "printf owned-output; printf owned-error >&2; exec sleep 30",
+        ]
+
+        # Act
+        try:
+            execute(command, timeout_s=0.5)
+        except subprocess.TimeoutExpired as failure:
+            note = "\n".join(failure.__notes__)
+            snapshot = (
+                failure.timeout,
+                "owned-output" in note,
+                "owned-error" in note,
+            )
+        else:
+            snapshot = None
+
+    # Assert
+    assert (snapshot, calls) == ((0.5, True, True), [])

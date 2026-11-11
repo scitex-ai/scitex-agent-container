@@ -122,6 +122,23 @@ When `true`, the runner shuts down after this turn. Default is `false`
 
 ---
 
+### Reserved listeners (POSIX)
+
+Supervisors can reserve a listening TCP socket before launching a sidecar.
+`scitex_agent_container.runtimes.a2a_sidecar.start_sidecar(config, listener=listener)`
+passes that listener to the native child without releasing and rebinding its
+port. The caller closes its own socket reference after launch; the child keeps
+its inherited reference. This avoids the free-port selection gap.
+
+For foreground serving, `sac a2a serve` accepts `--fd` for an already inherited
+descriptor (3 or greater), alongside the matching `--host` and `--port`. The Python
+`scitex_agent_container.a2a.serve` function accepts the corresponding `fd`
+argument. The descriptor must already be a listening TCP socket at exactly the
+advertised address. Invalid descriptors and endpoint mismatches are refused;
+there is no fallback to a newly chosen port. Omitting this option retains the
+ordinary bind behavior. Descriptor handoff requires POSIX; descriptors 0–2
+are reserved for standard streams and are refused.
+
 ## 2. CLI — `sac agents send` / `sac agents tail`
 
 The same-host, no-network path:

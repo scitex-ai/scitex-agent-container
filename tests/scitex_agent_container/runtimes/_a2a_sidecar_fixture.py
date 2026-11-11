@@ -16,6 +16,7 @@ import yaml
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes.a2a_sidecar import (
+    _log_path,
     _pid_path,
     _proc_argv,
     _process_alive,
@@ -123,7 +124,21 @@ def _config(
     )
 
 
-def wait_for_sidecar(pid, port, name, *, timeout):
+def _startup_log_detail(log_path):
+    """Read at most the final 4 KiB of the caller's owned startup log."""
+    if log_path is None:
+        return "Startup log not supplied."
+    try:
+        with log_path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 4096))
+            tail = stream.read(4096).decode("utf-8", errors="replace")
+    except OSError as exc:
+        return f"Startup log {log_path} unavailable: {exc}"
+    return f"Startup log {log_path} (last 4096 bytes):\n{tail}"
+
+
+def wait_for_sidecar(pid, port, name, *, timeout, log_path=None):
     """Do not yield a process that merely exists but has not started its server.
 
     Preserve the fixture's existing budget. Metadata from an unrelated server
@@ -131,13 +146,19 @@ def wait_for_sidecar(pid, port, name, *, timeout):
     """
     if pid is None:
         raise RuntimeError("Owned sidecar was not spawned")
-    process = psutil.Process(pid)
+    exited = (
+        f"Owned sidecar {name} (pid={pid}, port={port}) exited before HTTP readiness"
+    )
+    try:
+        process = psutil.Process(pid)
+    except psutil.NoSuchProcess as exc:
+        raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}") from exc
     deadline = time.monotonic() + timeout
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
             if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
-                raise RuntimeError("Owned sidecar exited before HTTP readiness")
+                raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}")
             argv = _proc_argv(pid)
             owns_port = any(
                 connection.laddr
@@ -154,12 +175,13 @@ def wait_for_sidecar(pid, port, name, *, timeout):
                 if [agent["name"] for agent in payload.get("agents", [])] == [name]:
                     return
         except psutil.NoSuchProcess as exc:
-            raise RuntimeError("Owned sidecar exited before HTTP readiness") from exc
+            raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}") from exc
         except (OSError, ValueError, KeyError, urllib.error.URLError):
             pass  # A child still starting may not accept HTTP yet.
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     raise TimeoutError(
-        f"Owned sidecar {name} (pid={pid}, port={port}) did not become ready"
+        f"Owned sidecar {name} (pid={pid}, port={port}) did not become ready\n"
+        f"{_startup_log_detail(log_path)}"
     )
 
 
@@ -174,26 +196,39 @@ def shared_workdir_pair(tmp_path: Path):
     root.mkdir()
     wd = root / "SHARED-WORKDIR"
     wd.mkdir()
-    port_a, port_b = _free_port_pair()
-    spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
-    spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
-    cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")
-    cfg_b = _config(wd, config_path=str(spec_b), name="pair-bravo")
-
-    pid_a = start_sidecar(cfg_a)
-    pid_b = start_sidecar(cfg_b)
-    try:
-        wait_for_sidecar(pid_a, port_a, cfg_a.name, timeout=10.0)
-        wait_for_sidecar(pid_b, port_b, cfg_b.name, timeout=10.0)
-        yield {
-            "cfg_a": cfg_a,
-            "cfg_b": cfg_b,
-            "pid_a": pid_a,
-            "pid_b": pid_b,
-            "port_b": port_b,
-        }
-    finally:
-        _kill(pid_a)
-        _kill(pid_b)
-        _pid_path(cfg_a).unlink(missing_ok=True)
-        _pid_path(cfg_b).unlink(missing_ok=True)
+    with socket.socket() as listener_a, socket.socket() as listener_b:
+        listener_a.bind(("127.0.0.1", 0))
+        listener_b.bind(("127.0.0.1", 0))
+        listener_a.listen()
+        listener_b.listen()
+        port_a, port_b = listener_a.getsockname()[1], listener_b.getsockname()[1]
+        spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
+        spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
+        cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")
+        cfg_b = _config(wd, config_path=str(spec_b), name="pair-bravo")
+        pid_a = pid_b = None
+        try:
+            pid_a = start_sidecar(cfg_a, listener=listener_a)
+            pid_b = start_sidecar(cfg_b, listener=listener_b)
+            wait_for_sidecar(
+                pid_a, port_a, cfg_a.name, timeout=10.0, log_path=_log_path(cfg_a)
+            )
+            wait_for_sidecar(
+                pid_b, port_b, cfg_b.name, timeout=10.0, log_path=_log_path(cfg_b)
+            )
+            # Startup must succeed while the parent still reserves both listeners.
+            # Then drop only the parent's references; the native children keep them.
+            listener_a.close()
+            listener_b.close()
+            yield {
+                "cfg_a": cfg_a,
+                "cfg_b": cfg_b,
+                "pid_a": pid_a,
+                "pid_b": pid_b,
+                "port_b": port_b,
+            }
+        finally:
+            _kill(pid_a)
+            _kill(pid_b)
+            _pid_path(cfg_a).unlink(missing_ok=True)
+            _pid_path(cfg_b).unlink(missing_ok=True)
