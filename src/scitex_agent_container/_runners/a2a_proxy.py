@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import nullcontext
 import os
 import signal
 import sys
@@ -403,6 +404,10 @@ async def run(
             # empty bodies because httpx's stream reader is
             # interrupted by the dangling handler.
             server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+            # Current Uvicorn enters capture_signals() instead of the legacy
+            # install hook. SAC owns the stop event; an embedded HTTP server
+            # must not consume/delay its SIGTERM while draining connections.
+            server.capture_signals = nullcontext  # type: ignore[method-assign]
             serve_task = asyncio.create_task(server.serve())
 
     try:
