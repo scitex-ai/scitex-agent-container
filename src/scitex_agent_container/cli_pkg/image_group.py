@@ -182,6 +182,20 @@ image_group.add_command(_image_distribute_cmd.image_distribute)
 # ---------------------------------------------------------------------------
 # build
 # ---------------------------------------------------------------------------
+def _report_retired_builds(out_dir, layer: str) -> None:
+    """Archive superseded timestamped SIFs after a successful build.
+
+    Daily bakes otherwise accumulate ~7 GB each with no owner (measured
+    2026-10-23: 18 GB across 4 superseded SIFs filled the build host).
+    Keeps the newest two per layer; older ones move to ``archive/`` (same
+    filesystem, never deleted). The stable boot symlink is untouched.
+    """
+    from ._image_retention import retire_superseded_builds
+
+    for archived in retire_superseded_builds(out_dir / f"sac-{layer}", layer):
+        render_rich(f"[dim]archived superseded[/dim] {archived}", __name__)
+
+
 @image_group.command("build")
 @click.argument("layer", type=click.Choice(list(_LAYERS)), default=_DEFAULT_LAYER)
 @click.option(
@@ -366,6 +380,7 @@ def image_build(
             bootstrap_sif=bootstrap_sif,
             verify=not skip_verify,
         )
+        _report_retired_builds(out_dir, layer)
         return
 
     try:
@@ -382,6 +397,7 @@ def image_build(
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
     render_rich(f"[green]built[/green] {output}", __name__)
+    _report_retired_builds(out_dir, layer)
 
 
 # ---------------------------------------------------------------------------
