@@ -196,30 +196,39 @@ def shared_workdir_pair(tmp_path: Path):
     root.mkdir()
     wd = root / "SHARED-WORKDIR"
     wd.mkdir()
-    port_a, port_b = _free_port_pair()
-    spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
-    spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
-    cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")
-    cfg_b = _config(wd, config_path=str(spec_b), name="pair-bravo")
-
-    pid_a = start_sidecar(cfg_a)
-    pid_b = start_sidecar(cfg_b)
-    try:
-        wait_for_sidecar(
-            pid_a, port_a, cfg_a.name, timeout=10.0, log_path=_log_path(cfg_a)
-        )
-        wait_for_sidecar(
-            pid_b, port_b, cfg_b.name, timeout=10.0, log_path=_log_path(cfg_b)
-        )
-        yield {
-            "cfg_a": cfg_a,
-            "cfg_b": cfg_b,
-            "pid_a": pid_a,
-            "pid_b": pid_b,
-            "port_b": port_b,
-        }
-    finally:
-        _kill(pid_a)
-        _kill(pid_b)
-        _pid_path(cfg_a).unlink(missing_ok=True)
-        _pid_path(cfg_b).unlink(missing_ok=True)
+    with socket.socket() as listener_a, socket.socket() as listener_b:
+        listener_a.bind(("127.0.0.1", 0))
+        listener_b.bind(("127.0.0.1", 0))
+        listener_a.listen()
+        listener_b.listen()
+        port_a, port_b = listener_a.getsockname()[1], listener_b.getsockname()[1]
+        spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
+        spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
+        cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")
+        cfg_b = _config(wd, config_path=str(spec_b), name="pair-bravo")
+        pid_a = pid_b = None
+        try:
+            pid_a = start_sidecar(cfg_a, listener=listener_a)
+            pid_b = start_sidecar(cfg_b, listener=listener_b)
+            wait_for_sidecar(
+                pid_a, port_a, cfg_a.name, timeout=10.0, log_path=_log_path(cfg_a)
+            )
+            wait_for_sidecar(
+                pid_b, port_b, cfg_b.name, timeout=10.0, log_path=_log_path(cfg_b)
+            )
+            # Startup must succeed while the parent still reserves both listeners.
+            # Then drop only the parent's references; the native children keep them.
+            listener_a.close()
+            listener_b.close()
+            yield {
+                "cfg_a": cfg_a,
+                "cfg_b": cfg_b,
+                "pid_a": pid_a,
+                "pid_b": pid_b,
+                "port_b": port_b,
+            }
+        finally:
+            _kill(pid_a)
+            _kill(pid_b)
+            _pid_path(cfg_a).unlink(missing_ok=True)
+            _pid_path(cfg_b).unlink(missing_ok=True)

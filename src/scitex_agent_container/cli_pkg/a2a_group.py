@@ -78,6 +78,12 @@ def a2a() -> None:
     help="TCP port for the A2A HTTP server.",
 )
 @click.option(
+    "--fd",
+    type=click.IntRange(min=3),
+    default=None,
+    help="POSIX listener descriptor already bound to --host and --port; do not rebind.",
+)
+@click.option(
     "--handler",
     type=click.Choice(sorted(HANDLERS), case_sensitive=False),
     default="echo",
@@ -100,6 +106,7 @@ def a2a_serve(
     port: int,
     handler: str,
     verbose: bool,
+    fd: int | None = None,
 ) -> None:
     """Serve A2A endpoints for the given agent YAMLs (foreground).
 
@@ -110,7 +117,11 @@ def a2a_serve(
     """
     if verbose:
         slogging.set_level("info")
-    serve(list(agent_yamls), host=host, port=port, handler=handler)
+    options = {} if fd is None else {"fd": fd}
+    try:
+        serve(list(agent_yamls), host=host, port=port, handler=handler, **options)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @a2a.command("doctor")
