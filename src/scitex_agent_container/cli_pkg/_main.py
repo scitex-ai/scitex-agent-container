@@ -171,11 +171,6 @@ class _MainGroup(LazyGroup):
         # spec.yaml. Honest UNKNOWN for underivable facts; never prints
         # secret values.
         "whoami": f"{_PKG}._whoami:whoami",
-        # Configured Stop-event relay: provider decision + bounded loop guard.
-        # Continuation is a request, not proof that work started. Preserve
-        # the old protocol entry point for deployed harness settings; an
-        # ordinary CLI rename error can itself block a Stop event.
-        "never-stop-when-task-remains": f"{_PKG}.never_stop_when_task_remains_cmds:never_stop_when_task_remains",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
@@ -282,6 +277,11 @@ class _MainGroup(LazyGroup):
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
+    }
+
+    # Deployed Stop hooks retain protocol-compatible warn-phase forwarding.
+    LAZY_WARN_ALIASES = {
+        "never-stop-when-task-remains": (("dev", "hooks", "decide-stop"), "0.40.0"),
     }
 
     # Renamed-command redirects (F-CS13 / scitex CLI convention §5):

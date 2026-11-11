@@ -105,6 +105,10 @@ class LazyGroup(HelpRecursiveGroup):
     # renamed_redirect wrapper that prints "renamed to X" and exits.
     LAZY_RENAMED: dict[str, tuple[str, str]] = {}
 
+    # Hidden warn-phase aliases: (canonical argv path, removal version).
+    # Resolve against this actual group so nested command policy still runs.
+    LAZY_WARN_ALIASES: dict[str, tuple[tuple[str, ...], str]] = {}
+
     # Optional: short_help cache for ``--help`` rendering. Click's
     # default ``format_commands`` calls ``get_short_help_str()`` on
     # every command — that would force a full import per row, defeating
@@ -121,13 +125,19 @@ class LazyGroup(HelpRecursiveGroup):
     def _resolve_lazy(self, name: str) -> click.Command | None:
         """Materialise a lazy entry to a real Command, or return None.
 
-        Looks up the name in ``LAZY_COMMANDS`` first, then ``LAZY_RENAMED``.
+        Resolve a command, a retained warn-phase alias, or an exit-2 redirect.
         Used by ``get_command`` and by ``_LazyCommandsDict`` so external
         introspection of ``group.commands`` sees lazy entries.
         """
         spec = self.LAZY_COMMANDS.get(name)
         if spec is not None:
             return self._import(spec)
+        alias = self.LAZY_WARN_ALIASES.get(name)
+        if alias is not None:
+            from scitex_dev.ecosystem import deprecated_alias
+
+            target, remove_in = alias
+            return deprecated_alias(self, name, target=target, remove_in=remove_in)
         renamed = self.LAZY_RENAMED.get(name)
         if renamed is not None:
             spec, new_path = renamed
@@ -143,7 +153,7 @@ class LazyGroup(HelpRecursiveGroup):
         # commands are merged and deduplicated.
         eager = set(super().list_commands(ctx))
         lazy = set(self.LAZY_COMMANDS)
-        return sorted((eager | lazy) - self.LAZY_HIDDEN)
+        return sorted((eager | lazy) - self.LAZY_HIDDEN - set(self.LAZY_WARN_ALIASES))
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         # The ``_LazyCommandsDict`` installed in ``__init__`` already

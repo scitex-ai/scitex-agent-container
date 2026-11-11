@@ -49,9 +49,10 @@ stdout JSON remain unchanged. A block requests continuation; it does not prove
 that a task was claimed or executed. The command invokes the configured provider
 and may update hook state; it is not a passive inspection command.
 
-The old entry point remains registered and visible during rollout. It does not
-use an ordinary exit-2 rename redirect, which could itself block a deployed Stop
-hook. Its CLI naming finding remains reported rather than waived.
+The old entry point is a hidden compatibility alias until 0.40.0. It forwards
+through the real `dev hooks decide-stop` path, preserving stdin, options and
+protocol stdout. Its deprecation warning goes to stderr. It does not use an
+exit-2 rename redirect, which could itself block a deployed Stop hook.
 
 Settings composition prunes both historical Stop names and the new spelling
 before reinjection, preserving unrelated hooks. Existing `exclude_hooks`

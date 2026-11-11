@@ -91,9 +91,9 @@ dependencies = [
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
-    # (0.62.4.dev0 was never published; nothing in this tree imports past
-    # the released auditor API, so the floor stays at the release.)
-    "scitex-dev>=0.61.0",
+    # 0.62.24 adds native nested-path deprecated_alias forwarding, required
+    # by the retained Stop entry's real `dev hooks decide-stop` route.
+    "scitex-dev>=0.62.24",
     # SAC directly opens PostgreSQL channel connections and classifies lost
     # connections with psycopg exceptions. Match scitex_dev.store's driver
     # floor and binary extra so a bare install does not require system libpq.

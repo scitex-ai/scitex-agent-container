@@ -37,6 +37,7 @@ def owned_hook_env(tmp_path):
     )
     return {
         "HOME": str(tmp_path / "home"),
+        "XDG_RUNTIME_DIR": str(tmp_path),
         "SCITEX_DIR": str(tmp_path / "state"),
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR": str(tmp_path / "runtime"),
         "SAC_MAY_STOP_CMD": str(provider),
@@ -112,3 +113,65 @@ def test_new_entry_uses_the_same_callback_and_options():
 
     # Assert
     assert binding == (True, True)
+
+
+def test_legacy_stop_route_warns_without_polluting_protocol_stdout(
+    owned_hook_env, tmp_path
+):
+    # Arrange
+    env = {**owned_hook_env, "XDG_RUNTIME_DIR": str(tmp_path)}
+    # Act
+    result = CliRunner(env=env).invoke(
+        main, ["never-stop-when-task-remains", "--agent", "owned-stop"], input="{}"
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        json.loads(result.stdout),
+        "deprecated" in result.stderr,
+        "dev hooks decide-stop" in result.stderr,
+        "v0.40.0" in result.stderr,
+    ) == (
+        0,
+        {"decision": "block", "reason": "Continue the owned fixture", "future": [1]},
+        True,
+        True,
+        True,
+    )
+
+
+def test_legacy_stop_route_is_hidden_from_root_help():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(main, ["--help"])
+    # Assert
+    assert (result.exit_code, "never-stop-when-task-remains" in result.stdout) == (
+        0,
+        False,
+    )
+
+
+def test_legacy_stop_help_forwards_canonical_options(tmp_path):
+    # Arrange
+    runner = CliRunner(env={"XDG_RUNTIME_DIR": str(tmp_path)})
+    # Act
+    result = runner.invoke(main, ["never-stop-when-task-remains", "--help"])
+    # Assert
+    assert (
+        result.exit_code,
+        "--agent" in result.stdout,
+        "dev hooks decide-stop" in result.stderr,
+    ) == (0, True, True)
+
+
+@pytest.mark.parametrize(
+    "route", [["dev", "hooks", "decide-stop"], ["never-stop-when-task-remains"]]
+)
+def test_stop_routes_reject_unknown_options(route, tmp_path):
+    # Arrange
+    runner = CliRunner(env={"XDG_RUNTIME_DIR": str(tmp_path)})
+    # Act
+    result = runner.invoke(main, [*route, "--not-a-real-option"], input="{}")
+    # Assert
+    assert (result.exit_code, "No such option" in result.stderr) == (2, True)
