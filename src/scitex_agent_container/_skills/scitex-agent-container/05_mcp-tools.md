@@ -64,7 +64,7 @@ The provider may read client configuration and emit logs; this is not a
 whole-process no-I/O guarantee. It does not establish tool execution readiness.
 
 `mcp channel` is a separate A2A channel adapter, not this server's entry point.
-`mcp healthcheck` includes alarms and possible self-restart requests; it is not
+`mcp recover-connections` includes alarms and possible self-restart requests; it is not
 a read-only replacement for discovery. Connectivity parsing requires an
 identified server row and a recognized status after ` - `. Command arguments,
 other server names, and ambiguous status text do not establish connectivity.
@@ -114,8 +114,11 @@ Startup-key alias controls:
 
 Read-only connection controls: `cli_pkg/_mcp_connections.py` and
 `tests/scitex_agent_container/cli_pkg/test__mcp_connections.py`. The legacy
-`healthcheck` boot hook retains its recovery behavior and fail-open exit status.
+hidden `healthcheck` alias forwards with a warning until 0.40. Both retain
+recovery behavior and fail-open exit status; `--help` forwards to the action.
 
 Targeted discovery controls: `cli_pkg/_mcp_tool_description.py` and
 `tests/scitex_agent_container/cli_pkg/test__mcp_tool_description.py`, including
 comparison with actual MCP `tools/list` schemas.
+
+Boot-action alias controls: `tests/scitex_agent_container/cli_pkg/test_mcp_group_recovery.py`.

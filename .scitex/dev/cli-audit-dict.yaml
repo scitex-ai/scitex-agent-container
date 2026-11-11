@@ -1,5 +1,7 @@
 # SAC-owned CLI nouns; command behavior and required flags stay in the auditor.
 nouns:
+  # Agent-to-agent protocol namespace, matching the public a2a Python package.
+  - a2a
   # Scheduled-job groups mirror the declared JobSpec.kind.
   - cron
   # Operator-facing dispatch of real pytest runs, including Spartan jobs.

@@ -1,13 +1,16 @@
 """CLI protocol for the packaged, harness-neutral worktree policy checker.
 
-stdout contains one JSON decision; human diagnostics use stderr.
+stdout defaults to one JSON decision; inspect can select a text view.
+Errors remain JSON and human diagnostics use stderr.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from .._logging import render_content
 from ._context import decide_context, inspect_repo, resolve_edit_repo
 from ._policy import (
     HARNESS_NAMES,
@@ -51,6 +54,15 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
         description="Inspect Git context and policy identity without changing the repository.",
     )
     inspect.add_argument("--repo", type=Path, required=True)
+    output = inspect.add_mutually_exclusive_group()
+    output.add_argument(
+        "--json", action="store_true", help="Select the default JSON decision output."
+    )
+    output.add_argument(
+        "--text",
+        action="store_true",
+        help="Show inspection fields as text; errors stay JSON.",
+    )
     context = sub.add_parser(
         "assert-context",
         description="Check whether Git context permits the selected intent.",
@@ -92,6 +104,18 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     return parser
 
 
+def _emit_inspection(payload: dict, *, as_json: bool) -> int:
+    if as_json:
+        return emit(payload, 0)
+    render_content(
+        "\n".join(
+            f"{key}: {json.dumps(value, sort_keys=True, ensure_ascii=False)}"
+            for key, value in sorted(payload.items())
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
     args = build_parser(prog=prog).parse_args(argv)
     try:
@@ -126,13 +150,13 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
             args.output_dir = projection_dir
         policy, source_hash = load_policy(args.policy.resolve())
         if args.operation == "inspect":
-            return emit(
+            return _emit_inspection(
                 {
                     "allowed": True,
                     "decision": "allow",
                     **inspect_repo(args.repo, policy, source_hash, projection_dir),
                 },
-                0,
+                as_json=args.json or not args.text,
             )
         if args.operation == "assert-context":
             info = inspect_repo(args.repo, policy, source_hash, projection_dir)

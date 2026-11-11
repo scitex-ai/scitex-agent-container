@@ -10,7 +10,7 @@ from __future__ import annotations
 import json as json_mod
 
 import click
-from scitex_dev.ecosystem import SpecCommand
+from scitex_dev.ecosystem import SpecCommand, deprecated_alias
 
 from ._helpers import _json_flag
 from ._mcp_help import CONNECTION_HELP, TOOL_DESCRIPTION_HELP
@@ -212,7 +212,7 @@ def mcp_channel(
     )
 
 
-@mcp.command("healthcheck")
+@mcp.command("recover-connections")
 @click.option(
     "--json",
     "as_json",
@@ -237,8 +237,8 @@ def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
 
     \b
     Example (SessionStart hook):
-      $ sac mcp healthcheck
-      $ sac --json mcp healthcheck
+      $ sac mcp recover-connections
+      $ sac --json mcp recover-connections
     """
     # Lazy import: keep this out of the cold-start path and out of the CLI's
     # module-import budget. ``_healthcheck`` pulls no heavy deps (no fastmcp).
@@ -272,6 +272,9 @@ def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
             click.secho(f"MCP healthcheck: action={action}", fg="yellow")
     # Fail-open: NEVER non-zero. A boot hook must not block the session.
     raise SystemExit(0)
+
+
+deprecated_alias(mcp, "healthcheck", target=("recover-connections",), remove_in="0.40")
 
 
 @mcp.command("validate-connections", cls=SpecCommand, help_spec=CONNECTION_HELP)
