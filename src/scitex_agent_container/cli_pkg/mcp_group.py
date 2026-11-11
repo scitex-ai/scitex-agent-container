@@ -349,17 +349,16 @@ def mcp_list_tools(ctx: click.Context, as_json: bool) -> None:
         get_server = _load_get_server()
         server = get_server()
         tools = _list_tools(server)
-    except ImportError:
-        if _json_flag(ctx, as_json):
-            click.echo(
-                json_mod.dumps(
-                    {"count": 0, "tools": [], "error": "fastmcp not installed"}
-                )
-            )
-            return
-        click.echo(
-            "fastmcp not installed — install with `pip install scitex-agent-container[mcp]`"
+    except ImportError as exc:
+        reason = exc.__cause__ or exc
+        message = (
+            f"fastmcp backend unavailable: {reason}. "
+            "Install: pip install scitex-agent-container[mcp]"
         )
+        if _json_flag(ctx, as_json):
+            click.echo(json_mod.dumps({"count": 0, "tools": [], "error": message}))
+            return
+        click.echo(message)
         return
 
     if _json_flag(ctx, as_json):
