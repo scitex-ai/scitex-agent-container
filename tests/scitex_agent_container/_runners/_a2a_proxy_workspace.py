@@ -1,15 +1,15 @@
 """Keep timed native proxy IO local, then retain its complete coverage shards.
 
 The subprocess still runs normal Python/site dependencies and the exact parent
-coverage configuration. Only writable fixture artifacts move to node-local
-storage; publication to the original collector is outside the shutdown clock.
+coverage configuration. Child HOME and SCITEX_DIR are private to this workspace. Writable fixture
+artifacts use node-local storage; publication to the original collector is outside the shutdown clock.
 """
 
-from contextlib import contextmanager
 import os
-from pathlib import Path
 import shutil
 import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 
 from coverage import Coverage, CoverageData
 
@@ -73,6 +73,10 @@ def proxy_workspace():
     with tempfile.TemporaryDirectory(prefix="sac-proxy-fixture-", dir="/tmp") as folder:
         root = Path(folder)
         child_env, original = coverage_environment(os.environ, root)
+        home = root / "home"
+        home.mkdir()
+        child_env["HOME"] = str(home)
+        child_env["SCITEX_DIR"] = str(root / "scitex")
         try:
             yield root, child_env
         except BaseException as failure:

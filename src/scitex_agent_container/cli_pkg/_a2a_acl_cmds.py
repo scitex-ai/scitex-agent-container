@@ -1,4 +1,4 @@
-"""``sac a2a {grant,unblock,block,revoke,grants}`` — the cross-group ACL verbs.
+"""``sac a2a {grant,unblock,block,revoke,list-grants}`` — the cross-group ACL verbs.
 
 Extracted from :mod:`.a2a_group` (over the per-file cap) and registered
 onto it by :func:`register`, the same way :mod:`._host_sync` attaches to
@@ -18,6 +18,7 @@ never load a database driver. The same lazy pattern used by
 from __future__ import annotations
 
 import json
+from copy import copy
 
 import click
 
@@ -175,18 +176,31 @@ def a2a_block(sender: str, target: str, note: str | None) -> None:
 @click.command("revoke")
 @click.argument("sender")
 @click.argument("target")
-def a2a_revoke(sender: str, target: str) -> None:
-    """Revoke ``SENDER``'s permission to send messages to ``TARGET``.
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show the directed grant withdrawal without querying or changing the store.",
+)
+@click.option(
+    "--yes", "-y", is_flag=True, help="Confirm withdrawal of this explicit grant."
+)
+def a2a_revoke(sender: str, target: str, dry_run: bool, yes: bool) -> None:
+    """Withdraw the explicit ``SENDER → TARGET`` send grant.
 
-    Thin wrapper over ``_state.state_store_nodes.revoke_send`` — removes
-    the single ``sender → target`` row in ``comms_grants``. No
-    confirmation prompt: the operation is narrow (one row, one
-    direction) and idempotent — revoking a non-existent grant prints
-    ``no-op`` and exits 0.
+    With --yes, withdraw the single ``sender → target`` explicit grant
+    through ``_state.state_store_nodes.revoke_send``. The store hides the
+    record and retains its history. Reverse and unrelated grants stay intact;
+    this does not add a block or override other policies that permit sending.
+    Revoking an absent grant with --yes prints ``no-op`` and exits 0.
+
+    --dry-run validates the pair and describes this operation without querying
+    the store or checking whether the grant exists. It takes precedence over
+    --yes. Without either option, refuse before opening the store.
 
     \b
     Example:
-      $ sac a2a revoke worker-a worker-b
+      $ sac a2a revoke worker-a worker-b --dry-run
+      $ sac a2a revoke worker-a worker-b --yes
     """
     if not sender or not target:
         click.echo(
@@ -194,6 +208,16 @@ def a2a_revoke(sender: str, target: str) -> None:
             err=True,
         )
         raise SystemExit(2)
+    if dry_run:
+        click.echo(
+            f"would revoke explicit grant {sender} -> {target}; "
+            "existing grant not checked; no store changes."
+        )
+        return
+    if not yes:
+        raise click.ClickException(
+            "refusing grant withdrawal without --yes. Use --dry-run to preview."
+        )
     from .._state.state_store_nodes import revoke_send
 
     removed = revoke_send(sender=sender, target=target)
@@ -203,7 +227,7 @@ def a2a_revoke(sender: str, target: str) -> None:
         render_rich(f"[dim]no-op[/dim]  no grant  {sender}  ->  {target}", __name__)
 
 
-@click.command("grants")
+@click.command("list-grants")
 @click.option(
     "--json",
     "as_json",
@@ -220,8 +244,8 @@ def a2a_grants(as_json: bool) -> None:
 
     \b
     Example:
-      $ sac a2a grants
-      $ sac a2a grants --json | jq '.[] | select(.sender == "worker-a")'
+      $ sac a2a list-grants
+      $ sac a2a list-grants --json | jq '.[] | select(.sender == "worker-a")'
     """
     from .._state.state_store_nodes import list_comms_grants
 
@@ -251,6 +275,11 @@ def a2a_grants(as_json: bool) -> None:
 
 
 def register(a2a_group) -> None:
-    """Attach the five ACL verbs to the parent ``a2a`` Click group."""
+    """Attach ACL verbs and the hidden legacy grant-list alias."""
     for command in (a2a_grant, a2a_unblock, a2a_block, a2a_revoke, a2a_grants):
         a2a_group.add_command(command)
+    legacy = copy(a2a_grants)
+    legacy.name = "grants"
+    legacy.hidden = True
+    legacy.deprecated = "Use sac a2a list-grants."
+    a2a_group.add_command(legacy)

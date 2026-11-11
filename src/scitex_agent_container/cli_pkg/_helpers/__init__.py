@@ -5,7 +5,7 @@ surface. Every consumer's ``from ._helpers import X`` (or
 ``from scitex_agent_container.cli_pkg._helpers import X``) keeps working
 unchanged.
 
-Submodule imports are lazy (PEP 562 ``__getattr__``). The CLI cold-start
+Heavy helper imports are lazy (PEP 562 ``__getattr__``). The CLI cold-start
 path imports this package as a side-effect of ``from ._helpers._groups
 import HelpRecursiveGroup`` in ``_lazy_group.py``; pulling ``_agent_list``
 eagerly here transitively loaded ``Registry`` + ``config.load_config`` +
@@ -16,6 +16,11 @@ blowing the 500 ms startup budget. Keep this shim lean.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+# Bind this tiny callable eagerly. Importing its same-named submodule first
+# otherwise installs a module at ``_helpers._json_flag`` and bypasses
+# __getattr__, breaking consumers that import the historical package export.
+from ._json_flag import _json_flag as _json_flag
 
 if TYPE_CHECKING:
     from ._agent_list import (  # noqa: F401
@@ -35,7 +40,6 @@ if TYPE_CHECKING:
         HelpRecursiveGroup,
         renamed_redirect,
     )
-    from ._json_flag import _json_flag  # noqa: F401
 
 __all__ = [
     "CategorizedGroup",
@@ -69,7 +73,6 @@ _LAZY_ATTR_SOURCES = {
     "CategorizedGroup": "._groups",
     "HelpRecursiveGroup": "._groups",
     "renamed_redirect": "._groups",
-    "_json_flag": "._json_flag",
 }
 
 

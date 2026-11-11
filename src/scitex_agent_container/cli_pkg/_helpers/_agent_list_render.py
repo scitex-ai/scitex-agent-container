@@ -164,7 +164,7 @@ def _print_auth_footer(data: list[dict]) -> None:
         if r.get("auth_checked_at") and r.get("auth_check_age_s") is not None
     ]
     failed = [r for r in live if r.get("auth_failed")]
-    hint = "run `sac agents auth-status` (or put it on a timer)"
+    hint = "run `sac agents show-auth-status` (or put it on a timer)"
     if not ages:
         render_rich(
             Text(

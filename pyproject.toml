@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.38.6"
+version = "0.38.7"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -91,9 +91,9 @@ dependencies = [
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
-    # (0.62.4.dev0 was never published; nothing in this tree imports past
-    # the released auditor API, so the floor stays at the release.)
-    "scitex-dev>=0.61.0",
+    # 0.62.24 adds native nested-path deprecated_alias forwarding, required
+    # by the retained Stop entry's real `dev hooks decide-stop` route.
+    "scitex-dev>=0.62.24",
     # SAC directly opens PostgreSQL channel connections and classifies lost
     # connections with psycopg exceptions. Match scitex_dev.store's driver
     # floor and binary extra so a bare install does not require system libpq.
@@ -816,7 +816,11 @@ path = "scripts/hatch_build.py"
 # path, which is the one release CI actually takes.
 exclude = [".git"]
 
+[tool.hatch.build.targets.sdist.force-include]
+".scitex/dev/cli-audit-dict.yaml" = ".scitex/dev/cli-audit-dict.yaml"
+
 [tool.hatch.build.targets.wheel.force-include]
+".scitex/dev/cli-audit-dict.yaml" = "scitex_agent_container/_cli_audit_dict.yaml"
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
 # In-process worktree policy assets. They must be reachable from an INSTALLED
 # sac on hosts where the repo is not on disk: the engine resolves them via

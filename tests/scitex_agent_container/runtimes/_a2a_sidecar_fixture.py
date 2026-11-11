@@ -32,6 +32,20 @@ def _free_port() -> int:
     return port
 
 
+def _free_port_pair() -> tuple[int, int]:
+    """Select distinct ports while both owned sockets are bound.
+
+    Release before native sidecar startup; PID/listener/HTTP identity checks
+    still decide readiness. This prevents duplicate allocation within the pair,
+    not a foreign bind between release and native startup.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as first:
+        first.bind(("127.0.0.1", 0))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as second:
+            second.bind(("127.0.0.1", 0))
+            return first.getsockname()[1], second.getsockname()[1]
+
+
 def _wait_pid_dead(pid: int, timeout: float = 5.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -160,7 +174,7 @@ def shared_workdir_pair(tmp_path: Path):
     root.mkdir()
     wd = root / "SHARED-WORKDIR"
     wd.mkdir()
-    port_a, port_b = _free_port(), _free_port()
+    port_a, port_b = _free_port_pair()
     spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
     spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
     cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")

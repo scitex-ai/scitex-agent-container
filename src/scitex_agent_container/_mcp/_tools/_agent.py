@@ -125,48 +125,24 @@ def agent_recall(name: str) -> dict[str, Any]:
 def agent_start(
     name: str, foreground: bool = False, session: str | None = None
 ) -> dict[str, Any]:
-    """Start an agent by name. Mirrors ``sac agents start <name>``.
+    """Start an agent through the local CLI or declared host authority.
 
-    JSON-friendly wrapper around the CLI. For programmatic callers
-    that need to share a Registry instance, use
-    :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
-    directly.
+    Passes ``--yes`` to carry the explicit start request through the CLI.
+    The local preview/confirmation gate applies to interactive TTY calls;
+    noninteractive callers are exempt from that preview. Spec, credential,
+    host-policy and lifecycle admission checks still apply.
 
-    Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
-    start against a non-running agent (exit 2, "refusing to start ...
-    without --yes/-y"), but an MCP tool call has no TTY to prompt on,
-    so the call itself IS the confirmation. Without this the tool
-    always failed the same way ``agent_restart`` did before it was
-    patched (no-surprise: the documented MCP surface must actually
-    work, not dead-end on an interactive guard that can never be
-    satisfied over MCP).
+    Container markers or a configured host-authority URL select the host
+    route; otherwise this tool invokes the local CLI. Use ``agent_spawn``
+    for an inline spec. A start response alone does not qualify readiness.
 
     Args:
         name: The agent to start.
-        foreground: Attach to the caller's terminal (claude-session only).
-        session: Optional session-continuity override for THIS start,
-            mirroring the CLI ``--session`` / ``--continue`` / ``--fresh``.
-            One of ``"fresh"`` (independent session — the default for
-            experiment trials), ``"continue"`` (resume the latest session —
-            for long-lived coordinators), or ``"resume"``. ``None`` leaves
-            the spec's resolved ``claude.session`` (which role-defaults to
-            ``continue`` for coordinators, ``fresh`` otherwise) untouched.
-            ``"new-session"`` is accepted as a back-compat alias for
-            ``"fresh"``.
+        foreground: Attach to the caller's terminal where supported.
+        session: Optional ``fresh``, ``continue`` or ``resume`` override.
+            ``new-session`` remains an alias for ``fresh``; ``None`` leaves
+            the spec's resolved session mode unchanged.
 
-    .. note::
-       In-SIF dispatch: as of the SAC-from-SAC broker (operator-
-       mandated 2026-06-01), an ``agent_start`` call from inside an
-       apptainer SIF (``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER``
-       set) auto-redirects to the host-side ``sac listen`` control
-       plane via :mod:`_lifecycle._in_sif_broker`. The host re-runs
-       ``check_spawn``, records the parent→child lineage edge, and
-       shells the real ``sac agent start`` against the bare host's
-       apptainer. On the bare host the local lifecycle is unchanged.
-       Use :func:`agent_spawn` when you need to pass an *inline*
-       spec dict (the host materialises it) or to be explicit about
-       broker semantics in a hybrid script that might also run on
-       the bare host.
     """
     argv = ["agents", "start", name, "--yes"]
     if foreground:
@@ -303,41 +279,32 @@ def agent_send(
     model: str | None = None,
     max_turns: int | None = None,
     wait: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Dispatch one prompt (or control key) to ``name``'s live session.
+    """Send a prompt or control key; preserve the helper's structured result.
 
-    Container prompts submit once through the authenticated host send route.
-    A validated HTTP202 exchange returns ``status="pending"`` even when
-    ``wait=True``; poll its authored exchange to establish completion. There
-    is no local credential or transport fallback after a host refusal.
+    ``dry_run=True`` previews arguments before endpoint/auth/lifecycle work,
+    hiding prompt/control-key contents. It does not send or qualify readiness.
 
-    On a bare host without a declared host listener, ``wait=False`` validates
-    reachability and returns ``status="dispatched"`` with a backgroundable
-    ``track_command``. ``wait=True`` waits for that runner's reply.
+    Supply exactly one of ``prompt`` or ``key``. Prompts in a container or
+    with a declared host listener submit once through that authenticated
+    host. A validated HTTP 202 returns ``status="pending"`` even with
+    ``wait=True``: poll its exchange; do not resend. Admission and completion
+    remain unproven, and a host refusal has no local fallback.
 
-    Library-grade dispatch to the agent's A2A sidecar. Unlike the
-    other ``agent_*`` tools this does NOT go through the CLI runner
-    surface — it calls
-    :func:`scitex_agent_container.cli_pkg._send.send_to_agent` directly
-    so the structured payload survives MCP transport intact (the CLI
-    prints the reply as free text, which would lose the metadata).
+    Without that host authority, prompt ``wait=False`` returns a delivery
+    plan with ``status="dispatched"`` and ``track_command``; the prompt has
+    NOT been delivered. Remote reachability may remain unverified. A local
+    TCP probe is not delivery or completion evidence. ``wait=True`` attempts
+    delivery and waits for a reply; accepted unfinished exchanges can still
+    return ``pending``. Eligible stopped local agents may be auto-started
+    under the existing lifecycle policy.
 
-    Returns the helper's dict verbatim. ``status`` is one of:
-
-      * ``"pending"`` — host queued the canonical exchange; admission and
-        completion remain unproven
-      * ``"dispatched"`` — (bare host, ``wait=False``) reachability
-        validated; ``track_command`` carries the backgroundable
-        ``sac agents send ...`` CLI to deliver + await the reply
-      * ``"ok"`` — (``wait=True``) reply received; ``response_text``
-        populated
-      * ``"error"`` — agent not running / no a2a_port / sidecar
-        unreachable / HTTP failure
-      * ``"creds-expired"`` — selected local Claude credential expired
-      * ``"timeout"`` — (``wait=True``) no response in ``timeout_seconds``
-
-    ``prompt`` and ``key`` are mutually exclusive; passing both raises
-    ``ValueError`` (surfaced to the MCP host as a tool-input error).
+    Control keys use the resolved endpoint directly, independently of
+    ``wait``. An ``ok`` control result is not a prompt reply. Other results
+    include ``error``, ``creds-expired`` and ``timeout``. Inspect the receipt,
+    ``status_code`` and diagnosis when present; a status label alone does
+    not establish successful task execution.
     """
     from ...cli_pkg._send import send_to_agent
 
@@ -349,6 +316,7 @@ def agent_send(
         model=model,
         max_turns=max_turns,
         wait=wait,
+        dry_run=dry_run,
     )
 
 
@@ -357,30 +325,26 @@ def agent_create(
     template: str = "python_developer",
     project: str | None = None,
     start: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Create a proven-shape agent spec from a template. Mirrors
-    ``sac agents create <name> --template python_developer|researcher|generalist
-    --project <p>``.
+    """Scaffold an agent spec through ``sac agents create``.
 
-    ``create`` was folded into ``new``'s dir-template system (card
-    refactor/consolidate-create-into-new-templates), and ``new`` was in
-    turn renamed to ``create`` (CRUD naming, reusing the vacated verb).
-    There is no ``developer``/``scientist`` template — those were the
-    planned-then-dropped names; the fleet's PROVEN dir-templates already
-    cover the same ground: use ``python_developer`` for a developer-role
-    agent and ``researcher`` for a research-role agent (``generalist`` for
-    anything else). The underscore-agent skeleton is copied wholesale and
-    its ``SAC_PLACEHOLDER_PROJECT`` / ``SAC_PLACEHOLDER_AGENT_ID`` tokens
-    filled from ``project`` (defaults to ``name``) and ``name``
-    respectively. The old auto-detected editable-install toggle is gone —
-    the install step is now unconditional in the template (delete it by
-    hand if the target repo ships no Python package). For Telegram, add
-    ``server:claude-code-telegrammer`` to the spec by hand after creation;
-    the BOT TOKEN itself is then auto-resolved at start from the fleet
-    pool (``CCT_BOT_TOKEN_<SLOT>`` via ``SAC_SECRETS_ENVRC`` — see
-    ``runtimes/_cct_token_pool.py``), so no per-project ``.envrc`` is
-    required anymore. ``start=True`` launches the agent afterwards. The
-    developer group is authorized to CRUD agents."""
+    Built-in presets are ``minimal`` and ``full``. Other names, including
+    this tool's default ``python_developer``, require a local
+    ``_template_<kind>/`` directory under the selected agents root. Use
+    ``sac agents create --help`` to discover that host's available choices.
+
+    The project token defaults to ``name``; the agent-ID token is ``name``.
+    CLI template validation, overwrite refusal and managed-home checks apply.
+    Scaffolding does not qualify credentials, images, engines or a live host.
+    ``start=True`` requests a subsequent CLI start only after creation exits
+    successfully; that request still has separate lifecycle admission checks.
+    A written spec does not establish that an agent has started or is ready.
+    ``dry_run=True`` previews arguments without writing a scaffold or starting
+    an agent, even when ``start=True``. It does not check template availability.
+    An explicit Python/MCP creation request supplies the CLI's write approval;
+    it does not authorize replacing an existing spec.
+    """
     argv = [
         "agents",
         "create",
@@ -392,12 +356,17 @@ def agent_create(
         "--agent-id",
         name,
     ]
+    if dry_run:
+        argv.append("--dry-run")
+    else:
+        argv.append("--yes")
     result = invoke_cli_text(argv)
-    if start and result.get("exit_code") == 0:
+    if start and not dry_run and result.get("exit_code") == 0:
         start_result = invoke_cli_text(["agents", "start", name])
         result = {
             "exit_code": start_result.get("exit_code"),
             "stdout": result.get("stdout", "") + start_result.get("stdout", ""),
+            "stderr": result.get("stderr", "") + start_result.get("stderr", ""),
         }
     return result
 

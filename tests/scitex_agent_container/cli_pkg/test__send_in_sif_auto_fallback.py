@@ -92,7 +92,7 @@ def test_in_sif_send_exits_0_on_success(fake_host_listen):
     fake_host_listen.enqueue(200, b'{"name":"alice","sent":true}')
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alice", "hello world"])
+    result = runner.invoke(send, ["--yes", "alice", "hello world"])
     # Assert
     assert result.exit_code == 0
 
@@ -102,7 +102,7 @@ def test_in_sif_send_posts_to_send_endpoint(fake_host_listen):
     fake_host_listen.enqueue(200, b'{"name":"alice","sent":true}')
     runner = CliRunner()
     # Act
-    runner.invoke(send, ["alice", "hello world"])
+    runner.invoke(send, ["--yes", "alice", "hello world"])
     captured = fake_host_listen.captured
     # Assert
     assert (
@@ -115,7 +115,7 @@ def test_in_sif_send_includes_prompt_in_request_body(fake_host_listen):
     fake_host_listen.enqueue(200, b'{"ok":true}')
     runner = CliRunner()
     # Act
-    runner.invoke(send, ["alice", "do the thing"])
+    runner.invoke(send, ["--yes", "alice", "do the thing"])
     body = json.loads(fake_host_listen.captured[0]["body"])
     # Assert
     assert body["prompt"] == "do the thing"
@@ -126,7 +126,7 @@ def test_in_sif_send_outcome_json_carries_ok_true(fake_host_listen):
     fake_host_listen.enqueue(200, b'{"name":"alice","sent":true}')
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alice", "hi"])
+    result = runner.invoke(send, ["--yes", "alice", "hi"])
     parsed = json.loads(result.stdout)
     # Assert
     assert parsed["ok"] is True
@@ -145,7 +145,7 @@ def test_in_sif_send_returns_validated_202_without_polling(fake_host_listen):
     }
     fake_host_listen.enqueue(202, json.dumps(receipt).encode())
     # Act
-    result = CliRunner().invoke(send, ["alice", "hello"])
+    result = CliRunner().invoke(send, ["--yes", "alice", "hello"])
     # Assert
     payload = json.loads(result.stdout)
     assert (
@@ -169,7 +169,7 @@ def test_in_sif_send_exits_5_on_acl_deny(fake_host_listen):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["unrelated-target", "hi"])
+    result = runner.invoke(send, ["--yes", "unrelated-target", "hi"])
     # Assert
     assert result.exit_code == 5
 
@@ -181,7 +181,7 @@ def test_in_sif_send_emits_kind_acl_deny(fake_host_listen):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["unrelated", "hi"])
+    result = runner.invoke(send, ["--yes", "unrelated", "hi"])
     parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "acl_deny"
@@ -199,7 +199,7 @@ def test_in_sif_send_exits_1_on_transport_error(env_save_restore):
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["any-name", "hi"])
+    result = runner.invoke(send, ["--yes", "any-name", "hi"])
     # Assert
     assert result.exit_code == 1
 
@@ -215,6 +215,6 @@ def test_in_sif_send_with_key_does_not_proxy(fake_host_listen):
     # ClickException about missing pid is the visible failure.
     runner = CliRunner()
     # Act — alice has no local pid; click should fail with no pid.
-    runner.invoke(send, ["alice", "--key", "ESC"])
+    runner.invoke(send, ["--yes", "alice", "--key", "ESC"])
     # Assert — fake server received NO requests.
     assert fake_host_listen.captured == []

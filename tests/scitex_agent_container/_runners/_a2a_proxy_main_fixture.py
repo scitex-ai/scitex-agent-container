@@ -1,12 +1,13 @@
 """Native proxy startup ownership and bounded shutdown fixtures (no model calls)."""
 
 import json
-from pathlib import Path
+import os
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
@@ -63,11 +64,30 @@ def wait_for_proxy(child, state_dir, upstream, *, timeout):
 def _snapshot(child, state_dir):
     """Only owned process metadata; never environment values or ambient files."""
     result = {"pid": child.pid, "returncode": child.poll()}
+    if result["returncode"] is not None:
+        result["kernel_state"] = "exited"
+        return result
     try:
-        result["kernel_state"] = psutil.Process(child.pid).status()
+        process = psutil.Process(child.pid)
+        if process.ppid() != os.getpid() or process.uids().real != os.getuid():
+            result["ownership_probe"] = "refused: not this process's child"
+            return result
+        with process.oneshot():
+            result["kernel_state"] = process.status()
+            cpu = process.cpu_times()
+            io = process.io_counters()
+            switches = process.num_ctx_switches()
+            result["cpu_seconds"] = {"user": cpu.user, "system": cpu.system}
+            result["io_bytes"] = {"read": io.read_bytes, "write": io.write_bytes}
+            result["context_switches"] = {
+                "voluntary": switches.voluntary,
+                "involuntary": switches.involuntary,
+            }
+            result["process_age_seconds"] = time.time() - process.create_time()
         result["kernel_wait"] = Path(f"/proc/{child.pid}/wchan").read_text()
     except (psutil.Error, OSError) as exc:
         result["kernel_probe"] = type(exc).__name__
+        return result
     for label, filename in (("kernel_syscall", "syscall"), ("kernel_stack", "stack")):
         try:
             result[label] = Path(f"/proc/{child.pid}/{filename}").read_text()[:4096]

@@ -4,10 +4,9 @@ Single entry point :func:`register_all_tools`. Each leaf module
 exposes one ``register_<group>_tools(mcp)`` function that registers
 its tools on the given FastMCP server.
 
-Tool naming follows the scitex convention: ``sac_<verb>_<noun>``,
-mirroring ``sac <noun> <verb>`` on the CLI. Hyphens in CLI verbs
-become underscores (e.g. ``sac agent list-snapshots`` →
-``sac_agent_list_snapshots``).
+Standalone tools use bare noun/action names such as ``agent_list`` and
+``agent_send``, without a ``sac_`` prefix. Discover actual names and input
+schemas through MCP ``tools/list``; CLI and MCP capabilities/options differ.
 """
 
 from __future__ import annotations

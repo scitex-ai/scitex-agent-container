@@ -70,7 +70,7 @@ def _assert_credential_unexpired(
             "`claudeAiOauth.expiresAt` — refusing to launch with an "
             "unverifiable token. Fix: `claude /login` to that account on "
             "this host, then `sac accounts save <account>` (snapshot it) "
-            "or `sac accounts sync-live`, and restart this agent."
+            "or `sac accounts sync-live --yes`, and restart this agent."
         )
     if expiry <= now_ts:
         ago = int(now_ts - expiry)
@@ -80,7 +80,7 @@ def _assert_credential_unexpired(
             "in-container claude would 401 and exit before rendering, "
             "surfacing only as an empty pane. Fix: `claude /login` to "
             "that account on this host, then `sac accounts save "
-            "<account>` (or `sac accounts sync-live`), and restart this "
+            "<account>` (or `sac accounts sync-live --yes`), and restart this "
             "agent."
         )
 

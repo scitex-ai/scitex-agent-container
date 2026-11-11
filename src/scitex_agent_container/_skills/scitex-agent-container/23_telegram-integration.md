@@ -89,7 +89,7 @@ Channel requested but no slot resolves ⇒ a scitex-logging WARNING names the
 pool source, every tried slot and the fixes; the start proceeds (Telegram is a
 comms rail, not a boot dependency) but the absence is loud. What happens NEXT —
 the three-valued rail verdict, the alarm that reaches the operator over the
-LEAD's Telegram rather than the broken agent's, and `sac agents cct-audit` —
+LEAD's Telegram rather than the broken agent's, and `sac agents validate-telegram` —
 is its own leaf: **23_telegram-rail-verdict.md**.
 
 Fix: one line under `spec.apptainer.env` — `CCT_BOT_TOKEN_SLOT: <SLOT>`

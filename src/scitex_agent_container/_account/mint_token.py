@@ -145,7 +145,7 @@ def mint_access_only_artifact(
             raise MintError(
                 f"cannot mint: account '{account}' is PAUSED ({reason}) — "
                 "this is a decision, not a fault; nothing is broken and "
-                f"nothing was deleted. Run `sac accounts resume {account}` "
+                f"nothing was deleted. Run `sac accounts resume {account} --yes` "
                 "to put it back in service."
             )
         if health.state == "FORBIDDEN":
@@ -168,7 +168,7 @@ def mint_access_only_artifact(
             detail = " (no credential snapshot on disk)"
         raise MintError(
             f"cannot mint: account '{account}' credential is unhealthy"
-            f"{detail} — run `claude /login` then `sac accounts sync-live`"
+            f"{detail} — run `claude /login` then `sac accounts sync-live --yes`"
         )
 
     # --- read FRESH tokens at call time (mint-on-demand) -------------------

@@ -22,6 +22,7 @@ import scitex_agent_container as sac  # noqa: E402
     "submodule, verb",
     [
         ("agent", "list"),
+        ("agent", "create"),
         ("agent", "status"),
         ("agent", "logs"),
         ("agent", "start"),

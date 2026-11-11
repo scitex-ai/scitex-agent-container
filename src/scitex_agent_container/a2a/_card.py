@@ -24,6 +24,7 @@ from a2a.types import AgentCard
 from google.protobuf.json_format import ParseDict
 
 from ._card_identity import as_str_list, spec_identity
+from ._card_interface import agent_interface
 
 DEFAULT_INPUT_MODES = ["text/plain", "application/json"]
 DEFAULT_OUTPUT_MODES = ["text/plain", "application/json"]
@@ -51,8 +52,10 @@ def _scheduling(spec: dict[str, Any]) -> dict[str, Any]:
     return {"mode": "singleton", "priority": []}
 
 
-def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]:
-    """Project a single agent's v3 YAML into an A2A AgentCard dict."""
+def project_card(
+    name: str, v3: dict[str, Any], base_url: str, *, protocol_binding: str = "HTTP+JSON"
+) -> dict[str, Any]:
+    """Project a spec; SDK servers select JSONRPC, HTTP adapters keep the default."""
     base = base_url.rstrip("/")
     metadata = v3.get("metadata") or {}
     labels = metadata.get("labels") or {}
@@ -80,8 +83,6 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         _roles = as_str_list(_role_label)
         role = _roles[0] if _roles else "agent"
     function = labels.get("function", "")
-
-    agent_base = f"{base}/agents/{name}"
 
     # ADR-0004 — surface sac MCP push channel on the v1 AgentCard.
     # `spec.comms.channels: [server:sac]` means an in-session SAC push
@@ -159,12 +160,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         # supportedInterfaces[] is REQUIRED; protocolBinding values
         # are "JSONRPC" | "GRPC" | "HTTP+JSON" (proto-canonical).
         "supportedInterfaces": [
-            {
-                "url": agent_base,
-                "protocolBinding": "HTTP+JSON",
-                "tenant": name,
-                "protocolVersion": "1.0",
-            }
+            agent_interface(base, name, protocol_binding=protocol_binding)
         ],
         "provider": {
             "organization": labels.get("team", "scitex-agent-container"),
@@ -194,7 +190,8 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
                     if function
                     else f"{role} for {labels.get('team', 'sac')}"
                 ),
-                "tags": sorted(set(capabilities_tags + list(required_skills))),
+                "tags": sorted(set(capabilities_tags + list(required_skills)))
+                or [role],
             }
         ],
         "x-scitex-agent-container": x_block,
@@ -313,7 +310,7 @@ def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
 def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCard:
     """Project a single agent's v3 YAML into the SDK's protobuf ``AgentCard``.
 
-    SDK 1.0.x's :class:`AgentCard` is a protobuf message (not pydantic),
+    The SDK's :class:`AgentCard` is a protobuf message (not pydantic),
     and only accepts a strict subset of the dict fields we serve at
     ``/.well-known/agent-card.json``. This helper builds the proto card the
     SDK's :class:`DefaultRequestHandler` requires.
@@ -324,9 +321,9 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
     forced to ``True`` since sac executors enqueue task-update events
     to support ``message/stream``.
     """
-    card_dict = project_card(name, v3, base_url)
+    card_dict = project_card(name, v3, base_url, protocol_binding="JSONRPC")
 
-    keep_keys = {"name", "description", "version"}
+    keep_keys = {"name", "description", "version", "supportedInterfaces"}
     minimal: dict[str, Any] = {k: card_dict[k] for k in keep_keys if k in card_dict}
 
     caps_in = card_dict.get("capabilities") or {}
@@ -351,7 +348,11 @@ def project_card_proto(name: str, v3: dict[str, Any], base_url: str) -> AgentCar
 
 
 def fleet_card(
-    base_url: str, agents: list[str], description: str | None = None
+    base_url: str,
+    agents: list[str],
+    description: str | None = None,
+    *,
+    protocol_binding: str = "HTTP+JSON",
 ) -> dict[str, Any]:
     """Project a fleet-level v1.0-shaped AgentCard listing ``agents``.
 
@@ -430,12 +431,7 @@ def fleet_card(
                 {
                     "name": n,
                     "supportedInterfaces": [
-                        {
-                            "url": f"{base}/agents/{n}",
-                            "protocolBinding": "HTTP+JSON",
-                            "tenant": n,
-                            "protocolVersion": "1.0",
-                        }
+                        agent_interface(base, n, protocol_binding=protocol_binding)
                     ],
                 }
                 for n in agents

@@ -19,7 +19,8 @@ import re
 #:
 #: * ``event ingest`` — the current event-ring ingest hook.
 #: * ``ingest-hook-event`` — its renamed-away predecessor.
-#: * ``never-stop-when-task-remains`` — the current actuator.
+#: * ``dev hooks decide-stop`` — the current Stop-event relay.
+#: * ``never-stop-when-task-remains`` — its retained protocol predecessor.
 #: * ``take-next-item`` — the actuator's FIRST released spelling. Retained
 #:   purely as a migration path, and it must not be dropped until no
 #:   deployed agent's ``settings.json`` still carries it.
@@ -47,6 +48,8 @@ _SAC_OWNED_RE = re.compile(
     r"(?:scitex-agent-container|sac)\s+"
     r"(?:ingest-hook-event|event\s+ingest"
     r"|never-stop-when-task-remains|take-next-item)\b"
+    r"|(?<![^\s/])(?:scitex-agent-container|sac)\s+"
+    r"dev\s+hooks\s+decide-stop(?=\s|$)"
 )
 
 
@@ -133,8 +136,25 @@ def _strip_stale_sac_ingest_hooks(hooks: object) -> dict:
     return cleaned
 
 
+_CANONICAL_STOP_RE = re.compile(
+    r"(?<![^\s/])((?:scitex-agent-container|sac)\s+)dev\s+hooks\s+decide-stop(?=\s|$)"
+)
+
+
+def _hook_is_excluded(command: str, patterns: list[str]) -> bool:
+    """Keep historical Stop-hook substring opt-outs effective after migration."""
+    spellings = [command]
+    match = _CANONICAL_STOP_RE.search(command)
+    if match:
+        for old in ("never-stop-when-task-remains", "take-next-item"):
+            spellings.append(
+                command[: match.start()] + match.group(1) + old + command[match.end() :]
+            )
+    return any(pattern in spelling for pattern in patterns for spelling in spellings)
+
+
 def _exclude_hooks(hooks: object, patterns: list[str]) -> dict:
-    """Drop any hook whose command CONTAINS one of ``patterns`` (substring).
+    """Drop substring matches, including historical Stop-hook spellings.
 
     The operator opt-out: after seeing the full materialized hook set via
     ``sac agents explain``, a spec's ``exclude_hooks`` switches specific ones
@@ -161,7 +181,7 @@ def _exclude_hooks(hooks: object, patterns: list[str]) -> dict:
                 if not (
                     isinstance(hk, dict)
                     and isinstance(hk.get("command"), str)
-                    and any(p in hk["command"] for p in patterns)
+                    and _hook_is_excluded(hk["command"], patterns)
                 )
             ]
             if kept:

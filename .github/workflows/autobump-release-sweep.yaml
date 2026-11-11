@@ -14,7 +14,7 @@ name: autobump-release-sweep
 #             (belt: also confirm PyPI actually serves V; see GHOST below).
 #   BUMP      tag vV exists AND head has moved past it (new work landed, but
 #             pyproject is still the last-released V) -> gate develop green,
-#             bump V->V+1, land it as a PR merged with --admin, tag the merge
+#             bump V->V+1, request CI and a protected PR merge, tag the merge
 #             commit, fire the release.
 #   TAG_ONLY  tag vV does NOT exist though pyproject is already V (a prior
 #             tick's bump merged but its tag/dispatch failed) -> RE-TAG the
@@ -80,7 +80,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write        # push the bump branch + tag ref; --admin merge
+  contents: write        # push the bump branch + tag ref; protected merge
   pull-requests: write   # open + merge the bump PR
   actions: write         # gh workflow run (dispatch the release / tests)
 
@@ -422,7 +422,7 @@ jobs:
 
           # =====================================================================
           # BUMP — develop advanced past the last release. Gate green, bump, land
-          # via --admin PR merge, tag the merge commit, dispatch the release.
+          # via a protected PR merge, tag the merge commit, dispatch the release.
           # =====================================================================
           log "BUMP: develop moved past v$V (tagged at $TAGV_SHA) — evaluating a v$NEXT release."
 
@@ -465,7 +465,7 @@ jobs:
           fi
 
           if ! acting; then
-            log "REPORT-ONLY: would bump $V -> $NEXT, land it as a PR merged --admin to develop, tag v$NEXT at the merge commit, and dispatch the release."
+            log "REPORT-ONLY: would bump $V -> $NEXT, request CI and a protected PR merge to develop, then tag v$NEXT only after the merge and dispatch the release."
             exit 0
           fi
 
@@ -473,10 +473,17 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Clean any stale branch/PR from a prior failed tick (prevents a DIRTY
-          # open-PR wedge: we never leave a lingering release PR behind).
-          STALE_PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number' 2>/dev/null || echo "")
-          for p in $STALE_PR; do gh pr close "$p" --repo "$REPO" --delete-branch >/dev/null 2>&1 || true; done
+          # Preserve an open bump PR and its checks/reviews across ticks.
+          # An unreadable lookup is not evidence that no pending PR exists.
+          if ! PENDING_PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number'); then
+            alarm "could not inspect pending bump PRs for $BRANCH; preserving the branch and releasing nothing."
+            exit 1
+          fi
+          if [ -n "$PENDING_PR" ]; then
+            log "bump PR $PENDING_PR remains pending; preserving its checks/reviews. No merge, tag, dispatch or branch deletion this tick."
+            exit 0
+          fi
+          # Only an orphan branch with no open PR can be replaced.
           git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
 
           # Mutate pyproject + CHANGELOG inside the SIF, then cross-check.
@@ -512,7 +519,7 @@ jobs:
 
           PR=$(gh pr create --repo "$REPO" --base develop --head "$BRANCH" \
                  --title "chore(release): v$NEXT" \
-                 --body "Automated patch bump to v$NEXT + CHANGELOG promotion (autobump-release-sweep). Merged with --admin (inert diff); the tagged tree is re-tested by the release pipeline before publish." \
+                 --body "Automated patch bump to v$NEXT + CHANGELOG promotion (autobump-release-sweep). Normal checks, reviews and branch protection must permit merging; the tagged tree is also re-tested before publish." \
                  2>/dev/null | grep -oE '[0-9]+$' | tail -1)
           if [ -z "${PR:-}" ]; then
             # PR may already exist for this head — recover its number.
@@ -523,18 +530,23 @@ jobs:
             exit 1
           fi
 
-          # --admin lands the inert bump under branch protection (proven primitive;
-          # enforce_admins=false). The bump PR has no CI of its own by design; the
-          # green gate above (develop head) + the release pipeline's re-test of the
-          # tagged tree are what satisfy "post-merge all-green".
-          if ! gh pr merge "$PR" --repo "$REPO" --merge --admin --delete-branch; then
-            state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
-            if [ "$state" != "MERGED" ]; then
-              alarm "failed to --admin merge the bump PR #$PR (state=$state)."
-              exit 1
-            fi
-            log "bump PR #$PR was already merged (race with auto-merge) — continuing."
+          # A github.token PR does not trigger pull_request CI. Request its
+          # normal checks once, at creation; pending ticks never force reruns.
+          if ! gh workflow run "ci.yml" --repo "$REPO" --ref "$BRANCH"; then
+            alarm "could not request initial CI for bump PR #$PR; preserving it without merging or tagging."
+            exit 1
           fi
+          # Ordinary protection applies even to version-only changes. A zero
+          # command exit can mean queued, so observe MERGED before any tag.
+          if ! gh pr merge "$PR" --repo "$REPO" --merge --delete-branch; then
+            log "bump PR #$PR was not merged by this command; inspecting its state."
+          fi
+          state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
+          case "$state" in
+            MERGED) log "bump PR #$PR is merged; resolving its merge commit." ;;
+            OPEN) log "bump PR #$PR awaits normal checks, reviews or queue completion; preserving it without tagging."; exit 0 ;;
+            *) alarm "bump PR #$PR has unexpected/unreadable state '$state'; refusing to tag."; exit 1 ;;
+          esac
 
           M=$(gh pr view "$PR" --repo "$REPO" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null || echo "")
           if [ -z "$M" ]; then

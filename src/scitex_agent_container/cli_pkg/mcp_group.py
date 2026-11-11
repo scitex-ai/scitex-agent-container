@@ -10,6 +10,10 @@ from __future__ import annotations
 import json as json_mod
 
 import click
+from scitex_dev.ecosystem import SpecCommand, deprecated_alias
+
+from ._helpers import _json_flag
+from ._mcp_help import CONNECTION_HELP, TOOL_DESCRIPTION_HELP
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -52,8 +56,7 @@ def _default_load_fastmcp_version():
         import fastmcp
     except ImportError as exc:
         raise ImportError(
-            "SAC MCP dependencies are unavailable; install "
-            "scitex-agent-container[mcp]."
+            "SAC MCP dependencies are unavailable; install scitex-agent-container[mcp]."
         ) from exc
 
     return fastmcp.__version__
@@ -96,7 +99,7 @@ def mcp() -> None:
     "--port",
     default=8970,
     show_default=True,
-    help="HTTP bind port (only with --http).",
+    help="HTTP bind port, 0-65535 (only with --http).",
 )
 @click.option(
     "--dry-run",
@@ -121,6 +124,10 @@ def mcp_start(use_http: bool, host: str, port: int, dry_run: bool, yes: bool) ->
       $ sac mcp start --http --port 8970       # HTTP transport
       $ sac mcp start --dry-run
     """
+    from ._port_options import validate_port
+
+    if use_http:
+        validate_port(port)
     del yes  # reserved
     transport = "http" if use_http else "stdio"
     if dry_run:
@@ -205,7 +212,7 @@ def mcp_channel(
     )
 
 
-@mcp.command("healthcheck")
+@mcp.command("recover-connections")
 @click.option(
     "--json",
     "as_json",
@@ -213,27 +220,32 @@ def mcp_channel(
     default=False,
     help="Emit the result as JSON.",
 )
-def mcp_healthcheck(as_json: bool) -> None:
+@click.pass_context
+def mcp_healthcheck(ctx: click.Context, as_json: bool) -> None:
     """Boot self-check + auto-heal for the critical MCP connections.
 
-    Verifies the ``scitex-agent-container`` + ``scitex-todo`` stdio MCP
+    Verifies the ``scitex-agent-container`` + ``scitex-cards`` stdio MCP
     servers actually CONNECTED (via ``claude mcp list``), logs the expected
     capability surface so a missing tool reads as "MCP broken → heal" rather
     than "I lack capability", and — if a critical server failed to connect —
     raises a loud alarm and requests a rate-limited ``--fresh`` self-restart
     through the host ``sac listen`` plane. FAIL-OPEN: always exits 0, so a
     ``SessionStart`` hook that runs this never blocks the agent's boot.
+    The legacy ``scitex-todo`` server key is also accepted for Cards.
+    This command includes recovery, not just observation. Set
+    ``SAC_MCP_HEALTHCHECK_NO_RESTART=1`` for alarms without self-restart.
 
     \b
     Example (SessionStart hook):
-      $ sac mcp healthcheck
+      $ sac mcp recover-connections
+      $ sac --json mcp recover-connections
     """
     # Lazy import: keep this out of the cold-start path and out of the CLI's
     # module-import budget. ``_healthcheck`` pulls no heavy deps (no fastmcp).
     from .._mcp._healthcheck import run_healthcheck
 
     result = run_healthcheck()
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(json_mod.dumps(result))
     else:
         action = result.get("action", "ok")
@@ -260,6 +272,21 @@ def mcp_healthcheck(as_json: bool) -> None:
             click.secho(f"MCP healthcheck: action={action}", fg="yellow")
     # Fail-open: NEVER non-zero. A boot hook must not block the session.
     raise SystemExit(0)
+
+
+deprecated_alias(mcp, "healthcheck", target=("recover-connections",), remove_in="0.40")
+
+
+@mcp.command("validate-connections", cls=SpecCommand, help_spec=CONNECTION_HELP)
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit the provider result as JSON."
+)
+@click.pass_context
+def mcp_validate_connections(ctx: click.Context, as_json: bool) -> None:
+    """Observe critical Claude Code MCP connections without boot recovery."""
+    from ._mcp_connections import check_connections
+
+    raise SystemExit(check_connections(as_json=_json_flag(ctx, as_json)))
 
 
 @mcp.command("doctor")
@@ -290,7 +317,9 @@ def mcp_doctor() -> None:
         tools = _list_tool_names(server)
         click.secho("  OK ", fg="green", nl=False)
         click.echo(f"sac MCP server ({len(tools)} tools)")
-    except Exception as exc:  # stx-allow: fallback (reason: doctor exits non-zero on any registration failure — surface the reason without crashing)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: doctor exits non-zero on any registration failure — surface the reason without crashing)
         click.secho("  NG ", fg="red", nl=False)
         click.echo(f"MCP server error: {exc}")
         raise SystemExit(1)
@@ -306,20 +335,22 @@ def mcp_doctor() -> None:
     default=False,
     help="Output as JSON (for programmatic consumers).",
 )
-def mcp_list_tools(as_json: bool) -> None:
+@click.pass_context
+def mcp_list_tools(ctx: click.Context, as_json: bool) -> None:
     """List MCP tools exposed by the sac server.
 
     \b
     Example:
       $ sac mcp list-tools
       $ sac mcp list-tools --json
+      $ sac --json mcp list-tools
     """
     try:
         get_server = _load_get_server()
         server = get_server()
         tools = _list_tools(server)
     except ImportError:
-        if as_json:
+        if _json_flag(ctx, as_json):
             click.echo(
                 json_mod.dumps(
                     {"count": 0, "tools": [], "error": "fastmcp not installed"}
@@ -331,7 +362,7 @@ def mcp_list_tools(as_json: bool) -> None:
         )
         return
 
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(
             json_mod.dumps(
                 {
@@ -352,6 +383,17 @@ def mcp_list_tools(as_json: bool) -> None:
         if t["description"]:
             first = t["description"].split("\n", 1)[0].strip()
             click.echo(f"    {first}")
+
+
+@mcp.command("show-tool", cls=SpecCommand, help_spec=TOOL_DESCRIPTION_HELP)
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True, help="Emit the MCP schema as JSON.")
+@click.pass_context
+def mcp_show_tool(ctx: click.Context, name: str, as_json: bool) -> None:
+    """Describe one exact tool name without invoking its domain operation."""
+    from ._mcp_tool_description import show_tool
+
+    show_tool(name, as_json=_json_flag(ctx, as_json))
 
 
 @mcp.command("install")

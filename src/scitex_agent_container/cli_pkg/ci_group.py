@@ -1,6 +1,6 @@
 """``sac ci`` — read a CI failure as cheaply as reading its status.
 
-``sac ci why <pr|run|branch>`` fetches the failing run's log ONCE and
+``sac ci explain <pr|run|branch>`` fetches the failing run's log ONCE and
 prints only the essential — failing test IDs + assertion lines, or the
 ``##[error]`` annotation for a setup failure — a few hundred bytes, not
 the whole log. The real reason is now as cheap to read as the status
@@ -11,6 +11,7 @@ parser and the rationale.
 from __future__ import annotations
 
 import json as _json
+from copy import copy
 
 import click
 
@@ -37,7 +38,7 @@ def _run_header(run) -> str:
     return f"{head}\n{run.url}" if run.url else head
 
 
-@ci_group.command("why")
+@ci_group.command("explain")
 @click.argument("target", required=False, default="")
 @click.option(
     "--repo",
@@ -58,11 +59,11 @@ def why(ctx: click.Context, target: str, repo: str, as_json: bool) -> None:
 
     \b
     Examples:
-      $ sac ci why 712              # a PR
-      $ sac ci why 29446283736      # a run id
-      $ sac ci why fix/foo          # a branch
-      $ sac ci why                  # current branch's latest run
-      $ sac ci why 712 --json       # machine-readable
+      $ sac ci explain 712              # a PR
+      $ sac ci explain 29446283736      # a run id
+      $ sac ci explain fix/foo          # a branch
+      $ sac ci explain                  # current branch's latest run
+      $ sac ci explain 712 --json       # machine-readable
     """
     try:
         runs = explain(target, repo=repo)
@@ -81,7 +82,7 @@ def why(ctx: click.Context, target: str, repo: str, as_json: bool) -> None:
     click.echo("\n\n".join(blocks))
 
 
-@ci_group.command("runners")
+@ci_group.command("list-runners")
 @click.argument("target", required=False, default="")
 @click.option(
     "--repo",
@@ -126,11 +127,11 @@ def runners(
 
     \b
     Examples:
-      $ sac ci runners 572                          # every run behind a PR
-      $ sac ci runners 31546807064                  # one run id
-      $ sac ci runners develop --repo o/n           # a branch, explicit repo
-      $ sac ci runners 572 --expect org-cpu         # assert where it ran
-      $ sac ci runners 572 --deny spartan           # assert where it did not
+      $ sac ci list-runners 572                          # every run behind a PR
+      $ sac ci list-runners 31546807064                  # one run id
+      $ sac ci list-runners develop --repo o/n           # a branch, explicit repo
+      $ sac ci list-runners 572 --expect org-cpu         # assert where it ran
+      $ sac ci list-runners 572 --deny spartan           # assert where it did not
     """
     try:
         runs = _runner_audit(target, repo=repo)
@@ -161,7 +162,7 @@ def runners(
         raise click.ClickException("; ".join(problems))
 
 
-@ci_group.command("blocked")
+@ci_group.command("list-blocked")
 @click.option(
     "--repo",
     default=None,
@@ -212,10 +213,10 @@ def blocked(
 
     \b
     Examples:
-      $ sac ci blocked                          # this repo, every open PR
-      $ sac ci blocked --base develop           # only PRs targeting develop
-      $ sac ci blocked --json                   # machine-readable
-      $ sac ci blocked --exit-zero              # report, never fail
+      $ sac ci list-blocked                          # this repo, every open PR
+      $ sac ci list-blocked --base develop           # only PRs targeting develop
+      $ sac ci list-blocked --json                   # machine-readable
+      $ sac ci list-blocked --exit-zero              # report, never fail
     """
     try:
         gates = _audit_blocked(repo=repo, base=base, limit=limit)
@@ -235,6 +236,15 @@ def blocked(
             f"{len(silent)} PR(s) blocked by a required check that never "
             f"started: {nums}"
         )
+
+
+# Preserve old invocations without advertising ambiguous leaf names.
+for _command, _old_name in ((why, "why"), (runners, "runners"), (blocked, "blocked")):
+    _legacy = copy(_command)
+    _legacy.name = _old_name
+    _legacy.hidden = True
+    _legacy.deprecated = f"Use sac ci {_command.name}."
+    ci_group.add_command(_legacy)
 
 
 __all__ = ["ci_group"]

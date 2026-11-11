@@ -1,4 +1,4 @@
-"""Thin ssh/SLURM wrappers used by ``sac pytest spartan run``.
+"""Thin ssh/SLURM wrappers used by ``sac pytest spartan submit-run``.
 
 Every binary is reached via real ``subprocess.run`` so the tests can
 install a fake binary on PATH (via the shared ``subprocess_shim``
@@ -8,6 +8,7 @@ monkeypatching anything.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import time
@@ -17,7 +18,11 @@ import click
 
 
 def _run_ssh(
-    host: str, remote_cmd: str, *, runner: Callable = subprocess.run
+    host: str,
+    remote_cmd: str,
+    *,
+    runner: Callable = subprocess.run,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run ``remote_cmd`` on ``host`` over ssh; return the CompletedProcess.
 
@@ -26,6 +31,13 @@ def _run_ssh(
     (real) ``subprocess.run`` and tests rely on the PATH-prepended
     shim fixture, no monkeypatching needed.
     """
+    if input_text is not None:
+        return runner(
+            ["ssh", "-o", "BatchMode=yes", host, remote_cmd],
+            capture_output=True,
+            text=True,
+            input=input_text,
+        )
     return runner(
         ["ssh", "-o", "BatchMode=yes", host, remote_cmd],
         capture_output=True,
@@ -34,11 +46,51 @@ def _run_ssh(
 
 
 def _extract_job_id(stdout: str) -> str | None:
-    """Pull the job id from ``Submitted batch job <id>``.  Pure function."""
-    for token in stdout.split():
-        if token.isdigit():
-            return token
-    return None
+    """Accept exactly one canonical positive-ASCII sbatch receipt line.
+
+    Numbers in diagnostics are not job IDs. Multiple receipts are ambiguous,
+    even when they repeat the same ID; never guess which job to observe.
+    """
+    receipts = [
+        match.group(1)
+        for line in stdout.splitlines()
+        if (match := re.fullmatch(r"Submitted batch job ([1-9][0-9]*)", line.strip()))
+    ]
+    return receipts[0] if len(receipts) == 1 else None
+
+
+def _resolve_scratch_root(
+    host: str, scratch_root: str, *, runner: Callable = subprocess.run
+) -> str:
+    """Resolve only a leading literal SCRATCH token through one remote read.
+
+    Explicit paths are preserved without a query. Never eval caller input or
+    expand local environment variables into a remote filesystem path.
+    """
+    token = next(
+        (
+            token
+            for token in ("$SCRATCH", "${SCRATCH}")
+            if scratch_root == token or scratch_root.startswith(token + "/")
+        ),
+        None,
+    )
+    if token is None:
+        return scratch_root
+    result = _run_ssh(host, "printf '%s\\n' \"${SCRATCH-}\"", runner=runner)
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"failed to read remote SCRATCH ({result.returncode}); "
+            "set it on the SSH host or pass an explicit --scratch-root"
+        )
+    root = result.stdout.removesuffix("\n")
+    if not root.startswith("/") or any(char in root for char in ("\r", "\n", "\x00")):
+        raise click.ClickException(
+            "remote SCRATCH must be one nonempty absolute single-line path; "
+            "set it on the SSH host or pass an explicit --scratch-root"
+        )
+    suffix = scratch_root[len(token) :]
+    return root.rstrip("/") + suffix if suffix else root
 
 
 def _submit_sbatch(
@@ -57,12 +109,10 @@ def _submit_sbatch(
     parent = remote_path.rsplit("/", 1)[0]
     write_cmd = (
         f"mkdir -p {shlex.quote(parent)} && "
-        f"cat > {shlex.quote(remote_path)} <<'__SAC_SBATCH_EOF__'\n"
-        f"{script}\n"
-        f"__SAC_SBATCH_EOF__\n"
+        f"cat > {shlex.quote(remote_path)} && "
         f"chmod +x {shlex.quote(remote_path)}"
     )
-    write_res = _run_ssh(host, write_cmd, runner=runner)
+    write_res = _run_ssh(host, write_cmd, runner=runner, input_text=script)
     if write_res.returncode != 0:
         raise click.ClickException(
             f"failed to upload sbatch script ({write_res.returncode}): "
@@ -95,9 +145,9 @@ def _poll_job(
 ) -> str:
     """Poll ``squeue -j <job_id>`` until the job leaves the queue.
 
-    Returns the final ``sacct`` state (or ``"COMPLETED"`` when squeue
-    has already dropped the job and we can't fetch sacct).  Raises
-    :class:`click.ClickException` on timeout.
+    Returns the observed accounting state. Failed queries and missing
+    accounting records are errors, never inferred completion. Existing
+    timeout and poll bounds remain unchanged; no retry is added.
     """
     deadline = clock() + timeout_s
     while clock() < deadline:
@@ -106,15 +156,24 @@ def _poll_job(
             f"squeue -h -j {shlex.quote(job_id)} -o %T",
             runner=runner,
         )
+        if res.returncode != 0:
+            raise click.ClickException(
+                f"failed to query SLURM job {job_id} ({res.returncode}): "
+                f"{res.stderr.strip()[:400]}"
+            )
         state = res.stdout.strip()
         if not state:
             sacct = _run_ssh(
                 host,
-                f"sacct -j {shlex.quote(job_id)} -n -o State -X | head -n1",
+                f"sacct -j {shlex.quote(job_id)} -n -o State -X",
                 runner=runner,
             )
-            final = sacct.stdout.strip() or "COMPLETED"
-            return final.split()[0] if final else "COMPLETED"
+            if sacct.returncode != 0 or not sacct.stdout.strip():
+                raise click.ClickException(
+                    f"could not determine accounting state for SLURM job {job_id} "
+                    f"({sacct.returncode}): {sacct.stderr.strip()[:400]}"
+                )
+            return sacct.stdout.strip().split()[0]
         sleeper(interval_s)
     raise click.ClickException(f"SLURM job {job_id} did not finish within {timeout_s}s")
 

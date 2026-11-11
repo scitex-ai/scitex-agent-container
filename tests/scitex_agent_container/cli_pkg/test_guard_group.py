@@ -51,9 +51,7 @@ def clip(values, lo, hi):
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True
-    )
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
 @pytest.fixture
@@ -61,9 +59,7 @@ def repo(tmp_path: Path) -> Path:
     """A committed repo whose HEAD is the baseline."""
     root = tmp_path / "repo"
     root.mkdir()
-    subprocess.run(
-        ["git", "init", "-q", str(root)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
     _git(root, "config", "user.email", "guard-test@example.com")
     _git(root, "config", "user.name", "guard test")
     (root / "transforms.py").write_text(TRANSFORMS_BEFORE)
@@ -125,7 +121,10 @@ def _run_json(*args: str) -> dict:
     except json.JSONDecodeError as exc:
         try:
             stderr = result.stderr
-        except (ValueError, AttributeError):  # stx-allow: fallback (reason: click does not always capture stderr separately; a missing stderr must not replace the real failure with an error about reading it. SINK: the assertion message below, which pytest prints on failure)
+        except (
+            ValueError,
+            AttributeError,
+        ):  # stx-allow: fallback (reason: click does not always capture stderr separately; a missing stderr must not replace the real failure with an error about reading it. SINK: the assertion message below, which pytest prints on failure)
             stderr = "<not captured separately>"
         detail = [
             "guard deletions --json produced no parseable JSON on stdout.",
@@ -323,9 +322,17 @@ def test_json_top_level_keys_are_stable(incident_repo: Path) -> None:
     payload = _run_json(*args)
     # Assert
     assert set(payload) == {
-        "verdict", "exit_code", "baseline", "target", "files_compared",
-        "deletions", "deleted_files", "broken_files", "allowed_deletions",
-        "undetermined_reason", "next_steps",
+        "verdict",
+        "exit_code",
+        "baseline",
+        "target",
+        "files_compared",
+        "deletions",
+        "deleted_files",
+        "broken_files",
+        "allowed_deletions",
+        "undetermined_reason",
+        "next_steps",
     }
 
 
@@ -338,9 +345,7 @@ def test_json_deletion_entry_carries_its_allow_key(
     # Act
     payload = _run_json(*args)
     # Assert
-    assert "transforms.py::class:Scaler" in {
-        d["key"] for d in payload["deletions"]
-    }
+    assert "transforms.py::class:Scaler" in {d["key"] for d in payload["deletions"]}
 
 
 def test_snapshot_pair_mode_detects_the_incident(tmp_path: Path) -> None:
@@ -375,3 +380,68 @@ def test_guard_group_is_registered_on_the_main_cli() -> None:
     result = runner.invoke(main, ["guard", "--help"])
     # Assert
     assert result.exit_code == 0
+
+
+@pytest.fixture(
+    params=[
+        ("def keep():\n    return 1\n", 0, "clean"),
+        ("", 3, "violations"),
+        ("def broken(\n", 4, "could-not-determine"),
+    ],
+    ids=["clean", "deleted", "unreadable"],
+)
+def guarded_snapshot_pair(tmp_path, request):
+    """Actual source snapshots; no Git configuration or live repository."""
+    after_text, code, verdict = request.param
+    before, after = tmp_path / "before", tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    (before / "part.py").write_text("def keep():\n    return 1\n")
+    (after / "part.py").write_text(after_text)
+    state = ((before / "part.py").read_bytes(), (after / "part.py").read_bytes())
+    return before, after, code, verdict, state
+
+
+@pytest.mark.parametrize(
+    "prefix,legacy",
+    [
+        (["guard", "validate-deletions", "--json"], False),
+        (["--json", "guard", "validate-deletions"], False),
+        (["guard", "deletions", "--json"], True),
+        (["--json", "guard", "deletions"], True),
+    ],
+    ids=["canonical-local", "canonical-root", "legacy-local", "legacy-root"],
+)
+def test_json_guard_aliases_preserve_domain_verdicts_and_files(
+    guarded_snapshot_pair, prefix, legacy
+):
+    # Arrange
+    before, after, code, verdict, original = guarded_snapshot_pair
+    # Act
+    result = CliRunner().invoke(
+        main, [*prefix, "--before", str(before), "--after", str(after)]
+    )
+    payload = json.loads(result.stdout)
+    state = ((before / "part.py").read_bytes(), (after / "part.py").read_bytes())
+    # Assert
+    assert (
+        result.exit_code,
+        payload["exit_code"],
+        payload["verdict"],
+        "validate-deletions" in result.stderr,
+        state,
+    ) == (code, code, verdict, legacy, original)
+
+
+def test_guard_help_advertises_action_and_hides_old_noun():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(main, ["guard", "--help"])
+    words = result.stdout.split()
+    # Assert
+    assert (result.exit_code, "validate-deletions" in words, "deletions" in words) == (
+        0,
+        True,
+        False,
+    )

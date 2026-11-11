@@ -1,13 +1,16 @@
 """CLI protocol for the packaged, harness-neutral worktree policy checker.
 
-stdout contains one JSON decision; human diagnostics use stderr.
+stdout defaults to one JSON decision; inspect can select a text view.
+Errors remain JSON and human diagnostics use stderr.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from .._logging import render_content
 from ._context import decide_context, inspect_repo, resolve_edit_repo
 from ._policy import (
     HARNESS_NAMES,
@@ -29,34 +32,109 @@ class JsonArgumentParser(argparse.ArgumentParser):
         raise SystemExit(3)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = JsonArgumentParser()
-    parser.add_argument("--policy", type=Path, default=default_policy_path())
+def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
+    parser = JsonArgumentParser(
+        prog=prog,
+        description=(
+            "Inspect Git context and enforce the configured worktree policy. "
+            "Decisions are JSON; a denial exits 2 and a policy/argument error exits 3."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  $ %(prog)s inspect --repo .\n"
+            "  $ %(prog)s assert-context --repo . --intent edit\n"
+            "  $ %(prog)s check-projections"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--policy", type=Path, default=None)
     sub = parser.add_subparsers(dest="operation", required=True)
-    inspect = sub.add_parser("inspect")
+    inspect = sub.add_parser(
+        "inspect",
+        description="Inspect Git context and policy identity without changing the repository.",
+    )
     inspect.add_argument("--repo", type=Path, required=True)
-    context = sub.add_parser("assert-context")
+    output = inspect.add_mutually_exclusive_group()
+    output.add_argument(
+        "--json", action="store_true", help="Select the default JSON decision output."
+    )
+    output.add_argument(
+        "--text",
+        action="store_true",
+        help="Show inspection fields as text; errors stay JSON.",
+    )
+    context = sub.add_parser(
+        "assert-context",
+        description="Check whether Git context permits the selected intent.",
+    )
     context.add_argument("--repo", type=Path, required=True)
     context.add_argument(
         "--intent",
         choices=("read", "edit", "commit", "push", "branch-change"),
         required=True,
     )
-    edit = sub.add_parser("check-edit")
+    edit = sub.add_parser(
+        "check-edit",
+        description="Check edit permission for a path under the selected policy.",
+    )
     edit.add_argument("--path", type=Path, required=True)
-    shell = sub.add_parser("check-shell")
+    shell = sub.add_parser(
+        "check-shell", description="Check a shell command against the worktree policy."
+    )
     shell.add_argument("--cwd", type=Path, required=True)
     shell.add_argument("--command", required=True)
-    generate = sub.add_parser("generate-projections")
+    generate = sub.add_parser(
+        "generate-projections",
+        description="Generate policy projections after explicit approval.",
+    )
     generate.add_argument("--output-dir", type=Path, default=None)
-    check = sub.add_parser("check-projections")
+    generate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview supplied arguments without reading policy or generating files.",
+    )
+    generate.add_argument(
+        "--yes", "-y", action="store_true", help="Approve writing policy projections."
+    )
+    check = sub.add_parser(
+        "check-projections",
+        description="Verify generated projections match the selected policy.",
+    )
     check.add_argument("--output-dir", type=Path, default=None)
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _emit_inspection(payload: dict, *, as_json: bool) -> int:
+    if as_json:
+        return emit(payload, 0)
+    render_content(
+        "\n".join(
+            f"{key}: {json.dumps(value, sort_keys=True, ensure_ascii=False)}"
+            for key, value in sorted(payload.items())
+        )
+    )
+    return 0
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    prog: str | None = None,
+    json_output: bool = False,
+) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     try:
+        if args.operation == "generate-projections" and args.dry_run:
+            from ._cli_preview import projection_argument_preview
+
+            return emit(projection_argument_preview(args.policy, args.output_dir), 0)
+        if args.operation == "generate-projections" and not args.yes:
+            message = "Projection generation requires --yes; use --dry-run to preview."
+            return emit(
+                {"allowed": False, "decision": "error", "error": message}, 3, message
+            )
+        if args.policy is None:
+            args.policy = default_policy_path()
         # An explicit generation request initializes host configuration rather
         # than writing into Python's installed package directory.
         if (
@@ -77,13 +155,13 @@ def main(argv: list[str] | None = None) -> int:
             args.output_dir = projection_dir
         policy, source_hash = load_policy(args.policy.resolve())
         if args.operation == "inspect":
-            return emit(
+            return _emit_inspection(
                 {
                     "allowed": True,
                     "decision": "allow",
                     **inspect_repo(args.repo, policy, source_hash, projection_dir),
                 },
-                0,
+                as_json=json_output or args.json or not args.text,
             )
         if args.operation == "assert-context":
             info = inspect_repo(args.repo, policy, source_hash, projection_dir)

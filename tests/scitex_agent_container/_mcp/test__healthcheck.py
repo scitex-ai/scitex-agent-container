@@ -12,6 +12,11 @@ as explicit parameters.
 
 from __future__ import annotations
 
+import json
+
+import pytest
+from click.testing import CliRunner
+
 from scitex_agent_container._mcp._healthcheck import (
     CONNECTED,
     CRITICAL_CAPABILITIES,
@@ -390,3 +395,45 @@ def test_caller_asking_for_the_legacy_name_verbatim_gets_that_key():
     statuses = parse_mcp_status(text, ("scitex-todo",))
     # Assert
     assert statuses["scitex-todo"] == CONNECTED
+
+
+@pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
+def test_cli_disabled_healthcheck_root_and_local_json(prefix, suffix):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [*prefix, "mcp", "healthcheck", *suffix],
+        env={"SAC_MCP_HEALTHCHECK_DISABLED": "1"},
+    )
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout)) == (
+        0,
+        {"statuses": {}, "failed": [], "healed": False, "action": "disabled"},
+    )
+
+
+@pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
+def test_missing_mcp_backend_keeps_structured_discovery_result(prefix, suffix):
+    # Arrange
+    from scitex_agent_container.cli import main
+    from scitex_agent_container.cli_pkg import mcp_group
+
+    original = mcp_group._load_get_server
+
+    def unavailable_backend():
+        raise ImportError("owned unavailable-backend fixture")
+
+    mcp_group._load_get_server = unavailable_backend
+    # Act
+    try:
+        result = CliRunner().invoke(main, [*prefix, "mcp", "list-tools", *suffix])
+    finally:
+        mcp_group._load_get_server = original
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout)) == (
+        0,
+        {"count": 0, "tools": [], "error": "fastmcp not installed"},
+    )

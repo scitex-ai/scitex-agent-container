@@ -2,7 +2,7 @@
 #
 # Host prerequisites:
 #   pip install 'scitex-agent-container[codex]'
-#   sac accounts sync-openai
+#   sac accounts sync-openai --yes
 #   export SCITEX_GENAI_GATEWAY_API_KEY="<local gateway key>"
 #   scitex-genai-gateway --host 127.0.0.1 --port 18765
 #

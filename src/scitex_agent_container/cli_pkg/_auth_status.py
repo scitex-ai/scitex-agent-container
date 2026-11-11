@@ -1,4 +1,4 @@
-"""``sac agents auth-status`` — which running TUI agents cannot reach the API.
+"""``sac agents show-auth-status`` — which running TUI agents cannot reach the API.
 
 The reliable, prompt-anchored auth health check (TG 1497: "a command to see if
 any running agent shows login-required"). For each live agent tmux session —
@@ -394,8 +394,8 @@ def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
 
     \b
     Example:
-      $ sac agents auth-status
-      $ sac agents auth-status --json --interval 6
+      $ sac agents show-auth-status
+      $ sac agents show-auth-status --json --interval 6
     """
     use_json = _json_flag(ctx, as_json)
     sessions = _prefer_canonical(_list_tui_sessions())

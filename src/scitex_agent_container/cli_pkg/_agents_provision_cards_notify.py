@@ -6,9 +6,10 @@ second, direct endpoint. This command copies no credential from anywhere else:
 for every selected spec it derives the direct row only from the exact role's
 working pooled row in the same passfile.
 
-The command is dry-run by default. It never prints a password, rejects
+The command inspects configured credentials by default. It never prints a password, rejects
 ambiguous or conflicting rows, validates the complete write set before
 changing anything, and replaces each passfile atomically.
+See ``docs/cards-notify-credentials.md`` for inspection versus argument preview.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import yaml
 
 from .._reconcile._pass import fleet_agents_dir, fleet_spec_paths
 from ..runtimes._pg_identity_env import derive_pg_role
+from ._helpers import _json_flag
 
 
 class NotifyCredentialError(RuntimeError):
@@ -69,7 +71,9 @@ def _endpoint(value: object, *, variable: str, port: int) -> Endpoint:
     try:
         parsed = urlsplit(text)
     except ValueError as exc:
-        raise NotifyCredentialError(f"{variable} is not a valid PostgreSQL DSN") from exc
+        raise NotifyCredentialError(
+            f"{variable} is not a valid PostgreSQL DSN"
+        ) from exc
     database = unquote(parsed.path.lstrip("/").split("/", 1)[0])
     if (
         parsed.scheme not in {"postgres", "postgresql"}
@@ -139,7 +143,9 @@ def _request(spec_path: Path, *, host_user: str, passfile: Path | None) -> Reque
     except (OSError, TypeError, KeyError, yaml.YAMLError) as exc:
         raise NotifyCredentialError(f"cannot read agent spec {spec_path}") from exc
     agent = spec_path.parent.name
-    source = _endpoint(env.get("SCITEX_CARDS_DB"), variable="SCITEX_CARDS_DB", port=55432)
+    source = _endpoint(
+        env.get("SCITEX_CARDS_DB"), variable="SCITEX_CARDS_DB", port=55432
+    )
     target = _endpoint(
         env.get("SCITEX_CARDS_NOTIFY_DSN"),
         variable="SCITEX_CARDS_NOTIFY_DSN",
@@ -225,9 +231,7 @@ def _derive_row(lines: list[str], request: Request) -> tuple[str | None, str]:
     return f"{rendered}:{source.raw_password}\n", "planned"
 
 
-def provision(
-    requests: list[Request], *, apply_changes: bool
-) -> list[Result]:
+def provision(requests: list[Request], *, apply_changes: bool) -> list[Result]:
     """Validate and optionally atomically append every requested direct row."""
     by_file: dict[Path, list[Request]] = {}
     for request in requests:
@@ -256,7 +260,9 @@ def provision(
                 continue
             prefix = "" if not lines or lines[-1].endswith(("\n", "\r")) else "\n"
             content = "".join(lines) + prefix + "".join(additions)
-            descriptor, temporary = tempfile.mkstemp(prefix=".pgpass-notify-", dir=path.parent)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=".pgpass-notify-", dir=path.parent
+            )
             try:
                 os.fchmod(descriptor, 0o600)
                 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
@@ -299,24 +305,68 @@ def provision(
     type=click.Path(path_type=Path, dir_okay=False),
     help="Override the spec-declared PGPASSFILE.",
 )
-@click.option("--apply", "apply_changes", is_flag=True, help="Atomically write missing rows.")
-@click.option("--check", is_flag=True, help="Exit 1 when any row still needs provisioning.")
+@click.option(
+    "--apply",
+    "--yes",
+    "-y",
+    "apply_changes",
+    is_flag=True,
+    help="Atomically write missing rows after validating the complete write set.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Describe arguments only; do not read specs or credential files.",
+)
+@click.option(
+    "--check", is_flag=True, help="Exit 1 when any row still needs provisioning."
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit secret-free JSON.")
+@click.pass_context
 def provision_cards_notify(
+    ctx: click.Context,
     root: Path | None,
     agents: tuple[str, ...],
     pgpass: Path | None,
     apply_changes: bool,
     check: bool,
+    dry_run: bool,
     as_json: bool,
 ) -> None:
     """Provision direct LISTEN credentials from pooled Cards credentials.
 
-    Dry-run is the default. Specs must explicitly declare both Cards DSNs;
-    this command never guesses a direct port at runtime.
+    Default/--check inspects specs and private passfiles without writing.
+    --dry-run describes arguments only, without reading either. --yes/-y
+    aliases --apply; approval conflicts with --check and --dry-run.
+    Specs must explicitly declare both Cards DSNs; this command never
+    guesses a direct port at runtime. No database connection is attempted.
+
+    \b
+    Examples:
+      $ sac agents provision-cards-notify --agent example-agent --check --json
+      $ sac agents provision-cards-notify --agent example-agent --dry-run --json
+      $ sac agents provision-cards-notify --agent example-agent --yes --json
     """
+    if apply_changes and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --apply/--yes/-y")
     if apply_changes and check:
-        raise click.UsageError("--apply and --check are mutually exclusive")
+        raise click.UsageError("--apply/--yes and --check are mutually exclusive")
+    if dry_run:
+        click.echo(
+            json.dumps(
+                {
+                    "action": "provision-cards-notify",
+                    "dry_run": True,
+                    "scope": "arguments_only",
+                    "verified": False,
+                    "root": str(root) if root is not None else None,
+                    "agents": list(agents),
+                    "pgpass": str(pgpass) if pgpass is not None else None,
+                },
+                indent=2,
+            )
+        )
+        return
     specs_root = (root or fleet_agents_dir()).expanduser()
     paths = fleet_spec_paths(specs_root)
     selected = set(agents)
@@ -334,13 +384,15 @@ def provision_cards_notify(
         results = provision(requests, apply_changes=apply_changes)
     except NotifyCredentialError as exc:
         raise click.ClickException(str(exc)) from exc
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(json.dumps({"rows": [asdict(row) for row in results]}, indent=2))
     else:
         for row in results:
             click.echo(f"{row.agent}: {row.status} ({row.target}, role={row.role})")
         if not apply_changes:
-            click.echo("Dry-run: no credentials were changed. Pass --apply to write.")
+            click.echo(
+                "Inspection: no credentials were changed. Pass --yes/--apply to write."
+            )
     if check and any(row.status == "planned" for row in results):
         raise SystemExit(1)
 

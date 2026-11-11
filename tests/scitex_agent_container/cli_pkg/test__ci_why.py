@@ -1,4 +1,4 @@
-"""Tests for the ``sac ci why`` failure-extraction core (``_ci_why``).
+"""Tests for the ``sac ci explain`` failure-extraction core (``_ci_why``).
 
 No mocks. The parser is exercised on real-shaped GitHub-Actions log
 STRINGS (timestamp prefixes, ``##[group]`` noise, a ``FAILURES`` block,

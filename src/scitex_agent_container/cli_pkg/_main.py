@@ -67,7 +67,7 @@ COMMAND_CATEGORIES = [
     ("Account", ["accounts"]),
     (
         "Network & Peer",
-        ["host", "peer", "a2a", "fleet", "listen", "gui"],
+        ["host", "peer", "a2a", "fleet", "listener", "gui"],
     ),
     ("Registry & Events", ["store", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
@@ -76,16 +76,16 @@ COMMAND_CATEGORIES = [
         "Diagnostics",
         [
             "doctor",
-            "ports",
-            "provenance",
+            "list-ports",
+            "show-provenance",
             "freshness",
-            "auth-events",
+            "list-auth-events",
             "ci",
             "guard",
         ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["whoami", "mcp", "list-python-apis", "versions"]),
+    ("Introspection", ["mcp", "list-python-apis", "list-versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -95,6 +95,9 @@ _PKG = "scitex_agent_container.cli_pkg"
 
 class _MainGroup(LazyGroup):
     command_categories = COMMAND_CATEGORIES
+    LAZY_HIDDEN = frozenset(
+        {"whoami", "ports", "versions", "provenance", "auth-events"}
+    )
 
     # User-facing top-level commands. Resolved on demand.
     LAZY_COMMANDS = {
@@ -125,10 +128,10 @@ class _MainGroup(LazyGroup):
         "mcp": f"{_PKG}.mcp_group:mcp",
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
-        "listen": f"{_PKG}.listen_cmds:listen",
+        "listener": f"{_PKG}.listen_cmds:listen",
         "gui": f"{_PKG}.gui_group:gui_group",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
-        # Mechanical gates over a DELEGATED code change. `guard deletions`
+        # Mechanical gates over a DELEGATED code change. `guard validate-deletions`
         # is the standing form of the detector that judged 36 local-model
         # trials: it names anything a change removed without being asked
         # to, and distinguishes "clean" from "could not tell" (exit 0 / 3
@@ -140,23 +143,26 @@ class _MainGroup(LazyGroup):
         "ci": f"{_PKG}.ci_group:ci_group",
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
-        "ports": f"{_PKG}.ports_cmds:ports",
+        "list-ports": f"{_PKG}.ports_cmds:ports",
+        "ports": f"{_PKG}.ports_cmds:_legacy_ports",
         # READ-ONLY auth timeline: this host's auth-event log joined with the
         # credential rotations the accounts store already audits. Observes
         # only — auth-heal owns remediation.
-        "auth-events": f"{_PKG}.auth_events_cmds:auth_events",
+        "list-auth-events": f"{_PKG}.auth_events_cmds:auth_events",
+        "auth-events": f"{_PKG}.auth_events_cmds:_legacy_auth_events",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
-        "provenance": f"{_PKG}.provenance_cmds:provenance",
+        "show-provenance": f"{_PKG}.provenance_cmds:provenance",
+        "provenance": f"{_PKG}.provenance_cmds:_legacy_provenance",
         # Is the loaded code CURRENT? (`provenance` answers "which code",
         # this answers "is it what shipped".) Thin rendering over
         # scitex-dev's `versioning` primitive — sac owns the constants and
         # the symbol registry, dev owns every verdict.
         "freshness": f"{_PKG}.freshness_cmds:freshness",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
-        # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
+        # surface: ``sac pytest spartan submit-run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
-        # by the ``spartan_pytest`` package; ``spartan run`` lives
+        # by the ``spartan_pytest`` package; ``spartan submit-run`` lives
         # underneath.
         "pytest": f"{_PKG}.spartan_pytest:pytest_group",
         # Top-level standalone
@@ -165,17 +171,13 @@ class _MainGroup(LazyGroup):
         # spec.yaml. Honest UNKNOWN for underivable facts; never prints
         # secret values.
         "whoami": f"{_PKG}._whoami:whoami",
-        # The never-stop-when-task-remains actuator: a Claude Code Stop hook that converts a
-        # stop-with-work-remaining into TAKING the next board item. Not a
-        # poller — it fires at turn end, which is the moment the agent would
-        # otherwise go idle holding claimed work.
-        "never-stop-when-task-remains": f"{_PKG}.never_stop_when_task_remains_cmds:never_stop_when_task_remains",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
         # (drift-report aggregation surface for scitex-dev ecosystem
         # check-versions — the 2 layers only sac can see).
-        "versions": f"{_PKG}.versions_cmds:versions",
+        "list-versions": f"{_PKG}.versions_cmds:versions",
+        "versions": f"{_PKG}.versions_cmds:_legacy_versions",
     }
 
     # Tracks whether scitex_dev._cli._completion has been attached.
@@ -246,6 +248,7 @@ class _MainGroup(LazyGroup):
     # ``21_cli-startup-budget.md`` to refresh after editing any
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
+        "list-versions": "Report package versions for base-image and overlay layers.",
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
         "store": "Inspect and maintain the shared sac state store.",
@@ -259,22 +262,27 @@ class _MainGroup(LazyGroup):
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
-        "whoami": "Who am I? In-container identity, placement, execution, role, how-to.",
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
-        "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "show-provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
-        "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
+        "listener": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
-        "ports": "List the ports sac/scitex uses, with live status.",
-        "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
+        "list-ports": "List the ports sac/scitex uses, with live status.",
+        "list-auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
+    }
+
+    # Retained spellings forward through their actual canonical command paths.
+    LAZY_WARN_ALIASES = {
+        "listen": (("listener",), "0.40.0"),
+        "never-stop-when-task-remains": (("dev", "hooks", "decide-stop"), "0.40.0"),
     }
 
     # Renamed-command redirects (F-CS13 / scitex CLI convention §5):
@@ -351,7 +359,7 @@ class _MainGroup(LazyGroup):
         "  $ sac agents status\n"
         "  $ sac agents start orchestrator                                      # by name\n"
         "  $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
-        "  $ sac listen status                                                  # host control-plane health\n"
+        "  $ sac listener status                                                  # host control-plane health\n"
     ),
 )
 @click.option(

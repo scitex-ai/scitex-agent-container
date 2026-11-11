@@ -1,4 +1,4 @@
-"""CLI wiring tests for ``sac ci why``.
+"""CLI wiring tests for ``sac ci explain``.
 
 No mocks: a real fake ``gh`` executable is installed on ``PATH`` (a tiny
 Python script that prints canned run-view JSON and ``--log-failed``
@@ -15,6 +15,7 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
@@ -99,7 +100,7 @@ def test_why_renders_the_failing_test_id(tmp_path: Path, env_save_restore):
     # Arrange
     _install_fake_gh(tmp_path, env_save_restore, META_FAIL, PYTEST_LOG)
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID])
     # Assert
     assert "tests/test_math.py::test_math" in result.output
 
@@ -108,7 +109,7 @@ def test_why_output_is_smaller_than_the_raw_log(tmp_path: Path, env_save_restore
     # Arrange — the inversion: the reason costs a fraction of the log.
     _install_fake_gh(tmp_path, env_save_restore, META_FAIL, PYTEST_LOG)
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID])
     # Assert
     assert len(result.output) < len(PYTEST_LOG)
 
@@ -117,7 +118,7 @@ def test_why_strips_group_noise_from_output(tmp_path: Path, env_save_restore):
     # Arrange
     _install_fake_gh(tmp_path, env_save_restore, META_FAIL, PYTEST_LOG)
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID])
     # Assert
     assert "##[group]" not in result.output
 
@@ -126,7 +127,7 @@ def test_why_green_run_says_no_failures(tmp_path: Path, env_save_restore):
     # Arrange
     _install_fake_gh(tmp_path, env_save_restore, META_GREEN, "")
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID])
     # Assert
     assert result.output.strip() == "no failures"
 
@@ -135,7 +136,7 @@ def test_why_json_flag_emits_structured_output(tmp_path: Path, env_save_restore)
     # Arrange
     _install_fake_gh(tmp_path, env_save_restore, META_FAIL, PYTEST_LOG)
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID, "--json"])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID, "--json"])
     # Assert
     assert '"failed_tests"' in result.output
 
@@ -144,6 +145,61 @@ def test_why_reports_gh_failure_loudly(tmp_path: Path, env_save_restore):
     # Arrange — gh errors: UNKNOWN must fail loud, never print "no failures".
     _install_gh(tmp_path, env_save_restore, _BROKEN_GH)
     # Act
-    result = CliRunner().invoke(main, ["ci", "why", _RUN_ID])
+    result = CliRunner().invoke(main, ["ci", "explain", _RUN_ID])
     # Assert
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "canonical,legacy,arguments",
+    [
+        ("explain", "why", [_RUN_ID]),
+        ("list-runners", "runners", [_RUN_ID]),
+        ("list-blocked", "blocked", []),
+    ],
+)
+@pytest.mark.parametrize("json_output", [False, True])
+def test_ci_read_routes_preserve_legacy_results(
+    tmp_path, env_save_restore, canonical, legacy, arguments, json_output
+):
+    # Arrange: a real inert gh executable handles only these read endpoints.
+    _install_fake_gh(tmp_path, env_save_restore, META_FAIL, PYTEST_LOG)
+    script = (
+        (tmp_path / "bin/gh")
+        .read_text()
+        .replace("import sys", "import json\nimport sys")
+        .replace(
+            'if "--log-failed" in args:',
+            'if args[:2] == ["pr", "list"]:\n    sys.stdout.write("[]")\n'
+            'elif args[0] == "api":\n    sys.stdout.write(json.dumps(dict(jobs=[])))\n'
+            'elif "--log-failed" in args:',
+        )
+    )
+    _install_gh(tmp_path, env_save_restore, script)
+    flags = ["--json"] if json_output else []
+    # Act
+    current = CliRunner().invoke(main, ["ci", canonical, *arguments, *flags])
+    previous = CliRunner().invoke(main, ["ci", legacy, *arguments, *flags])
+    # Assert
+    assert (
+        current.exit_code,
+        previous.exit_code,
+        current.stderr,
+        current.stdout == previous.stdout,
+        f"Use sac ci {canonical}." in previous.stderr,
+    ) == (0, 0, "", True, True)
+
+
+def test_ci_help_lists_canonical_read_actions_only():
+    # Arrange
+    canonical = {"explain", "list-runners", "list-blocked"}
+    legacy = {"why", "runners", "blocked"}
+    # Act
+    result = CliRunner().invoke(main, ["ci", "--help"])
+    words = {line.split()[0] for line in result.stdout.splitlines() if line.split()}
+    # Assert
+    assert (result.exit_code, canonical <= words, bool(legacy & words)) == (
+        0,
+        True,
+        False,
+    )

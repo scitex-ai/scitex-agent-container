@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -211,10 +212,16 @@ async def serve_inbound(
     agent_name: str = "",
     spec_yaml_path: str = "",
     state_dir: Path | None = None,
+    listener: socket.socket | None = None,
 ) -> None:
     """Run an HTTP server that feeds turn envelopes into ``inbox``.
 
     Returns when ``stop`` is set; cancels the uvicorn server task.
+
+    ``listener`` optionally hands an already-bound TCP socket to Uvicorn.
+    Keep it open for this call and pass its actual host/port; this avoids
+    releasing a reserved port before startup. Without it, normal host/port
+    binding and bind-conflict failures remain unchanged.
 
     ``state_dir`` (when supplied) is the agent's runner state directory
     — the same one the heartbeat loop writes ``heartbeat.json`` /
@@ -390,7 +397,9 @@ async def serve_inbound(
         lifespan="off",
     )
     server = uvicorn.Server(config)
-    serve_task = asyncio.create_task(server.serve())
+    serve_task = asyncio.create_task(
+        server.serve(sockets=[listener]) if listener is not None else server.serve()
+    )
     try:
         await stop.wait()
     finally:

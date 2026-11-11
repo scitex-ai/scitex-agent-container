@@ -64,6 +64,11 @@ sac image build scitex    # :scitex SIF (FROM :base + scitex[all], ~10-20 min)
 sac image build --sandbox # writable sandbox dir instead of frozen SIF
 ```
 
+Builds and activation use a per-layer `.build.lock`. Keep each lock as its own
+regular file: symlinked, hard-linked, and non-regular entries are refused before
+owner metadata is written. This checks the opened final entry, not ancestor
+directory containment.
+
 Image builds have a stricter source-authority check than read-only commands.
 When SAC is editable-installed from one checkout but ``PYTHONPATH`` would load
 another, the console entry point stops before importing the build command or
@@ -90,19 +95,21 @@ Sandbox once, refresh when you want, freeze when stable:
 
 ```bash
 sac image build scitex --sandbox        # one-time: writable sandbox
-sac image update sandbox/               # any time: pip install --upgrade scitex[all]
+sac image update sandbox/ --yes         # any time: pip install --upgrade scitex[all]
 sac image freeze sandbox/ candidate.sif # bake an explicit immutable SIF
 
 # Managed timestamped artifacts already under the SAC layer store:
-sac image switch 2026-0914-152140 --layer base  # atomic dual-link flip
-sac image rollback --layer base                  # restore previous version
-sac image snapshot -o env.json         # full reproducibility capsule
+sac image switch 2026-0914-152140 --layer base --yes  # atomic dual-link flip
+sac image rollback --layer base --yes                  # restore previous version
+sac image show-snapshot -o env.json --json  # generic backend metadata
 ```
 
 Build, sandbox, and freeze delegate their container operations to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
 Switch and rollback operate on SAC's layered `sac-<layer>-<version>.sif`
-store and update both stable links together.
+store and update both stable links together. `show-snapshot` reads the generic
+backend's `current.sif` layout; it does not inventory named SAC layers. Use
+`image status` to inspect those layers.
 
 ## Distributing one verified artifact to a fleet
 
@@ -189,3 +196,21 @@ spec:
   apptainer:
     image: ./my-custom.sif
 ```
+
+
+### Switching and rolling back managed layer links
+
+`image switch VERSION --layer LAYER --dry-run` and
+`image rollback --layer LAYER --dry-run` describe arguments only. They do not inspect artifacts or live links,
+select the older version, acquire a lock or establish that the plan can apply.
+An unapproved activation refuses before calling the store backend. Replace
+`--dry-run` with `--yes` (`-y`) to apply; combining approval and preview is refused.
+
+Both commands accept root-level or local `--json` for the applied result. The
+existing backend still validates the selected layer/version, holds its build
+lock, updates both SAC live links, and preserves its link-disagreement and
+failure-recovery checks. Rollback selects the immediately older artifact by
+modification time and then filename, under that lock. This uses SAC's named
+`sac-<layer>` store; the generic container snapshot's `current.sif` layout does
+not replace it. CLI activation does not restart agents or qualify an artifact
+as a working container image.

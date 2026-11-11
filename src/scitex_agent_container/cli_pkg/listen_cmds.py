@@ -1,4 +1,4 @@
-"""``sac listen`` — host-level HTTP/JSON control plane for sac agents.
+"""``sac listener`` — host-level HTTP/JSON control plane for sac agents.
 
 Boots a Starlette app under uvicorn at ``--bind``; routes the
 ``/agents/...`` and ``/v1/a2a/...`` namespaces from
@@ -22,13 +22,19 @@ import click
 
 def _split_bind(spec: str) -> tuple[str, int]:
     """Split ``host:port`` (or ``[ipv6]:port``) into a tuple."""
+    from ._port_options import validate_port
+
     if spec.startswith("["):
         host, _, port = spec[1:].partition("]:")
-        return host, int(port)
+        value = int(port)
+        validate_port(value, option="--bind")
+        return host, value
     host, _, port = spec.rpartition(":")
     if not host or not port:
         raise click.UsageError(f"--bind must be 'host:port', got {spec!r}")
-    return host, int(port)
+    value = int(port)
+    validate_port(value, option="--bind")
+    return host, value
 
 
 def _is_loopback(host: str) -> bool:
@@ -40,21 +46,15 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-# ADR-0014 comms_nodes registry hooks — extracted to a sibling module to
-# keep this file under the per-file line cap. Re-exported here so the
-# historical import path
-# ``from scitex_agent_container.cli_pkg.listen_cmds import
-# _register_self_comms_node`` (used by tests + the boot path below)
-# keeps working unchanged.
+# Keep the historical registry-hook import available to tests and boot callers.
 from ._listen_registry_hooks import _register_self_comms_node  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Bare-boot deprecation — scitex CLI convention §5, phase W (warn + forward)
 # ---------------------------------------------------------------------------
 
-#: The release that REMOVES boot-on-bare-``sac listen``. Every warning names
-#: it, so callers always know the deadline (§5: "each phase names the removal
-#: version").
+#: Historical removal target retained in the compatibility warning. Bare
+#: invocation still boots; removal requires migration of existing launchers.
 BARE_BOOT_REMOVAL_VERSION = "v0.23.0"
 
 
@@ -62,11 +62,12 @@ def _warn_bare_boot_deprecated() -> None:
     """Warn that bare ``sac listen`` booted a daemon, and name the verb.
 
     Phase W: the bare form still FORWARDS to the boot, so every caller keeps
-    working — and three still invoke it bare TODAY (the systemd unit's
-    ``ExecStart``, ``_listen._restart``'s direct-spawn argv, and the systemd
-    JobSpec in PR #543). ``sac listen`` IS the host control plane; flipping
+    working — the shipped systemd unit's ``ExecStart`` and
+    ``_listen._restart``'s default direct-spawn argv still invoke it bare.
+    The jobs provider deliberately excludes listen (ADR 0022), avoiding a
+    second supervisor. ``sac listen`` IS the host control plane; flipping
     the bare form to show-help would take the fleet's host access down with
-    it. Removing the bare boot is a FOLLOW-UP, only after all three migrate.
+    it. Removing bare startup requires migration of the existing launchers.
 
     DELIBERATE DEVIATION from §5a's once-per-shell suppression: §5a keys its
     marker on ``$PPID`` to give one warning per interactive shell, but this
@@ -80,19 +81,19 @@ def _warn_bare_boot_deprecated() -> None:
     not need.
     """
     click.echo(
-        "WARN: bare `sac listen` is DEPRECATED — use `sac listen start` "
+        "WARN: bare `sac listen` is DEPRECATED — use `sac listen start --yes` "
         f"(removed in {BARE_BOOT_REMOVAL_VERSION}).",
         err=True,
     )
     click.echo(
-        "      `listen` is a command GROUP, not a verb: booting a daemon off "
+        "      `listener` is the command group: booting a daemon off "
         "the bare noun means a typo or a stray tab-complete starts a server. "
         "Verbs: start / stop / restart / status  (see `sac listen -h`).",
         err=True,
     )
 
 
-@click.group(name="listen", invoke_without_command=True)
+@click.group(name="listener", invoke_without_command=True)
 @click.option(
     "--bind",
     default="127.0.0.1:7878",
@@ -135,21 +136,23 @@ def listen(
 
     The plane every sac agent reaches the host through — 127.0.0.1:7878 by
     default, bearer-token authenticated, loopback-only unless you opt out.
-    `listen` is a NOUN; the verbs below are its whole lifecycle.
+    `listener` is the canonical namespace; `listen` remains a hidden alias.
 
     \b
     Example:
-        sac listen start                    # boot the daemon (loopback only)
-        sac listen status                   # health report; exit 1 if down
-        sac listen status --json            # machine-readable envelope
-        sac listen stop                     # stop it (idempotent)
-        sac listen restart                  # atomic stop-clean-relaunch
-        sac listen start --print-token      # echo the bearer token, then exit
+        sac listener start --yes              # boot the daemon (loopback only)
+        sac listener status                   # health report; exit 1 if down
+        sac listener status --json            # machine-readable envelope
+        sac listener stop --yes               # stop it (idempotent)
+        sac listener restart --yes            # atomic stop-clean-relaunch
+        sac listener start --yes --print-token # echo the bearer token, then exit
 
     \b
-    DEPRECATED: bare `sac listen` still BOOTS the daemon, so the systemd unit
+    DEPRECATED: bare `sac listener` still BOOTS the daemon, so the systemd unit
     and every existing launcher keep working — but it now warns. Use
-    `sac listen start`. The bare form is removed in v0.23.0.
+    `sac listener start --yes`. The warning still names the historical v0.23.0
+    removal target; removal has not been implemented. Existing launchers
+    must migrate before bare startup can be removed.
     """
     # Stash group-level options so subcommands (``start`` / ``stop`` /
     # ``restart`` / ``status``) can mirror ``sac listen``'s own bind
@@ -346,8 +349,14 @@ def _do_start_listen(
     show_default=True,
     help="SIGTERM-to-SIGKILL escalation deadline (seconds).",
 )
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments as JSON without restarting."
+)
+@click.option("-y", "--yes", is_flag=True, help="Approve restarting the listener.")
 @click.pass_context
-def listen_restart(ctx: click.Context, grace_secs: float) -> None:
+def listen_restart(
+    ctx: click.Context, grace_secs: float, dry_run: bool = False, yes: bool = False
+) -> None:
     """Atomically stop, self-heal, and relaunch the sac listen daemon.
 
     Deterministic incident recovery (card
@@ -370,10 +379,18 @@ def listen_restart(ctx: click.Context, grace_secs: float) -> None:
 
     \b
     Example:
-        sac listen restart                  # 10s grace, then SIGKILL
-        sac listen restart --grace-secs 30  # longer TERM window
-        sac listen restart                  # stop, wait, then relaunch
+        sac listen restart --yes            # 10s grace, then SIGKILL
+        sac listen restart --yes --grace-secs 30  # longer TERM window
+        sac listen restart --dry-run        # argument preview
     """
+    if dry_run:
+        from ._listen_preview import show_listen_preview
+
+        show_listen_preview("restart", bind=ctx.obj["bind"], grace_secs=grace_secs)
+        return
+    from ._listen_restart_approval import require_listener_restart_approval
+
+    require_listener_restart_approval(yes)
     force = False
     from .._listen._restart import (
         format_escalation_warning,
@@ -483,15 +500,8 @@ def listen_status(ctx: click.Context, as_json: bool) -> None:
         ctx.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# ``sac listen start`` / ``sac listen stop`` — the explicit lifecycle verbs.
-#
-# Defined in a sibling module to keep THIS file under the 512-line cap (the
-# same extraction ``_listen_registry_hooks`` made) and attached here so they
-# resolve on the group. ``_listen_verbs`` imports its boot primitives lazily,
-# inside the command bodies, so importing it here is not a cycle.
-# ---------------------------------------------------------------------------
-
+# Attach the explicit verbs from their sibling module. Its lazy imports avoid
+# a cycle and keep this module within the file-size budget.
 from ._listen_verbs import listen_start, listen_stop  # noqa: E402
 
 listen.add_command(listen_start)

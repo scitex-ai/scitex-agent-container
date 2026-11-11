@@ -1,8 +1,9 @@
-"""READ-ONLY remote probe for ``sac host sync``. Mutates nothing, ever.
+"""Checkout-preserving remote probe for ``sac host sync``; refreshes Git refs.
 
-That is a structural guarantee, not a comment: the single mutating
-operation lives in :mod:`._apply`, so this module can be read — and
-audited — as inert. ``sac host sync --check`` runs ONLY this.
+The probe runs ``git fetch`` to observe current upstream refs. It does not
+merge or change tracked working-tree content; fast-forward application lives
+in :mod:`._apply`. ``sac host sync --check`` uses this probe, while the CLI
+``--dry-run`` is an argument-only preview and never calls it.
 
 How the checkout is located (the whole trick)
 ---------------------------------------------
@@ -275,7 +276,7 @@ def probe_peer(
     timeout: int = 120,
     runner=subprocess.run,
 ) -> PeerSyncReport:
-    """ssh ``peer`` and read its sac checkout state. Never raises, never writes.
+    """ssh ``peer`` and refresh refs to inspect its checkout; never merges.
 
     Rides :func:`build_ssh_argv` — sac's single remote-dispatch choke
     point — so the peer's ``via:`` ProxyJump chain and ``env_preamble``
@@ -310,7 +311,7 @@ def probe_peer(
             state=GraphState.UNREACHABLE,
             detail=(
                 f"peer '{peer}' is not defined in config.yaml — "
-                f"add it with:  sac host add {peer} --ssh <user@host>"
+                f"add it with:  sac host add {peer} --ssh <user@host> --yes"
             ),
         )
     try:

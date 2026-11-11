@@ -93,7 +93,7 @@ def mid_push_death_result(keepalive_cli):
     try:
         yield CliRunner().invoke(
             keepalive_cli,
-            ["send-credentials", "--account", ACCOUNT, "--to", PEER],
+            ["send-credentials", "--yes", "--account", ACCOUNT, "--to", PEER],
         )
     finally:
         token_keepalive.keepalive_push = original
@@ -114,7 +114,7 @@ def sweep_death_result(keepalive_cli):
     try:
         yield CliRunner().invoke(
             keepalive_cli,
-            ["send-credentials", "--account", ACCOUNT, "--to", PEER, "--sweep"],
+            ["send-credentials", "--yes", "--account", ACCOUNT, "--to", PEER, "--sweep"],
         )
     finally:
         token_keepalive.keepalive_push = original_push

@@ -1,4 +1,4 @@
-"""``sac image disk`` — filesystem pressure for the image store + alert.
+"""``sac image show-disk-usage`` — image-store filesystem pressure + alert.
 
 Card ``infra-disk-hygiene-mechanize-20260929`` gap 3: no 85%-full alert
 existed anywhere, so a full runner disk broke CI silently. This verb
@@ -13,12 +13,15 @@ reporting verb itself.
 
 from __future__ import annotations
 
+import json
 import shutil
+from copy import copy
 from pathlib import Path
 
 import click
 
 from .._logging import render_rich
+from ._helpers import _json_flag
 
 DEFAULT_ALERT_THRESHOLD = 85.0
 NEVER_FIRES_THRESHOLD = 101.0
@@ -27,9 +30,14 @@ NEVER_FIRES_THRESHOLD = 101.0
 def disk_pressure_pct(path: Path) -> float:
     """Used percent of the filesystem holding ``path`` (real statfs)."""
     usage = shutil.disk_usage(path)
-    if usage.total <= 0:
+    return _pressure_pct(usage.used, usage.total)
+
+
+def _pressure_pct(used: int, total: int) -> float:
+    """Derive pressure from one measurement, including its zero-total guard."""
+    if total <= 0:
         return 0.0
-    return usage.used / usage.total * 100.0
+    return used / total * 100.0
 
 
 def pressure_fires(used_pct: float, *, threshold: float) -> bool:
@@ -37,7 +45,7 @@ def pressure_fires(used_pct: float, *, threshold: float) -> bool:
     return used_pct >= threshold
 
 
-@click.command("disk")
+@click.command("show-disk-usage")
 @click.option(
     "--path",
     "path",
@@ -53,27 +61,54 @@ def pressure_fires(used_pct: float, *, threshold: float) -> bool:
     help="Fire the ALERT line at or above this percent "
     "(0.0 always fires; 101.0 never fires).",
 )
-def image_disk(path: Path | None, alert_threshold: float) -> None:
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit filesystem measurements and alert state as JSON.",
+)
+@click.pass_context
+def image_disk(
+    ctx: click.Context, path: Path | None, alert_threshold: float, as_json: bool
+) -> None:
     """Report image-store filesystem pressure; ALERT at the threshold.
 
+    Without --path, initialize the configured containers directory if absent.
+    With --path, measure that existing location without creating it.
+
     Example:
-      $ sac image disk
-      $ sac image disk --alert-threshold 0
+      $ sac image show-disk-usage
+      $ sac image show-disk-usage --alert-threshold 0
+      $ sac image show-disk-usage --path /tmp --json
     """
     from . import image_group as ig
 
     if not 0.0 <= alert_threshold <= NEVER_FIRES_THRESHOLD:
-        raise click.UsageError(
-            "--alert-threshold must be between 0.0 and 101.0"
-        )
+        raise click.UsageError("--alert-threshold must be between 0.0 and 101.0")
     target = path if path is not None else ig._ensure_containers_dir()
     try:
         usage = shutil.disk_usage(target)
-        pct = disk_pressure_pct(target)
+        pct = _pressure_pct(usage.used, usage.total)
     except OSError as exc:
         raise click.ClickException(
             f"Cannot measure filesystem for {target}: {exc}"
         ) from exc
+    if _json_flag(ctx, as_json):
+        click.echo(
+            json.dumps(
+                {
+                    "path": str(target),
+                    "total_bytes": usage.total,
+                    "used_bytes": usage.used,
+                    "free_bytes": usage.free,
+                    "used_percent": pct,
+                    "alert_threshold_percent": alert_threshold,
+                    "alert": pressure_fires(pct, threshold=alert_threshold),
+                },
+                indent=2,
+            )
+        )
+        return
     used_gb = usage.used / (1024**3)
     total_gb = usage.total / (1024**3)
     render_rich(
@@ -87,3 +122,9 @@ def image_disk(path: Path | None, alert_threshold: float) -> None:
             f"(`sac image prune --dry-run`)[/red]",
             __name__,
         )
+
+
+_legacy_disk = copy(image_disk)
+_legacy_disk.name = "disk"
+_legacy_disk.hidden = True
+_legacy_disk.deprecated = "Use image show-disk-usage instead."

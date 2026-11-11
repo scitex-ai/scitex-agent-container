@@ -69,6 +69,11 @@ import tomllib
 from .._provenance._git import repo_root_for_package
 from .._provenance._stamp import compute_stamp, render_module, stamp_path
 from ._image_build_lock import image_build_lock
+from ._image_source_inputs import (
+    _locate_bundled_sibling,
+    locate_cli_dictionary,
+    stage_cli_dictionary,
+)
 
 # ---------------------------------------------------------------------------
 # Staging
@@ -95,6 +100,10 @@ _COPY_IGNORE = shutil.ignore_patterns(
     # new image build context: once .git disappears inside Apptainer, the
     # wheel build treats this file as authoritative sdist-style provenance.
     "_build_info.py",
+    # Reconstructed at the source root, then force-included by Hatch. Copying
+    # installed copies too produces duplicate ZIP members in the next wheel.
+    "_bundled",
+    "_cli_audit_dict.yaml",
 )
 
 
@@ -220,50 +229,6 @@ def assert_source_provenance(
         "that built it. Remove the stale PYTHONPATH entry or pin it to the "
         "intended checkout, for example:\n"
         f"  PYTHONPATH={staged_root.parent} uv run sac image build ..."
-    )
-
-
-def _locate_bundled_sibling(
-    pkg_root: Path, name: str, *, editable_rel: str | None = None
-) -> Path:
-    """Return the path to a wheel-bundled or repo-root file by name.
-
-    Resolution order — both supported because sac is installed BOTH
-    ways in real use:
-
-      1. ``pkg_root/_bundled/<name>`` — wheel install. The wheel
-         ships the file via ``[tool.hatch.build.targets.wheel.
-         force-include]`` in the repo's own pyproject.toml.
-      2. ``pkg_root.parent.parent/<editable_rel or name>`` — editable
-         install (``pip install -e .``). The package is at
-         ``<repo>/src/scitex_agent_container/``; ``parent.parent``
-         walks up through ``src/`` to the repo root.
-
-    ``editable_rel`` exists because a file's slot in the wheel's FLAT
-    ``_bundled/`` dir need not mirror its path in the repo:
-    ``hatch_build.py`` bundles to ``_bundled/hatch_build.py`` but lives
-    at ``<repo>/scripts/hatch_build.py``. Defaults to ``name`` (the
-    repo-root case: pyproject.toml, README.md).
-
-    Raises
-    ------
-    FileNotFoundError
-        If neither location holds the file. Hard failure — the SIF
-        build can't produce a pip-installable source tree without it.
-        No silent fallback.
-    """
-    bundled = pkg_root / "_bundled" / name
-    if bundled.is_file():
-        return bundled
-    editable_repo = pkg_root.parent.parent / (editable_rel or name)
-    if editable_repo.is_file():
-        return editable_repo
-    raise FileNotFoundError(
-        f"could not locate {name} for source-bundled SIF build. "
-        f"checked:\n  - {bundled} (wheel install / force-included)\n"
-        f"  - {editable_repo} (editable install / repo root)\n"
-        f"ensure the wheel ships {name} under _bundled/ or run "
-        "from an editable install."
     )
 
 
@@ -582,7 +547,9 @@ def stage_build_context(
     pyproject_src = locate_bundled_pyproject(pkg_root)
     readme_src = locate_bundled_readme(pkg_root)
     hatch_build_src = locate_bundled_hatch_build(pkg_root)
-    project = tomllib.loads(pyproject_src.read_text())["project"]
+    project_data = tomllib.loads(pyproject_src.read_text())
+    project = project_data["project"]
+    dictionary_src = locate_cli_dictionary(pkg_root, pyproject_src, project_data)
     license_bytes = _source_license_bytes(pkg_root) if project.get("license") else None
     package_sources = _declared_package_sources(
         pyproject_path=pyproject_src,
@@ -629,6 +596,7 @@ def stage_build_context(
     staged_src.mkdir()
     shutil.copy2(pyproject_src, staged_src / "pyproject.toml")
     shutil.copy2(readme_src, staged_src / "README.md")
+    stage_cli_dictionary(dictionary_src, staged_src)
     if license_bytes is not None:
         (staged_src / "LICENSE").write_bytes(license_bytes)
     (staged_src / "scripts").mkdir()

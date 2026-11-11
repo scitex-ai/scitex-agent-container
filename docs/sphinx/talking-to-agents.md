@@ -128,7 +128,7 @@ The same-host, no-network path:
 
 ```bash
 # Send a turn — output is just the ack; the reply lands on session.jsonl
-sac agents send ecosystem-auditor "Which packages have uncommitted changes?"
+sac agents send --yes ecosystem-auditor "Which packages have uncommitted changes?"
 
 # Read the latest assistant turns
 sac agents tail ecosystem-auditor -n 5

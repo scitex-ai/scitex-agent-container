@@ -1,11 +1,10 @@
-"""``sac image list / status / snapshot`` — installed-image reporting verbs.
+"""``sac image list / status / show-snapshot`` — installed-image reporting verbs.
 
 Extracted from :mod:`image_group` (512-line budget) when the
 incident-local-heavy-build low-priority default pushed the group module
-over the cap; registered back onto the ``sac image`` group via
-``image_group.add_command`` so the CLI surface is unchanged. One cohesive
-responsibility: read-only reporting over already-built artefacts (no
-build/mutate verbs here).
+over the cap; registered onto the ``sac image`` group by ``image_group``.
+These commands inspect already-built artifacts; the snapshot also writes
+JSON when an explicit output path is supplied.
 
 Shared constants and backend seams (``_CONTAINERS_DIR``,
 ``_SCITEX_USER_STATE_ROOT``, ``_ensure_containers_dir``,
@@ -21,11 +20,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from copy import copy
 from pathlib import Path
 
 import click
 
 from .._logging import render_rich
+from ._helpers import _json_flag
 
 
 @click.command("list")
@@ -119,9 +120,12 @@ def image_list(as_json: bool) -> None:
         return
     render_rich(f"[dim]scan root: {root}/*/containers/[/dim]", __name__)
     if not versions:
-        render_rich(f"[dim](no SIFs under {root}/*/containers/ — "
+        render_rich(
+            f"[dim](no SIFs under {root}/*/containers/ — "
             f"run `sac image build base -y && sac image build scitex -y` to "
-            f"populate; downstream packages populate their own siblings)[/dim]", __name__)
+            f"populate; downstream packages populate their own siblings)[/dim]",
+            __name__,
+        )
         return
     for v in versions:
         size_mb = v["size_bytes"] / (1024 * 1024)
@@ -137,7 +141,10 @@ def image_list(as_json: bool) -> None:
         suffix = f"  -> {v['resolves_to']}" if v.get("resolves_to") else ""
         if v["target_state"] != "available":
             suffix += f"  [red]{v['target_state'].upper()}[/red]"
-        render_rich(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}", __name__)
+        render_rich(
+            f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}",
+            __name__,
+        )
     # NECESSARY, NOT SUFFICIENT — do not let a fresh date retire the content
     # question. scitex-hpc measured a bake on 2026-07-18 whose build-context
     # source was develop HEAD (1e4870fd) while the INSTALLED wheel was pre-fix
@@ -192,15 +199,20 @@ def image_status(as_json: bool) -> None:
         click.echo(json.dumps(info, indent=2, default=str))
         return
     if not info:
-        render_rich(f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]", __name__)
+        render_rich(
+            f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]", __name__
+        )
         return
     for entry in info:
         size_mb = entry["sif_size_bytes"] / (1024 * 1024)
-        render_rich(f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
-            f"{entry['verification']:10s}  {entry['version']}", __name__)
+        render_rich(
+            f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
+            f"{entry['verification']:10s}  {entry['version']}",
+            __name__,
+        )
 
 
-@click.command("snapshot")
+@click.command("show-snapshot")
 @click.option(
     "--output",
     "-o",
@@ -208,13 +220,27 @@ def image_status(as_json: bool) -> None:
     default=None,
     help="Write JSON to this path instead of stdout.",
 )
-def image_snapshot(output: Path | None) -> None:
-    """Capture a reproducibility snapshot (pip + apt + conda + git + ...).
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="JSON payloads; also format file acknowledgements as JSON.",
+)
+@click.pass_context
+def image_snapshot(
+    ctx: click.Context, output: Path | None, as_json: bool = False
+) -> None:
+    """Collect backend container/host-tool metadata and lockfile hashes.
+
+    JSON is the default stdout payload. With --output, the payload goes to
+    that file; --json makes its acknowledgement structured as well. The
+    generic backend reads current.sif; use image status for named SAC layers.
+    This adapter supplies no dev repository paths to the backend.
 
     \b
     Example:
-      $ sac image snapshot
-      $ sac image snapshot -o env.json
+      $ sac image show-snapshot
+      $ sac image show-snapshot -o env.json --json
     """
     from . import image_group as ig
 
@@ -224,9 +250,22 @@ def image_snapshot(output: Path | None) -> None:
     payload = json.dumps(snap, indent=2, default=str)
     if output:
         output.write_text(payload)
-        render_rich(f"[green]wrote[/green] {output}", __name__)
+        if _json_flag(ctx, as_json):
+            click.echo(json.dumps({"output": str(output)}))
+        else:
+            render_rich(f"[green]wrote[/green] {output}", __name__)
     else:
         click.echo(payload)
 
 
-__all__ = ["image_list", "image_snapshot", "image_status"]
+def register_snapshot_command(group: click.Group) -> None:
+    """Register metadata inspection and its hidden historical spelling."""
+    group.add_command(image_snapshot)
+    legacy = copy(image_snapshot)
+    legacy.name = "snapshot"
+    legacy.hidden = True
+    legacy.deprecated = "Use image show-snapshot instead."
+    group.add_command(legacy)
+
+
+__all__ = ["image_list", "image_snapshot", "image_status", "register_snapshot_command"]

@@ -179,3 +179,171 @@ def test_ambiguous_source_credentials_are_refused(tmp_path: Path) -> None:
             source_passfile=source,
             apply_changes=False,
         )
+
+
+@pytest.fixture
+def sync_cli_recorder(tmp_path):
+    import importlib
+
+    module = importlib.import_module(
+        "scitex_agent_container.cli_pkg._agents_sync_cards_store_credential"
+    )
+    calls = []
+    originals = {
+        name: getattr(module, name) for name in ("derive_pg_role", "sync_to_peers")
+    }
+    source = _private(tmp_path / "source.pgpass", "synthetic private fixture\n")
+
+    def derive(agent, **kwargs):
+        calls.append(("derive", agent))
+        return ROLE
+
+    def sync(peers, **kwargs):
+        calls.append(("sync", peers, kwargs))
+        return [
+            module.SyncResult(peer, ROLE, "scitex-primary:55432/scitex", "observed")
+            for peer in peers
+        ]
+
+    module.derive_pg_role = derive
+    module.sync_to_peers = sync
+    try:
+        yield calls, source
+    finally:
+        for name, original in originals.items():
+            setattr(module, name, original)
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+def test_conflicting_approval_refuses_before_identity_or_sync(
+    sync_cli_recorder, approval
+):
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg.agent_group import agent_group
+
+    # Arrange
+    calls, source = sync_cli_recorder
+    args = [
+        "sync-cards-store-credential",
+        "--agent",
+        "worker",
+        "--to",
+        "peer-a",
+        "--pgpass",
+        str(source),
+        "--dry-run",
+        approval,
+    ]
+    # Act
+    result = CliRunner().invoke(agent_group, args)
+    # Assert
+    assert (result.exit_code, "cannot be combined" in result.output, calls) == (
+        2,
+        True,
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    "flags, apply",
+    [
+        ([], False),
+        (["--dry-run"], False),
+        (["--yes"], True),
+        (["-y"], True),
+        (["--apply"], True),
+    ],
+)
+def test_cli_forwards_approval_identity_and_exact_peers(
+    sync_cli_recorder, flags, apply
+):
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg.agent_group import agent_group
+
+    # Arrange
+    calls, source = sync_cli_recorder
+    args = [
+        "sync-cards-store-credential",
+        "--agent",
+        "worker",
+        "--to",
+        "peer-a",
+        "--to",
+        "peer-b",
+        "--pgpass",
+        str(source),
+        "--json",
+        *flags,
+    ]
+    # Act
+    result = CliRunner().invoke(agent_group, args)
+    # Assert
+    assert (result.exit_code, len(json.loads(result.output)["rows"]), calls) == (
+        0,
+        2,
+        [
+            ("derive", "worker"),
+            (
+                "sync",
+                ("peer-a", "peer-b"),
+                {"role": ROLE, "source_passfile": source, "apply_changes": apply},
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize("prefix, suffix", [(["--json"], []), ([], ["--json"])])
+def test_root_and_local_json_emit_only_result(sync_cli_recorder, prefix, suffix):
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli import main
+
+    # Arrange
+    calls, source = sync_cli_recorder
+    args = [
+        *prefix,
+        "agents",
+        "sync-cards-store-credential",
+        "--agent",
+        "worker",
+        "--to",
+        "peer-a",
+        "--pgpass",
+        str(source),
+        *suffix,
+    ]
+    # Act
+    result = CliRunner().invoke(main, args)
+    # Assert
+    assert (result.exit_code, json.loads(result.output)) == (
+        0,
+        {
+            "rows": [
+                {
+                    "peer": "peer-a",
+                    "role": ROLE,
+                    "target": "scitex-primary:55432/scitex",
+                    "status": "observed",
+                }
+            ]
+        },
+    )
+
+
+@pytest.mark.parametrize("flag", ["--dry-run", "--yes", "-y", "--apply"])
+def test_help_exposes_approval_and_network_preview(flag):
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg.agent_group import agent_group
+
+    # Arrange
+    # Act
+    result = CliRunner().invoke(agent_group, ["sync-cards-store-credential", "--help"])
+    # Assert
+    assert (result.exit_code, flag in result.output, "SSH stdin" in result.output) == (
+        0,
+        True,
+        True,
+    )

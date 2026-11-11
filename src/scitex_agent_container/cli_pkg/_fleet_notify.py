@@ -17,7 +17,7 @@ Exit codes:
 
 The default ``from_agent`` is resolved from the ``SAC_NAME`` env var
 (set inside every agent container) so the common in-container call
-site reduces to ``sac fleet notify done --summary "..."``. Outside a
+site reduces to ``sac fleet notify done --summary "..." --yes``. Outside a
 container (operator on the lead host running a one-shot test) the
 ``--from-agent`` flag is required and surfaces a loud usage error if
 omitted.
@@ -103,6 +103,7 @@ def _resolve_from_agent(explicit: str | None) -> str:
     is_flag=True,
     help="Build + print the A2A envelope without POSTing.",
 )
+@click.option("--yes", "-y", is_flag=True, help="Approve sending to the lead inbox.")
 @click.option(
     "--json",
     "as_json",
@@ -119,15 +120,24 @@ def fleet_notify(
     timeout_seconds: float,
     dry_run: bool,
     as_json: bool,
+    yes: bool = False,
 ) -> None:
     """Push a typed event (``done`` / ``blocker`` / ``status``) to the lead.
 
+    Sending requires ``--yes``/``-y`` before identity or configuration is
+    read. ``--dry-run`` takes precedence and builds the existing local preview;
+    it does not read peer tokens, contact the lead or verify ACL/delivery.
+
     \b
     Examples:
-      $ sac fleet notify done --summary "PR #224 merged"
-      $ sac fleet notify blocker --summary "creds expired" --detail "..."
-      $ sac fleet notify status --summary "phase 2 of 4 complete" --json
+      $ sac fleet notify done --summary "PR #224 merged" --yes
+      $ sac fleet notify blocker --summary "creds expired" --detail "..." --dry-run
+      $ sac fleet notify status --summary "phase 2 of 4 complete" --json --yes
     """
+    if not dry_run and not yes:
+        raise click.UsageError(
+            "Sending requires --yes; inspect the envelope with --dry-run first."
+        )
     sender = _resolve_from_agent(from_agent)
 
     if dry_run:

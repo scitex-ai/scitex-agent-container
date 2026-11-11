@@ -19,11 +19,15 @@ split into per-behaviour tests, parametrized when natural.
 
 from __future__ import annotations
 
+import asyncio as _asyncio
+import contextlib as _contextlib
 import json
 import os
+import socket as _socket
 import tempfile
 from pathlib import Path
 
+import httpx as _httpx
 import pytest
 import yaml
 from starlette.testclient import TestClient
@@ -43,6 +47,9 @@ from scitex_agent_container.a2a.executors._claude_session import (
 )
 from scitex_agent_container.a2a.executors._openai_session import (
     OpenAISessionExecutor,
+)
+from tests.scitex_agent_container._helpers.loopback_server import (
+    run_loopback as _run_loopback_shared,
 )
 
 # ---------------------------------------------------------------------
@@ -149,8 +156,8 @@ def test_executors_yaml_handler_drives_app_build_body():
                     "name": "mock-claude",
                     "supportedInterfaces": [
                         {
-                            "url": "http://testserver/agents/mock-claude",
-                            "protocolBinding": "HTTP+JSON",
+                            "url": "http://testserver/agents/mock-claude/message:send",
+                            "protocolBinding": "JSONRPC",
                             "tenant": "mock-claude",
                             "protocolVersion": "1.0",
                         }
@@ -270,8 +277,8 @@ def test_fleet_card_endpoint_lists_member_agents(echo_client: TestClient):
             "name": "mock-echo",
             "supportedInterfaces": [
                 {
-                    "url": "http://testserver/agents/mock-echo",
-                    "protocolBinding": "HTTP+JSON",
+                    "url": "http://testserver/agents/mock-echo/message:send",
+                    "protocolBinding": "JSONRPC",
                     "tenant": "mock-echo",
                     "protocolVersion": "1.0",
                 }
@@ -305,8 +312,8 @@ def test_list_agents_endpoint_enumerates_members(echo_client: TestClient):
                 "name": "mock-echo",
                 "supportedInterfaces": [
                     {
-                        "url": "http://testserver/agents/mock-echo",
-                        "protocolBinding": "HTTP+JSON",
+                        "url": "http://testserver/agents/mock-echo/message:send",
+                        "protocolBinding": "JSONRPC",
                         "tenant": "mock-echo",
                         "protocolVersion": "1.0",
                     }
@@ -336,24 +343,14 @@ def test_per_agent_card_name_is_agent_name(echo_client: TestClient):
     assert name == "mock-echo"
 
 
-def test_per_agent_card_supported_interface_url(echo_client: TestClient):
-    """ADR-0004: v1 card publishes URL under supportedInterfaces[0]."""
-    # Arrange
-    client = echo_client
-    # Act
-    body = client.get("/agents/mock-echo/.well-known/agent-card.json").json()
-    # Assert
-    assert body["supportedInterfaces"][0]["url"] == "http://testserver/agents/mock-echo"
-
-
 def test_per_agent_card_supported_interface_binding(echo_client: TestClient):
-    """The per-agent card declares HTTP+JSON as its protocol binding."""
+    """The per-agent card declares JSONRPC as its protocol binding."""
     # Arrange
     client = echo_client
     # Act
     body = client.get("/agents/mock-echo/.well-known/agent-card.json").json()
     # Assert
-    assert body["supportedInterfaces"][0]["protocolBinding"] == "HTTP+JSON"
+    assert body["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
 
 
 def test_per_agent_card_preserves_sac_extension(echo_client: TestClient):
@@ -660,15 +657,6 @@ def test_sdk_round_trip_get_task_envelope_carries_result(_round_trip):
 # resumes at the right cursor.
 # ---------------------------------------------------------------------
 
-import asyncio as _asyncio
-import contextlib as _contextlib
-import socket as _socket
-
-import httpx as _httpx
-
-from tests.scitex_agent_container._helpers.loopback_server import (
-    run_loopback as _run_loopback_shared,
-)
 
 
 @pytest.fixture
