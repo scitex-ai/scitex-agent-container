@@ -371,7 +371,16 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
 
     key = "SCITEX_STORE_DSN"
     saved = os.environ.get(key)
-    os.environ[key] = f"{PG_BASE_DSN}?options=-csearch_path%3D{schema}"
+    # Preserve the store's URI contract and any existing query/options.
+    # A socket DSN already has ?host=...; a second '?' corrupts that value.
+    from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(PG_BASE_DSN)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    options = dict(query).get("options", "")
+    query = [(name, value) for name, value in query if name != "options"]
+    query.append(("options", f"{options} -csearch_path={schema}".strip()))
+    os.environ[key] = urlunsplit(parts._replace(query=urlencode(query, quote_via=quote)))
     try:
         yield schema
     finally:
