@@ -38,6 +38,10 @@ _DISRUPTIVE = [
     ["systemctl", "--user", "stop", "sac-listen.service"],
     ["systemctl", "restart", "sac-listen"],
     ["sac", "listen", "restart"],
+    ["sac", "listener", "restart", "--yes"],
+    ["sac", "listener", "stop", "--yes"],
+    ["scitex-agent-container", "listener", "stop", "--yes"],
+    ["pkill", "-f", "sac listener"],
     ["sac", "listen", "stop"],
     ["sac", "listen", "stop", "--yes"],
     ["scitex-agent-container", "listen", "stop"],
@@ -82,6 +86,8 @@ _SAFE = [
     ["systemctl", "--user", "restart", "sac-creds-watch.service"],
     # start kills nobody, and on a down daemon it is the recovery path.
     ["sac", "listen", "start"],
+    ["sac", "listener", "start", "--yes"],
+    ["scitex-agent-container", "listener", "status", "--json"],
     # Ordinary sac work.
     ["sac", "agents", "list"],
     ["sac", "agents", "restart", "some-agent"],

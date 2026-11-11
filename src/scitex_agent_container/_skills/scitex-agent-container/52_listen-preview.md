@@ -9,11 +9,17 @@ tags: [scitex-agent-container-listen-preview]
 
 # Preview listener lifecycle arguments
 
+`listener` is the public namespace. The hidden `listen` alias forwards to the
+same group until 0.40.0, warning on stderr once per shell session. Group options,
+subcommands and approval checks are shared. Existing launcher argv still works;
+this change does not alter service units, token paths or bare startup.
+The JSON preview target remains `"listen"` for compatibility.
+
 ```bash
-sac listen start --dry-run
-sac listen start --bind '[::1]:7979' --print-token --dry-run
-sac listen --bind 127.0.0.1:7979 stop --grace-secs 3.5 --dry-run
-sac listen restart --dry-run
+sac listener start --dry-run
+sac listener start --bind '[::1]:7979' --print-token --dry-run
+sac listener --bind 127.0.0.1:7979 stop --grace-secs 3.5 --dry-run
+sac listener restart --dry-run
 ```
 
 Each preview emits JSON with `dry_run=true`, `scope="arguments_only"`, the
@@ -36,16 +42,16 @@ covers credentials, live daemon/pidfile/socket state, supervisor/failover state
 and the lifecycle outcome. Exit zero means an argument plan was produced;
 it does not establish that a daemon can start, stop or restart.
 
-Explicit `listen start`, `listen stop` and `listen restart` require `--yes/-y` before runtime lookup or signals;
+Explicit `listener start`, `listener stop` and `listener restart` require `--yes/-y` before runtime lookup or signals;
 `SAC_ASSUME_YES=1` does not approve it. Preview takes precedence over approval.
 Start approval also covers `--print-token`, which may create a token.
 The existing lifecycle backends and result handling remain unchanged.
 
 ```bash
-sac listen start --yes
-sac listen start --yes --print-token
-sac listen stop --yes --json
-sac listen restart --yes
+sac listener start --yes
+sac listener start --yes --print-token
+sac listener stop --yes --json
+sac listener restart --yes
 ```
 
 Bare startup retains its existing compatibility policy for the systemd unit

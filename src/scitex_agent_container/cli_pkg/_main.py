@@ -67,7 +67,7 @@ COMMAND_CATEGORIES = [
     ("Account", ["accounts"]),
     (
         "Network & Peer",
-        ["host", "peer", "a2a", "fleet", "listen", "gui"],
+        ["host", "peer", "a2a", "fleet", "listener", "gui"],
     ),
     ("Registry & Events", ["store", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
@@ -128,7 +128,7 @@ class _MainGroup(LazyGroup):
         "mcp": f"{_PKG}.mcp_group:mcp",
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
-        "listen": f"{_PKG}.listen_cmds:listen",
+        "listener": f"{_PKG}.listen_cmds:listen",
         "gui": f"{_PKG}.gui_group:gui_group",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
         # Mechanical gates over a DELEGATED code change. `guard validate-deletions`
@@ -269,7 +269,7 @@ class _MainGroup(LazyGroup):
         "show-provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
-        "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
+        "listener": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
         "list-ports": "List the ports sac/scitex uses, with live status.",
         "list-auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
@@ -279,8 +279,9 @@ class _MainGroup(LazyGroup):
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }
 
-    # Deployed Stop hooks retain protocol-compatible warn-phase forwarding.
+    # Retained spellings forward through their actual canonical command paths.
     LAZY_WARN_ALIASES = {
+        "listen": (("listener",), "0.40.0"),
         "never-stop-when-task-remains": (("dev", "hooks", "decide-stop"), "0.40.0"),
     }
 
@@ -358,7 +359,7 @@ class _MainGroup(LazyGroup):
         "  $ sac agents status\n"
         "  $ sac agents start orchestrator                                      # by name\n"
         "  $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
-        "  $ sac listen status                                                  # host control-plane health\n"
+        "  $ sac listener status                                                  # host control-plane health\n"
     ),
 )
 @click.option(

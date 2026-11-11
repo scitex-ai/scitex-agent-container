@@ -1,4 +1,4 @@
-"""``sac listen`` — host-level HTTP/JSON control plane for sac agents.
+"""``sac listener`` — host-level HTTP/JSON control plane for sac agents.
 
 Boots a Starlette app under uvicorn at ``--bind``; routes the
 ``/agents/...`` and ``/v1/a2a/...`` namespaces from
@@ -86,14 +86,14 @@ def _warn_bare_boot_deprecated() -> None:
         err=True,
     )
     click.echo(
-        "      `listen` is a command GROUP, not a verb: booting a daemon off "
+        "      `listener` is the command group: booting a daemon off "
         "the bare noun means a typo or a stray tab-complete starts a server. "
         "Verbs: start / stop / restart / status  (see `sac listen -h`).",
         err=True,
     )
 
 
-@click.group(name="listen", invoke_without_command=True)
+@click.group(name="listener", invoke_without_command=True)
 @click.option(
     "--bind",
     default="127.0.0.1:7878",
@@ -136,21 +136,21 @@ def listen(
 
     The plane every sac agent reaches the host through — 127.0.0.1:7878 by
     default, bearer-token authenticated, loopback-only unless you opt out.
-    `listen` is a NOUN; the verbs below are its whole lifecycle.
+    `listener` is the canonical namespace; `listen` remains a hidden alias.
 
     \b
     Example:
-        sac listen start --yes              # boot the daemon (loopback only)
-        sac listen status                   # health report; exit 1 if down
-        sac listen status --json            # machine-readable envelope
-        sac listen stop --yes               # stop it (idempotent)
-        sac listen restart --yes            # atomic stop-clean-relaunch
-        sac listen start --yes --print-token # echo the bearer token, then exit
+        sac listener start --yes              # boot the daemon (loopback only)
+        sac listener status                   # health report; exit 1 if down
+        sac listener status --json            # machine-readable envelope
+        sac listener stop --yes               # stop it (idempotent)
+        sac listener restart --yes            # atomic stop-clean-relaunch
+        sac listener start --yes --print-token # echo the bearer token, then exit
 
     \b
-    DEPRECATED: bare `sac listen` still BOOTS the daemon, so the systemd unit
+    DEPRECATED: bare `sac listener` still BOOTS the daemon, so the systemd unit
     and every existing launcher keep working — but it now warns. Use
-    `sac listen start --yes`. The warning still names the historical v0.23.0
+    `sac listener start --yes`. The warning still names the historical v0.23.0
     removal target; removal has not been implemented. Existing launchers
     must migrate before bare startup can be removed.
     """
