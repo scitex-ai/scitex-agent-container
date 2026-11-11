@@ -48,7 +48,7 @@ not). The servers start healthy and write nothing to stdout; the failure is a
 3. **Lazy-import** of the tool modules (`_mcp/server.py` imports them inside
    `_build_server()`, not at module load) so `import scitex_agent_container._mcp`
    stays cheap.
-4. **Auto-heal boot self-check** — `sac mcp healthcheck` (`_mcp/_healthcheck.py`),
+4. **Auto-heal boot self-check** — `sac mcp recover-connections` (`_mcp/_healthcheck.py`),
    run at boot via a `SessionStart` hook: logs the expected capability surface,
    detects failed critical MCPs via `claude mcp list`, and on failure alarms +
    requests a rate-limited `--fresh` self-restart. FAIL-OPEN — never blocks boot.
