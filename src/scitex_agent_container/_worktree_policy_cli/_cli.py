@@ -46,21 +46,35 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     )
     parser.add_argument("--policy", type=Path, default=None)
     sub = parser.add_subparsers(dest="operation", required=True)
-    inspect = sub.add_parser("inspect")
+    inspect = sub.add_parser(
+        "inspect",
+        description="Inspect Git context and policy identity without changing the repository.",
+    )
     inspect.add_argument("--repo", type=Path, required=True)
-    context = sub.add_parser("assert-context")
+    context = sub.add_parser(
+        "assert-context",
+        description="Check whether Git context permits the selected intent.",
+    )
     context.add_argument("--repo", type=Path, required=True)
     context.add_argument(
         "--intent",
         choices=("read", "edit", "commit", "push", "branch-change"),
         required=True,
     )
-    edit = sub.add_parser("check-edit")
+    edit = sub.add_parser(
+        "check-edit",
+        description="Check edit permission for a path under the selected policy.",
+    )
     edit.add_argument("--path", type=Path, required=True)
-    shell = sub.add_parser("check-shell")
+    shell = sub.add_parser(
+        "check-shell", description="Check a shell command against the worktree policy."
+    )
     shell.add_argument("--cwd", type=Path, required=True)
     shell.add_argument("--command", required=True)
-    generate = sub.add_parser("generate-projections")
+    generate = sub.add_parser(
+        "generate-projections",
+        description="Generate policy projections after explicit approval.",
+    )
     generate.add_argument("--output-dir", type=Path, default=None)
     generate.add_argument(
         "--dry-run",
@@ -70,7 +84,10 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     generate.add_argument(
         "--yes", "-y", action="store_true", help="Approve writing policy projections."
     )
-    check = sub.add_parser("check-projections")
+    check = sub.add_parser(
+        "check-projections",
+        description="Verify generated projections match the selected policy.",
+    )
     check.add_argument("--output-dir", type=Path, default=None)
     return parser
 

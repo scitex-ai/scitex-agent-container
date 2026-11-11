@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import click
 
+from .._worktree_policy_cli._discovery import build_policy_group
 from . import _worktree_gc
 
 
@@ -33,27 +34,7 @@ def worktree_group() -> None:
     """
 
 
-@worktree_group.command(
-    "policy",
-    context_settings={"ignore_unknown_options": True},
-    add_help_option=False,
-)
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-@click.pass_context
-def policy(ctx: click.Context, args: tuple[str, ...]) -> None:
-    """Inspect and enforce the packaged Git worktree policy.
-
-    \b
-    Examples:
-      $ sac worktree policy inspect --repo .
-      $ sac worktree policy assert-context --repo . --intent edit
-      $ sac worktree policy check-projections
-    """
-    from .._worktree_policy_cli import main
-
-    raise SystemExit(main(list(args), prog=ctx.command_path))
-
-
+worktree_group.add_command(build_policy_group())
 _worktree_gc.register(worktree_group)
 
 __all__ = ["worktree_group"]

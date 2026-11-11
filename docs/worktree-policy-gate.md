@@ -10,6 +10,17 @@ No operator-side executable is required. Operators who keep their own policy
 executable can still pass its path as `cli_path`; the engine schema and this
 page document the contract it must honor.
 
+## Discovering policy operations
+
+`sac worktree policy --help` lists the native operations. Command discovery
+also exposes each operation's required paths, intent choices and projection
+approval options from the same parser used to validate execution. Discovery
+does not inspect a repository, read a selected manifest or generate projections.
+
+Policy decisions remain JSON. Invalid arguments return a JSON error and exit 3;
+a denied request exits 2. `generate-projections --dry-run` previews supplied
+arguments without reading the manifest, while writes require explicit `--yes`.
+
 ## Launch behavior
 
 Before a write-capable `kind: Agent` task starts, SAC:
