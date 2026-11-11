@@ -81,7 +81,7 @@ handler can block the server long enough for the client to give up.
    error (`host_exec_local` → `{"status":"error", …}`) or is caught by the SSE
    `on_event` wrapper — a slow/hung upstream never desyncs the stdio protocol.
 
-5. **Honest healthcheck (no false-OK).** `sac mcp healthcheck` now returns
+5. **Honest recovery observation (no false-OK).** `sac mcp recover-connections` returns
    `action="unknown"` (not `ok`) whenever it could not verify client-side
    connectivity (`claude mcp list` unreadable/empty, or a critical server absent
    from its output). A live server process does not prove the client is still
@@ -128,7 +128,7 @@ Check `sac mcp --help` first: older installations may lack `show-tool` or
 | `mcp show-tool NAME --json` | describe one exact registered tool | its name, description and MCP `inputSchema` |
 | `mcp doctor` | inspect the local installation and tool registration | local dependencies and registration, not a client connection |
 | `mcp validate-connections --json` | observe critical connections reported by Claude Code, with SAC restart requests disabled | exit 0 only for verified connected results; exit 1 for unverified observations |
-| `mcp healthcheck --json` | run the existing boot observation/recovery hook | inspect the payload; fail-open exit 0 does not establish health |
+| `mcp recover-connections --json` | run the existing boot observation/recovery hook | inspect the payload; fail-open exit 0 does not establish health |
 
 Discovery does not invoke the domain operation. It still initializes the
 registry and Python dependencies, so it is not a whole-process no-I/O claim.
@@ -144,7 +144,8 @@ the existing result contains `count: 0`, an empty `tools` list and an `error`;
 the CLI retains its existing zero exit status for that case. Consumers must
 inspect the payload rather than treating status zero as dependency readiness.
 
-Both `sac mcp healthcheck --json` and `sac --json mcp healthcheck` select the
+Both `sac mcp recover-connections --json` and
+`sac --json mcp recover-connections` select the
 backend result as JSON. This is the existing boot recovery hook, not a passive
 probe: it may request a rate-limited self-restart. Its fail-open status zero
 allows boot to proceed and does not certify health. Read `action`, `statuses`,
@@ -153,6 +154,9 @@ allows boot to proceed and does not certify health. Read `action`, `statuses`,
 connectivity; `SAC_MCP_HEALTHCHECK_NO_RESTART=1` permits the normal observations
 and alarms but suppresses the self-restart request. Neither is proof of a
 healthy MCP connection. The JSON flag changes rendering, not those policies.
+
+`mcp healthcheck` remains a hidden compatibility alias until 0.40. It forwards
+to `recover-connections` and warns on stderr, preserving JSON-only stdout.
 
 `mcp show-tool` returns one object's `name`, `description` and `inputSchema`,
 using the registered backend's MCP metadata conversion. It accepts both
