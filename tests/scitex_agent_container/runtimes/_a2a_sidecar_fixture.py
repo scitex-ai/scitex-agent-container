@@ -16,6 +16,7 @@ import yaml
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes.a2a_sidecar import (
+    _log_path,
     _pid_path,
     _proc_argv,
     _process_alive,
@@ -123,7 +124,21 @@ def _config(
     )
 
 
-def wait_for_sidecar(pid, port, name, *, timeout):
+def _startup_log_detail(log_path):
+    """Read at most the final 4 KiB of the caller's owned startup log."""
+    if log_path is None:
+        return "Startup log not supplied."
+    try:
+        with log_path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 4096))
+            tail = stream.read(4096).decode("utf-8", errors="replace")
+    except OSError as exc:
+        return f"Startup log {log_path} unavailable: {exc}"
+    return f"Startup log {log_path} (last 4096 bytes):\n{tail}"
+
+
+def wait_for_sidecar(pid, port, name, *, timeout, log_path=None):
     """Do not yield a process that merely exists but has not started its server.
 
     Preserve the fixture's existing budget. Metadata from an unrelated server
@@ -131,13 +146,19 @@ def wait_for_sidecar(pid, port, name, *, timeout):
     """
     if pid is None:
         raise RuntimeError("Owned sidecar was not spawned")
-    process = psutil.Process(pid)
+    exited = (
+        f"Owned sidecar {name} (pid={pid}, port={port}) exited before HTTP readiness"
+    )
+    try:
+        process = psutil.Process(pid)
+    except psutil.NoSuchProcess as exc:
+        raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}") from exc
     deadline = time.monotonic() + timeout
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
             if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
-                raise RuntimeError("Owned sidecar exited before HTTP readiness")
+                raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}")
             argv = _proc_argv(pid)
             owns_port = any(
                 connection.laddr
@@ -154,12 +175,13 @@ def wait_for_sidecar(pid, port, name, *, timeout):
                 if [agent["name"] for agent in payload.get("agents", [])] == [name]:
                     return
         except psutil.NoSuchProcess as exc:
-            raise RuntimeError("Owned sidecar exited before HTTP readiness") from exc
+            raise RuntimeError(f"{exited}\n{_startup_log_detail(log_path)}") from exc
         except (OSError, ValueError, KeyError, urllib.error.URLError):
             pass  # A child still starting may not accept HTTP yet.
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     raise TimeoutError(
-        f"Owned sidecar {name} (pid={pid}, port={port}) did not become ready"
+        f"Owned sidecar {name} (pid={pid}, port={port}) did not become ready\n"
+        f"{_startup_log_detail(log_path)}"
     )
 
 
@@ -183,8 +205,12 @@ def shared_workdir_pair(tmp_path: Path):
     pid_a = start_sidecar(cfg_a)
     pid_b = start_sidecar(cfg_b)
     try:
-        wait_for_sidecar(pid_a, port_a, cfg_a.name, timeout=10.0)
-        wait_for_sidecar(pid_b, port_b, cfg_b.name, timeout=10.0)
+        wait_for_sidecar(
+            pid_a, port_a, cfg_a.name, timeout=10.0, log_path=_log_path(cfg_a)
+        )
+        wait_for_sidecar(
+            pid_b, port_b, cfg_b.name, timeout=10.0, log_path=_log_path(cfg_b)
+        )
         yield {
             "cfg_a": cfg_a,
             "cfg_b": cfg_b,
