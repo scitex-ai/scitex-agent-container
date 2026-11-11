@@ -106,3 +106,24 @@ def test_discovery_exposes_native_inspection_output_flags():
         options["json"].is_flag, options["text"].is_flag,
         options["json"].default, options["text"].default,
     ) == ({"repo", "json", "text"}, True, True, True, False, False)
+
+
+def test_global_json_takes_precedence_over_inspection_text(tmp_path):
+    # Arrange
+    _authority(tmp_path)
+    runner = CliRunner(
+        env={
+            "SCITEX_AGENT_CONTAINER_HOME": str(tmp_path / "sac-state"),
+            "SCITEX_DIR": str(tmp_path / "scitex"),
+        }
+    )
+    expected = json.loads(_inspect(tmp_path, "click", "--json")[1])
+
+    # Act
+    result = runner.invoke(
+        main,
+        ["--json", "worktree", "policy", "inspect", "--repo", str(tmp_path), "--text"],
+    )
+
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout)) == (0, expected)

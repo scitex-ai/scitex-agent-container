@@ -184,7 +184,7 @@ Run `sac list-python-apis -vv` for the full signature tree.
 ## Conventions
 
 - **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac store clean`).
-- **Policy JSON:** default. Inspect’s `--json` / `--text` are exclusive; errors stay JSON.
+- **Policy:** JSON by default; inspect has `--json` / `--text`. Global JSON wins; errors stay JSON.
 - **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart` — the CLI resolves yaml paths to agent names internally.
 
 ## See also

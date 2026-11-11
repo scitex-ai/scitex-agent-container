@@ -116,7 +116,12 @@ def _emit_inspection(payload: dict, *, as_json: bool) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    prog: str | None = None,
+    json_output: bool = False,
+) -> int:
     args = build_parser(prog=prog).parse_args(argv)
     try:
         if args.operation == "generate-projections" and args.dry_run:
@@ -156,7 +161,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
                     "decision": "allow",
                     **inspect_repo(args.repo, policy, source_hash, projection_dir),
                 },
-                as_json=args.json or not args.text,
+                as_json=json_output or args.json or not args.text,
             )
         if args.operation == "assert-context":
             info = inspect_repo(args.repo, policy, source_hash, projection_dir)

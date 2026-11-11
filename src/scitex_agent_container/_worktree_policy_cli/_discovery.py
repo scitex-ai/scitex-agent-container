@@ -35,12 +35,14 @@ class _NativePolicy:
         return []
 
     def invoke(self, ctx: click.Context) -> None:
+        from ..cli_pkg._helpers import _json_flag
+
         argv = list(ctx.meta["sac_policy_argv"])
         prog = ctx.command_path
         if self.operation is not None:
             argv.insert(0, self.operation)
             prog = ctx.parent.command_path if ctx.parent else "worktree-policy"
-        raise SystemExit(main(argv, prog=prog))
+        raise SystemExit(main(argv, prog=prog, json_output=_json_flag(ctx, False)))
 
 
 class PolicyCommand(_NativePolicy, SpecCommand):
