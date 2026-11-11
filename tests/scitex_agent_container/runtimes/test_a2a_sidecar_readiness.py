@@ -10,6 +10,8 @@ import pytest
 
 from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
     shared_workdir_pair as shared_workdir_pair,
+)
+from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
     wait_for_sidecar,
 )
 
@@ -91,3 +93,46 @@ def test_actual_agent_metadata_must_match_the_owned_child(shared_workdir_pair):
     # Assert
     with pytest.raises(TimeoutError):
         wait()
+
+
+def _failure_from_exited_child(startup_log):
+    process = subprocess.Popen(["true"])
+    process.wait(timeout=2)
+    try:
+        return wait_for_sidecar(
+            process.pid, 1, "owned-fixture", timeout=0.2, log_path=startup_log
+        )
+    except RuntimeError as failure:
+        return failure
+
+
+def test_exited_child_reports_only_bounded_owned_startup_log(tmp_path):
+    # Arrange: a real reaped child and synthetic diagnostic data, not a live sidecar.
+    startup_log = tmp_path / "startup.log"
+    startup_log.write_bytes(
+        b"discarded-prefix" + b"x" * 5000 + b"owned diagnostic tail"
+    )
+    # Act
+    failure = _failure_from_exited_child(startup_log)
+    # Assert
+    assert (
+        isinstance(failure, RuntimeError)
+        and "owned diagnostic tail" in str(failure)
+        and "discarded-prefix" not in str(failure)
+        and "pid=" in str(failure)
+        and "owned-fixture" in str(failure)
+        and "exited before HTTP readiness" in str(failure)
+    )
+
+
+def test_missing_owned_startup_log_does_not_mask_child_exit(tmp_path):
+    # Arrange
+    startup_log = tmp_path / "absent.log"
+    # Act
+    failure = _failure_from_exited_child(startup_log)
+    # Assert
+    assert (
+        isinstance(failure, RuntimeError)
+        and "exited before HTTP readiness" in str(failure)
+        and "unavailable" in str(failure)
+    )
