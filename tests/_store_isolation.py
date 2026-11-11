@@ -373,14 +373,15 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
     saved = os.environ.get(key)
     # Preserve the store's URI contract and any existing query/options.
     # A socket DSN already has ?host=...; a second '?' corrupts that value.
-    from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
     parts = urlsplit(PG_BASE_DSN)
-    query = parse_qsl(parts.query, keep_blank_values=True)
-    options = dict(query).get("options", "")
-    query = [(name, value) for name, value in query if name != "options"]
-    query.append(("options", f"{options} -csearch_path={schema}".strip()))
-    os.environ[key] = urlunsplit(parts._replace(query=urlencode(query, quote_via=quote)))
+    # libpq percent-decodes URI queries; '+' is literal, not a form space.
+    query = parts.query.split("&") if parts.query else []
+    options = psycopg.conninfo.conninfo_to_dict(PG_BASE_DSN).get("options", "")
+    query = [part for part in query if unquote(part.partition("=")[0]) != "options"]
+    options = quote(f"{options} -csearch_path={schema}".strip(), safe="")
+    os.environ[key] = urlunsplit(parts._replace(query="&".join([*query, f"options={options}"])))
     try:
         yield schema
     finally:
