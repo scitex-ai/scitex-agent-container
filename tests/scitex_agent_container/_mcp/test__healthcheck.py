@@ -435,5 +435,12 @@ def test_missing_mcp_backend_keeps_structured_discovery_result(prefix, suffix):
     # Assert
     assert (result.exit_code, json.loads(result.stdout)) == (
         0,
-        {"count": 0, "tools": [], "error": "fastmcp not installed"},
+        {
+            "count": 0,
+            "tools": [],
+            "error": (
+                "fastmcp backend unavailable: owned unavailable-backend fixture. "
+                "Install: pip install scitex-agent-container[mcp]"
+            ),
+        },
     )
