@@ -69,12 +69,19 @@ back link and the lifecycle form action are correct at any mount.
         <dt>Model</dt><dd>{{ agent.model }}</dd>
         <dt>Project</dt><dd>{{ agent.project }}</dd>
         <dt>Host</dt><dd>{{ agent.host }}</dd>
-        <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
-        <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
-        <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
-        <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
         {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
       </dl>
+      {# Compass L518: pid / port / turn URL / session sit behind a native #}
+      {# <details> disclosure — collapsed until needed, no-JS safe. #}
+      <details class="detail-advanced" data-advanced="runtime">
+        <summary>Advanced runtime details</summary>
+        <dl class="kv">
+          <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
+          <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
+          <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
+          <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
+        </dl>
+      </details>
     </section>
 
     <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-activity" aria-labelledby="dt-{{ agent.name }}-activity" data-detail-panel="activity" tabindex="0">
