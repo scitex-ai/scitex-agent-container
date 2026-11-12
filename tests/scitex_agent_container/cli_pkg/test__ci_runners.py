@@ -1,4 +1,4 @@
-"""Tests for the runner read behind ``sac ci runners``.
+"""Tests for the runner read behind ``sac ci list-runners``.
 
 Two regressions these exist for:
 

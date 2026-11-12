@@ -8,6 +8,7 @@ the filesystem itself.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,18 +17,29 @@ _SKILLS_ROOT = (
 )
 
 
+def _skill_files() -> list[Path]:
+    """Admit direct skill files whose resolved target stays in the skill root."""
+    root = _SKILLS_ROOT.resolve()
+    return [
+        path
+        for path in sorted(_SKILLS_ROOT.glob("*.md"))
+        if path.is_file() and path.resolve().parent == root
+    ]
+
+
 def skills_list() -> dict[str, Any]:
     """Enumerate the markdown skill files this package ships under
     ``_skills/scitex-agent-container/``.
 
     Returns a flat list of ``{name, path, description}`` entries.
     ``description`` is the YAML-frontmatter ``description`` field
-    when present, else the first non-blank line of the file.
+    when it is a string (including YAML block scalars), else the first
+    non-blank, non-heading body line. Surrounding whitespace is stripped.
     """
     skills = []
     if not _SKILLS_ROOT.is_dir():
         return {"count": 0, "skills": []}
-    for md in sorted(_SKILLS_ROOT.glob("*.md")):
+    for md in _skill_files():
         text = md.read_text(encoding="utf-8", errors="replace")
         skills.append(
             {
@@ -44,15 +56,18 @@ def skills_get(name: str) -> dict[str, Any]:
     ``"02_quick-start"``). Reverse of :func:`skills_list`.
 
     ``name`` is matched against ``<stem>``; pass without the ``.md``
-    extension. Returns ``{"name", "path", "content"}`` when found,
+    extension. Only listed files resolving inside the skill directory are
+    admitted; paths and external symlinks are not skill names.
+    Returns ``{"name", "path", "content"}`` when found,
     or ``{"error", "name", "available"}`` when not.
     """
-    target = _SKILLS_ROOT / f"{name}.md"
-    if not target.is_file():
+    files = _skill_files()
+    target = next((path for path in files if path.stem == name), None)
+    if target is None:
         return {
             "error": "skill not found",
             "name": name,
-            "available": [p.stem for p in sorted(_SKILLS_ROOT.glob("*.md"))],
+            "available": [path.stem for path in files],
         }
     return {
         "name": name,
@@ -67,12 +82,21 @@ def register_skills_tools(mcp) -> None:
 
 
 def _extract_description(text: str) -> str:
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            for line in text[3:end].splitlines():
-                if line.lstrip().startswith("description:"):
-                    return line.split(":", 1)[1].strip().strip("\"'")
+    block = re.match(
+        r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", text, re.DOTALL
+    )
+    if block is not None:
+        import yaml
+
+        try:
+            metadata = yaml.safe_load(block.group(1))
+        except yaml.YAMLError:
+            metadata = None
+        if isinstance(metadata, dict):
+            description = metadata.get("description")
+            if isinstance(description, str):
+                return description.strip()
+        text = text[block.end() :]
     for line in text.splitlines():
         s = line.strip()
         if s and not s.startswith("#") and not s.startswith("---"):

@@ -2,6 +2,9 @@
 
 Currently exposes:
 
+* ``hooks decide-stop`` — configured runtime Stop-event protocol. It invokes
+  the provider and may update hook state without interactive approval.
+
 * ``upload-apikey-from-credentials-to-github`` — sync local Anthropic auth env vars into
   this repo's GitHub Actions secret slots so CI runs against the same
   credentials the operator has locally. Honours the OAuth-vs-API
@@ -10,7 +13,7 @@ Currently exposes:
 
 Design constraints:
 
-* Read-only by default — refuses to mutate without ``--yes/-y``
+* Secret-management commands refuse mutation without ``--yes/-y``
   (audit-cli §2; the rotate is destructive on the GitHub side).
 * GitHub returns secret names + ``updated_at`` only — never values.
   "Inconsistent" therefore means *slot present but older than ~1 day*
@@ -182,6 +185,10 @@ def dev_group() -> None:
 from .skills_group import skills_group
 
 dev_group.add_command(skills_group)
+
+from .hooks_group import hooks
+
+dev_group.add_command(hooks)
 
 # Federated scheduled-job subcommands (`sac dev {cron,systemd}`, derived
 # from `_dev_jobs.GROUP_KINDS`) delegate to scitex-dev's ecosystem

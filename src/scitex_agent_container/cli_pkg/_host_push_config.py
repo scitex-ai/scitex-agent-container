@@ -51,6 +51,7 @@ from .._hostsync._token_state import DEFAULT_LISTEN_PORT
 from .._logging import render_rich
 from .._state.host_config import load as _load_cfg
 from ._helpers import _json_flag
+from ._host_push_config_preview import emit_preview
 
 # Colour per verdict. Refusals and unknowns are loud on purpose.
 _STYLE = {
@@ -135,6 +136,12 @@ def _print_token_result(result: TokenStateResult) -> None:
     help="READ-ONLY: classify each peer's config, exit non-zero on drift.",
 )
 @click.option(
+    "--yes", "-y", is_flag=True, help="Approve guarded config/token writes or rotation."
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Show arguments only; no config/token read or SSH."
+)
+@click.option(
     "--all",
     "all_peers",
     is_flag=True,
@@ -198,6 +205,8 @@ def host_push_config(
     ctx: click.Context,
     peer: str | None,
     check_only: bool,
+    yes: bool,
+    dry_run: bool,
     all_peers: bool,
     show_diff: bool,
     adopt: bool,
@@ -223,12 +232,12 @@ def host_push_config(
       $ sac host push-config --check --all --json
     \b
     Reconcile:
-      $ sac host push-config spartan
-      $ sac host push-config --all
-      $ sac host push-config spartan --with-tokens   # + the master's bearer
+      $ sac host push-config spartan --yes
+      $ sac host push-config --all --yes
+      $ sac host push-config spartan --yes --with-tokens   # + the master's bearer
     \b
     Rotate ONE peer's listen bearer (mints, restarts its listen, verifies):
-      $ sac host push-config --rotate-tokens spartan
+      $ sac host push-config --rotate-tokens spartan --yes
     \b
     Config verdicts, each printed with its evidence:
       current       remote content matches the render (timestamp aside)
@@ -248,12 +257,17 @@ def host_push_config(
                       listen tokens (which one its listen serves is not
                       knowable from here) -> rotate to collapse them
 
+    --dry-run previews arguments only, without validating peers/config/tokens.
+    Writes require --yes/-y; approval conflicts with --check or --dry-run.
+
     Only sha256 digests (12 chars) are ever printed — never a token.
 
     Every push is verified by reading the peer back and comparing bytes;
     a push that cannot substantiate itself reports FAILED. The peer-side
     path is expanded remotely ($HOME on the peer) — never locally.
     """
+    if yes and (dry_run or check_only):
+        raise click.UsageError("--yes/-y cannot be combined with --dry-run or --check")
     if rotate_peer:
         if check_only:
             raise click.UsageError(
@@ -302,6 +316,27 @@ def host_push_config(
             "concrete peers only"
         )
 
+    if dry_run:
+        emit_preview(
+            ctx,
+            as_json=as_json,
+            peer=peer,
+            all_peers=all_peers,
+            mode="rotate-tokens" if rotate_peer else "check" if check_only else "push",
+            rotate_peer=rotate_peer,
+            adopt=adopt,
+            with_tokens=with_tokens,
+            no_tokens=no_tokens,
+            listen_port=listen_port,
+            timeout=timeout,
+            show_diff=show_diff,
+        )
+        return
+    if not check_only and not yes:
+        raise click.UsageError(
+            "push/rotation requires --yes/-y; use --dry-run to preview or --check to inspect"
+        )
+
     cfg = _load_cfg()
     if target and target == cfg.canonical_host():
         raise click.UsageError(
@@ -312,7 +347,7 @@ def host_push_config(
         if rotate_peer not in cfg.peers:
             raise click.UsageError(
                 f"peer '{rotate_peer}' is not defined in {cfg.source_path} — add "
-                f"it on the MASTER with `sac host add {rotate_peer} --ssh <user@host>`"
+                f"it on the MASTER with `sac host add {rotate_peer} --ssh <user@host> --yes`"
             )
         _run_rotate(
             ctx,
@@ -332,7 +367,7 @@ def host_push_config(
     if missing:
         raise click.UsageError(
             f"peer '{missing[0]}' is not defined in {cfg.source_path} — add it "
-            f"on the MASTER with `sac host add {missing[0]} --ssh <user@host>`"
+            f"on the MASTER with `sac host add {missing[0]} --ssh <user@host> --yes`"
         )
 
     results: list[PushConfigResult] = []
@@ -362,7 +397,10 @@ def host_push_config(
         raise SystemExit(code)
 
     mode = "check (read-only)" if check_only else "push"
-    render_rich(f"[bold]sac host push-config {mode}[/bold]  master -> {len(results)} peer(s)\n", __name__)
+    render_rich(
+        f"[bold]sac host push-config {mode}[/bold]  master -> {len(results)} peer(s)\n",
+        __name__,
+    )
     for result in results:
         _print_result(result, show_diff=show_diff)
     for token in tokens:
@@ -372,23 +410,32 @@ def host_push_config(
     drifted = [r.peer for r in results if r.exit_code != 0]
     tok_drifted = [t.peer for t in tokens if t.exit_code != 0]
     if check_only and drifted:
-        render_rich(f"[yellow]config drift on {len(drifted)} peer(s):[/yellow] "
+        render_rich(
+            f"[yellow]config drift on {len(drifted)} peer(s):[/yellow] "
             f"{', '.join(drifted)}\n"
             "  These peers are NOT running the master's generated client "
             "config. Reconcile with:\n"
-            f"    sac host push-config {drifted[0]}", __name__)
+            f"    sac host push-config {drifted[0]} --yes",
+            __name__,
+        )
     if check_only and tok_drifted:
-        render_rich(f"[red]token drift on {len(tok_drifted)} peer(s):[/red] "
+        render_rich(
+            f"[red]token drift on {len(tok_drifted)} peer(s):[/red] "
             f"{', '.join(tok_drifted)}\n"
             "  a2a is broken (or will break at the next listen restart) in at "
             "least one direction. Reconcile with:\n"
-            f"    sac host push-config {tok_drifted[0]} --with-tokens   "
+            f"    sac host push-config {tok_drifted[0]} --yes --with-tokens   "
             "# the master's OWN bearer\n"
-            f"    sac host push-config --rotate-tokens {tok_drifted[0]}   "
-            "# the peer's bearer (restarts its listen)", __name__)
+            f"    sac host push-config --rotate-tokens {tok_drifted[0]} --yes   "
+            "# the peer's bearer (restarts its listen)",
+            __name__,
+        )
     if code == 0:
-        render_rich("[green]all peers carry the master's generated client config[/green] "
-            "[dim](verified by read-back bytes, not by a write's exit code)[/dim]", __name__)
+        render_rich(
+            "[green]all peers carry the master's generated client config[/green] "
+            "[dim](verified by read-back bytes, not by a write's exit code)[/dim]",
+            __name__,
+        )
     raise SystemExit(code)
 
 
@@ -422,7 +469,9 @@ def _run_rotate(
         )
         raise SystemExit(result.exit_code)
 
-    render_rich(f"[bold]sac host push-config --rotate-tokens[/bold]  {peer}\n", __name__)
+    render_rich(
+        f"[bold]sac host push-config --rotate-tokens[/bold]  {peer}\n", __name__
+    )
     colour = "green" if result.ok else "red"
     label = result.action.upper() if not result.ok else "rotated"
     _evidence(f"[{colour}]{label:<14}[/{colour}] {peer}")

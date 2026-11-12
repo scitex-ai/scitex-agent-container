@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # File: src/scitex_agent_container/cli_pkg/provenance_cmds.py
 
-"""``sac provenance`` — prove which code is loaded, and whether it lies.
+"""``sac show-provenance`` — prove which code is loaded, and whether it lies.
 
 The heavy half of the version story. ``sac --version`` stays terse and
 ~0.5 ms because it is typed constantly and shelled by scripts; the checks
@@ -17,6 +17,7 @@ install instead of discovering it hours later.
 from __future__ import annotations
 
 import json as _json
+from copy import copy
 
 import click
 
@@ -61,7 +62,7 @@ def _render(report: dict) -> str:
     return "\n".join(lines)
 
 
-@click.command("provenance", context_settings=CONTEXT_SETTINGS)
+@click.command("show-provenance", context_settings=CONTEXT_SETTINGS)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
 @click.option(
     "--strict",
@@ -86,9 +87,9 @@ def provenance(as_json: bool, strict: bool) -> None:
 
     \b
     Examples:
-      $ sac provenance                  # human-readable
-      $ sac provenance --json           # machine-readable
-      $ sac provenance --strict         # exit 1 on any anomaly (CI / deploy gate)
+      $ sac show-provenance                  # human-readable
+      $ sac show-provenance --json           # machine-readable
+      $ sac show-provenance --strict         # exit 1 on any anomaly (CI / deploy gate)
     """
     from .._provenance import audit
 
@@ -105,3 +106,10 @@ def provenance(as_json: bool, strict: bool) -> None:
 __all__ = ["provenance"]
 
 # EOF
+
+
+# Keep scripts callable while discovery advertises an explicit read action.
+_legacy_provenance = copy(provenance)
+_legacy_provenance.name = "provenance"
+_legacy_provenance.hidden = True
+_legacy_provenance.deprecated = "Use show-provenance instead."

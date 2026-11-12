@@ -274,9 +274,9 @@ def pick_healthy_account(
     if not cand_list:
         raise NoHealthyAccountError(
             "no stored accounts to choose from — run "
-            "`sac accounts save <name>` or `sac accounts sync-live` "
+            "`sac accounts save <name>` or `sac accounts sync-live --yes` "
             "on the credential-holding host, then retry.",
-            brief="no stored accounts — run `sac accounts sync-live`",
+            brief="no stored accounts — run `sac accounts sync-live --yes`",
         )
 
     healths = [
@@ -312,18 +312,18 @@ def pick_healthy_account(
             raise NoHealthyAccountError(
                 f"every stored account is PAUSED (probed at "
                 f"{_iso_utc(probe_ts)}): {_format_states(healths)}. Fix: "
-                f"`sac accounts resume {paused[0].name}` — this is a "
+                f"`sac accounts resume {paused[0].name} --yes` — this is a "
                 "decision you made, not a fault; nothing is broken and "
                 "nothing was deleted.",
                 brief=(
                     f"every stored account is PAUSED ({names}) — run "
-                    f"`sac accounts resume {paused[0].name}`"
+                    f"`sac accounts resume {paused[0].name} --yes`"
                 ),
             )
         raise NoHealthyAccountError(
             f"no healthy stored account (probed at {_iso_utc(probe_ts)}): "
             f"{_format_states(healths)}. Fix: `claude /login` to one of "
-            "them, then `sac accounts sync-live`, then restart the agent"
+            "them, then `sac accounts sync-live --yes`, then restart the agent"
             + (
                 f" — but note {len(paused)} of them are PAUSED and need "
                 "`sac accounts resume` instead."
@@ -332,7 +332,7 @@ def pick_healthy_account(
             ),
             brief=(
                 f"no fresh account among {', '.join(h.name for h in healths)}"
-                " — run `claude /login` then `sac accounts sync-live`"
+                " — run `claude /login` then `sac accounts sync-live --yes`"
                 + (f" ({len(paused)} are PAUSED — resume those)" if paused else "")
             ),
         )

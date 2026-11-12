@@ -91,6 +91,9 @@ def gc_repo(
     an empty verdict list: "I could not read this repo" must not render as
     "this repo has no worktrees".
     """
+    from ._worktree_gc_options import validate_gc_options
+
+    validate_gc_options(min_age_hours, cap)
     now = time.time() if now is None else now
     ok, infos, err = list_worktrees(repo)
     if not ok:
@@ -169,6 +172,9 @@ def gc_repos(
     cwd_scan: CwdScan = running_cwds,
 ) -> GcOutcome:
     """Run :func:`gc_repo` over every repo; one bad repo never stops the rest."""
+    from ._worktree_gc_options import validate_gc_options
+
+    validate_gc_options(min_age_hours, cap)
     return GcOutcome(
         results=tuple(
             gc_repo(

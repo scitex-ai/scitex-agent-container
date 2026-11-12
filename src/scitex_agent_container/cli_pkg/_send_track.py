@@ -31,8 +31,8 @@ __all__ = [
 
 
 def build_track_command_argv(name: str, prompt: str) -> list[str]:
-    """The argv the caller should run to deliver ``prompt`` to ``name``."""
-    return ["sac", "agents", "send", name, prompt]
+    """Deliver the caller's requested prompt with approval and literal arguments."""
+    return ["sac", "agents", "send", "--yes", "--", name, prompt]
 
 
 def build_track_command(name: str, prompt: str) -> str:

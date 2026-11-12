@@ -289,7 +289,7 @@ def push_config_peer(
                 "hand-edited (no generated header). sac never silently "
                 "replaces a file a human wrote. Review the diff below; to "
                 "replace it (backing it up on the peer first) run:\n"
-                f"    sac host push-config {peer} --adopt"
+                f"    sac host push-config {peer} --adopt --yes"
             ),
             diff=unified_config_diff(remote.text, rendered, peer),
             sha12=sha12,

@@ -1,4 +1,4 @@
-"""Tests for ``cli_pkg._whoami`` — the ``sac whoami`` orientation verb.
+"""Tests for ``cli_pkg._whoami`` — the ``sac agents show-identity`` orientation command.
 
 PA-306 no-mocks. Everything is real:
 
@@ -109,7 +109,7 @@ def _spec_env(tmp_path: Path, name: str = "whoami-fixture", **overrides) -> dict
 
 
 def _invoke(env: dict, *args: str):
-    return CliRunner().invoke(main, ["whoami", *args], env=env)
+    return CliRunner().invoke(main, ["agents", "show-identity", *args], env=env)
 
 
 def _line(output: str, key: str) -> str:

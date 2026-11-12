@@ -1,4 +1,4 @@
-"""``sac ports`` — read-only inventory of the ports sac / scitex uses.
+"""``sac list-ports`` — read-only inventory of the ports sac / scitex uses.
 
 Port hygiene surface (operator request): a single command that shows
 every port sac cares about, with live status, so the operator can SEE
@@ -30,6 +30,7 @@ from __future__ import annotations
 import json as _json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from pathlib import Path
 from typing import Callable
 
@@ -276,7 +277,7 @@ def _render_table(data: dict) -> None:
             "— a2a port claimed, nothing listening.", __name__)
 
 
-@click.command(name="ports")
+@click.command(name="list-ports")
 @click.option(
     "--json",
     "as_json",
@@ -307,9 +308,9 @@ def ports(ctx: click.Context, as_json: bool, probe_timeout: float) -> None:
 
     \b
     Example:
-        sac ports                 # rich table
-        sac ports --json          # JSON envelope for scripts
-        sac ports --timeout 1.0   # slower / looser live probes
+        sac list-ports                 # rich table
+        sac list-ports --json          # JSON envelope for scripts
+        sac list-ports --timeout 1.0   # slower / looser live probes
     """
     from ._helpers._json_flag import _json_flag
 
@@ -321,3 +322,10 @@ def ports(ctx: click.Context, as_json: bool, probe_timeout: float) -> None:
 
 
 __all__ = ["ports", "collect_ports_data"]
+
+
+# Keep scripts callable while discovery advertises an explicit read action.
+_legacy_ports = copy(ports)
+_legacy_ports.name = "ports"
+_legacy_ports.hidden = True
+_legacy_ports.deprecated = "Use list-ports instead."

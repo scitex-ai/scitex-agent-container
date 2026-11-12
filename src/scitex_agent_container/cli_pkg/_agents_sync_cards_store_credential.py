@@ -29,6 +29,7 @@ from ._agents_provision_cards_notify import (
     _escape_field,
     _row,
 )
+from ._helpers import _json_flag
 
 _ROLE = re.compile(r"[A-Za-z0-9_.-]+\Z")
 _ENDPOINT = Endpoint("scitex-primary", "55432", "scitex")
@@ -219,13 +220,42 @@ def receive_cards_store_credential(role: str, apply_changes: bool) -> None:
     "--pgpass", type=click.Path(path_type=Path, dir_okay=False), default="~/.pgpass"
 )
 @click.option(
-    "--apply", "apply_changes", is_flag=True, help="Write after all peers pass dry-run."
+    "--apply",
+    "--yes",
+    "-y",
+    "apply_changes",
+    is_flag=True,
+    help="Write after all peers pass dry-run.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Validate peers without passfile writes (the default).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit secret-free JSON.")
 def sync_cards_store_credential(
-    agent: str, peers: tuple[str, ...], pgpass: Path, apply_changes: bool, as_json: bool
+    agent: str,
+    peers: tuple[str, ...],
+    pgpass: Path,
+    apply_changes: bool,
+    dry_run: bool,
+    as_json: bool,
 ) -> None:
-    """Sync one role's canonical 55432 credential from this host to peers."""
+    """Sync one role's canonical 55432 credential from this host to peers.
+
+    Preview is the default. It reads --pgpass and sends the selected credential
+    over SSH stdin to validate every peer without writing its passfile. It is
+    not an offline preview. --yes (-y, --apply) writes after all peers validate.
+    Explicit --dry-run cannot be combined with approval. Output omits passwords.
+
+    \b
+    Examples (choose trusted peers and an owned private source passfile):
+      $ sac agents sync-cards-store-credential --agent worker --to peer-a --dry-run --json
+      $ sac agents sync-cards-store-credential --agent worker --to peer-a --yes --json
+    """
+    if apply_changes and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --apply/--yes/-y")
+    as_json = _json_flag(click.get_current_context(), as_json)
     role = derive_pg_role(agent, host_user=getpass.getuser())
     try:
         results = sync_to_peers(
@@ -242,7 +272,9 @@ def sync_cards_store_credential(
         for item in results:
             click.echo(f"{item.peer}: {item.status} ({item.target}, role={item.role})")
         if not apply_changes:
-            click.echo("Dry-run: no credentials were changed. Pass --apply to write.")
+            click.echo(
+                "Dry-run: no credentials were changed. Pass --yes (or --apply) to write."
+            )
 
 
 def register(group: click.Group) -> None:

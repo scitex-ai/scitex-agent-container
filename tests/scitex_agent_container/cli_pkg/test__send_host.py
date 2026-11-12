@@ -8,10 +8,75 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
 import pytest
+from click.testing import CliRunner
 
 from scitex_agent_container._mcp._tools._agent import agent_send
+from scitex_agent_container.cli_pkg._main import main
+from scitex_agent_container.cli_pkg._send_track import build_track_command_argv
 
 EXCHANGE = "xch_20261002T230000Z_synthetic_abcdef"
+
+
+@pytest.mark.parametrize("flag", ["--yes", "-y"])
+def test_cli_approval_preserves_the_host_pending_receipt(env_save_restore, flag):
+    # Arrange
+    with host_endpoint(env_save_restore, 202, accepted_turn()) as calls:
+        # Act
+        result = CliRunner().invoke(
+            main, ["agents", "send", "retained-peer", "synthetic", flag]
+        )
+        payload = json.loads(result.stdout)
+
+    # Assert
+    assert (result.exit_code, payload["http_status"], payload["details"], calls) == (
+        0,
+        202,
+        accepted_turn(),
+        [
+            (
+                "/agents/retained-peer/send",
+                {"prompt": "synthetic"},
+                "Bearer synthetic-host",
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize("assume_yes", ["0", "1"])
+def test_unapproved_cli_send_never_reaches_host(env_save_restore, assume_yes):
+    # Arrange
+    env_save_restore.set("SAC_ASSUME_YES", assume_yes)
+    with host_endpoint(env_save_restore, 200, {"reply": "unused"}) as calls:
+        # Act
+        result = CliRunner().invoke(
+            main, ["agents", "send", "retained-peer", "owned-sensitive-prompt"]
+        )
+
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        "requires --yes/-y" in result.stderr,
+        "owned-sensitive-prompt" in result.output,
+        calls,
+    ) == (2, "", True, False, [])
+
+
+@pytest.mark.parametrize("prompt", ["--help", "line one\n'quoted'"])
+def test_generated_tracking_argv_approves_only_the_literal_prompt(
+    env_save_restore, prompt
+):
+    # Arrange
+    argv = build_track_command_argv("retained-peer", prompt)
+    with host_endpoint(env_save_restore, 200, {"reply": "owned reply"}) as calls:
+        # Act
+        result = CliRunner().invoke(main, argv[1:])
+
+    # Assert
+    assert (result.exit_code, calls) == (
+        0,
+        [("/agents/retained-peer/send", {"prompt": prompt}, "Bearer synthetic-host")],
+    )
 
 
 def accepted_turn() -> dict:

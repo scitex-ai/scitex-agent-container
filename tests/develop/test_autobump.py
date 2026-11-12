@@ -292,3 +292,145 @@ def test_cli_bump_prints_new_version_to_stdout(autobump, repo, capsys):
     out = capsys.readouterr().out.strip()
     # Assert
     assert out == "0.24.2"
+
+
+# Execute only bounded sections of the trusted workflow with inert external
+# command fixtures. No GitHub, tag, release, store or operator git calls occur.
+_GH_FIXTURE = """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['CALLS'], 'a') as stream:
+    stream.write(json.dumps(sys.argv[1:]) + '\\n')
+args = sys.argv[1:]
+if args[:2] == ['pr', 'list']:
+    print(os.environ['OPEN_PR'])
+    sys.exit(int(os.environ['LOOKUP_EXIT']))
+if args[:2] == ['pr', 'create']:
+    print('https://example.invalid/fixture/pull/17')
+elif args[:2] == ['pr', 'merge']:
+    sys.exit(int(os.environ['MERGE_EXIT']))
+elif args[:2] == ['pr', 'view']:
+    print(os.environ['PR_STATE'])
+elif args[:2] == ['workflow', 'run']:
+    sys.exit(int(os.environ['DISPATCH_EXIT']))
+"""
+
+
+def _workflow_probe(tmp_path, section, **settings):
+    import json
+    import os
+    import subprocess
+
+    import yaml
+
+    workflow = yaml.safe_load(
+        (_REPO / ".github/workflows/autobump-release-sweep.yaml").read_text()
+    )
+    code = next(
+        s["run"]
+        for s in workflow["jobs"]["sweep"]["steps"]
+        if 'BRANCH="autobump/release-v$NEXT"' in s.get("run", "")
+    )
+    starts = {
+        "pending": 'BRANCH="autobump/release-v$NEXT"',
+        "merge": "PR=$(gh pr create",
+    }
+    ends = {"pending": "# Mutate pyproject + CHANGELOG", "merge": "M=$(gh pr view"}
+    body = code.split(starts[section], 1)[1].split(ends[section], 1)[0]
+    body = starts[section] + body
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    for name, content in [
+        ("gh", _GH_FIXTURE),
+        (
+            "git",
+            '#!/usr/bin/env python3\nimport json, os, sys\nwith open(os.environ["CALLS"], "a") as stream:\n    stream.write(json.dumps(["git", *sys.argv[1:]]) + "\\n")\n',
+        ),
+    ]:
+        path = commands / name
+        path.write_text(content)
+        path.chmod(0o755)
+    calls = tmp_path / "calls.jsonl"
+    env = dict(
+        os.environ,
+        PATH=f"{commands}:{os.environ['PATH']}",
+        CALLS=str(calls),
+        OPEN_PR="",
+        LOOKUP_EXIT="0",
+        MERGE_EXIT="0",
+        PR_STATE="MERGED",
+        DISPATCH_EXIT="0",
+    )
+    env.update(settings)
+    prefix = (
+        "set -uo pipefail\nREPO=owned/fixture\nNEXT=0.0.1\n"
+        "BRANCH=autobump/release-v0.0.1\n"
+        'log() { echo "$*"; }\nalarm() { echo "$*" >&2; }\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", prefix + body + "\necho TAG_ALLOWED\n"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    invoked = [json.loads(line) for line in calls.read_text().splitlines()]
+    invoked = [call for call in invoked if call[:2] != ["git", "config"]]
+    return result.returncode, "TAG_ALLOWED" in result.stdout, invoked
+
+
+@pytest.mark.parametrize("lookup_exit", ["0", "1"])
+def test_pending_bump_is_preserved_without_deleting_or_releasing(tmp_path, lookup_exit):
+    # Arrange
+    expected = (0 if lookup_exit == "0" else 1, False, ["pr", "list"])
+    # Act
+    code, continued, calls = _workflow_probe(
+        tmp_path, "pending", OPEN_PR="17", LOOKUP_EXIT=lookup_exit
+    )
+    # Assert
+    assert (code, continued, calls[0][:2], len(calls)) == (*expected, 1)
+
+
+@pytest.mark.parametrize("merge_exit", ["0", "1"])
+@pytest.mark.parametrize(
+    "state,allowed,code",
+    [("MERGED", True, 0), ("OPEN", False, 0), ("CLOSED", False, 1), ("", False, 1)],
+)
+def test_tagging_requires_observed_merge_even_when_command_succeeds(
+    tmp_path, merge_exit, state, allowed, code
+):
+    # Arrange
+    expected = (code, allowed, False, True)
+    # Act
+    actual_code, continued, calls = _workflow_probe(
+        tmp_path, "merge", MERGE_EXIT=merge_exit, PR_STATE=state
+    )
+    # Assert
+    assert (
+        actual_code,
+        continued,
+        any("--admin" in c for c in calls),
+        any(c[:2] == ["workflow", "run"] for c in calls),
+    ) == expected
+
+
+def test_initial_ci_dispatch_failure_never_attempts_merge_or_tag(tmp_path):
+    # Arrange
+    expected = (1, False, False)
+    # Act
+    code, continued, calls = _workflow_probe(tmp_path, "merge", DISPATCH_EXIT="1")
+    # Assert
+    assert (code, continued, any(c[:2] == ["pr", "merge"] for c in calls)) == expected
+
+
+def test_no_pending_pr_can_reach_orphan_branch_cleanup(tmp_path):
+    # Arrange
+    expected = (0, True, True)
+    # Act
+    code, continued, calls = _workflow_probe(tmp_path, "pending")
+    # Assert
+    assert (
+        code,
+        continued,
+        any(c[:3] == ["git", "push", "origin"] and "--delete" in c for c in calls),
+    ) == expected

@@ -694,7 +694,7 @@ def test_harness_pump_failed_turn_resolves_response_with_error(
 def test_harness_pump_failed_turn_records_error_kind_in_transcript(
     tmp_path, error_code, expected_kind
 ):
-    # Arrange: real tmp state dir, no stubs.
+    # Arrange: real tmp state with the existing scripted error session.
     class _FailedSession:
         async def send(self, _message):
             yield NormalizedEvent(
@@ -717,16 +717,16 @@ def test_harness_pump_failed_turn_records_error_kind_in_transcript(
             host="compute-02",
             harness="codex-sdk",
         )
-
+        return response.exception()
     # Act
-    asyncio.run(_scenario())
+    failure = asyncio.run(_scenario())
     # Assert
     kinds = [
         json.loads(line).get("kind")
         for line in (tmp_path / "session.jsonl").read_text().splitlines()
         if json.loads(line).get("type") == "error"
     ]
-    assert kinds[-1] == expected_kind
+    assert (kinds[-1], str(failure)) == (expected_kind, "Codex turn failed")
 
 
 @pytest.mark.parametrize(
@@ -740,7 +740,7 @@ def test_harness_pump_error_cause_lands_in_diary(
     pg_schema, tmp_path, error_code, expected_cause
 ):
     # Arrange: genuine isolated schema (loud skip without PG; hard-fails
-    # only when a target is declared). No stubs, no mocks.
+    # only when a target is declared); existing scripted error session.
     from scitex_agent_container._state import state_store_diary
 
     class _FailedSession:
@@ -765,16 +765,16 @@ def test_harness_pump_error_cause_lands_in_diary(
             host="compute-02",
             harness="codex-sdk",
         )
-
+        return response.exception()
     # Act
-    asyncio.run(_scenario())
+    failure = asyncio.run(_scenario())
     store = state_store_diary._open(state_store_diary._errors_schema())
     try:
         causes = [row.values["cause"] for row in store.rows()]
     finally:
         store.close()
     # Assert
-    assert causes == [expected_cause]
+    assert (causes, str(failure)) == ([expected_cause], "Codex turn failed")
 
 
 def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():

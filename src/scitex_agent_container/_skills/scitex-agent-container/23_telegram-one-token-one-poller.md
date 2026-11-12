@@ -75,7 +75,7 @@ shared handyman bot. A check that flagged that family would be flagging the
 answer.
 
 **UNRESOLVED is a real fault and a DIFFERENT one** — mute and deaf, owned by
-`sac agents cct-audit` and `runtimes/_cct_rail_alarm`. It is counted and named
+`sac agents validate-telegram` and `runtimes/_cct_rail_alarm`. It is counted and named
 in every collision result and deliberately does not alarm there: measured
 2026-08-12, 81 specs declared the channel and 15 resolved a token, so alarming
 on it here would fire on 66 agents forever.

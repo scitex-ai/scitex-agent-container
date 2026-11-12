@@ -131,7 +131,13 @@ def freshness() -> None:
     help="Emit the full report as JSON.",
 )
 def check(as_json: bool) -> None:
-    """Run every currency check now (hits PyPI, git, gh, systemd)."""
+    """Run every currency check now (hits PyPI, git, gh, systemd).
+
+    \b
+    Examples:
+      sac freshness check
+      sac freshness check --json
+    """
     from .._freshness import check_currency
 
     text, code = _render(check_currency(), as_json)
@@ -161,6 +167,11 @@ def refresh(as_json: bool) -> None:
     refresher is broken" with "the refresher is working and has bad news".
     Those need different responses, so they get different exit codes. The
     verdict is still printed, and ``check`` still reports it tri-state.
+
+    \b
+    Examples:
+      sac freshness refresh
+      sac freshness refresh --json
     """
     from .._freshness import refresh_cache
 
@@ -183,6 +194,11 @@ def status(as_json: bool) -> None:
 
     An expired cache reads as UNKNOWN, not as the last known answer: a dead
     refresher's final verdict is a fossil, not evidence about now.
+
+    \b
+    Examples:
+      sac freshness status
+      sac freshness status --json
     """
     from .._freshness import read_cached
 

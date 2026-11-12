@@ -14,8 +14,8 @@ WHY — a silent skip is indistinguishable from a bug.
 DEPLOY GATE: an existing ``auth-heal.py`` cron already restarts these agents.
 Do NOT enable the ``sac.restart-login-expired-agents`` timer on a host until
 that host's ``auth-heal.py`` ``scan_tui`` is retired — two restarters on one
-fleet is the double-supervisor class. Running this command BY HAND is always
-safe.
+fleet is the double-supervisor class. Manual passes retain the same
+admission checks.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from .._authheal import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, auth_heal_pass
 from .._logging import render_rich
 from .._reconcile._rule import Verdict
 from ._helpers import _json_flag
+from ._recovery_command_preview import emit_preview
 
 #: Colour per verdict. Anything that leaves an agent wedged is loud on purpose.
 _STYLE = {
@@ -80,6 +81,8 @@ def already_summarised_by_count(report) -> bool:
 @click.command(name="restart-login-expired")
 @click.option(
     "--apply",
+    "--yes",
+    "-y",
     "apply",
     is_flag=True,
     default=False,
@@ -91,7 +94,7 @@ def already_summarised_by_count(report) -> bool:
     "check",
     is_flag=True,
     default=False,
-    help="Report only, mutate nothing (dry-run). This is already the DEFAULT.",
+    help="Observe without recovery actions; may record pass state (the default).",
 )
 @click.option(
     "--limit",
@@ -107,17 +110,27 @@ def already_summarised_by_count(report) -> bool:
     show_default=True,
     help="Seconds between the two pane captures used for the frozen check.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Describe arguments only; no observation or state recording.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
 @click.pass_context
 def restart_login_expired(
     ctx: click.Context,
     apply: bool,
     check: bool,
+    dry_run: bool,
     limit: int,
     interval: float,
     as_json: bool,
 ) -> None:
     """Audit LIVE agents showing auth banners (currently REPORT-ONLY).
+
+    --dry-run reports arguments without observing the fleet or recording
+    pass state. --yes/-y aliases --apply; neither bypasses report-only
+    admission. Approval conflicts with --dry-run and --check.
 
     Frozen banners can persist on healthy idle agents. Both positional and
     liveness auditors must authorize destructive restart admission; their
@@ -129,19 +142,20 @@ def restart_login_expired(
     session is stalled. Dead sessions belong to `sac agents reconcile`.
 
     \b
-    Detect (read-only — the DEFAULT; exits non-zero if anything is wedged):
+    Detect (observational pass — the DEFAULT; exits non-zero if anything is wedged):
       $ sac agents restart-login-expired
       $ sac agents restart-login-expired --check --json
     \b
     Compatibility invocation (still report-only):
-      $ sac agents restart-login-expired --apply
+      $ sac agents restart-login-expired --yes
+      $ sac agents restart-login-expired --dry-run --json
 
     \b
     ! DEPLOY GATE — the SCHEDULED form (sac.restart-login-expired-agents timer):
       An existing auth-heal.py cron ALREADY restarts these agents. Do NOT enable
       this timer on a host until that host's auth-heal.py scan_tui is retired —
-      two restarters bouncing one fleet is the double-supervisor class. Running
-      THIS COMMAND by hand is always safe.
+      two restarters bouncing one fleet is the double-supervisor class.
+      Manual passes retain the same admission checks.
 
     Exits 0 when every observable pane is clear, and 2 if auth failure could not be
     determined — an unreadable pane, an unreadable fleet roster, or an
@@ -159,11 +173,17 @@ def restart_login_expired(
     92" next to 0 reads as "we looked at all we could, and it is clean", never
     as "we failed to look". Full argument: _authheal/_pass.py:indeterminate.
     """
+    if apply and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --apply/--yes/-y")
     if apply and check:
         raise click.UsageError(
-            "--apply and --check are contradictory. Dry-run is the DEFAULT: "
-            "drop both flags to preview, pass --apply to restart."
+            "--apply/--yes and --check are contradictory. Use --dry-run for "
+            "arguments only; approval does not bypass report-only admission."
         )
+
+    if dry_run:
+        emit_preview("restart-login-expired", limit=limit, interval=interval)
+        return
 
     outcome = auth_heal_pass(apply=apply, limit=limit, interval=interval)
     code = outcome.exit_code()
@@ -183,7 +203,7 @@ def restart_login_expired(
         )
         raise SystemExit(code)
 
-    mode = "apply" if apply else "check (read-only)"
+    mode = "apply" if apply else "check (records pass state)"
     # Count the two populations SEPARATELY. A single total would fold the
     # agents we could not read into the agents we found wedged, which is the
     # collapse this command's exit code exists to keep apart.
@@ -215,8 +235,8 @@ def restart_login_expired(
         render_rich(
             f"\n[yellow]{len(would)} agent(s) are login-expired and would be "
             f"restarted:[/yellow] {', '.join(r.name for r in would)}\n"
-            "  Nothing was restarted — this is a dry-run. To act:\n"
-            "    sac agents restart-login-expired --apply",
+            "  Nothing was restarted; current admission remains report-only.\n"
+            "    sac agents restart-login-expired --yes",
             __name__,
         )
     down = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
@@ -244,7 +264,7 @@ def restart_login_expired(
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
-            "    sac agents auth-status\n"
+            "    sac agents show-auth-status\n"
             "    sac agents list",
             __name__,
         )

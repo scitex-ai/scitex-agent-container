@@ -60,7 +60,7 @@ def test_sync_live_exits_zero_for_valid_live(sandbox_home):
     _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live"])
+    result = runner.invoke(account, ["sync-live", "--yes"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -70,7 +70,7 @@ def test_sync_live_reports_saved_store_name(sandbox_home):
     _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live"])
+    result = runner.invoke(account, ["sync-live", "--yes"])
     # Assert
     assert "alpha-example-com" in result.output
 
@@ -80,7 +80,7 @@ def test_sync_live_json_action_saved(sandbox_home):
     _write_live(sandbox_home, "ywatanabe@scitex.ai", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live", "--json"])
+    result = runner.invoke(account, ["sync-live", "--yes", "--json"])
     payload = json.loads(result.stdout)
     # Assert
     assert payload["action"] == "saved"
@@ -90,9 +90,9 @@ def test_sync_live_idempotent_reports_up_to_date(sandbox_home):
     # Arrange — sync once, then sync again over the unchanged live cred.
     _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
-    runner.invoke(account, ["sync-live"])
+    runner.invoke(account, ["sync-live", "--yes"])
     # Act
-    result = runner.invoke(account, ["sync-live", "--json"])
+    result = runner.invoke(account, ["sync-live", "--yes", "--json"])
     payload = json.loads(result.stdout)
     # Assert
     assert payload["action"] == "up-to-date"
@@ -108,7 +108,7 @@ def test_sync_live_exits_nonzero_when_live_expired(sandbox_home):
     _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live"])
+    result = runner.invoke(account, ["sync-live", "--yes"])
     # Assert
     assert result.exit_code == 1
 
@@ -120,7 +120,7 @@ def test_sync_live_exits_nonzero_when_live_absent(sandbox_home):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live"])
+    result = runner.invoke(account, ["sync-live", "--yes"])
     # Assert
     assert result.exit_code == 1
 
@@ -140,7 +140,7 @@ def test_poll_exits_zero_when_live_absent(sandbox_home):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live", "--poll"])
+    result = runner.invoke(account, ["sync-live", "--yes", "--poll"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -151,7 +151,7 @@ def test_poll_exits_zero_when_live_expired(sandbox_home):
     _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live", "--poll"])
+    result = runner.invoke(account, ["sync-live", "--yes", "--poll"])
     # Assert
     assert result.exit_code == 0, result.output
 
@@ -165,7 +165,7 @@ def test_poll_wording_does_not_call_a_no_op_an_error(sandbox_home):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live", "--poll"])
+    result = runner.invoke(account, ["sync-live", "--yes", "--poll"])
     # Assert
     assert "Error" not in result.output, result.output
 
@@ -175,7 +175,7 @@ def test_sync_live_error_message_points_at_login(sandbox_home):
     _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["sync-live"])
+    result = runner.invoke(account, ["sync-live", "--yes"])
     # Assert
     assert "claude /login" in result.output
 

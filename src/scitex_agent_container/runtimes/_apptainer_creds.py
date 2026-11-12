@@ -67,7 +67,7 @@ class PinnedAccountError(RuntimeError):
     """Raised when ``spec.claude.account`` points at an absent/expired store.
 
     The message names the store path and the two remedies:
-    ``claude /login`` to that account (then ``sac accounts sync-live``),
+    ``claude /login`` to that account (then ``sac accounts sync-live --yes``),
     or ``sac accounts save <name>`` on the credential-holding host.
     Surfaced at ``sac agents start`` so a pinned agent never launches
     with the wrong account or a dead token.
@@ -118,7 +118,7 @@ def resolve_cred_file(
             f"spec.claude.account='{acct}' has no credential snapshot at "
             f"{snapshot}. Refusing to fall back to a different account. "
             f"Fix: run `claude /login` to that account then "
-            f"`sac accounts sync-live`, or `sac accounts save {acct}` on "
+            f"`sac accounts sync-live --yes`, or `sac accounts save {acct}` on "
             "the credential-holding host, then restart this agent."
         )
 
@@ -129,7 +129,7 @@ def resolve_cred_file(
             f"spec.claude.account='{acct}' snapshot at {snapshot} is "
             "missing a numeric `claudeAiOauth.expiresAt`. Refusing to "
             f"launch with an unverifiable token. Fix: `claude /login` to "
-            f"that account then `sac accounts sync-live`."
+            f"that account then `sac accounts sync-live --yes`."
         )
     if expiry <= now_ts:
         ago = int(now_ts - expiry)
@@ -137,7 +137,7 @@ def resolve_cred_file(
             f"spec.claude.account='{acct}' snapshot at {snapshot} expired "
             f"{ago} seconds ago. Refusing to launch a pinned agent with a "
             f"stale token. Fix: `claude /login` to that account then "
-            f"`sac accounts sync-live`, and restart this agent."
+            f"`sac accounts sync-live --yes`, and restart this agent."
         )
 
     # Return the SNAPSHOT itself — the caller binds it ``:ro``. The

@@ -1,17 +1,15 @@
-"""``sac.agent`` — agent-lifecycle verbs as bare names.
+"""``sac.agent`` — selected agent verbs as noun-grouped public Python calls.
 
-Same function objects as the flat top-level (`sac.agent_list` etc.);
-this module is the noun-grouped re-export shim for ergonomic
-access (`sac.agent.list()` reads like the CLI tree).
-
-The set mirrors the live ``sac agents`` CLI subcommands. The
-``validate`` / ``inspect`` / ``check-priority`` / ``take-snapshot`` /
-``attach`` leaves were removed in the ``agent`` → ``agents`` group
-rename, so the corresponding re-exports are gone too.
+Each verb is the same function object registered for MCP, with no duplicate
+implementation. The package root exposes this noun module rather than flat
+verb names. Shared-Registry lifecycle helpers remain in ``_lifecycle``.
 """
 
 from .._mcp._tools._agent import (
     agent_check as check,
+)
+from .._mcp._tools._agent import (
+    agent_create as create,
 )
 from .._mcp._tools._agent import (
     agent_find as find,
@@ -45,6 +43,7 @@ from .._mcp._tools._agent import (
 )
 
 __all__ = [
+    "create",
     "list",
     "status",
     "logs",

@@ -75,6 +75,8 @@ CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
 # which alarms. That is a false alarm manufactured by the rename itself.
 # Drop the old entry once no deployed ``.mcp.json`` declares it.
 SERVER_ALIASES: dict[str, tuple[str, ...]] = {
+    # The startup reliability policy also recognizes this short server key.
+    "scitex-agent-container": ("sac",),
     "scitex-cards": ("scitex-todo",),
 }
 
@@ -138,7 +140,9 @@ def parse_mcp_status(
 
     We match the server name at the start of a line (``name:`` prefix) and read
     a connected/failed marker from that line. Robust to unicode-glyph vs plain
-    "Connected"/"Failed" wording. Any server not mentioned → ``unknown``.
+    "Connected"/"Failed" wording. Match the server-key prefix and inspect only
+    the final `` - status`` field; command arguments are not status evidence.
+    Any absent, ambiguous, or unrecognized status remains ``unknown``.
 
     ``aliases`` (default :data:`SERVER_ALIASES`) maps a requested name to OTHER
     server keys that may carry the same server during a rename roll-out. A line
@@ -159,26 +163,28 @@ def parse_mcp_status(
         line = raw.strip()
         if not line:
             continue
-        low = line.lower()
+        _, separator, status = line.rpartition(" - ")
+        if not separator:
+            continue
+        low = status.strip().lower()
         for name in result:
             # Match "<name>:" or "<name> " at the line start (mcp list uses
-            # "name: command - status"). Substring fallback covers reformats.
+            # "name: command - status"). Other names and diagnostic text must
+            # never establish this server's connectivity.
             if any(
-                line.startswith(f"{alias}:")
-                or line.startswith(f"{alias} ")
-                or alias in line
+                line.startswith(f"{alias}:") or line.startswith(f"{alias} ")
                 for alias in candidates[name]
             ):
                 if (
                     "fail" in low
-                    or "✗" in line
+                    or "✗" in status
                     or "not connect" in low
                     or "error" in low
                 ):
                     result[name] = FAILED
-                elif "connect" in low or "✓" in line or "ready" in low:
-                    # "failed to connect" already handled above; here it's the
-                    # positive "Connected".
+                elif low in {"connected", "ready", "✓", "✓ connected", "✓ ready"}:
+                    # Accept explicit positive markers, never "Disconnected",
+                    # "Connecting", or "Not ready".
                     result[name] = CONNECTED
                 break
     return result

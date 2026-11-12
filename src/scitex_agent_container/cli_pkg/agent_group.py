@@ -13,6 +13,7 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
+from ._agents_restore_worktree import register as _register_restore_worktree
 from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
@@ -36,7 +37,13 @@ from .status_cmds import health as _health_impl
 from .status_cmds import status as _status_impl
 
 
-def _rebind(cmd: click.Command, new_name: str) -> click.Command:
+def _rebind(
+    cmd: click.Command,
+    new_name: str,
+    *,
+    hidden: bool = False,
+    deprecated: bool | str = False,
+) -> click.Command:
     return click.Command(
         name=new_name,
         callback=cmd.callback,
@@ -44,6 +51,8 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
         help=cmd.help,
         short_help=cmd.short_help,
         epilog=cmd.epilog,
+        hidden=hidden,
+        deprecated=deprecated,
     )
 
 
@@ -78,17 +87,17 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "list",
                 "status",
                 "health",
-                "auth-status",
+                "show-auth-status",
                 "tail",
                 "recall",
                 "explain",
                 "state",
-                "auth-audit",
-                "cct-audit",
+                "validate-auth-verdicts",
+                "validate-telegram",
             ],
         ),
         ("Preflight", ["check"]),
-        ("Discovery", ["find", "roles", "whoami"]),
+        ("Discovery", ["find", "list-roles", "show-identity"]),
         (
             "Maintenance",
             [
@@ -129,17 +138,24 @@ def agent_group() -> None:
 # already has `delete`). Use
 # `sac agents create <name> --template python_developer|researcher|generalist
 # --project <p>`.
-agent_group.add_command(_rebind(_create_impl, "create"))
+# Keep _CreateCommand's raw-argument capture and live template help. Rebinding
+# it as a plain click.Command would discard both overrides.
+agent_group.add_command(_create_impl)
 agent_group.add_command(_rebind(_start_impl, "start"))
 # `fork` — spawn a context-inheriting child of a running agent (forks the
 # parent's live session, then diverges; parent never stops). See the
 # fork-spawning skill + docs/adr/0019. The verb is `fork`; the noun "twin" is
 # retired (operator, 2026-09-19: a noun must not name a command).
 agent_group.add_command(_rebind(_fork_impl, "fork"))
-# `whoami` — in-container self-orientation (operator, 2026-09-29: an
+# `show-identity` — in-container self-orientation (operator, 2026-09-29: an
 # agent must know its own identity — how it was born, where it is
 # defined). Answers from injected env + resolvable spec.yaml.
-agent_group.add_command(_rebind(_whoami_impl, "whoami"))
+agent_group.add_command(_rebind(_whoami_impl, "show-identity"))
+agent_group.add_command(
+    _rebind(
+        _whoami_impl, "whoami", hidden=True, deprecated="Use sac agents show-identity."
+    )
+)
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the
@@ -274,11 +290,22 @@ agent_group.add_command(_rebind(_health_impl, "health"))
 # watchdog). See cli_pkg/_auth_status + _runners/_tmux/auth_status.
 from ._auth_status import auth_status as _auth_status_impl  # noqa: E402
 
-agent_group.add_command(_auth_status_impl)
+agent_group.add_command(_rebind(_auth_status_impl, "show-auth-status"))
+agent_group.add_command(
+    _rebind(
+        _auth_status_impl,
+        "auth-status",
+        hidden=True,
+        deprecated="Use sac agents show-auth-status.",
+    )
+)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))
-agent_group.add_command(_rebind(_roles_impl, "roles"))
+agent_group.add_command(_rebind(_roles_impl, "list-roles"))
+agent_group.add_command(
+    _rebind(_roles_impl, "roles", hidden=True, deprecated="Use sac agents list-roles.")
+)
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
@@ -312,7 +339,6 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_link_specs import register as _register_link_specs  # noqa: E402
 
 _register_link_specs(agent_group)
-from ._agents_restore_worktree import register as _register_restore_worktree  # noqa: E402
 
 _register_restore_worktree(agent_group)
 # `migrate-layers` — step 3 of the to_home_layers migration: write into each

@@ -18,8 +18,8 @@ interfaces:
 
 > **Interfaces:** Python ⭐⭐ · CLI ⭐⭐⭐ (primary) · MCP ⭐ · Skills ⭐⭐ · Hook — · HTTP —
 
-Define `spec.yaml`, choose a harness/mode, run via Apptainer/SSH, and observe
-with `sac agents list`/`tail`/`health`.
+Run from `spec.yaml` via Apptainer/SSH; observe with
+`sac agents list`/`tail`/`health`.
 
 Claude and direct Codex support TUI/headless; Hermes and OpenCode support
 TUI. Authentication is separate from harness selection. OpenAI Agents SDK
@@ -32,7 +32,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 |---|---|
 | Python API | `scitex_agent_container` (`AgentConfig`, `load_config`, `Registry`; `agent.*`/`peer.*`/`host.*`) |
 | CLI | `scitex-agent-container`, `sac` — see [10_cli.md](10_cli.md) |
-| MCP servers | None bundled — agents spawn their own via `to_home/.mcp.json` |
+| MCP | `sac mcp start`; per-agent `to_home/.mcp.json` |
 | Config format | v3 `scitex-agent-container/v3` only — v2 rejected |
 
 ## Sub-skills
@@ -69,17 +69,21 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
 - [12](12_wsl-connectivity.md) — WSL connectivity notes
-- [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
-- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay, settings hook
+- [24_image-build.md](24_image-build.md) — Apptainer image builds
+- [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — home delivery
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron
+- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — host refresh
 - [26-acct](26_credentials-account-selection.md) — boot account pin/picker + 7d policy
-- [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
+- [27_credentials-relogin.md](27_credentials-relogin.md) — re-login and 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push via a2a_send
 - [30](30_responsiveness-background-work.md) — short turns; long work backgrounded
 - [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`
 - [32](32_nested-apptainer-builds.md)
+
+- [50](50_credential-distribution-preview.md) — credential preview
+- [51](51_send-preview.md) — send plan
+- [52](52_listen-preview.md) — listener preview
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
@@ -103,7 +107,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [21](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env`; host fs/git/gh
 - [23](23_telegram-integration.md) — Telegram wake contract, token resolution
-- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `cct-audit`
+- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `validate-telegram`
 - [23-1t1p](23_telegram-one-token-one-poller.md) — one token, one consumer
 
 ## 30-second start

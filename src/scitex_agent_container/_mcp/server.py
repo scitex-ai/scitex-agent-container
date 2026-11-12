@@ -31,14 +31,12 @@ import scitex_logging as slogging
 log = slogging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
-scitex-agent-container (sac) — declarative container wrapper for
-agents. Tools mirror the `sac` CLI surface: `agent_*` for lifecycle
-(list / status / start / stop / logs), `db_*` for instance-registry
-maintenance,
-`host_*` for multi-host topology, `image_*` for container image
-build, `template_*` for spec rendering, plus `account_*`, `skills_*`,
-`mcp_*` and a few introspection helpers. Tool names mirror the CLI
-verb-noun shape (e.g. `sac_agent_list`).
+scitex-agent-container (sac) manages agents in container environments.
+Discover actual names and schemas through tools/list. Standalone tools use
+noun_action names such as agent_list and agent_send, without a sac_ prefix.
+CLI commands use the corresponding noun group followed by the action, for
+example `sac agents list`; individual capabilities and options can differ.
+Use skills_list and skills_get to load package guidance when needed.
 """
 
 

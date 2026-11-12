@@ -1,13 +1,13 @@
-"""``sac host`` noun group — local host identity + peer routing (F-CS12).
+"""``sac host`` — host identity, SSH routing and peer configuration.
 
-Phase 1 surface (read-only inspection):
-
-  * ``sac host list`` — local host row + configured peers with their ssh routes
-  * ``sac host add / remove / set`` — peer CRUD against config.yaml
-
-Phase 2 (deferred): ``sac host probe <peer>``, ``sac host exec
-<peer> -- <args>``, the ``--on <peer>`` global flag, and fold-ins
-of ``sac network probe`` / ``sac installation boot``.
+* ``list`` / ``validate`` inspect configured hosts and registry routes.
+* ``probe`` / ``probe-hub`` check reachability; ``exec`` runs a remote command.
+* ``show-ssh-options`` prints shared SSH control options; the root ``--on`` flag
+  dispatches a SAC command through the same routing layer.
+* ``add`` / ``remove`` / ``set``, ``sync`` and ``push-config`` manage peers
+  and their configuration through the registered command providers.
+* ``list-peers`` inventories bearer-registry names without reading token contents;
+  ``add-peer`` / ``remove-peer`` manage the separate per-host token files.
 """
 
 from __future__ import annotations
@@ -25,10 +25,18 @@ from .._state.host_config import (
     Config,
     build_ssh_argv,
     load,
-    ssh_control_options_str,
+)
+from .._state.host_config import (
+    ssh_control_options_str as ssh_control_options_str,
 )
 from ._helpers import _json_flag
 from ._host_list_cmd import host_list, register_list_command
+from ._host_peer_tokens import host_add_peer as host_add_peer
+from ._host_peer_tokens import host_list_peers as host_list_peers
+from ._host_peer_tokens import host_remove_peer as host_remove_peer
+from ._host_peer_tokens import register_peer_token_commands
+from ._host_ssh_options import host_ssh_opts as host_ssh_opts
+from ._host_ssh_options import register_ssh_options_command
 from ._host_validate_cmd import host_validate, register_validate_command
 
 # ``host_list`` / ``host_validate`` are re-exported because callers import them
@@ -65,9 +73,10 @@ def host_group() -> None:
 # orchestrator under the per-file line cap; they attach at import time (same
 # pattern as ``_account_list_cmd.py``). This module keeps one cohesive
 # responsibility: reaching peers (split_on_flag / dispatch_remote / exec /
-# probe / ssh-opts / peer CRUD).
+# probe / SSH option inspection / peer CRUD).
 register_list_command(host_group)
 register_validate_command(host_group)
+register_ssh_options_command(host_group)
 
 
 def _unknown_peer_error(peer: str, cfg: Config) -> str:
@@ -334,34 +343,16 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
     elif reachable:
-        render_rich(f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}", __name__)
+        render_rich(
+            f"[green]ok[/green]  {peer}  {elapsed_ms}ms  remote={remote_canonical}",
+            __name__,
+        )
     else:
         render_rich(f"[red]unreachable[/red]  {peer}  exit={proc.returncode}", __name__)
         if proc.stderr.strip():
             render_rich(f"[dim]{proc.stderr.strip()[:200]}[/dim]", __name__)
     if not reachable:
         raise SystemExit(1)
-
-
-@host_group.command("ssh-opts")
-def host_ssh_opts() -> None:
-    """Print sac's ssh ControlMaster options as a shell-quoted string.
-
-    Splat this into an ad-hoc ssh / scp / rsync command so multi-host
-    automation reuses sac's existing multiplexed master per peer
-    instead of opening a fresh connection per call. The output is
-    shell-safe — just pass it through ``$(...)``::
-
-        ssh $(sac host ssh-opts) myhost cmd
-        rsync -e "ssh $(sac host ssh-opts)" src/ myhost:dst/
-        parallel ssh $(sac host ssh-opts) myhost ::: cmd1 cmd2 cmd3
-
-    Prints an empty line when multiplexing is opted out
-    (``SAC_SSH_CONTROL_MASTER=0``) so the splat is a no-op. The
-    underlying flags are documented under
-    :func:`scitex_agent_container._state.host_config.ssh_control_options`.
-    """
-    click.echo(ssh_control_options_str())
 
 
 # WSL → fleet-hub layered probe (folded from ``sac network probe``).
@@ -400,74 +391,4 @@ _register_host_push_config(host_group)
 _register_host_sync(host_group)
 
 
-# WI-4 Q4(b) — peer bearer-token registry. ``sac host add-peer`` /
-# ``list-peers`` / ``remove-peer`` manage the
-# ``peer-tokens/<peer-host>.token`` files the cross-host forwarder
-# consults to authenticate at a destination ``sac listen``. Each
-# entry is per-host scoped, so leaking one host's token compromises
-# only that host (the per-host blast radius the lead asked for).
-
-
-@host_group.command("add-peer")
-@click.argument("peer_host")
-@click.argument("token")
-def host_add_peer(peer_host: str, token: str) -> None:
-    """Register a peer host's listen bearer for cross-host forwarding.
-
-    Writes ``~/.scitex/agent-container/peer-tokens/<PEER_HOST>.token``
-    mode 0600. The cross-host forwarder reads this file when
-    forwarding ``message:send`` to ``<PEER_HOST>``.
-
-    \b
-    Examples:
-      sac host add-peer host-a $(ssh host-a 'cat ~/.scitex/agent-container/tokens/listen-host-a.token')
-      sac host add-peer head-spartan AAAAA-bearer-from-spartan-BBBBB
-    """
-    from .._listen.peer_tokens import write_peer_token
-
-    if not peer_host:
-        raise click.UsageError("PEER_HOST must be non-empty")
-    if not token:
-        raise click.UsageError("TOKEN must be non-empty")
-    dst = write_peer_token(peer_host=peer_host, token=token)
-    render_rich(f"[green]ok[/green]  wrote {dst}", __name__)
-
-
-@host_group.command("list-peers")
-def host_list_peers() -> None:
-    """List the peer hosts that have a registered listen bearer.
-
-    Token values are NEVER printed — only the peer-host names. To
-    see the on-disk file paths run
-    ``ls -la ~/.scitex/agent-container/peer-tokens/``.
-    """
-    from .._listen.peer_tokens import default_peer_tokens_dir, list_peer_hosts
-
-    tdir = default_peer_tokens_dir()
-    hosts = list_peer_hosts()
-    if not hosts:
-        render_rich(f"no peer tokens registered (dir: {tdir}). "
-            "Add one with: sac host add-peer <host> <token>", __name__)
-        return
-    render_rich(f"peer-tokens dir: {tdir}", __name__)
-    for h in hosts:
-        render_rich(f"  {h}", __name__)
-
-
-@host_group.command("remove-peer")
-@click.argument("peer_host")
-def host_remove_peer(peer_host: str) -> None:
-    """Remove a peer host's listen bearer from the registry.
-
-    Idempotent — removing an absent peer is a no-op (returns 0).
-    """
-    from .._listen.peer_tokens import default_peer_tokens_dir
-
-    if not peer_host:
-        raise click.UsageError("PEER_HOST must be non-empty")
-    path = default_peer_tokens_dir() / f"{peer_host}.token"
-    if not path.exists():
-        render_rich(f"no peer token to remove at {path}", __name__)
-        return
-    path.unlink()
-    render_rich(f"[green]ok[/green]  removed {path}", __name__)
+register_peer_token_commands(host_group)

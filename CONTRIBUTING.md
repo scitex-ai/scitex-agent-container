@@ -54,13 +54,13 @@ enforced by nothing — which is why the CI ruff job exists at all
 The release flow `develop → main` is gated by CI (Test, SciTeX Quality,
 Docs, SDK runtime smoke). See `.github/workflows/`.
 
-### A robot merges your PR. Nobody reviews it.
+### Automated merges and holds
 
-Say it plainly, because this document used to say "reviewer-approved" and no
-reviewer exists: `.github/workflows/auto-merge-to-develop.yaml` is a cron sweep
-that runs about every 15 minutes and merges green PRs targeting `develop` with
-`gh pr merge --admin`. There is no human in that loop. A PR that goes green at
-02:00 is typically merged by 02:15 by a workflow, not a person.
+`.github/workflows/auto-merge-to-develop.yaml` runs about every 15 minutes
+and attempts ordinary merges of eligible PRs targeting `develop`.
+It does not bypass branch protection. Its eligibility checks and GitHub's
+required checks and reviews must permit the merge. An automated merge does
+not, by itself, establish that a person reviewed the changes.
 
 **To stop that, put a hold on the PR — a hold the automation can actually read:**
 
@@ -69,8 +69,9 @@ that runs about every 15 minutes and merges green PRs targeting `develop` with
 
 The sweep refuses a held PR on every tick and says so in its run log, naming the
 PR and the marker. A hold spends no merge budget, so holding one PR never delays
-anyone else's. Remove the marker and it merges on the next tick — nothing else to
-do. Deciding not to merge something and telling only your teammates is not a
+anyone else's. Removing the marker makes the PR eligible for consideration
+on a later tick; it does not override outstanding checks or reviews.
+Deciding not to merge something and telling only your teammates is not a
 hold; on 2026-08-12 a PR held exactly that way was merged anyway, because nothing
 in the repository knew.
 
@@ -78,7 +79,15 @@ in the repository knew.
 workflow and its reasons. That comment is the audit trail: every agent, workflow
 and human here acts through the same GitHub account, so the `merged_by` name on a
 merged PR cannot tell you whether anybody read the diff. If you find such a
-comment, the answer is that nobody did.
+comment, it identifies an automated merge; inspect the review records separately.
+
+The separate `autobump-release-sweep.yaml` creates version-bump PRs only
+when armed and outside dry-run mode. It requests normal CI on a new bump
+branch once, preserves an open bump PR across later ticks, and attempts a
+protected merge. It requires an observed `MERGED` PR state before resolving
+the merge commit and creating a tag. A queued or refused merge creates no tag.
+If the initial CI request fails, the PR remains available for investigation;
+later ticks do not force reruns or discard its checks and reviews.
 
 ## Running tests
 

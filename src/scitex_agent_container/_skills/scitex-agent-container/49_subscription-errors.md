@@ -51,7 +51,55 @@ mechanisms. Do not copy an API key into an OAuth store to silence a warning.
    running client's cache was replaced or that a different image contains the
    source fix. Verify the actual judge after recovery.
 
+## Collect a local Codex login
+
+```bash
+sac accounts sync-openai --dry-run
+sac accounts sync-openai --yes
+```
+
+Preview reports arguments without reading login material or deriving an account
+slug. Approval copies the active local login to the provider-qualified store;
+it does not log in, renew a subscription or prove model availability.
+
+## Collect a local Claude Code login
+
+```bash
+sac accounts sync-live --dry-run
+sac accounts sync-live --yes
+sac accounts sync-live --poll --yes
+```
+
+Preview never reads credentials or checks identity/expiry. Approval retains the
+existing OAuth identity lookup and snapshot safeguards. `--poll` changes invalid
+input into an expected no-op after approval; it does not bypass the write guard.
+The snapshot timer declares both `--poll` and `--yes`. This does not verify model
+availability or renew a login.
+
 ## Probe and recover within a bounded budget
+
+For a deliberate subscription rest, preview the local account pause before
+recording it:
+
+```bash
+sac accounts pause worker-account --reason "subscription rest" --dry-run
+```
+
+The preview validates the account, reason and last-usable-account guard without
+changing credentials or pause records. Remove `--dry-run` to record the decision.
+The existing `--yes` option explicitly permits pausing the last usable account;
+the preview does not bypass that guard. This local pause does not stop an agent
+already using the credential, renew a subscription or measure provider quota.
+
+Preview lifting a local pause:
+
+```bash
+sac accounts resume worker-account --dry-run
+```
+
+This reads the named account's pause record without removing it or checking
+model access. Replace `--dry-run` with `--yes` to approve lifting the pause;
+the account may still be expired or refused by its provider.
 
 The examples in [48](48_model-availability.md) are real network operations, not
 offline documentation tests. `accounts probe-api-keys` queries supported official
@@ -110,3 +158,13 @@ Paths are relative to the installed `scitex_agent_container` package:
 
 Use the pinned/deployed Hermes implementation for auxiliary-cache and goal
 semantics; the host checkout alone does not establish what an existing SIF runs.
+
+
+## Recovery CLI preview versus observation
+
+`agents restart-login-expired --dry-run` and
+`agents resume-rate-limited --dry-run` describe arguments without running a pass. They do not prove live
+health or reset eligibility. Default/`--check` observes and can record pass
+state. `--yes`/`-y` aliases existing `--apply`; approval conflicts with check or
+preview and never bypasses auth report-only admission or rate-limit guards.
+See [recovery modes](../../../../docs/systemic-recovery.md#recovery-command-modes).

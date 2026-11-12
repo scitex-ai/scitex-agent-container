@@ -404,7 +404,7 @@ def rotate_peer_tokens(
                 f"UNVERIFIED — until it does, {master} -> {peer} a2a is DOWN.\n"
                 f"    The old bearer (sha256:{old_sha or '<none>'}) is RETAINED "
                 f"at {where}.\n"
-                f"    Recover:  ssh {peer} -- sac listen restart   then re-check:"
+                f"    Recover:  ssh {peer} -- sac listen restart --yes   then re-check:"
                 f"  sac host push-config --check {peer}"
             ),
             new_sha12=new_sha,

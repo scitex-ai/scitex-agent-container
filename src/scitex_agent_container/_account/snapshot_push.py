@@ -217,7 +217,7 @@ def resolve_peer_transport(peer: str) -> SshTransport:
         raise UnknownPeerError(
             f"unknown peer '{peer}': not found under peers: in "
             f"{cfg.source_path}. Registered peers: {known}. "
-            f"Add one with `sac host add {peer} --ssh <user@host>`."
+            f"Add one with `sac host add {peer} --ssh <user@host> --yes`."
         )
     return SshTransport(peer=peer, peers=cfg.peers)
 

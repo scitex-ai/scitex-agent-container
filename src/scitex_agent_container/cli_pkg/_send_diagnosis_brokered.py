@@ -98,7 +98,7 @@ def unknown_lookup_diagnosis(
             "is UNKNOWN — it may well be alive and working. Absence of "
             "evidence is NOT death: do not stop, force-restart or reap the "
             "agent on the strength of this result. Restore the broker on the "
-            "host (`sac listen restart`) and retry the lookup."
+            "host (`sac listen restart --yes`) and retry the lookup."
         ),
     }
 

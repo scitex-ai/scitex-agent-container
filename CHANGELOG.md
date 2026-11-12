@@ -6,6 +6,36 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Require explicit approval for peer-token CLI writes; add token-free argument
+  previews and JSON metadata while preserving containment and idempotent removal.
+- Accept standard `--yes/-y` approval spellings for agent reconciliation
+  while retaining `--apply`, preview defaults and existing restart guards.
+- Add offline registry registration previews and require explicit approval
+  before accessing the routing store; retain backend conflict checks.
+- Expose root diagnostics as `list-ports`, `list-versions` and
+  `show-provenance`; retain hidden legacy aliases with warnings on stderr.
+- Forward service/timer status JSON through the installed scitex-dev backend,
+  refusing undeclared JSON capability; add grammar-derived job command examples.
+- Add an offline `a2a revoke --dry-run` plan and require `--yes` before
+  withdrawing an explicit directed grant; preserve reverse grants and history.
+- Require `accounts resume --yes` before removing a local pause record; keep
+  `--dry-run` read-only even with approval and preserve unpaused no-op behavior.
+- Expose CI inspection as `ci explain`, `ci list-runners` and `ci list-blocked`;
+  retain hidden deprecated `why`, `runners` and `blocked` aliases with unchanged
+  read behavior and JSON output.
+- Expose read-only role/grant/quota discovery as `agents list-roles`,
+  `a2a list-grants` and `accounts get-quota`; retain hidden deprecated aliases for existing scripts.
+- Reserve the unspent 0.38.7 version for these pending changes.
+- Preserve lazy command enumeration and custom command lookup through the console
+  bootstrap facade. External CLI auditors can discover the Python API and MCP
+  interfaces without invoking the console wrapper; execution still uses the
+  existing source-authority guard and pre-Click processing.
+- Contain peer-token reads, writes and CLI removal to validated single host
+  identifiers; reject token-file symlinks while retaining directory symlinks.
+- Use exclusive private staging files for atomic token writes so a predictable
+  temporary-path symlink cannot redirect credential output.
+
 ## [0.38.6] - 2026-11-02
 
 ### Fixed

@@ -194,7 +194,7 @@ def account_list(
     # the operator's primary credential instrument and is reached most often
     # DURING an incident, which is exactly when a store is half-written, revoked,
     # or logged out. `read_codex_accounts_metadata` raises for every such state
-    # once the store root exists (and `sac accounts sync-openai` creates it
+    # once the store root exists (and `sac accounts sync-openai --yes` creates it
     # permanently), so an unguarded call here took the whole command down —
     # including `--json`, which sits below this line. The Claude reads on this
     # same path have always been exception-tolerant; the provider axis has to
@@ -266,7 +266,7 @@ def account_list(
     if openai_error is not None:
         render_rich(f"[yellow]OpenAI accounts UNREADABLE:[/yellow] {openai_error}", __name__)
         render_rich("[dim]The Claude accounts below are unaffected. "
-            "Repair with: sac accounts sync-openai[/dim]", __name__)
+            "Repair with: sac accounts sync-openai --yes[/dim]", __name__)
         render_rich("", __name__)
 
     for openai_account in openai_accounts:

@@ -1,4 +1,4 @@
-"""``sac worktree gc`` — reap safe, stale worktrees; shout about the rest.
+"""``sac worktree clean`` — reap safe, stale worktrees; shout about the rest.
 
 Registered onto the ``worktree`` group by :func:`register`, exactly as
 :mod:`._host_sync` does onto ``host``.
@@ -76,30 +76,45 @@ def _print_repo(result: RepoGcResult) -> None:
 
 
 def _print_report(outcome: GcOutcome, *, apply: bool) -> None:
-    mode = "apply" if apply else "dry-run (read-only)"
-    render_rich(f"[bold]sac worktree gc[/bold]  {mode} — {len(outcome.results)} repo(s)\n", __name__)
+    mode = "apply" if apply else "dry-run (no worktree removals)"
+    render_rich(
+        f"[bold]sac worktree clean[/bold]  {mode} — {len(outcome.results)} repo(s)\n",
+        __name__,
+    )
     for result in outcome.results:
         _print_repo(result)
 
     # Never silent: say what the verdict MEANS, not just what it was.
     if outcome.over_cap:
         names = ", ".join(r.repo for r in outcome.over_cap)
-        render_rich(f"[yellow]{len(outcome.over_cap)} repo(s) still over cap:[/yellow] {names}\n"
+        render_rich(
+            f"[yellow]{len(outcome.over_cap)} repo(s) still over cap:[/yellow] {names}\n"
             "  Every kept worktree failed at least one safety leg (see the\n"
             "  kept-reasons above). The GC will NEVER auto-remove those — a\n"
-            "  human decides. Dirty worktrees hold work that exists nowhere else.", __name__)
+            "  human decides. Dirty worktrees hold work that exists nowhere else.",
+            __name__,
+        )
     elif outcome.unreadable:
-        render_rich(f"[magenta]{len(outcome.unreadable)} repo(s) UNREADABLE[/magenta] "
-            "[dim]— unknown is not clean; their sprawl is unobserved, not absent.[/dim]", __name__)
+        render_rich(
+            f"[magenta]{len(outcome.unreadable)} repo(s) UNREADABLE[/magenta] "
+            "[dim]— unknown is not clean; their sprawl is unobserved, not absent.[/dim]",
+            __name__,
+        )
     else:
-        render_rich("[green]every repo under its worktree cap[/green] "
+        render_rich(
+            "[green]every repo under its worktree cap[/green] "
             "[dim](removals are proven-safe only: clean AND merged AND aged "
-            "AND idle)[/dim]", __name__)
+            "AND idle)[/dim]",
+            __name__,
+        )
     if not apply:
-        render_rich("[dim]dry-run: nothing was removed. Re-run with --apply to act.[/dim]", __name__)
+        render_rich(
+            "[dim]dry-run: nothing was removed. Re-run with --apply to act.[/dim]",
+            __name__,
+        )
 
 
-@click.command("gc")
+@click.command("clean")
 @click.option(
     "--repo",
     "repos",
@@ -114,22 +129,24 @@ def _print_report(outcome: GcOutcome, *, apply: bool) -> None:
     default=False,
     help=(
         "Every local git repo declared as an agent's spec.workdir "
-        "(sac's own spec tree is the source — see `sac worktree gc --help`)."
+        "(sac's own spec tree is the source — see `sac worktree clean --help`)."
     ),
 )
 @click.option(
     "--apply",
+    "--yes",
+    "-y",
     "apply",
     is_flag=True,
     default=False,
-    help="ACT: remove the worktrees the predicate proved safe. Default is --dry-run.",
+    help="ACT: remove worktrees the predicate proved safe. Aliases --yes/-y; default reports.",
 )
 @click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
     default=False,
-    help="READ-ONLY report (the DEFAULT). Removes nothing; explicit for scripts.",
+    help="Inspect repositories without removals (the default); --alarm can record events.",
 )
 @click.option(
     "--min-age-hours",
@@ -190,11 +207,11 @@ def worktree_gc(
 
     \b
     Report (read-only — the DEFAULT):
-      $ sac worktree gc --repo ~/proj/scitex-todo
-      $ sac worktree gc --all --json
+      $ sac worktree clean --repo ~/proj/scitex-todo
+      $ sac worktree clean --all --json
     \b
     Act:
-      $ sac worktree gc --apply --all
+      $ sac worktree clean --yes --all
 
     A worktree is removed ONLY if ALL FOUR legs pass:
 
@@ -207,6 +224,10 @@ def worktree_gc(
       OLD       its HEAD commit is older than --min-age-hours.
       IDLE      no running process has its cwd inside it (best-effort
                 /proc scan; if the signal is unavailable -> KEEP).
+
+    --dry-run performs real Git/PR/process checks, not an argument preview.
+    --alarm explicitly records cap events even with --dry-run; default
+    reporting keeps alarms off. --yes/-y aliases existing --apply.
 
     Every leg is three-state: a check that could not RUN keeps the
     worktree, exactly like a check that failed. Removal is `git worktree
@@ -230,20 +251,23 @@ def worktree_gc(
     if bool(repos) == all_repos:
         raise click.UsageError(
             "give exactly one of --repo PATH (repeatable) or --all  "
-            "(e.g. `sac worktree gc --repo ~/proj/scitex-todo` or "
-            "`sac worktree gc --apply --all`)"
+            "(e.g. `sac worktree clean --repo ~/proj/scitex-todo` or "
+            "`sac worktree clean --apply --all`)"
         )
     if apply and dry_run:
         raise click.UsageError(
             "--apply and --dry-run are opposites; --dry-run is already the default"
         )
 
+    from ._worktree_gc_options import validate_cleanup_options
+
+    validate_cleanup_options(min_age_hours, cap)
     targets = list(discover_repos()) if all_repos else list(repos)
     if not targets:
         raise click.UsageError(
             "no local git repo is declared as any agent's spec.workdir, so "
             "--all has nothing to sweep. Name one explicitly:  "
-            "sac worktree gc --repo <path>"
+            "sac worktree clean --repo <path>"
         )
 
     outcome = gc_repos(
@@ -318,9 +342,28 @@ def worktree_gc(
     raise SystemExit(status)
 
 
+def _legacy_gc(*args, **kwargs):
+    """Keep published callers working; diagnostics stay off JSON stdout."""
+    click.echo(
+        "warning: `sac worktree gc` is deprecated; use `sac worktree clean`. "
+        "Existing options and safety checks are unchanged.",
+        err=True,
+    )
+    return worktree_gc.callback(*args, **kwargs)
+
+
 def register(worktree_group) -> None:
-    """Attach ``gc`` to the parent ``worktree`` Click group."""
+    """Attach canonical ``clean`` and the hidden compatibility name ``gc``."""
     worktree_group.add_command(worktree_gc)
+    worktree_group.add_command(
+        click.Command(
+            "gc",
+            callback=_legacy_gc,
+            params=list(worktree_gc.params),
+            help=worktree_gc.help,
+            hidden=True,
+        )
+    )
 
 
 __all__ = ["register", "worktree_gc"]
