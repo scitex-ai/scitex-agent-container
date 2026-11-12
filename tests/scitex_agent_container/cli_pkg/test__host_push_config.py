@@ -227,7 +227,7 @@ def test_pushing_to_the_master_itself_is_a_usage_error(cfg_path):
     # Arrange — the master's config.yaml is the hand-edited SSOT.
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_push_config, ["master-x"])
+    result = runner.invoke(host_push_config, ["master-x", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -250,7 +250,7 @@ def test_push_refuses_hand_edited_with_exit_one(cfg_path, subprocess_shim):
     # Arrange
     subprocess_shim.install("ssh", stdout=_b64_block("peers: {}\n"))
     # Act
-    result = CliRunner().invoke(host_push_config, ["spartan"])
+    result = CliRunner().invoke(host_push_config, ["spartan", "--yes"])
     # Assert
     assert result.exit_code == 1
 
@@ -259,7 +259,7 @@ def test_push_hand_edited_refusal_dispatches_no_write(cfg_path, subprocess_shim)
     # Arrange — the refusal must be structural, not cosmetic.
     subprocess_shim.install("ssh", stdout=_b64_block("peers: {}\n"))
     # Act
-    CliRunner().invoke(host_push_config, ["spartan"])
+    CliRunner().invoke(host_push_config, ["spartan", "--yes"])
     calls = subprocess_shim.invocations("ssh")
     # Assert
     assert not any("umask 077" in " ".join(argv) for argv in calls)
@@ -270,7 +270,7 @@ def test_push_hand_edited_refusal_shows_the_diff(cfg_path, subprocess_shim):
     # re-run to see what a refusal was protecting.
     subprocess_shim.install("ssh", stdout=_b64_block("peers: {}\n"))
     # Act
-    result = CliRunner().invoke(host_push_config, ["spartan"])
+    result = CliRunner().invoke(host_push_config, ["spartan", "--yes"])
     # Assert
     assert "rendered (master truth)" in result.output
 
@@ -279,7 +279,7 @@ def test_push_unreachable_peer_exits_two(cfg_path, subprocess_shim):
     # Arrange — UNDETERMINED never mutates and never passes as clean.
     subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
     # Act
-    result = CliRunner().invoke(host_push_config, ["spartan"])
+    result = CliRunner().invoke(host_push_config, ["spartan", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -325,7 +325,7 @@ def test_push_creates_config_on_absent_peer_and_exits_zero(cfg_path, stateful_ss
     # Arrange
     runner = CliRunner()
     # Act — real subprocess, real PATH lookup, real stdin piping.
-    result = runner.invoke(host_push_config, ["spartan"])
+    result = runner.invoke(host_push_config, ["spartan", "--yes"])
     # Assert — created AND verified by read-back.
     assert result.exit_code == 0
 
@@ -334,7 +334,7 @@ def test_pushed_peer_file_carries_the_generated_header(cfg_path, stateful_ssh):
     # Arrange
     runner = CliRunner()
     # Act
-    runner.invoke(host_push_config, ["spartan"])
+    runner.invoke(host_push_config, ["spartan", "--yes"])
     # Assert — the peer-side file is renderer output.
     assert is_generated(stateful_ssh.read_text())
 
@@ -342,7 +342,7 @@ def test_pushed_peer_file_carries_the_generated_header(cfg_path, stateful_ssh):
 def test_check_after_push_reports_current(cfg_path, stateful_ssh):
     # Arrange — a push has landed on the peer.
     runner = CliRunner()
-    runner.invoke(host_push_config, ["spartan"])
+    runner.invoke(host_push_config, ["spartan", "--yes"])
     # Act
     result = runner.invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert — the loop closes: what was pushed reads back CURRENT.
@@ -354,7 +354,7 @@ def test_adopt_replaces_a_hand_edited_peer_file(cfg_path, stateful_ssh):
     stateful_ssh.write_text("peers:\n  relic: {ssh: old}\n")
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_push_config, ["spartan", "--adopt"])
+    result = runner.invoke(host_push_config, ["spartan", "--adopt", "--yes"])
     # Assert
     assert result.exit_code == 0
 
@@ -362,9 +362,9 @@ def test_adopt_replaces_a_hand_edited_peer_file(cfg_path, stateful_ssh):
 def test_adopt_on_current_peer_is_refused_nonzero(cfg_path, stateful_ssh):
     # Arrange — nothing hand-edited to adopt once the push has landed.
     runner = CliRunner()
-    runner.invoke(host_push_config, ["spartan"])
+    runner.invoke(host_push_config, ["spartan", "--yes"])
     # Act
-    result = runner.invoke(host_push_config, ["spartan", "--adopt"])
+    result = runner.invoke(host_push_config, ["spartan", "--adopt", "--yes"])
     # Assert
     assert result.exit_code == 1
 
@@ -625,7 +625,7 @@ def test_rotate_tokens_on_the_master_itself_is_a_usage_error(cfg_path):
     # Arrange — the master does not rotate its own bearer this way.
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_push_config, ["--rotate-tokens", "master-x"])
+    result = runner.invoke(host_push_config, ["--rotate-tokens", "master-x", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -634,7 +634,7 @@ def test_rotate_tokens_on_an_unknown_peer_is_a_usage_error(cfg_path):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(host_push_config, ["--rotate-tokens", "ghost"])
+    result = runner.invoke(host_push_config, ["--rotate-tokens", "ghost", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -664,7 +664,7 @@ def test_rotate_tokens_on_unreachable_peer_exits_two(
     # peer we do not rotate.
     subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
     # Act
-    result = CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    result = CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -673,7 +673,7 @@ def test_rotate_refusal_dispatches_no_write(cfg_path, master_tokens, subprocess_
     # Arrange — the refusal must be structural, not cosmetic.
     subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
     # Act
-    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan", "--yes"])
     calls = subprocess_shim.invocations("ssh")
     # Assert
     assert not any("v=$(cat)" in " ".join(argv) for argv in calls)
@@ -688,6 +688,6 @@ def test_rotate_refusal_leaves_the_master_copy_intact(
         master_tokens / ".scitex" / "agent-container" / "peer-tokens" / "spartan.token"
     )
     # Act
-    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan", "--yes"])
     # Assert
     assert copy.read_text() == _PEER_BEARER

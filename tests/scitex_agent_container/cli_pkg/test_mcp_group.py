@@ -21,6 +21,7 @@ import json
 from contextlib import contextmanager
 from typing import Iterator
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg import mcp_group as mg
@@ -333,7 +334,25 @@ def test_list_tools_import_error_human_prints_install_hint():
     with _use_get_server_import_error():
         result = runner.invoke(mcp, ["list-tools"])
     # Assert
-    assert result.exit_code == 0 and "fastmcp not installed" in result.output
+    assert result.exit_code == 0 and "fastmcp backend unavailable" in result.output
+
+
+@pytest.mark.parametrize("args", [["list-tools"], ["list-tools", "--json"]])
+def test_list_tools_broken_dependency_reports_import_reason(args):
+    # Arrange: an installed backend can fail importing its protocol dependency.
+    failure = ImportError("cannot import name 'McpError' from 'mcp.shared.exceptions'")
+    # Act
+    with _use_get_server_raises(failure):
+        result = CliRunner().invoke(mcp, args)
+    # Assert
+    assert (
+        result.exit_code == 0
+        and "fastmcp backend unavailable" in result.stdout
+        and "McpError" in result.stdout
+        and "scitex-agent-container[mcp]" in result.stdout
+        and "fastmcp not installed" not in result.stdout
+        and result.stderr == ""
+    )
 
 
 # ---------------------------------------------------------------------------

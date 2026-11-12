@@ -19,7 +19,7 @@ failure modes the operator cannot fix without this verb:
 
 This verb closes both gaps. The operator runs::
 
-    sac registry register --name lead --host lead-host --a2a-port 7878
+    sac registry register --name lead --host lead-host --a2a-port 7878 --yes
 
 and the entry lands in the ADR-0014 directory immediately. Since
 2026-08-28 that directory is the SHARED PostgreSQL store, so other hosts
@@ -33,8 +33,8 @@ job and a missed row can be re-tried next tick. This verb's primary
 job IS the registry write, invoked by a human; a silent
 :class:`CommsNodeConflictError` would defeat the operator's intent.
 We surface the conflict via ``click.ClickException`` (exit 1) with the
-underlying error message so the operator can ``--unregister`` /
-re-typed-args their way out.
+underlying error message so the operator can resolve the conflicting
+ownership before retrying.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from .._state.state_store_nodes import (
     "--a2a-port",
     "a2a_port",
     required=True,
-    type=int,
+    type=click.IntRange(min=1),
     help="TCP port the node's a2a HTTP endpoint listens on.",
 )
 @click.option(
@@ -82,13 +82,27 @@ from .._state.state_store_nodes import (
         "stored record's _origin instead of this host's own name."
     ),
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show an offline argument plan without accessing storage.",
+)
+@click.option("--yes", "-y", is_flag=True, help="Approve the registry write.")
 def registry_register(
     name: str,
     host: str,
     a2a_port: int,
     source_host: str | None,
+    dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Write a ``comms_nodes`` row directly. ADR-0014 operator-repair path.
+
+    ``--dry-run`` prints the supplied registration arguments without opening
+    storage. It does not check existing ownership, conflicts or reachability.
+    Preview takes precedence over ``--yes``. Applying requires ``--yes`` and
+    retains the writer's ownership/conflict checks; approval does not override
+    an existing route.
 
     Use cases:
 
@@ -109,11 +123,25 @@ def registry_register(
     directory is the shared PostgreSQL store and there is no file to
     override. ``SCITEX_STORE_DSN`` is the equivalent knob.
 
-    \\b
+    \b
     Examples:
-      $ sac registry register --name lead --host lead-host --a2a-port 7878
-      $ sac registry register --name spartan-2 --host spartan-2.lan --a2a-port 7878
+      $ sac registry register --name lead --host lead-host --a2a-port 7878 --yes
+      $ sac registry register --name lead --host lead-host --a2a-port 7878 --dry-run
+      $ sac registry register --name spartan-2 --host spartan-2.lan --a2a-port 7878 --yes
     """
+    if not name or not host:
+        raise click.UsageError("--name and --host must be non-empty")
+    if dry_run:
+        click.echo(
+            f"would register comms_nodes: name={name!r} host={host!r} "
+            f"a2a_port={a2a_port} source_host={source_host!r}; "
+            "offline plan only: existing ownership/conflicts are not checked"
+        )
+        return
+    if not yes:
+        raise click.UsageError(
+            "Registration requires --yes; inspect arguments with --dry-run first."
+        )
     try:
         register_comms_node(
             name=name,

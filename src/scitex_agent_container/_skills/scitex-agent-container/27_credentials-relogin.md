@@ -92,7 +92,7 @@ piped to the running `claude auth login` process) is required.
 9. **Verify**:
 
    ```
-   sac agents send cred-refresher-<acct> hello
+   sac agents send --yes cred-refresher-<acct> hello
    # expect a plain `ok`-style reply, NOT a 401
    ```
 

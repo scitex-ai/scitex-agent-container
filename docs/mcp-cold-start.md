@@ -48,10 +48,14 @@ not). The servers start healthy and write nothing to stdout; the failure is a
 3. **Lazy-import** of the tool modules (`_mcp/server.py` imports them inside
    `_build_server()`, not at module load) so `import scitex_agent_container._mcp`
    stays cheap.
-4. **Auto-heal boot self-check** — `sac mcp healthcheck` (`_mcp/_healthcheck.py`),
+4. **Auto-heal boot self-check** — `sac mcp recover-connections` (`_mcp/_healthcheck.py`),
    run at boot via a `SessionStart` hook: logs the expected capability surface,
    detects failed critical MCPs via `claude mcp list`, and on failure alarms +
    requests a rate-limited `--fresh` self-restart. FAIL-OPEN — never blocks boot.
+   This includes recovery; it is not a passive status read. The preferred server
+   keys are `scitex-agent-container` and `scitex-cards`; the legacy `scitex-todo`
+   Cards key remains accepted. `SAC_MCP_HEALTHCHECK_NO_RESTART=1` suppresses
+   self-restart while retaining alarms.
 
 ## Knobs
 
@@ -64,9 +68,15 @@ not). The servers start healthy and write nothing to stdout; the failure is a
 
 ## Not fixed here
 
-The ecosystem-wide `fastmcp` version pin is scitex-dev's domain. sac's
-`pyproject.toml` carries an unpinned `fastmcp>=2.0`; `sac versions --json --live
---base-only` reports the fastmcp version across SIFs.
+Runtime dependency bounds are declared in `pyproject.toml`
+(`fastmcp>=2.0,<4`), rather than an exact version pin. The read-only
+`sac list-versions --json --live --base-only` command lists SciTeX package
+versions across base images; it does not list dependencies such as `fastmcp`.
+To inspect `fastmcp`, use the Python interpreter from the target runtime:
+
+```bash
+python -c "from importlib.metadata import version; print(version('fastmcp'))"
+```
 
 ## See also
 

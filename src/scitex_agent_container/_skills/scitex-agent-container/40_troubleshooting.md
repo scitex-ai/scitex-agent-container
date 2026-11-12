@@ -177,3 +177,18 @@ Agents that need persistent per-workspace notes should write them strictly
 **below** the End marker. The guide comment immediately after the End
 marker spells this out — if you see an agent editing above it, flag the
 error and move the content down.
+
+
+## Audit-driven Claude workdir archive
+
+`sac agents archive-claude-bloat NAME --dry-run` describes arguments without
+registry lookup, scanning or moving files. It does not validate the agent or
+list candidates. Replace preview with `--yes` (`-y`) to run the existing audit
+and move flagged buckets under `.claude/.archived-<UTC>/`. Approval conflicts
+with preview. This can move worktrees; the narrower `prune-claude` has separate
+pending-record and merged-worktree rules.
+
+Applied `--json` reports recorded moves. The mover can skip disappeared or
+failing sources; zero records does not establish a clean tree or a complete
+archive. It is not a transaction or checksum-verified backup. See the
+[archive guide](../../../../docs/workdir-archive.md) for scope and controls.

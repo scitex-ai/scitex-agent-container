@@ -172,7 +172,7 @@ def skip_line(account: str, pause: Pause, *, now: float | None = None) -> str:
     return (
         f"  {'(paused)':20s}  {account}: SKIPPED — paused "
         f"{pause.age_human(now)} ago: {pause.reason}. Nothing pushed, "
-        f"nothing failed. `sac accounts resume {account}` puts it back."
+        f"nothing failed. `sac accounts resume {account} --yes` puts it back."
     )
 
 

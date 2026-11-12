@@ -109,7 +109,17 @@ def migration_inventory(roots: tuple[Path, ...], *, apply: bool) -> dict:
 def migrate_images(
     roots: tuple[Path, ...], apply_changes: bool, check: bool, as_json: bool
 ) -> None:
-    """Replace host-specific managed image paths with logical SAC names."""
+    """Preview replacing managed image paths with logical SAC names.
+
+    Without --apply, specs are only inspected. --check exits 1 when migration
+    remains; --check and --apply cannot be combined. Custom image paths that
+    do not match managed SAC image references stay unchanged.
+
+    \b
+    Example (the agents root must already exist):
+      $ sac agents migrate-images --root ./agent-definitions --json
+      $ sac agents migrate-images --root ./agent-definitions --check --json
+    """
     if check and apply_changes:
         raise click.UsageError("--check and --apply are mutually exclusive")
     payload = migration_inventory(roots, apply=apply_changes)

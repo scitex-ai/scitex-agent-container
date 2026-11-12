@@ -200,3 +200,168 @@ def test_narrow_terminal_keeps_the_complete_observed_module_path(
     )
     # Assert
     assert _MODULE in result.output
+
+
+@pytest.fixture
+def forbidden_config_loader():
+    import importlib
+
+    module = importlib.import_module("scitex_agent_container.cli_pkg._host_sync")
+    original = module._load_cfg
+    calls = []
+
+    def forbidden():
+        calls.append("load")
+        raise AssertionError("early refusal/preview must not load config")
+
+    module._load_cfg = forbidden
+    try:
+        yield calls
+    finally:
+        module._load_cfg = original
+
+
+@pytest.mark.parametrize("flags", [[], ["--yes", "--dry-run"], ["-y", "--check"]])
+def test_unapproved_or_conflicting_sync_refuses_before_config(
+    forbidden_config_loader, flags
+):
+    # Arrange
+    # Act
+    result = CliRunner().invoke(host_sync, ["peer-a", *flags])
+    # Assert
+    assert (result.exit_code, forbidden_config_loader) == (2, [])
+
+
+@pytest.mark.parametrize("prefix, suffix", [(["--json"], []), ([], ["--json"])])
+def test_argument_preview_never_loads_config_even_for_alarm(
+    forbidden_config_loader, prefix, suffix
+):
+    import json
+
+    from scitex_agent_container.cli import main
+
+    # Arrange
+    args = [
+        *prefix,
+        "host",
+        "sync",
+        "--all",
+        "--check",
+        "--alarm",
+        "--exit-zero",
+        "--dry-run",
+        "--timeout",
+        "17",
+        *suffix,
+    ]
+    # Act
+    result = CliRunner().invoke(main, args)
+    # Assert
+    assert (result.exit_code, json.loads(result.output), forbidden_config_loader) == (
+        0,
+        {
+            "operation": "host.sync",
+            "mode": "check",
+            "dry_run": True,
+            "scope": "arguments_only",
+            "peer": None,
+            "all_peers": True,
+            "ref": "",
+            "repo": "scitex-ai/scitex-agent-container",
+            "timeout": 17,
+            "alarm": True,
+            "exit_zero": True,
+            "verified": False,
+        },
+        [],
+    )
+
+
+@pytest.fixture
+def sync_dispatch_recorder():
+    import importlib
+    from types import SimpleNamespace
+
+    from scitex_agent_container._hostsync import (
+        GraphState,
+        Outcome,
+        PeerSyncReport,
+        SyncResult,
+    )
+
+    module = importlib.import_module("scitex_agent_container.cli_pkg._host_sync")
+    originals = {
+        key: getattr(module, key) for key in ("_load_cfg", "sync_peer", "check_peer")
+    }
+    calls = []
+
+    def load():
+        calls.append(("load",))
+        return SimpleNamespace(peers={"peer-a": "declared"})
+
+    def sync(peer, peers, **kwargs):
+        calls.append(("sync", peer, peers, kwargs))
+        return SyncResult(
+            peer=peer,
+            outcome=Outcome.CURRENT,
+            before=PeerSyncReport(peer=peer, state=GraphState.CURRENT),
+        )
+
+    def check(*args, **kwargs):
+        raise AssertionError("approved sync must retain sync provider")
+
+    module._load_cfg = load
+    module.sync_peer = sync
+    module.check_peer = check
+    try:
+        yield calls
+    finally:
+        for name, original in originals.items():
+            setattr(module, name, original)
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+def test_approved_sync_forwards_original_guard_arguments(
+    sync_dispatch_recorder, approval
+):
+    import json
+
+    # Arrange
+    args = ["peer-a", approval, "--ref", "origin/main", "--timeout", "17", "--json"]
+    # Act
+    result = CliRunner().invoke(host_sync, args)
+    # Assert
+    assert (
+        result.exit_code,
+        json.loads(result.output)["mode"],
+        sync_dispatch_recorder,
+    ) == (
+        0,
+        "sync",
+        [
+            ("load",),
+            (
+                "sync",
+                "peer-a",
+                {"peer-a": "declared"},
+                {
+                    "ref": "origin/main",
+                    "force": False,
+                    "repo": "scitex-ai/scitex-agent-container",
+                    "timeout": 17,
+                },
+            ),
+        ],
+    )
+
+
+def test_preview_text_identifies_no_fetch_or_event_write(forbidden_config_loader):
+    # Arrange
+    # Act
+    result = CliRunner().invoke(host_sync, ["peer-a", "--dry-run"])
+    # Assert
+    assert (
+        result.exit_code,
+        "no config lookup, SSH, fetch, merge or event write" in result.output,
+        forbidden_config_loader,
+    ) == (0, True, [])

@@ -121,10 +121,10 @@ You do not have to reason about this: the spawn/restart clients now
 case they measured —
 
 - *"the listen daemon is UP and serving … it is the AUTHENTICATED route
-  that did not answer"* → the daemon is alive; `sac listen restart` on the
+  that did not answer"* → the daemon is alive; `sac listener restart --yes` on the
   host clears the wedged pool. Not an operator escalation.
 - *"cannot reach listen … nothing is serving HTTP at this URL"* → genuinely
-  down or the wrong URL/port. `sac listen restart`, then escalate only if
+  down or the wrong URL/port. `sac listener restart --yes`, then escalate only if
   it stays down.
 
 Anything short of a dead broker is yours to do, not the operator's to queue.

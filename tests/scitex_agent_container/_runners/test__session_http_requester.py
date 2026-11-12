@@ -27,13 +27,6 @@ from scitex_agent_container._runners._session_inbox import (
 )
 
 
-def _free_port() -> int:
-    """Ask the kernel for an unused TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 async def _wait_bound(port: int) -> None:
     """Poll until the TCP port accepts connections."""
     for _ in range(50):
@@ -72,15 +65,22 @@ def _post(url: str, body: dict) -> int:
         return exc.code
 
 
-async def _run_request(body: dict) -> tuple[int, list[TurnEnvelope]]:
+async def _run_request(
+    body: dict, *, listener: socket.socket | None = None
+) -> tuple[int, list[TurnEnvelope]]:
     """Return the native receiver status and every envelope it enqueued."""
-    port = _free_port()
+    if listener is None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as owned:
+            owned.bind(("127.0.0.1", 0))
+            owned.listen()
+            return await _run_request(body, listener=owned)
+    port = listener.getsockname()[1]
     inbox = make_inbox()
     stop = asyncio.Event()
     captured: list[Any] = []
     consumer = asyncio.create_task(_capturing_consumer(inbox, captured=captured))
     server = asyncio.create_task(
-        serve_inbound(inbox, host="127.0.0.1", port=port, stop=stop)
+        serve_inbound(inbox, host="127.0.0.1", port=port, stop=stop, listener=listener)
     )
     try:
         await _wait_bound(port)
@@ -178,3 +178,15 @@ class TestRequesterThreading:
         result = asyncio.run(_run_request(body))
         # Assert
         assert result == (400, [])
+
+
+def test_owned_listener_receives_request_without_rebinding() -> None:
+    # Arrange
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        body = {"text": "hello"}
+        # Act
+        status, captured = asyncio.run(_run_request(body, listener=listener))
+    # Assert
+    assert (status, len(captured)) == (200, 1)

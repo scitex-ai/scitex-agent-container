@@ -392,17 +392,10 @@ async def run(
                 ws="none",
                 lifespan="off",
             )
-            server = uvicorn.Server(config)
-            # Suppress uvicorn's own signal handlers: it installs
-            # signal.signal(SIGTERM/SIGINT) via ``Server.install_signal_handlers``,
-            # which (a) shadows the asyncio-level handlers we
-            # registered above and (b) is never restored on shutdown.
-            # The latter leaks process-global signal dispositions
-            # into whatever runs after ``run()`` returns — observed:
-            # subsequent Starlette TestClient SSE streams produce
-            # empty bodies because httpx's stream reader is
-            # interrupted by the dangling handler.
-            server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+            from ._a2a_proxy_server import build_server
+
+            # Uvicorn's old and current signal hooks both defer to this runner.
+            server = build_server(config)
             serve_task = asyncio.create_task(server.serve())
 
     try:

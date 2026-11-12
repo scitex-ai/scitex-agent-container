@@ -1,4 +1,4 @@
-"""``sac fleet sync`` — cross-host agent-spec audit (NO auto-merge).
+"""``sac fleet validate-specs`` — cross-host agent-spec audit (NO auto-merge).
 
 Behaviour
 ---------
@@ -42,6 +42,7 @@ import scitex_logging as slogging
 from .._logging import render_rich
 from .._state.host_config import Config, build_ssh_argv, load
 from .._state.spec_manifest import build_manifest, diff_manifests
+from ._helpers import _json_flag
 
 log = slogging.getLogger(__name__)
 
@@ -178,19 +179,30 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
                     continue
                 if not ph.get("present"):
                     marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                    click.echo(f"    {h:<11} <missing>                                     {marker}", err=True)
+                    click.echo(
+                        f"    {h:<11} <missing>                                     {marker}",
+                        err=True,
+                    )
                     continue
                 sha = ph.get("sha256", "")
                 size = ph.get("size", "")
                 mode = ph.get("mode", "")
                 marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                click.echo(f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
-                    f"size={size}  mode={mode}   {marker}".rstrip(), err=True)
+                click.echo(
+                    f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
+                    f"size={size}  mode={mode}   {marker}".rstrip(),
+                    err=True,
+                )
         click.echo("", err=True)
     click.echo("=" * 72, err=True)
-    click.echo(f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.", err=True)
+    click.echo(
+        f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.",
+        err=True,
+    )
     click.echo("Operator action (sac will NEVER do this for you):", err=True)
-    click.echo("  1. Pick the authoritative copy per agent — sac has no opinion.", err=True)
+    click.echo(
+        "  1. Pick the authoritative copy per agent — sac has no opinion.", err=True
+    )
     click.echo("  2. Rsync that tree to the diverged hosts manually.", err=True)
     click.echo("  3. Re-run `sac fleet sync` until it exits 0.", err=True)
     click.echo("=" * 72, err=True)
@@ -374,8 +386,11 @@ def fleet_sync_impl(
         click.echo(json.dumps(diff, indent=2))
     else:
         if diff["exit_code"] == 0:
-            render_rich(f"[green]ok[/green]  every agent agrees across "
-                f"{len(fleet)} host(s): {', '.join(fleet)}", __name__)
+            render_rich(
+                f"[green]ok[/green]  every agent agrees across "
+                f"{len(fleet)} host(s): {', '.join(fleet)}",
+                __name__,
+            )
         else:
             _render_text_conflicts(diff)
 
@@ -383,7 +398,7 @@ def fleet_sync_impl(
         raise SystemExit(diff["exit_code"])
 
 
-@click.command("sync")
+@click.command("validate-specs")
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON envelope.")
 @click.option(
     "--only",
@@ -421,7 +436,9 @@ def fleet_sync_impl(
     help="Override the agents directory (defaults to "
     "~/.scitex/agent-container/agents).",
 )
+@click.pass_context
 def fleet_sync(
+    ctx: click.Context,
     as_json: bool,
     only: tuple[str, ...],
     peer_filter: tuple[str, ...],
@@ -439,10 +456,11 @@ def fleet_sync(
 
     \b
     Examples:
-      $ sac fleet sync                       # audit every agent on every host
-      $ sac fleet sync --only myagent --json # narrow + machine-readable
-      $ sac fleet sync --peer spartan        # only diff local vs. spartan
+      $ sac fleet validate-specs
+      $ sac fleet validate-specs --only myagent --json
+      $ sac fleet validate-specs --peer worker
     """
+    as_json = _json_flag(ctx, as_json)
     fleet_sync_impl(
         as_json=as_json,
         only=only,

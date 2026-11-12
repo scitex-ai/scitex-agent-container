@@ -1,45 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``sac agents create NAME`` — scaffold a fresh v3 agent spec.
+"""Agent-spec scaffolding shared by the CLI and Agents GUI.
 
-Card sac-fresh-agent-specs (2026-06-13). "Author fresh specs from a
-clean template, not in-place repair" — operators get a v3-clean
-``spec.yaml`` + ``to_home/`` skeleton next to it, ready to edit. The
-templates here are the canonical reference; they must always satisfy
-:func:`scitex_agent_container.config._validation.validate_config`
-without any operator edits (the tests assert this invariant).
+``create`` validates CLI agent names and reserved slots, then delegates
+writes to ``scaffold_agent`` after explicit approval. Preview returns first.
+The GUI uses that same backend and must apply
+its own caller-side name validation; the backend does not repeat it.
 
-Two templates ship out of the box:
+Built-in ``minimal`` (default) and ``full`` field definitions live in
+``_create_templates``. They emit explicit specs with model and endpoint
+selection delegated to the engine. The full preset uses the canonical
+``SCITEX_CARDS_AGENT_ID`` identity. Consult those definitions and the
+matching template tests for current runtime, harness and channel settings.
 
-  * ``minimal`` (default) — bare-minimum spec mirroring
-    ``examples/agents/minimal-agent/``. Three blocks: ``apptainer.image``,
-    ``claude.model``, ``claude.flags``. Use as the starting point for new
-    agents you'll customise yourself.
-  * ``full`` — the PROVEN developer shape the fleet's live dev agents
-    use (card sac-agents-new-template-stale, operator 2026-06-25:
-    "very general, just developer like existing ones"). NOT a bare
-    knob-tour: it renders a ready-to-run project-maintainer agent —
-    runtime: tui, relaxed + persistent directory overlay,
-    full-home reach at the canonical path, the fleet push channels
-    (``server:sac`` + ``server:scitex-todo`` + telegrammer),
-    ``SCITEX_TODO_AGENT_ID`` wired to the agent, an editable install of
-    the agent's own repo, a generic "Start or continue." kick, opus
-    model, and metadata.labels. Parameterised by ``{name}`` (the agent
-    == project) and ``{home}`` (the operator's home, filled at render
-    time so the whole-home bind + workdir are absolute yet
-    operator-agnostic). Edit the labels + prompt for the real mission;
-    delete blocks you don't need.
+Directory templates are discovered under the selected agents root. Their
+placeholders are filled through ``_new_dir_template``; unresolved tokens
+fail rather than leaving an incomplete successful scaffold. Existing inline
+specs are not overwritten, and force replacement is unsupported.
 
-The CLI refuses to overwrite an existing ``spec.yaml``. Edit that spec
-explicitly or choose a different agent name.
-
-Named ``create`` (renamed from ``new``, card
-refactor/consolidate-create-into-new-templates): CRUD naming
-(Create/Read/Update/Delete) lines up with the existing ``delete``
-verb. The old narrow ``sac agents create`` (auto-detected
-editable-install toggle, marker-block machinery) was retired in the
-same card and folded into this command's dir-template system, which
-freed the ``create`` name back up.
+Scaffolding writes a spec and home skeleton; it does not launch an agent or
+qualify credentials, images, engine availability or a live host. Missing
+credentials and failed managed-home adoption are reported separately.
 """
 
 from __future__ import annotations
@@ -159,36 +140,16 @@ def _accounts_root() -> Path:
 
 
 def _discover_credentials_pool_block() -> tuple[str, bool]:
-    """Render ``credentials_files:`` as the FULL pool, and say if it is empty.
+    """Return ``(yaml_block, found_any)`` for every discovered OAuth file.
 
-    Returns ``(yaml_block, found_any)``.
+    Include the complete creating user's pool; a single entry is valid.
+    File presence does not establish validity, remaining capacity or model
+    availability. An empty pool means no OAuth files were discovered here,
+    not that an explicit provider/API-key authentication path is unusable.
 
-    EMIT EVERY ACCOUNT THE STORE HAS. ``credentials_files`` is the list the
-    selector rotates over by headroom, so the scaffold's job is simply not to
-    under-report what is available.
-
-    A ONE-ENTRY LIST IS PERFECTLY VALID and is the correct output for anyone
-    with a single account — which is most people. Rotation not happening with
-    one account is arithmetic, not a defect, and an earlier version of this
-    docstring wrongly called that shape "quiet failure". What actually bit us
-    on 2026-08-05 was not the COUNT: an agent was pinned to a single account
-    that happened to be at 7d 100%, so auth succeeded and every model call
-    died. A three-account pool with all three exhausted fails identically. The
-    hazard is the HEADROOM, not the length.
-
-    ``[]`` is the genuinely broken shape: no credential bind is emitted at all,
-    so the agent falls through to the host default and parks on the interactive
-    OAuth login screen while ``agent_start`` reports success.
-
-    So a non-empty check is NOT a sufficient gate, and neither is this
-    discovery — only invoking a model distinguishes "authenticated" from
-    "able to do work" (card sac-preflight-must-invoke-a-model-20260805).
-
-    Discovery is deliberately conservative. It globs the CREATING user's
-    account store; run inside a container ``Path.home()`` is the container
-    home, which holds no accounts, so we return ``found_any=False`` and let
-    the caller say so LOUDLY rather than emitting a plausible-looking path
-    that resolves to nothing on the target host.
+    Discovery uses the creating process's home, which may differ from the
+    target host's home inside a container. Scaffolding reports the missing
+    pool; start-time checks and actual provider requests remain separate.
     """
     root = _accounts_root()
     try:
@@ -256,6 +217,12 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
         "primary agents root (resolver search-chain entry #1)."
     ),
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview arguments without reading templates or credentials, or writing a scaffold.",
+)
+@click.option("--yes", "-y", is_flag=True, help="Approve writing a new scaffold.")
 def create(
     name: str,
     template_name: str,
@@ -263,6 +230,8 @@ def create(
     agent_id: str | None,
     set_pairs: tuple[str, ...],
     base_dir: Path | None,
+    dry_run: bool,
+    yes: bool,
 ) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
@@ -273,14 +242,16 @@ def create(
     ``SAC_PLACEHOLDER_*`` tokens filled from ``--project``/``--agent-id``/
     ``--set``. Any surviving placeholder fails the command loud and
     removes the partial output.
+    Normal creation requires ``--yes/-y``; ``--dry-run`` takes precedence.
 
     Examples:
 
     \b
-        sac agents create my-agent
-        sac agents create my-agent --template full
-        sac agents create dev1 --template python_developer --project myproj
-        sac agents create r1 --template researcher --project p --set TEAM=x
+        sac agents create my-agent --yes
+        sac agents create my-agent --dry-run
+        sac agents create my-agent --template full --yes
+        sac agents create dev1 --template python_developer --project myproj --yes
+        sac agents create r1 --template researcher --project p --set TEAM=x --yes
     """
     force = False
     if not _is_valid_agent_name(name):
@@ -298,6 +269,24 @@ def create(
     reserved_msg = reserved_agent_name_error(name)
     if reserved_msg is not None:
         raise click.UsageError(reserved_msg)
+
+    if dry_run:
+        from ._create_preview import _show_creation_preview
+
+        _show_creation_preview(
+            name,
+            template_name=template_name,
+            project=project,
+            agent_id=agent_id,
+            set_pairs=set_pairs,
+            base_dir=base_dir,
+        )
+        return
+
+    if not yes:
+        raise click.UsageError(
+            "Creation requires --yes/-y; use --dry-run to preview arguments."
+        )
 
     scaffold_agent(
         name,
@@ -418,19 +407,16 @@ def scaffold_agent(
 
     creds_block, creds_found = _discover_credentials_pool_block()
     if not creds_found:
-        # LOUD, because the spec we are about to write CANNOT BOOT. A scaffold
-        # whose output parks on the OAuth login screen is the defect; it cost
-        # the operator two manual logins on 2026-08-05 before anyone traced it
-        # back to here.
+        # Report discovery without inferring the target's auth or readiness.
         click.echo(
             click.style(
                 f"WARNING: no account credentials found under "
                 f"{_accounts_root()} — writing `credentials_files: []`.\n"
-                f"         {name!r} WILL NOT BOOT with this spec: with no "
-                f"credential bind it falls through to the host default and "
-                f"parks on the interactive OAuth login screen.\n"
-                f"         Populate spec.claude.credentials_files with EVERY "
-                f"healthy account before starting it.",
+                f"         OAuth credentials were not discovered for {name!r}. "
+                f"Configure the intended account pool or an explicit "
+                f"provider/API-key authentication path before starting.\n"
+                f"         Scaffolding does not verify credentials or "
+                f"provider availability.",
                 fg="red",
             ),
             err=True,

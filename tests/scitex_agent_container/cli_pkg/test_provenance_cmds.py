@@ -1,4 +1,4 @@
-"""Tests for ``sac --version`` and ``sac provenance``.
+"""Tests for ``sac --version`` and ``sac show-provenance``.
 
 Drives the real click commands through ``CliRunner`` against the real
 loaded package — no mocks. What is being pinned down is that ``--version``
@@ -8,6 +8,7 @@ shape scripts already parse.
 
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._provenance import identity, package_dir
@@ -102,3 +103,16 @@ class TestProvenanceCommand:
         assert '"live_code_hash"' in result.output
 
 # EOF
+
+
+@pytest.mark.parametrize("options", [[], ["--json"]])
+def test_legacy_provenance_preserves_payload_and_warns_separately(options):
+    # Arrange
+    runner = CliRunner()
+    canonical = runner.invoke(main, ["show-provenance", *options])
+    # Act
+    legacy = runner.invoke(main, ["provenance", *options])
+    # Assert
+    assert (legacy.exit_code, legacy.stdout, "Use show-provenance instead." in legacy.stderr) == (
+        canonical.exit_code, canonical.stdout, True
+    )

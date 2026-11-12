@@ -6,19 +6,18 @@ Build/sandbox/version/rollback verbs delegate to ``scitex-container``;
 
 Verbs:
   build        Build SIF or sandbox from a layer's .def
-  sandbox      Create a writable sandbox from a SIF (mutable rootfs)
+  create-sandbox  Create a writable sandbox from a SIF (mutable rootfs)
   update       Refresh packages inside a sandbox (pip install --upgrade)
   freeze       Bake a sandbox back to an immutable SIF
   list         List installed SIF versions
   switch       Atomically switch to a different version
   rollback     Restore the previous version
   status       Unified container dashboard
-  snapshot     Capture a reproducibility snapshot (pip + apt + git + ...)
+  show-snapshot  Collect backend container/host metadata and lockfile hashes
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -34,7 +33,9 @@ from . import (
     _image_prune_cmd,
     _image_remote_bake,
     _image_repro_build,
+    _image_sandbox_cmd,
     _image_source_build,
+    _image_update_cmd,
 )
 from ._helpers import HelpRecursiveGroup
 from ._helpers._console import logger
@@ -167,9 +168,10 @@ def image_group() -> None:
 # surface is unchanged.
 image_group.add_command(_image_inventory_cmds.image_list)
 image_group.add_command(_image_inventory_cmds.image_status)
-image_group.add_command(_image_inventory_cmds.image_snapshot)
+_image_inventory_cmds.register_snapshot_command(image_group)
 image_group.add_command(_image_prune_cmd.image_prune)
 image_group.add_command(_image_disk_cmd.image_disk)
+image_group.add_command(_image_disk_cmd._legacy_disk)
 image_group.add_command(_image_activation_cmds.image_switch)
 image_group.add_command(_image_activation_cmds.image_rollback)
 
@@ -387,59 +389,15 @@ def image_build(
 # ---------------------------------------------------------------------------
 # sandbox
 # ---------------------------------------------------------------------------
-@image_group.command("sandbox")
-@click.argument("source", type=str)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(file_okay=False, path_type=Path),
-    default=None,
-    help="Output dir (default: <source-stem>.sandbox/ next to the SIF).",
-)
-def image_sandbox(source: str, output: Path | None) -> None:
-    """Create a writable sandbox from SOURCE (a SIF path or layer name).
-
-    \b
-    Examples:
-      $ sac image sandbox scitex                          # use the :scitex SIF
-      $ sac image sandbox /path/to/scitex.sif --output /tmp/sandbox/
-    """
-    sandbox_create = _load_apptainer().sandbox_create
-
-    src_path = _resolve_source_to_sif(source)
-    result = sandbox_create(
-        source=src_path, containers_dir=_CONTAINERS_DIR, output_dir=output
-    )
-    render_rich(f"[green]sandbox[/green] {result}", __name__)
+image_sandbox = _image_sandbox_cmd.image_create_sandbox
+_image_sandbox_cmd.register(image_group)
 
 
 # ---------------------------------------------------------------------------
 # update (refresh packages inside a sandbox)
 # ---------------------------------------------------------------------------
-@image_group.command("update")
-@click.argument(
-    "sandbox_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
-)
-@click.option(
-    "--package",
-    "-p",
-    "packages",
-    multiple=True,
-    help="Specific package(s) to upgrade. Default: scitex[all].",
-)
-def image_update(sandbox_dir: Path, packages: tuple[str, ...]) -> None:
-    """Refresh packages inside a writable sandbox.
-
-    \b
-    Examples:
-      $ sac image update /opt/containers/scitex.sandbox/
-      $ sac image update sandbox/ -p scitex -p numpy
-    """
-    sandbox_update = _load_apptainer().sandbox_update
-
-    pkgs = packages or ("scitex[all]",)
-    result = sandbox_update(sandbox_dir=sandbox_dir, packages=pkgs)
-    click.echo(json.dumps(result, indent=2, default=str))
+image_update = _image_update_cmd.image_update
+image_group.add_command(image_update)
 
 
 # ---------------------------------------------------------------------------

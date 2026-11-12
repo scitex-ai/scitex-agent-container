@@ -35,8 +35,6 @@ Global flags:
 
 Multi-target: `sac agents start a b c` works for daemon mode; `--foreground` is single-target only.
 
-The earlier verbs `validate`, `take-snapshot`, `check-priority`, `inspect`, `logs`, `list` were folded into `check`, `status --snapshot`, `status --priority`, `status` (per-agent), `tail`, and `status` (fleet view) respectively.
-
 ## Image lifecycle (`sac image`)
 
 Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
@@ -44,22 +42,22 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 | Command | Purpose |
 |---|---|
 | `sac image build [base\|scitex] [--sandbox]` | Build a layered Apptainer image. Default target: `base`. `--sandbox` builds a writable rootfs directory instead of an immutable SIF. Sac is apptainer-only since 2026-05-13 — no `--runtime` flag. |
-| `sac image sandbox SOURCE` | Convert an existing SIF (or layer name) into a writable sandbox. |
-| `sac image update SANDBOX [-p PKG]` | Refresh packages inside a sandbox via `pip install --upgrade`. Default: `scitex[all]`. |
+| `sac image create-sandbox SOURCE --yes` | Create sandbox; `--dry-run` previews arguments. |
+| `sac image update SANDBOX [-p PKG] --yes` | Upgrade sandbox packages (default `scitex[all]`); `--dry-run` previews arguments offline. |
 | `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
 | `sac image list` | Installed SIF versions on disk. |
-| `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |
-| `sac image rollback [--layer base]` | Restore the immediately older image for one SAC layer. |
+| `sac image switch <version> [--layer base] --yes` | Switch SAC live links; `--dry-run` previews arguments only. |
+| `sac image rollback [--layer base] --yes` | Restore the immediately older SAC image. |
 | `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
-| `sac image snapshot [-o env.json]` | Reproducibility capsule: pip + apt + conda + git + active SIF hash. |
+| `sac image show-snapshot [-o env.json]` | Backend metadata + lock hashes; use `image status` for named SAC layers. |
 
 Typical "scitex updates often" cycle:
 
 ```
 sac image build base -y                # create a managed timestamped artifact
 sac image status                       # read its active version
-sac image switch 2026-0914-152140 --layer base
-sac image rollback --layer base
+sac image switch 2026-0914-152140 --layer base --yes
+sac image rollback --layer base --yes
 ```
 
 ## Account / quota (`sac accounts`)
@@ -68,8 +66,8 @@ sac image rollback --layer base
 |---|---|
 | `sac accounts list` | Stored Claude Code accounts + active block; per-store freshness column (`VALID (+Xh)` / `EXPIRED (-Xh)` / `ABSENT`). |
 | `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
-| `sac accounts sync-live` | Snapshot the live credential into its matching store (store-name = email slugified). Idempotent; fails loud on an expired/absent live cred (never saves a stale token). |
-| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and auto-run `sync-live` on every change — "the moment I log in → auto-saved". |
+| `sac accounts sync-live --yes` | Snapshot a valid live login; `--dry-run` previews arguments. `--poll` treats invalid/absent input as a no-op after approval. |
+| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and run the sync engine on every change — "the moment I log in → auto-saved". |
 | `sac accounts switch <name>` | Switch active credentials to a stored account. |
 | `sac accounts delete <name>` | Remove a stored account. |
 | `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |
@@ -79,30 +77,34 @@ sac image rollback --layer base
 
 | Command | Purpose |
 |---|---|
-| `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
-| `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
-| `sac host ssh-opts` | Print sac's ssh ControlMaster flags shell-quoted — use as `ssh $(sac host ssh-opts) host cmd`. |
+| `sac host list / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
+| `sac host add PEER --ssh TARGET --dry-run --json` | Preview supplied addition arguments without reading config or creating a scaffold. Does not validate duplicates or routes. Apply with `--yes`/`-y`; generated-config refusal, symlink handling and validation rollback still apply. |
+| `sac host remove PEER --dry-run --json` | Preview supplied removal arguments without reading config contents. Does not verify target existence or configuration validity. Apply with `sac host remove PEER --yes`; generated-config refusal, symlink handling and validation rollback still apply. |
+| `sac host add-peer / list-peers / remove-peer` | Writes need `--yes`; `--dry-run` previews arguments without registry access or validation. |
+| `sac host show-ssh-options --json` | Return SSH option words as `{"options": [...]}` for a subprocess argv. Human output needs `shlex.split`; plain shell command substitution does not preserve paths containing spaces. Hidden `ssh-opts` compatibility remains. |
 | `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
 | `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
 | `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
 | `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
 | `sac a2a doctor AGENT` | Probe an agent's A2A AgentCard endpoint and report health. |
-| `sac agents reconcile-turn-bridge AGENT [--apply]` | Resolve an existing TUI agent's `a2a.port: auto` from authoritative live registry/claim state and reload only its turn bridge. Dry-run by default; never starts or restarts the TUI. |
+| `sac agents reconcile-turn-bridge AGENT [--dry-run / --yes]` | Inspect live TUI/port state by default; `--yes` (`-y`, `--apply`) reloads only its bridge. Approval conflicts with `--dry-run`; never starts/restarts the TUI. |
 
 ## Fleet (`sac fleet`)
 
 | Command | Purpose |
 |---|---|
-| `sac fleet launch PEER <name>...` | Rsync each agent's spec to PEER and run `sac agents start <name>` there. |
-| `sac fleet notify done\|blocker\|status --summary "..."` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. |
+| `sac fleet launch SPECDIR --peer PEER --dry-run --json` | Preview spec-directory copying and remote starts. Alternatively repeat `--spec NAME`; `--no-rsync` skips copying. Omit `--dry-run` to apply. |
+| `sac fleet validate-specs` | Compare spec/to_home manifests across hosts. Hidden `sync` alias remains. |
+| `sac fleet validate-checkouts` | Compare checkout state; git fetch refreshes origin refs without merging. Hidden `sync-code` remains. |
+| `sac fleet notify done\|blocker\|status --summary "..." --yes` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. Sending requires `--yes`/`-y`; preview takes precedence and does not verify ACL or delivery. |
 
 ## State database / registry / events
 
 | Command | Purpose |
 |---|---|
-| `sac store clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `db clean` replaces the legacy `registry clean`. |
-| `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
-| `sac event ingest` | Append a Claude Code hook event to the per-agent ring buffer. |
+| `sac store clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `sac store clean` replaces the legacy `sac registry clean`. |
+| `sac registry reconcile` | Preview singleton placement across hosts; `--execute` requests handover. Separately, `sac agents reconcile` checks unexpected deaths and restarts only with `--yes`/`--apply`. |
+| `sac event ingest KIND --agent NAME` | Append a JSON hook payload from stdin to the per-agent ring buffer. KIND is `pretool`, `posttool`, `prompt`, `stop` or `other`; vendor hook labels such as `PreToolUse` are not CLI kind names. |
 
 ## Build / install / templates
 

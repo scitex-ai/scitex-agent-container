@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.fleet_group import fleet_group
@@ -80,9 +81,7 @@ def test_notify_dry_run_carries_kind(tmp_path: Path, env_save_restore) -> None:
     assert payload["envelope"]["params"]["metadata"]["kind"] == "status"
 
 
-def test_notify_dry_run_reports_lead_address(
-    tmp_path: Path, env_save_restore
-) -> None:
+def test_notify_dry_run_reports_lead_address(tmp_path: Path, env_save_restore) -> None:
     # Arrange
     _write_lead_cfg(tmp_path, env_save_restore)
     env_save_restore.set("SAC_NAME", "alice")
@@ -187,3 +186,38 @@ def test_notify_surfaces_no_lead_block_as_exit_one(
     )
     # Assert
     assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("approval", [[], ["--yes"], ["-y"]])
+def test_notify_preview_takes_precedence_over_approval(
+    tmp_path: Path, env_save_restore, approval: list[str]
+) -> None:
+    # Arrange
+    _write_lead_cfg(tmp_path, env_save_restore)
+    env_save_restore.set("SAC_NAME", "alice")
+    # Act
+    result = CliRunner().invoke(
+        fleet_group,
+        ["notify", "done", "--summary", "x", "--dry-run", "--json", *approval],
+    )
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout)["dry_run"]) == (0, True)
+
+
+@pytest.mark.parametrize("as_json", [[], ["--json"]])
+def test_notify_refuses_before_identity_or_config_access(
+    tmp_path: Path, env_save_restore, as_json: list[str]
+) -> None:
+    # Arrange
+    env_save_restore.set("SAC_NAME", "")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(tmp_path / "absent"))
+    # Act
+    result = CliRunner().invoke(
+        fleet_group, ["notify", "done", "--summary", "x", *as_json]
+    )
+    # Assert
+    assert (result.exit_code, result.stdout, "requires --yes" in result.stderr) == (
+        2,
+        "",
+        True,
+    )

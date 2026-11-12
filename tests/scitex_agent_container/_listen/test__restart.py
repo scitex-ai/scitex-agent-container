@@ -893,7 +893,7 @@ def test_cli_listen_restart_surface_invokes_restart_listen(tmp_path: Path) -> No
     restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
     try:
         # Act
-        result = runner.invoke(listen_grp, ["restart"])
+        result = runner.invoke(listen_grp, ["restart", "--yes"])
     finally:
         restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
     # Assert
@@ -926,7 +926,7 @@ def test_cli_listen_restart_surfaces_loud_warn_on_escalation(tmp_path: Path) -> 
     restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
     try:
         # Act
-        result = runner.invoke(listen_grp, ["restart"])
+        result = runner.invoke(listen_grp, ["restart", "--yes"])
     finally:
         restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
     # Assert
@@ -959,7 +959,7 @@ def test_cli_listen_restart_failure_exits_nonzero_with_error(tmp_path: Path) -> 
     restart_mod_alias.restart_listen = _fake_restart  # type: ignore[assignment]
     try:
         # Act
-        result = runner.invoke(listen_grp, ["restart"])
+        result = runner.invoke(listen_grp, ["restart", "--yes"])
     finally:
         restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
     # Assert — non-zero exit + the loud ERROR cause surfaces to stderr.

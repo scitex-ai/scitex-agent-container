@@ -30,7 +30,7 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │   │   └── .credentials.json   (copied into ~/.claude/ on `sac accounts switch`)
 │   └── openai/<name>/
 │       ├── account.json        (safe metadata; no tokens)
-│       └── auth.json           (mode 0600; collected by `sac accounts sync-openai`)
+│       └── auth.json           (mode 0600; collected by `sac accounts sync-openai --yes`)
 │   └── _rotations/
 │       └── <email>.ndjson      (OAuth-rotation log, one append per observed rotation)
 ├── tokens/

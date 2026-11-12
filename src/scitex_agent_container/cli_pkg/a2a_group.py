@@ -1,4 +1,4 @@
-"""``sac a2a {serve,doctor,grant,unblock,block,revoke,grants,list,reachability}``.
+"""``sac a2a {serve,doctor,grant,unblock,block,revoke,list-grants,list,validate-reachability}``.
 
 The A2A protocol surface. This module holds the ``a2a`` group itself plus
 the two protocol verbs; the rest live in sibling modules (this file sat
@@ -11,7 +11,7 @@ over the per-file cap) and are registered at the bottom, the same way
   declared by ``spec.a2a`` in its YAML) and reports liveness +
   round-trip latency. Useful for ops or as ``spec.health.method:
   a2a-card`` from outside the agent process.
-* ``grant`` / ``unblock`` / ``block`` / ``revoke`` / ``grants``
+* ``grant`` / ``unblock`` / ``block`` / ``revoke`` / ``list-grants``
   (:mod:`._a2a_acl_cmds`) are thin click wrappers over the cross-group
   ACL primitives in ``_state.state_store_nodes``. Operators previously had
   to drop into a Python REPL to amend the comms-grants table — a footgun
@@ -19,7 +19,7 @@ over the per-file cap) and are registered at the bottom, the same way
   auditable and validates the positional order at the Click layer.
 * ``list`` (:mod:`._a2a_list_cmd`) lists every peer registered on the
   local ``sac listen``.
-* ``reachability`` (:mod:`._a2a_reachability`) probes the cross-host a2a
+* ``validate-reachability`` (:mod:`._a2a_reachability`) probes the cross-host a2a
   transport to every peer, from this host.
 
 Examples::
@@ -30,9 +30,10 @@ Examples::
     sac a2a doctor mock-echo.yaml
     sac a2a doctor mock-echo.yaml --json
     sac a2a grant worker-a worker-b --note "ticket-123"
-    sac a2a revoke worker-a worker-b
-    sac a2a grants --json
-    sac a2a reachability --all --json
+    sac a2a revoke worker-a worker-b --dry-run
+    sac a2a revoke worker-a worker-b --yes
+    sac a2a list-grants --json
+    sac a2a validate-reachability --all --json
 """
 
 from __future__ import annotations
@@ -77,6 +78,12 @@ def a2a() -> None:
     help="TCP port for the A2A HTTP server.",
 )
 @click.option(
+    "--fd",
+    type=click.IntRange(min=3),
+    default=None,
+    help="POSIX listener descriptor already bound to --host and --port; do not rebind.",
+)
+@click.option(
     "--handler",
     type=click.Choice(sorted(HANDLERS), case_sensitive=False),
     default="echo",
@@ -99,6 +106,7 @@ def a2a_serve(
     port: int,
     handler: str,
     verbose: bool,
+    fd: int | None = None,
 ) -> None:
     """Serve A2A endpoints for the given agent YAMLs (foreground).
 
@@ -109,7 +117,11 @@ def a2a_serve(
     """
     if verbose:
         slogging.set_level("info")
-    serve(list(agent_yamls), host=host, port=port, handler=handler)
+    options = {} if fd is None else {"fd": fd}
+    try:
+        serve(list(agent_yamls), host=host, port=port, handler=handler, **options)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @a2a.command("doctor")

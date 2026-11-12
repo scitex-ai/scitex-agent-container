@@ -395,7 +395,7 @@ def test_message_refuses_a_restart_when_authed_answers() -> None:
     # Act
     message = _message2(_SERVING, _authed())
     # Assert
-    assert "Do NOT run `sac listen restart`" in message
+    assert "Do NOT run `sac listen restart --yes`" in message
 
 
 def test_message_warns_the_route_can_answer_then_degrade() -> None:

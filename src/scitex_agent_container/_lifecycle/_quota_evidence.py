@@ -47,12 +47,12 @@ way in the other.
 
 from __future__ import annotations
 
-from .._logging import write_stream
-
 from pathlib import Path
 from typing import Any, Callable
 
 import scitex_logging as slogging
+
+from .._logging import write_stream
 
 logger = slogging.getLogger(__name__)
 
@@ -515,7 +515,7 @@ def _warn_unverifiable(
         "the agent will start and report success while every turn answers "
         '"You\'ve hit your weekly limit" (measured 2026-08-06, scitex-02). '
         "Fix: on THIS host run `sac accounts save <name>` (or `sac accounts "
-        "sync-live`) if it holds no accounts, then `sac accounts "
+        "sync-live --yes`) if it holds no accounts, then `sac accounts "
         "refresh-quota-cache` — and install its cron so the next boot can see "
         "quota without asking."
     )

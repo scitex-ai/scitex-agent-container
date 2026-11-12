@@ -64,3 +64,23 @@ every two minutes (fifteen-minute stale threshold); it does not restart them.
 Use `~/.scitex/dev/runtime/periodic-executions.jsonl` for execution receipts,
 including exit codes and overlapping-run skips. An enabled timer alone does
 not prove that recovery ran or that its observations were conclusive.
+
+
+## Recovery command modes
+
+`agents restart-login-expired` and `agents resume-rate-limited` accept
+`--yes`/`-y` as aliases for their existing `--apply`. Existing scheduled and
+keepalive callers using `--apply` remain valid; no job cadence, timeout or
+admission rule changes. Approval conflicts with `--check` and `--dry-run`.
+
+`--dry-run` prints an unverified argument plan before any recovery pass. It
+does not resolve the fleet, capture panes, read histories, record a heartbeat,
+restart or resume an agent, or select a successor. Default/`--check` is a
+separate observational pass that can record its normal events and heartbeat.
+Use the actual pass result and exit status as evidence; an argument plan does
+not establish health, quota reset, restart eligibility or successful delivery.
+
+Auth-banner recovery remains report-only under positional/liveness admission,
+even with approval. Rate-limit recovery still requires the existing frozen
+pane/reset evidence and budgets; `--switch-model` remains an explicit opt-in.
+These CLI aliases do not install, enable, resume or stop any supervisor.
