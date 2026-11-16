@@ -9,9 +9,6 @@ import psutil
 import pytest
 
 from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
-    shared_workdir_pair as shared_workdir_pair,
-)
-from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
     wait_for_sidecar,
 )
 
