@@ -61,64 +61,22 @@ env:
   CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
 
 jobs:
+  # THE RELEASE TEST GATE IS THE PR GATE (operator rule 2026-11-16: one CI
+  # SSOT). It calls the same organization pytest-matrix at the same pinned
+  # revision as ci.yml, so the two cannot diverge again; the shared
+  # runner-admission puts organization members on the private runners and
+  # everyone else on GitHub-hosted. The in-repo SIF runner this replaces had
+  # drifted from the PR gate (deps in a --target dir: no `sac` entrypoint,
+  # subprocesses could not import the package) and blocked every release from
+  # 0.38.4 to 0.39.0. The full supported set is a LITERAL input so a release can
+  # never inherit a narrowed list (tests/integration/test_ci_python_matrix_shape.py).
   test:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # ALL THREE, UNCONDITIONALLY, AND WRITTEN OUT RATHER THAN REFERENCED.
-        #
-        # The PR gate narrowed to the ends of the range on 2026-08-12 (3.11 +
-        # 3.13; the middle moved to a hosted nightly) because a human waits on
-        # it. NOTHING about that narrowing may reach this job: a release has
-        # correctness as its only job and nobody is waiting on it, so it pays
-        # for full coverage. That is also why there is no shared "matrix
-        # variable" for the two to read — a single referenced list is one edit
-        # away from silently narrowing the release too, which is the exact
-        # half-applied shape this fleet keeps getting caught by. The lists are
-        # instead kept in agreement by
-        # tests/integration/test_ci_python_matrix_shape.py, which fails if this
-        # one stops being the full supported set or grows an event condition.
-        #
-        # AND IT RUNS ON OUR POOL, not on the hosted runner the nightly uses:
-        # this gate exists to be byte-identical to what ships (same SIF, same
-        # xdist invocation, same runner expression). Divergence between the
-        # release gate and the release itself is what left PyPI at 0.21.17 while
-        # eight tags shipped nothing — see the header of ci.yml (which
-        # superseded the old inline pytest-matrix workflow).
-        python-version: ["3.11", "3.12", "3.13"]
-    steps:
-      - name: Resolve version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            v="${GITHUB_REF#refs/tags/}"
-          else
-            v="${{ inputs.version }}"
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.ver.outputs.version }}
-          fetch-depth: 0
-      # SIF-based self-hosted test run — mirrors pytest-matrix exactly. No
-      # setup-python (the bare Spartan node has no Python tool cache; that step
-      # failed "version not found for this OS"); no apt fd-install (fd is baked
-      # in the SIF). exec-in-sif.sh apptainer-execs the reused ci-cpu.sif and
-      # run-in-sif.sh layers THIS (tagged) checkout + [all,dev] into a writable
-      # target, then runs pytest. fail-loud on a missing SIF/shim.
-      - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
-        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
-
-      # The persistent runner keeps whatever this job leaves in /tmp — 1.8-2.2 GB
-      # per leg. `always()` covers failure and cancellation; the version arg
-      # scopes the removal to THIS leg, because all three share GITHUB_RUN_ID and
-      # an unscoped cleanup would delete the siblings' live scratch. Mirrors the
-      # step above by design (tests/integration/test_ci_tmpdir_lifecycle.py
-      # enforces the pairing).
-      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
-        if: always()
-        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
+    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@cd4e545a20a1e35385ffe88f4a963ae3c500819b
+    with:
+      runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
+      full_python_versions: '["3.11","3.12","3.13"]'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
     needs: test
@@ -145,6 +103,16 @@ jobs:
             v="${{ inputs.version }}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+      # The shared test gate tests github.ref. A manual dispatch must therefore
+      # run ON the tag it publishes (gh workflow run release --ref vX.Y.Z -f
+      # version=vX.Y.Z); otherwise the tested commit and the shipped commit differ.
+      - name: Refuse a dispatch whose ref is not the tag it publishes
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${GITHUB_REF}" != "refs/tags/${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::dispatched on ${GITHUB_REF}, but publishing ${{ steps.ver.outputs.version }}; re-run with --ref ${{ steps.ver.outputs.version }}"
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.ver.outputs.version }}

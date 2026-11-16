@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -46,8 +47,14 @@ def _declared_versions() -> list[str]:
     return _sorted(found)
 
 
+def _release_versions_raw() -> object:
+    """The release gate calls the shared pytest-matrix; its version set is the
+    literal ``full_python_versions`` input on the ``test`` job."""
+    return _load(RELEASE_WORKFLOW)["jobs"]["test"]["with"]["full_python_versions"]
+
+
 NIGHTLY_VERSIONS = _sorted(_matrix_raw(NIGHTLY_WORKFLOW))
-RELEASE_VERSIONS = _sorted(_matrix_raw(RELEASE_WORKFLOW))
+RELEASE_VERSIONS = _sorted(json.loads(_release_versions_raw()))
 DECLARED_VERSIONS = _declared_versions()
 PR_VERSIONS = DECLARED_VERSIONS
 FULL_VERSIONS = RELEASE_VERSIONS
@@ -119,11 +126,13 @@ def test_release_matrix_carries_no_event_condition():
     """The release must not be able to inherit a narrowed list by reference or
     by condition -- the half-applied shape this fleet keeps getting caught by."""
     # Arrange
-    raw = _matrix_raw(RELEASE_WORKFLOW)
+    raw = _release_versions_raw()
 
     # Act
-    is_plain_literal = isinstance(raw, list) and not any(
-        "${{" in str(item) for item in raw
+    is_plain_literal = (
+        isinstance(raw, str)
+        and "${{" not in raw
+        and isinstance(json.loads(raw), list)
     )
 
     # Assert
@@ -200,4 +209,20 @@ def test_pr_gate_job_names_match_the_required_status_checks():
         "(`pytest-matrix / pytest-matrix-on-ubuntu-py3.11`, ...) — renaming "
         "one silently detaches protection, and moving the pin without "
         "review re-points every gate at unreviewed org code."
+    )
+
+
+def test_release_gate_is_the_pr_gate_workflow_at_the_same_revision():
+    """One CI SSOT (operator 2026-11-16): the release test job calls exactly
+    the shared pytest-matrix that ci.yml calls, pinned to the same revision."""
+    # Arrange
+    pr_uses = _load(PR_GATE_WORKFLOW)["jobs"]["pytest-matrix"]["uses"]
+
+    # Act
+    release_uses = _load(RELEASE_WORKFLOW)["jobs"]["test"]["uses"]
+
+    # Assert
+    assert release_uses == pr_uses, (
+        f"release test gate uses {release_uses!r} but the PR gate uses "
+        f"{pr_uses!r}; the two gates must be the same bytes"
     )
