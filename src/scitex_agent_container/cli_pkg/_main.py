@@ -62,7 +62,7 @@ def _print_version(ctx: click.Context, param, value) -> None:
 # Help categories — clean noun-group surface
 # ---------------------------------------------------------------------------
 COMMAND_CATEGORIES = [
-    ("Agent", ["agents", "subagent"]),
+    ("Agent", ["agents", "subagent", "config"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
     ("Account", ["accounts"]),
     (
@@ -104,6 +104,9 @@ class _MainGroup(LazyGroup):
         # Noun groups
         "agents": f"{_PKG}.agent_group:agent_group",
         "subagent": f"{_PKG}.subagent_group:subagent_group",
+        # Harness-neutral agent config (.agents/) rendered into native files
+        # (~/.claude, ...): deploy / check / show / import. ADR-0033.
+        "config": f"{_PKG}.config_group:config_group",
         "store": f"{_PKG}.store_group:store_group",
         "dev": f"{_PKG}.dev_group:dev_group",
         "host": f"{_PKG}.host_group:host_group",
@@ -250,6 +253,7 @@ class _MainGroup(LazyGroup):
     LAZY_SHORT_HELPS = {
         "list-versions": "Report package versions for base-image and overlay layers.",
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
+        "config": "Neutral agent config (.agents/): show, deploy to native, check drift, import.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
         "store": "Inspect and maintain the shared sac state store.",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",

@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `sac config show|deploy|check|import`: harness-neutral agent config
+  (`~/.scitex/agent-container/.agents`, project layer wins) rendered into
+  Claude Code's native `~/.claude` / `<root>/.claude`; `AGENTS.md` is the only
+  instruction file (ADR-0033). Deploy backs up, never deletes.
+
 ### Fixed
 - Require explicit approval for peer-token CLI writes; add token-free argument
   previews and JSON metadata while preserving containment and idempotent removal.
