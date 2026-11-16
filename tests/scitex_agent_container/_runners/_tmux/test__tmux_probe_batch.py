@@ -25,6 +25,7 @@ import contextlib
 import os
 import shutil
 import subprocess
+import time
 import uuid
 
 import pytest
@@ -68,14 +69,39 @@ def _tmux(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _kill_server_and_wait(deadline_s: float = 10.0) -> None:
+    # `kill-server` returns before the server has exited. A `new-session` sent
+    # in that window reaches the DYING server, fails, and the session silently
+    # never exists — seen on loaded CI as `KeyError: 'tui-scitex-hpc'`. Wait
+    # until no server answers on this socket before the test arranges anything.
+    _tmux("kill-server")
+    end = time.monotonic() + deadline_s
+    while _tmux("list-sessions").returncode == 0:
+        if time.monotonic() >= end:
+            raise RuntimeError(f"tmux server on {SOCKET} still alive after kill")
+        time.sleep(0.05)
+
+
+def _arrange(*args: str) -> subprocess.CompletedProcess:
+    # Arrange steps must not fail silently: a session that was never created
+    # surfaces later as a confusing KeyError/count mismatch in the assertion.
+    if args == ("kill-server",):
+        _kill_server_and_wait()
+        return subprocess.CompletedProcess(args, 0)
+    result = _tmux(*args)
+    if result.returncode != 0:
+        raise RuntimeError(f"tmux {' '.join(args)} failed: {result.stderr.strip()}")
+    return result
+
+
 @pytest.fixture()
 def tmux_server():
     """A real tmux server on a socket only this process can name."""
     # SOCKET is per-process, so the tests in one process share a server: this
     # kill is what isolates each test from the last one's sessions. It is NOT
     # vestigial — dropping it lets test N inherit test N-1's fleet.
-    _tmux("kill-server")
-    yield _tmux
+    _kill_server_and_wait()
+    yield _arrange
     # Teardown. A reap that cannot finish is not a test failure: the socket name
     # is unique, so nothing else can collide with a leftover, and it self-reaps
     # anyway (every session here runs `sleep`; tmux exits with its last one).
