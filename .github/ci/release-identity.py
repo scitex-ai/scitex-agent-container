@@ -919,37 +919,16 @@ def run_witness(commit, run, attempt, query=api, *, tests=True):
     }
     if not tests:
         return witness
-    # The release gate runs its tests INLINE (same SIF bytes + env as the PR
-    # gate, per the release workflow header) rather than through the central
-    # reusable caller, so there is no referenced_workflows callee to pin.
-    # What this witness actually proves is unchanged: the three matrix legs of
-    # THIS run, on THIS commit, all completed success. The caller pin lives in
-    # ci.yml; inventing a callee requirement here would fail every release.
-    document = query(prefix + "/jobs?per_page=100")
-    jobs = document.get("jobs", [])
-    if (
-        type(document.get("total_count")) is not int
-        or document["total_count"] != len(jobs)
-        or len(jobs) > 100
-    ):
-        raise ValueError("release job inventory is incomplete")
-    completed = []
-    for version in ("3.11", "3.12", "3.13"):
-        name = "test (" + version + ")"
-        rows = [row for row in jobs if row.get("name") == name]
-        if (
-            len(rows) != 1
-            or rows[0].get("status") != "completed"
-            or rows[0].get("conclusion") != "success"
-            or rows[0].get("head_sha") != commit
-            or rows[0].get("run_id") != int(run)
-            or rows[0].get("run_attempt") != int(attempt)
-            or type(rows[0].get("id")) is not int
-        ):
-            raise ValueError("all three genuine release test legs have not succeeded")
-        completed.append({"version": version, "job": rows[0]["id"], "name": name})
-    # No central callee: the inline matrix IS the qualified gate (see above).
-    witness.update({"test_callee": None, "tests": completed})
+    import importlib.util  # release_tests.py by path: this runs under `python -I`
+
+    spec = importlib.util.spec_from_file_location(
+        "release_tests", os.path.join(os.path.dirname(__file__), "release_tests.py")
+    )
+    release_tests = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release_tests)
+    witness.update(
+        release_tests.witness(REPOSITORY, commit, run, attempt, current, prefix, query)
+    )
     return witness
 
 

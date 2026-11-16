@@ -6,7 +6,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.39.1] - 2026-11-16
+## [0.39.2] - 2026-11-17
+
+### Fixed
+- Release build witness recognises the shared pytest-matrix leg names
+  (`test / pytest-matrix-on-ubuntu-py3.X`) and now also proves the run used
+  the callee revision pinned in the release workflow at the released commit.
+  0.39.1 was tagged but never published: its tests passed, then the build
+  refused them under the old inline leg names.
+
+## [0.39.1] - 2026-11-16 (tagged, not published)
 
 ### Fixed
 - Release test gate now calls the shared organization pytest-matrix at the same
