@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-16
+
 ### Added
 - `sac config show|deploy|check|import`: harness-neutral agent config
   (`~/.scitex/agent-container/.agents`, project layer wins) rendered into
