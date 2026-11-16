@@ -128,29 +128,34 @@ def show(scope: str, source: str | None, as_json: bool) -> None:
 @_scope_opt
 @_source_opt
 @_target_opt
-@click.option("--dry-run", is_flag=True, help="Show the plan; change nothing.")
+@click.option("--dry-run", is_flag=True, help="Show the plan; change nothing (also the default without --yes).")
+@click.option("--yes", "-y", is_flag=True, help="Apply the plan.")
 def deploy(
-    harness: str, scope: str, source: str | None, target: str | None, dry_run: bool
+    harness: str, scope: str, source: str | None, target: str | None, dry_run: bool, yes: bool
 ) -> None:
     """Render the neutral layer into the harness's native files.
 
-    Real files in the way are moved to <target>/.sac-backup/<stamp>/, never
-    deleted; live state (credentials, transcripts) is never touched.
+    Without --yes this only previews. Real files in the way are moved to
+    <target>/.sac-backup/<stamp>/, never deleted; live state (credentials,
+    transcripts) is never touched.
 
     Example:
-      $ sac config deploy --harness claude --scope user
+      $ sac config deploy --harness claude --scope user --yes
     """
     from .._neutral_config import apply, check
 
     _, dest, actions, notes = _plan(harness, scope, source, target)
-    results = check(dest, actions) if dry_run else apply(dest, actions)
+    preview = dry_run or not yes
+    results = check(dest, actions) if preview else apply(dest, actions)
     for result in results:
         click.echo(result.line())
     for note in notes:
         click.echo(f"[note] {note}")
     changed = sum(r.state != "ok" for r in results)
-    verb = "would change" if dry_run else "changed"
+    verb = "would change" if preview else "changed"
     click.echo(f"{harness} {scope}: {verb} {changed} of {len(results)} into {dest}")
+    if preview and not dry_run and changed:
+        click.echo("preview only; re-run with --yes to apply")
 
 
 @config_group.command("check")
@@ -201,23 +206,30 @@ def check_cmd(harness: str, scope: str, source: str | None, target: str | None) 
     is_flag=True,
     help="Also copy hooks/, agents/ (as subagents/), commands/, skills/.",
 )
+@click.option("--dry-run", is_flag=True, help="Report what would be written (also the default without --yes).")
+@click.option("--yes", "-y", is_flag=True, help="Write the layer.")
 def import_cmd(
-    from_harness: str, claude_dir: str | None, dest: str, copy_trees: bool
+    from_harness: str, claude_dir: str | None, dest: str, copy_trees: bool, dry_run: bool, yes: bool
 ) -> None:
     """Create a neutral layer from an existing native config (migration).
 
+    Without --yes this only reports what would be written.
+
     Example:
-      $ sac config import --from claude --to /tmp/agents-layer
+      $ sac config import --from claude --to /tmp/agents-layer --yes
     """
     from .._neutral_config import import_claude
 
     src = Path(claude_dir) if claude_dir else _claude_user_dir()
+    preview = dry_run or not yes
     try:
-        report = import_claude(src, Path(dest), copy_trees=copy_trees)
+        report = import_claude(src, Path(dest), copy_trees=copy_trees, dry_run=preview)
     except (FileExistsError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     for line in report:
         click.echo(line)
+    if preview and not dry_run:
+        click.echo("preview only; re-run with --yes to write")
 
 
 __all__ = ["config_group"]

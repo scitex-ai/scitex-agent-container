@@ -1,4 +1,4 @@
-"""ADR-0033: neutral layer loading, precedence and the Claude Code adapter."""
+"""ADR-0033: loading a neutral layer and merging user + project layers."""
 
 from __future__ import annotations
 
@@ -8,15 +8,9 @@ from scitex_agent_container._neutral_config import (
     NeutralConfigError,
     load_layer,
     merge_layers,
-    plan_claude,
 )
-from scitex_agent_container._neutral_config._claude import render_settings
 
-from .conftest import make_layer
-
-
-def _link_sources(actions):
-    return {a.dest.name: a.source for a in actions if hasattr(a, "source")}
+from ._layer_fixture import make_layer
 
 
 def test_load_layer_finds_agents_md(user_layer):
@@ -55,6 +49,17 @@ def test_unknown_neutral_event_is_rejected_with_file_and_index(tmp_path):
     loading = pytest.raises(
         NeutralConfigError, match=r"hooks\.yaml: hooks\[0\] event 'pretool'"
     )
+    # Assert
+    with loading:
+        load_layer(root)
+
+
+def test_duplicate_hook_name_is_rejected(tmp_path):
+    # Arrange
+    hook = {"name": "x", "event": "stop", "command": "c"}
+    root = make_layer(tmp_path / "u", hooks=[hook, hook])
+    # Act
+    loading = pytest.raises(NeutralConfigError, match="duplicate hook name 'x'")
     # Assert
     with loading:
         load_layer(root)
@@ -129,94 +134,3 @@ def test_project_disables_user_hook_only_by_name(merged):
     names = [h.name for h in hooks]
     # Assert
     assert names == ["guard", "cx"]
-
-
-def test_claude_md_is_a_link_to_agents_md(claude_actions, user_root):
-    # Arrange
-    actions, _ = claude_actions
-    # Act
-    source = _link_sources(actions)["CLAUDE.md"]
-    # Assert
-    assert source == user_root / "AGENTS.md"
-
-
-def test_agents_dir_links_to_neutral_subagents(claude_actions, user_root):
-    # Arrange
-    actions, _ = claude_actions
-    # Act
-    source = _link_sources(actions)["agents"]
-    # Assert
-    assert source == user_root / "subagents"
-
-
-def test_each_skill_is_linked_individually(claude_actions, user_root):
-    # Arrange
-    actions, _ = claude_actions
-    # Act
-    source = _link_sources(actions)["alpha"]
-    # Assert
-    assert source == user_root / "skills" / "alpha"
-
-
-def test_neutral_pre_tool_hook_renders_as_claude_pre_tool_use(user_layer):
-    # Arrange
-    layer = user_layer
-    # Act
-    groups = render_settings(layer, "user")["hooks"]["PreToolUse"]
-    # Assert
-    assert groups == [
-        {
-            "matcher": "Bash",
-            "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/guard.sh"}],
-        }
-    ]
-
-
-def test_claude_only_event_is_rendered_for_claude(user_layer):
-    # Arrange
-    layer = user_layer
-    # Act
-    events = render_settings(layer, "user")["hooks"]
-    # Assert
-    assert "WorktreeCreate" in events
-
-
-def test_hook_for_another_harness_is_reported_not_rendered(claude_actions):
-    # Arrange
-    _, notes = claude_actions
-    # Act
-    mentions = [n for n in notes if "codex" in n]
-    # Assert
-    assert len(mentions) == 1
-
-
-def test_native_claude_settings_pass_through(user_layer):
-    # Arrange
-    layer = user_layer
-    # Act
-    theme = render_settings(layer, "user")["theme"]
-    # Assert
-    assert theme == "dark"
-
-
-def test_project_scope_hook_uses_project_dir_variable(tmp_path):
-    # Arrange
-    layer = load_layer(make_layer(tmp_path / "p"))
-    # Act
-    cmd = render_settings(layer, "project")["hooks"]["PreToolUse"][0]["hooks"][0][
-        "command"
-    ]
-    # Assert
-    assert cmd == "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh"
-
-
-def test_native_claude_may_not_shadow_neutral_keys(tmp_path):
-    # Arrange
-    layer = load_layer(
-        make_layer(tmp_path / "u", settings={"native": {"claude": {"model": "x"}}})
-    )
-    # Act
-    planning = pytest.raises(NeutralConfigError, match="native.claude sets")
-    # Assert
-    with planning:
-        plan_claude(layer, tmp_path / "c", "user")

@@ -115,19 +115,19 @@ def _dump(path: Path, data: dict[str, Any], header: str) -> None:
 
 
 def import_claude(
-    claude_dir: Path, dest: Path, *, copy_trees: bool = False
+    claude_dir: Path, dest: Path, *, copy_trees: bool = False, dry_run: bool = False
 ) -> list[str]:
     """Write a neutral layer at ``dest`` from ``claude_dir``; returns report lines.
 
     Refuses to overwrite an existing ``hooks.yaml``/``settings.yaml``/``AGENTS.md``.
+    With ``dry_run`` nothing is written; the report says what would be.
     """
     claude_dir, dest = Path(claude_dir), Path(dest)
     outputs = [dest / "settings.yaml", dest / "hooks.yaml", dest / "AGENTS.md"]
     existing = [str(p) for p in outputs if p.exists()]
     if existing:
         raise FileExistsError(f"refusing to overwrite: {', '.join(existing)}")
-    dest.mkdir(parents=True, exist_ok=True)
-    report: list[str] = []
+    verb = "would write" if dry_run else "wrote"
     settings_path = claude_dir / "settings.json"
     settings = (
         json.loads(settings_path.read_text(encoding="utf-8"))
@@ -135,38 +135,38 @@ def import_claude(
         else {}
     )
     neutral, hooks = settings_from_claude(settings)
-    _dump(
-        dest / "settings.yaml",
-        neutral,
-        f"Neutral settings imported from {settings_path} (ADR-0033)",
-    )
-    _dump(
-        dest / "hooks.yaml",
-        {"hooks": hooks},
-        f"Hooks imported from {settings_path} (ADR-0033)",
-    )
-    report.append(f"settings.yaml: {sorted(neutral)}; hooks.yaml: {len(hooks)} hooks")
+    report = [
+        f"{verb} {dest / 'settings.yaml'}: {sorted(neutral)}",
+        f"{verb} {dest / 'hooks.yaml'}: {len(hooks)} hooks",
+    ]
     claude_md = claude_dir / "CLAUDE.md"
     if claude_md.is_file():
-        shutil.copyfile(claude_md, dest / "AGENTS.md")
-        report.append(f"AGENTS.md <- {claude_md}")
+        report.append(f"{verb} {dest / 'AGENTS.md'} <- {claude_md}")
+    trees = []
     if copy_trees:
-        for src_name, dst_name in (
-            ("hooks", "hooks"),
-            ("agents", "subagents"),
-            ("commands", "commands"),
-            ("skills", "skills"),
-        ):
+        for src_name, dst_name in _TREES:
             src = claude_dir / src_name
             if src.is_dir() and not (dest / dst_name).exists():
-                shutil.copytree(
-                    src,
-                    dest / dst_name,
-                    symlinks=False,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.log"),
-                )
-                report.append(f"{dst_name}/ <- {src}")
+                trees.append((src, dest / dst_name))
+                report.append(f"{verb} {dest / dst_name}/ <- {src}")
+    if dry_run:
+        return report
+    dest.mkdir(parents=True, exist_ok=True)
+    _dump(dest / "settings.yaml", neutral, f"Neutral settings imported from {settings_path} (ADR-0033)")
+    _dump(dest / "hooks.yaml", {"hooks": hooks}, f"Hooks imported from {settings_path} (ADR-0033)")
+    if claude_md.is_file():
+        shutil.copyfile(claude_md, dest / "AGENTS.md")
+    for src, dst in trees:
+        shutil.copytree(src, dst, symlinks=False, ignore=shutil.ignore_patterns("__pycache__", "*.log"))
     return report
+
+
+_TREES = (
+    ("hooks", "hooks"),
+    ("agents", "subagents"),
+    ("commands", "commands"),
+    ("skills", "skills"),
+)
 
 
 __all__ = [
