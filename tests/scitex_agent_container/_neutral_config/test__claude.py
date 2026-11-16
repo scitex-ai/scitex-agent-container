@@ -128,3 +128,21 @@ def test_unknown_scope_is_refused(user_layer, tmp_path):
     # Assert
     with planning:
         plan_claude(layer, tmp_path / "c", "global")
+
+
+def test_external_skill_is_not_rendered(tmp_path):
+    # Arrange
+    root = make_layer(tmp_path / "u", skills=("alpha", "scitex"), settings={"external_skills": ["scitex"]})
+    # Act
+    actions, _ = plan_claude(load_layer(root), tmp_path / "c", "user")
+    # Assert
+    assert "scitex" not in _link_sources(actions)
+
+
+def test_external_skill_is_reported(tmp_path):
+    # Arrange
+    root = make_layer(tmp_path / "u", skills=("scitex",), settings={"external_skills": ["scitex"]})
+    # Act
+    _, notes = plan_claude(load_layer(root), tmp_path / "c", "user")
+    # Assert
+    assert any("'scitex'" in n for n in notes)

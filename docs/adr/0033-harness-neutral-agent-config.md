@@ -39,7 +39,7 @@ Note the neighbour: `~/.scitex/agent-container/agents/` holds sac agent specs;
 | `commands/<name>.md` | frontmatter `description`, `argument-hint` + body; `$ARGUMENTS` | common subset |
 | `hooks/` + `hooks.yaml` | scripts + registrations (below) | ours |
 | `mcp.yaml` | `servers: {name: {transport, command, args, env, url, headers}}` | ours |
-| `settings.yaml` | `model`, `env`, `permissions`, `native: {<harness>: {...}}` | ours |
+| `settings.yaml` | `model`, `env`, `permissions`, `external_skills`, `native: {<harness>: {...}}` | ours |
 
 `hooks.yaml`:
 
@@ -83,7 +83,7 @@ Claude Code (implemented, `sac config deploy --harness claude`):
 | `hooks/` | `hooks` → link |
 | `subagents/` | `agents` → link |
 | `commands/` | `commands` → link |
-| `skills/<name>` | `skills/<name>` → link each (the dir stays real; foreign entries kept) |
+| `skills/<name>` | `skills/<name>` → link each (the dir stays real; foreign entries kept; names in `external_skills` — owned by another installer, e.g. scitex-dev's `scitex` — are skipped) |
 | `hooks.yaml`, `settings.yaml` | `settings.json` written (`hooks/x.sh` → `$HOME/.claude/hooks/x.sh` or `$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh`) |
 | `mcp.yaml` | project: `<root>/.mcp.json`; user: not rendered (lives in `~/.claude.json` with live state) |
 

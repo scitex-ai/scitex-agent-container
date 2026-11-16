@@ -141,7 +141,12 @@ def plan(layer: Layer, target: Path, scope: str) -> tuple[list[Action], list[str
             )
     # skills/ stays a real directory: other owners (e.g. scitex-dev's
     # ``skills/scitex``) keep their entries; we link ours one by one.
+    # ``settings.yaml: external_skills`` names skills another installer owns.
+    external = set(layer.settings.get("external_skills") or [])
     for name, path in layer.skills.items():
+        if name in external:
+            notes.append(f"skill '{name}' is owned by another installer (external_skills); not rendered")
+            continue
         actions.append(Link(target / "skills" / name, path))
     actions.append(
         WriteFile(target / "settings.json", _json(render_settings(layer, scope)))
