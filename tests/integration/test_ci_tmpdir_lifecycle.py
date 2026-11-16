@@ -841,7 +841,9 @@ def test_workflow_scan_finds_the_scratch_creating_steps(wiring):
     """Positive control: an empty scan would pass the two tests below
     vacuously — exactly the failure mode this whole fix is about."""
     # Arrange
-    expected_minimum = 4  # 2x pytest-matrix/release test legs, build, publish
+    # build + publish; the release TEST gate is the shared org pytest-matrix
+    # (no in-repo scratch) since the 2026-11-16 one-CI-SSOT change.
+    expected_minimum = 2
     # Act
     found = len(wiring)
     # Assert
