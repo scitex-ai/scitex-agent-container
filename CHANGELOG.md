@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.1] - 2026-11-16
+
+### Fixed
+- Release test gate now calls the shared organization pytest-matrix at the same
+  pinned revision as `ci.yml` (one CI SSOT); the in-repo SIF runner had drifted
+  and blocked every release from 0.38.4 to 0.39.0. A manual dispatch must run on
+  the tag it publishes.
+
 ## [0.39.0] - 2026-11-16
 
 ### Added
