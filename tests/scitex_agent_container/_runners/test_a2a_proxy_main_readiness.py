@@ -1,12 +1,12 @@
 """Real native proxy controls reject foreign health and wrong application identity."""
 
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import ProxyHandler, build_opener
 
 import pytest
@@ -16,9 +16,6 @@ from tests.scitex_agent_container._runners._a2a_proxy_main_fixture import (
     wait_for_proxy,
 )
 from tests.scitex_agent_container._runners._a2a_proxy_workspace import proxy_workspace
-from tests.scitex_agent_container._runners.test_a2a_proxy import (
-    real_upstream_server as real_upstream_server,
-)
 
 
 @contextmanager

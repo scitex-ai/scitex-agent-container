@@ -26,7 +26,6 @@ from scitex_agent_container.runtimes.a2a_sidecar import (
     start_sidecar,
     stop_sidecar,
 )
-
 from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
     _config,
     _free_port,
@@ -34,10 +33,7 @@ from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
     _marked_sleeper,
     _wait_pid_alive,
     _write_yaml,
-    shared_workdir_pair as shared_workdir_pair,
-    workdir as workdir,
 )
-
 
 # ---------------------------------------------------------------------------
 # _read_a2a_block (pure-parse paths)
@@ -230,8 +226,6 @@ def test_start_sidecar_clears_stale_pid_file_and_respawns(
 # ---------------------------------------------------------------------------
 # Two agents, ONE workdir — the reported defect, end to end with real sidecars
 # ---------------------------------------------------------------------------
-
-
 
 
 def test_second_agent_in_a_shared_workdir_gets_its_own_pid(

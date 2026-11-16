@@ -24,7 +24,6 @@ from ..runtimes.test__codex_activity import _meta, _tool, _turn
 from ..runtimes.test__codex_activity_binding import _layout
 from ..runtimes.test__codex_activity_projection import _Diary
 from .test__agent_handshake import TARGET, _feedback, _row
-from .test__agent_handshake import rig as rig
 
 
 def _append_tool(rig, contract, *, completed_at=102):

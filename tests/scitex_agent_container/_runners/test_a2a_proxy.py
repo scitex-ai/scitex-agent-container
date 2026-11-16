@@ -18,9 +18,6 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from scitex_agent_container._runners.a2a_proxy import build_app, splice_card
-from tests.scitex_agent_container._runners._a2a_proxy_main_fixture import (
-    main_short_run as main_short_run,
-)
 from tests.scitex_agent_container._helpers.loopback_server import (
     serve_in_thread,
     wait_until_serving,
@@ -1262,7 +1259,6 @@ def test_run_final_heartbeat_state_is_stopping(
 # real local upstream, terminated only after its HTTP health route is ready.
 # The signal belongs to a child process, never the pytest/xdist worker.
 # ---------------------------------------------------------------------------
-
 
 
 def test_main_returns_zero_on_clean_shutdown(
