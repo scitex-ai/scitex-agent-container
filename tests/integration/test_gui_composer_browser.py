@@ -137,3 +137,30 @@ def test_detail_fragment_keeps_natural_height_inside_fleet(browser_page):
     geometry = page.locator('[data-page="detail"]').evaluate("e => ({display: getComputedStyle(e).display, height: e.getBoundingClientRect().height})")
     # Assert — it must not inherit the outer full-height flex column contract.
     assert geometry["display"] == "block" and geometry["height"] < 100
+
+
+@pytest.mark.parametrize("width", [960, 1440])
+def test_fleet_chat_and_details_fill_their_sdk_grid_tracks(browser_page, width):
+    """Grid-owned DM surfaces must not retain the SDK's narrow rail width."""
+    from importlib.resources import files
+
+    # Use the actual shared rail stylesheet, including its fixed navigation width.
+    sidebar = files("scitex_sdk").joinpath(
+        "ui/static/scitex_sdk/ui/css/shell/stx-shell-sidebar.css"
+    ).read_text()
+    leaf = (LEAF / "static/scitex_agent_container/agents.css").read_text()
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 700})
+    # Load shared CSS last to cover the host's real stylesheet ordering.
+    page.set_content(f'''<style>{leaf}</style><style>{sidebar}</style>
+      <div class="agents-app"><div class="agents-3col"
+        style="display:grid;grid-template-columns:200px minmax(0,1fr) 320px;height:500px">
+        <section data-stx-pane="fleet">Agents</section>
+        <section data-stx-pane="chat"><div class="agents-chat-pane stx-shell-sidebar">DM</div></section>
+        <section data-stx-pane="detail"><div class="agents-detail-pane stx-shell-sidebar">Details</div></section>
+      </div></div>''')
+    # Both surfaces occupy their allocated tracks instead of leaving blank space.
+    widths = page.locator('[data-stx-pane]:not([data-stx-pane="fleet"])').evaluate_all(
+        "es => es.map(e => [e.getBoundingClientRect().width, e.firstElementChild.getBoundingClientRect().width])"
+    )
+    assert all(abs(track - surface) < 1 for track, surface in widths)
