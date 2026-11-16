@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Hermes profiles project the harness-neutral agent layer: its skills (copied into
+  `<profile>/neutral-skills`) and `mcp.yaml` servers (agent `.mcp.json` wins on a
+  clash). `AGENTS.md` and hooks are deliberately not projected (ADR-0033 §Hermes).
+
+### Added
 - `sac config show|deploy|check|import`: harness-neutral agent config
   (`~/.scitex/agent-container/.agents`, project layer wins) rendered into
   Claude Code's native `~/.claude` / `<root>/.claude`; `AGENTS.md` is the only

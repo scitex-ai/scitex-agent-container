@@ -99,6 +99,15 @@ Hermes (`config.yaml`: `hooks:`, `mcp_servers:`, `skills.external_dirs`),
 OpenCode (`.opencode/`; hooks need a generated plugin). They plug into the
 registry's existing per-harness `prepare_home` seam.
 
+### Hermes (sac's primary harness) — what carries over, measured 2026-11-16
+
+| Neutral | Hermes | How |
+|---|---|---|
+| `skills/` | `skills.external_dirs` | containers: copied into `<profile>/neutral-skills` (`runtimes/_hermes_neutral.py`; `external_skills` skipped — they arrive via the installed-package projection). Host: one static line in the tracked `~/.hermes/config.yaml` (dotfiles), not rendered — Hermes rewrites that file itself (`config set`, migrations, model switch). |
+| `mcp.yaml` | `mcp_servers` | containers: added, loaded eagerly; the agent's own `.mcp.json` wins on a name clash. |
+| `AGENTS.md` | — | not projected: Hermes has no user-level AGENTS.md (it reads git-root→cwd AGENTS.md + `SOUL.md`), and each container agent already carries its own role `AGENTS.md`; the operator's personal file must not land in every fleet prompt. |
+| `hooks.yaml` | — | not rendered: Hermes tool names differ (`terminal`, not `Bash`), our scripts parse Claude payloads, and Hermes gates each (event, command) behind `shell-hooks-allowlist.json` (silently skipped off-TTY). A hook becomes portable only when ported and declared for `hermes:` explicitly. |
+
 ### Verbs
 
 ```
