@@ -143,16 +143,14 @@ def isolated_env(tmp_path):
                 os.environ[key] = saved_env
 
 
-# ---------------------------------------------------------------------------
 # CLI argument validation
-# ---------------------------------------------------------------------------
 
 
 def test_invocation_without_prompt_exits_nonzero(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha"])
+    result = runner.invoke(send, ["--yes", "alpha"])
     # Assert
     assert result.exit_code != 0
 
@@ -163,7 +161,7 @@ def test_invocation_without_prompt_reports_requirement_in_output(
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha"])
+    result = runner.invoke(send, ["--yes", "alpha"])
     # Assert
     assert "PROMPT is required" in result.output
 
@@ -173,12 +171,11 @@ def test_send_no_longer_exposes_a_key_option(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    result = runner.invoke(send, ["--yes", "alpha", "--key", "ESC"])
     # Assert
     assert "no such option" in result.output.lower()
 
 
-# ---------------------------------------------------------------------------
 # NO DELIVERY PATH LEFT -> REFUSE (2026-08-14 containment invariant)
 #
 # What USED to live here: "Missing session_id", "Happy path: resume
@@ -194,14 +191,13 @@ def test_send_no_longer_exposes_a_key_option(isolated_env):
 # Those tests are not ported, they are DELETED, because their subject is
 # gone. What replaces them is the property that took its place: with every
 # HTTP delivery path declined, the command refuses and says why.
-# ---------------------------------------------------------------------------
 
 
 def test_no_delivery_path_exits_nonzero(isolated_env):
     # Arrange — isolated_env leaves an empty state.db, so no a2a_port exists.
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "follow up please"])
+    result = runner.invoke(send, ["--yes", "alpha", "follow up please"])
     # Assert
     assert result.exit_code != 0, result.output
 
@@ -210,7 +206,7 @@ def test_no_delivery_path_reports_the_missing_a2a_port(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "follow up please"])
+    result = runner.invoke(send, ["--yes", "alpha", "follow up please"])
     # Assert
     assert "no A2A port is recorded" in result.output, result.output
 
@@ -219,7 +215,7 @@ def test_no_delivery_path_says_the_agent_is_contained(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "follow up please"])
+    result = runner.invoke(send, ["--yes", "alpha", "follow up please"])
     # Assert
     assert "apptainer" in result.output, result.output
 
@@ -228,7 +224,7 @@ def test_no_delivery_path_names_the_recovery_command(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "follow up please"])
+    result = runner.invoke(send, ["--yes", "alpha", "follow up please"])
     # Assert
     assert "sac agents start alpha" in result.output, result.output
 
@@ -238,14 +234,12 @@ def test_send_no_longer_exposes_a_no_stream_flag(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "hi", "--no-stream"])
+    result = runner.invoke(send, ["--yes", "alpha", "hi", "--no-stream"])
     # Assert
     assert "no such option" in result.output.lower(), result.output
 
 
-# ---------------------------------------------------------------------------
 # Cross-host send: state.db row on peer → ssh://peer:port/v1/turn POST.
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -289,7 +283,7 @@ def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
     record_instance_start(name="zeta", host="peer-x", a2a_port=None)
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["zeta", "hi"])
+    result = runner.invoke(send, ["--yes", "zeta", "hi"])
     # Assert
     assert "did not register an A2A port" in result.output
 
@@ -314,7 +308,7 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     try:
         runner = CliRunner()
         # Act
-        runner.invoke(send, ["zeta", "hi"])
+        runner.invoke(send, ["--yes", "zeta", "hi"])
     finally:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert
@@ -336,18 +330,16 @@ def test_remote_send_prints_reply_from_peer(remote_send_env):
     try:
         runner = CliRunner()
         # Act
-        result = runner.invoke(send, ["zeta", "hi"])
+        result = runner.invoke(send, ["--yes", "zeta", "hi"])
     finally:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert
     assert "REMOTE-REPLY" in result.output
 
 
-# ---------------------------------------------------------------------------
 # Local send: active state.db row on THIS host with a bound a2a_port →
 # http://127.0.0.1:port/v1/turn POST (NOT host-side claude --resume).
 # The fix for the 2026-05-22 apptainer mis-target diagnosis.
-# ---------------------------------------------------------------------------
 
 
 # Loopback A2A port for the local-send fixtures. A port reads as a
@@ -382,7 +374,7 @@ def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env)
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
-        CliRunner().invoke(send, ["local-a", "hi"])
+        CliRunner().invoke(send, ["--yes", "local-a", "hi"])
     # Assert
     assert (
         captured.get("url"),
@@ -403,7 +395,7 @@ def test_local_send_forwards_the_prompt_text(remote_send_env):
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
-        CliRunner().invoke(send, ["local-a", "do the thing"])
+        CliRunner().invoke(send, ["--yes", "local-a", "do the thing"])
     # Assert
     assert captured.get("text") == "do the thing"
 
@@ -415,7 +407,7 @@ def test_local_send_prints_reply_from_loopback(remote_send_env):
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
     with _swap_peer_post_turn_to_url(lambda *a, **kw: "LOCAL-REPLY"):
-        result = CliRunner().invoke(send, ["local-a", "hi"])
+        result = CliRunner().invoke(send, ["--yes", "local-a", "hi"])
     # Assert
     assert "LOCAL-REPLY" in result.output
 
@@ -427,7 +419,7 @@ def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
     with _swap_peer_post_turn_to_url(lambda *a, **kw: "LOCAL-REPLY"):
-        result = CliRunner().invoke(send, ["local-a", "hi"])
+        result = CliRunner().invoke(send, ["--yes", "local-a", "hi"])
     # Assert
     assert result.exit_code == 0
 
@@ -445,7 +437,7 @@ def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
-        CliRunner().invoke(send, ["local-b", "hi"])
+        CliRunner().invoke(send, ["--yes", "local-b", "hi"])
     # Assert
     assert "url" not in posted
 
@@ -462,7 +454,7 @@ def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_e
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
-        result = CliRunner().invoke(send, ["local-b", "hi"])
+        result = CliRunner().invoke(send, ["--yes", "local-b", "hi"])
     # Assert
     assert "no A2A port is recorded" in result.output, result.output
 
@@ -479,7 +471,7 @@ def test_local_send_failure_wraps_peer_error(remote_send_env):
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
-        result = CliRunner().invoke(send, ["local-a", "hi"])
+        result = CliRunner().invoke(send, ["--yes", "local-a", "hi"])
     # Assert
     assert "local send failed" in result.output
 
@@ -522,7 +514,7 @@ def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
 
     # Act
     with _swap_peer_post_turn_to_url(pending_post):
-        result = CliRunner().invoke(send, ["local-a", "hi"])
+        result = CliRunner().invoke(send, ["--yes", "local-a", "hi"])
     output = result.output
     # Assert
     assert (

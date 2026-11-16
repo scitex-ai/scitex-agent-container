@@ -278,6 +278,7 @@ async def test_failed_ack_does_not_hold_the_cursor():
     # Arrange
     get_headers: list[dict[str, str | None]] = []
     ack_paths: list[str] = []
+    reconnected_with_cursor = asyncio.Event()
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -295,7 +296,13 @@ async def test_failed_ack_does_not_hold_the_cursor():
                     last_event_id = value.strip()
                 elif k == "content-length":
                     content_length = int(value.strip())
+            if method == "GET" and path != "/stream":
+                writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+                return
             if method == "GET":
+                if last_event_id == "41":
+                    reconnected_with_cursor.set()
                 get_headers.append({"last-event-id": last_event_id})
                 writer.write(
                     b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
@@ -320,6 +327,16 @@ async def test_failed_ack_does_not_hold_the_cursor():
     server = await asyncio.start_server(handler, host="127.0.0.1", port=0)
     port = server.sockets[0].getsockname()[1]
 
+    # An unrelated client's health request must not satisfy reconnect readiness.
+    probe_reader, probe_writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        probe_writer.write(b"GET /global/health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await probe_writer.drain()
+        await probe_reader.read()
+    finally:
+        probe_writer.close()
+        await probe_writer.wait_closed()
+
     async def on_event(event: dict[str, Any]) -> None:
         pass  # delivery succeeded; the ack outcome is what under test
 
@@ -331,12 +348,9 @@ async def test_failed_ack_does_not_hold_the_cursor():
             ack_url=f"http://127.0.0.1:{port}/ack",
         )
     )
-    # Act — wait for the reconnect (2 GET connections) and the failed ack.
+    # Act — await the actual replay cursor, never an unrelated GET count.
     try:
-        for _ in range(200):
-            if len(get_headers) >= 2:
-                break
-            await asyncio.sleep(0.05)
+        await asyncio.wait_for(reconnected_with_cursor.wait(), timeout=10)
     finally:
         task.cancel()
         try:

@@ -109,7 +109,7 @@ def test_base_recipe_installs_and_labels_exact_staged_commit():
     )
 
 
-def test_scitex_recipe_reinstalls_exact_source_after_dependency_resolution():
+def test_scitex_recipe_rebuilds_exact_staged_source_during_resolution():
     # Arrange
     recipe = Path(source.__file__).parent.parent / "containers" / "apptainer-scitex.def"
 

@@ -24,7 +24,7 @@ surfaced the gap until the operator checked by hand.
 
 The fix: ``delivered_subscriber_count`` is ``1`` ONLY when reachability
 was ACTUALLY, LOCALLY verified (``diagnosis["port_reachable"] is True``).
-Otherwise it is omitted — never a fabricated number — and the new
+Otherwise it is None — never a fabricated number — and the new
 ``status_code`` field (a ``scitex_dev.status.StatusCode``, ADR-0007)
 carries the honest, machine-checkable verdict instead: ``http 202``,
 ``final=False``, with a message that says plainly whether reachability
@@ -108,7 +108,7 @@ def dispatch_nonblocking(
     reply — so the caller fires-and-tracks instead of blocking inline.
     ``delivered_subscriber_count`` is ``1`` ONLY when a local probe
     actually confirmed the sidecar is listening; see the module docstring
-    for why it is omitted otherwise rather than fabricated.
+    for why it is None otherwise rather than fabricated.
     """
     diagnosis = diagnose_send_failure(
         name,

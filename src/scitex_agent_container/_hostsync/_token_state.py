@@ -228,7 +228,7 @@ def _live_listen_digest(listen_files: dict[str, str], hostname: str) -> tuple[st
         f"its listen may have booted on any of them — this ssh reached "
         f"'{hostname}'. Which one the running listen serves is UNKNOWABLE from "
         "here. Rotate to collapse them to a single value:  "
-        "sac host push-config --rotate-tokens <peer>"
+        "sac host push-config --rotate-tokens <peer> --yes"
     )
 
 

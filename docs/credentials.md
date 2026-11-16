@@ -7,7 +7,11 @@ slugs match.
 
 ## OpenAI Codex
 
-Run `sac accounts sync-openai` to collect the active Codex login into
+Preview with `sac accounts sync-openai --dry-run`. The preview reports arguments
+only and does not read login material or determine the account identity.
+`--yes` approves the local copy; it does not log in or verify model access.
+
+Run `sac accounts sync-openai --yes` to collect the active Codex login into
 `~/.scitex/agent-container/accounts/openai/<account-slug>/auth.json`. The
 provider directory is part of storage identity, so `openai:<account-slug>`
 cannot collide with the legacy Claude store at `accounts/<account-slug>/`.
@@ -37,7 +41,7 @@ Start the scitex-genai gateway with its account homes and a local gateway key:
 
 ```bash
 pip install 'scitex-agent-container[codex]'
-sac accounts sync-openai
+sac accounts sync-openai --yes
 export SCITEX_GENAI_GATEWAY_API_KEY="$(openssl rand -hex 32)"
 scitex-genai-gateway --host 127.0.0.1 --port 18765
 ```
@@ -188,3 +192,38 @@ From `~/.claude/settings.json`:
 
 Any addition to this list requires updating both this doc and the
 whitelist in `src/scitex_agent_container/credentials.py`.
+
+
+## Cards store credential synchronization
+
+`sac agents sync-cards-store-credential --agent worker --to peer-a --dry-run --json`
+previews one role's canonical Cards store credential. The role is derived as
+`<current OS user>__<agent argument>`. `--pgpass` selects the owned private source
+passfile (default `~/.pgpass`). Preview reads that file and sends the credential
+over SSH stdin to each explicitly selected peer's SAC receiver. It validates
+remote passfiles without changing them; it is not an offline argument preview.
+Only use peers authorized to receive this credential.
+
+After reviewing the peer results, replace `--dry-run` with `--yes` (`-y` or
+`--apply`). All peers must pass preflight before any apply begins. This does not
+make the later writes across hosts transactional: a failure during apply can
+leave earlier peers updated. Each receiver atomically writes only the exact
+`(host, port, database, role)` row, retains unrelated rows, and uses mode `0600`.
+Source credentials that disagree for the same role are refused. Passwords are
+excluded from argv and result output. Root-level and command-level `--json`
+select the same structured result. Conflicting preview/approval flags are
+refused before identity derivation, passfile reads or SSH.
+
+The implementation is `cli_pkg/_agents_sync_cards_store_credential.py`;
+`tests/scitex_agent_container/cli_pkg/test__agents_sync_cards_store_credential.py`
+covers passfile preservation, source ambiguity, all-peer preflight and CLI
+approval/JSON forwarding. These controls do not establish live fleet access or
+PostgreSQL authentication.
+
+
+## Cards direct notification credentials
+
+For the separate session endpoint used by PostgreSQL LISTEN, see
+[Cards notification credentials](cards-notify-credentials.md). That command
+derives local passfile rows from declared pooled/direct endpoints; it does
+not synchronize them to peers or verify database authentication.

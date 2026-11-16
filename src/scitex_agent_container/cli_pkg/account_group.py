@@ -6,6 +6,8 @@ and the top-level ``quota-watch`` command.
 
 from __future__ import annotations
 
+from copy import copy
+
 import click
 
 from ._helpers import HelpRecursiveGroup
@@ -27,7 +29,7 @@ class _AccountsGroup(HelpRecursiveGroup):
     """
 
     COMMAND_CATEGORIES = [
-        ("Inspect (read-only)", ["list", "status", "quota"]),
+        ("Inspect (read-only)", ["list", "status", "get-quota"]),
         (
             "Stored accounts",
             [
@@ -153,7 +155,9 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
             m = read_credentials_metadata(home=home)
             if m.get("email_address"):
                 meta["email_address"] = m["email_address"]
-        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
 
     save_account(name, meta, home=home)
@@ -434,12 +438,12 @@ register_pause_commands(account)
 #
 # Never errors on missing data: prints "unavailable" + non-zero exit
 # only when the operator passes --strict. Default exit code 0 + JSON
-# null/object so a Claude turn can run `sac account quota --json` in a
+# null/object so a Claude turn can run `sac accounts get-quota --json` in a
 # pipeline without aborting on a cold cache.
 # ---------------------------------------------------------------------------
 
 
-@account.command("quota")
+@account.command("get-quota")
 @click.option(
     "--json",
     "json_out",
@@ -458,7 +462,7 @@ register_pause_commands(account)
     ),
 )
 def account_quota(json_out: bool, strict: bool) -> None:
-    """Print THIS agent's own account + live quota numbers.
+    """Print this agent's cached account and quota snapshot.
 
     Reads ``$CLAUDE_AGENT_ACCOUNT`` (injected by SAC at launch) and looks
     up the matching entry in ``/var/sac/quota-cache.json`` (bound
@@ -467,10 +471,10 @@ def account_quota(json_out: bool, strict: bool) -> None:
 
     \b
     Examples:
-      $ sac account quota
+      $ sac accounts get-quota
       account=alpha 5h=17 percent 7d=3 percent ttl=7.74h
 
-      $ sac account quota --json
+      $ sac accounts get-quota --json
       {"account":"alpha","used_pct_5h":17.0,"used_pct_7d":3.0,"token_ttl_hours":7.74}
     """
     import json as _json
@@ -510,6 +514,14 @@ def account_quota(json_out: bool, strict: bool) -> None:
             f"7d={round(meta['used_pct_7d'])} percent "
             f"ttl={meta['token_ttl_hours']:.2f}h"
         )
+
+
+# Retain old scripts without advertising a noun-shaped command in discovery.
+_legacy_quota = copy(account_quota)
+_legacy_quota.name = "quota"
+_legacy_quota.hidden = True
+_legacy_quota.deprecated = "Use accounts get-quota instead."
+account.add_command(_legacy_quota)
 
 
 # ``quota_watch`` is re-exported (defined in ``_account_quota_watch``) so the

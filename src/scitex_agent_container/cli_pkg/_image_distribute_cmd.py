@@ -83,8 +83,10 @@ def image_distribute(
     restored to the preflight link states. Existing artifacts are never pruned.
 
     \b
-      sac image distribute ./sac-base.sif --layer base \\
-        --host compute-01 --host compute-02 --json
+    Examples:
+      $ sac image distribute ./sac-base.sif --layer base --host compute-01 --dry-run --json
+      $ sac image distribute ./sac-base.sif --layer base \\
+          --host compute-01 --host compute-02 --json
     """
     try:
         artifact = resolve_artifact(source, layer)

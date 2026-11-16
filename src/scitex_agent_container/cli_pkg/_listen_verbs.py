@@ -1,39 +1,12 @@
-"""``sac listen start`` / ``sac listen stop`` — the explicit lifecycle verbs.
+"""Explicit listener start/stop commands attached by ``listen_cmds``.
 
-``listen`` is a NOUN — a command group, exactly like ``agents`` / ``db`` /
-``host``. Booting a daemon off the bare noun (what ``sac listen`` does, and
-still does for one more release) is the anti-pattern the scitex CLI
-convention names outright — §1 "trailing noun, no action: **never**" — and
-it is a live footgun: a typo or a stray tab-complete starts a server on
-7878. Every other noun group in this CLI shows help when invoked bare; this
-one silently becomes a daemon.
+Startup runs in the foreground under the caller's supervisor. Stop uses the
+same lifecycle backend as restart. Bare ``sac listen`` retains startup
+compatibility for existing launchers; removing it requires their migration.
 
-These two verbs make the lifecycle explicit and complete the set the group
-already had (``restart`` / ``status``), so ``listen`` finally reads like
-every other group: **start / stop / restart / status**.
-
-Why ``start`` and not ``serve``
--------------------------------
-The §1d verb catalog reserves ``start`` / ``stop`` / ``restart`` for
-"daemonized-service lifecycle (background process with a pid)" and gives
-``serve`` to *foreground* serving. This daemon is squarely the former: it
-writes a flock-backed pidfile, ``restart`` / ``status`` / ``stop`` all
-address it BY that pid, ``restart`` re-spawns it with ``setsid``, and a
-systemd unit supervises it. (The catalog's ``serve`` is scoped to §12's
-``gui`` group — foreground, browser-facing surfaces. ``sac listen`` is a
-headless JSON control plane.) ``serve`` would also leave an incoherent
-``serve`` / ``stop`` / ``restart`` triad. ``start`` additionally keeps SSOT
-with the CLI's own existing lifecycle verb, ``sac agents start``.
-
-Layout
-------
-These live here rather than in ``listen_cmds`` purely to keep that module
-under the 512-line cap — the same extraction ``_listen_registry_hooks``
-made. ``listen_cmds`` imports THIS module to attach the commands, so the
-boot primitives are imported LAZILY inside the command bodies: a top-level
-``from .listen_cmds import ...`` would close an import cycle. Lazy
-in-function imports are house style here anyway (see ``21_cli-startup-
-budget.md``) — this module's import cost is click alone.
+Runtime imports stay inside callbacks to avoid the registration cycle and
+keep cold startup cheap. ``--dry-run`` returns an argument-only plan before
+lifecycle work, including when ``--print-token`` is requested.
 """
 
 from __future__ import annotations
@@ -78,6 +51,10 @@ DEFAULT_BIND = "127.0.0.1:7878"
     default=False,
     help="Print the bearer token to stdout and exit (does not boot).",
 )
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments as JSON without starting."
+)
+@click.option("-y", "--yes", is_flag=True, help="Approve starting or creating a token.")
 @click.pass_context
 def listen_start(
     ctx: click.Context,
@@ -85,6 +62,8 @@ def listen_start(
     token_file: Path | None,
     allow_non_loopback: bool,
     print_token: bool,
+    dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Boot the sac listen HTTP/JSON control-plane daemon.
 
@@ -97,25 +76,41 @@ def listen_start(
     the port, this one does NOT crash — it stands by as a warm spare and
     fails over the moment the holder dies.
 
-    Options may be given on the verb (`sac listen start --bind ...`) or on
-    the group (`sac listen --bind ... start`); the verb wins.
+    Options may be given on the verb (`sac listen start --yes --bind ...`) or on
+    the group (`sac listen --bind ... start --yes`); the verb wins.
 
     \b
     Example:
-        sac listen start                                  # 127.0.0.1:7878
-        sac listen start --bind 127.0.0.1:7979            # custom port
-        sac listen start --bind 100.64.1.2:7878 --allow-non-loopback
-        sac listen start --print-token                    # echo token, exit
+        sac listen start --yes                            # 127.0.0.1:7878
+        sac listen start --yes --bind 127.0.0.1:7979            # custom port
+        sac listen start --yes --bind 100.64.1.2:7878 --allow-non-loopback
+        sac listen start --yes --print-token              # echo token, exit
+        sac listen start --dry-run                        # argument preview
 
     \b
     Exit codes:
-        0  clean shutdown (SIGTERM / Ctrl-C), or --print-token printed
+        0  argument preview, clean shutdown or --print-token printed
         1  uvicorn/starlette missing, or the bind failed
-        2  non-loopback --bind without --allow-non-loopback
+        2  missing --yes/-y, or non-loopback bind without opt-in
     """
+    obj = ctx.obj or {}
+    if dry_run:
+        from ._listen_preview import show_listen_preview
+
+        show_listen_preview(
+            "start",
+            bind=bind or obj.get("bind") or DEFAULT_BIND,
+            token_file=token_file or obj.get("token_file"),
+            allow_non_loopback=allow_non_loopback
+            or bool(obj.get("allow_non_loopback")),
+            print_token=print_token or bool(obj.get("print_token")),
+        )
+        return
+    from ._listen_start_approval import require_listener_start_approval
+
+    require_listener_start_approval(yes)
     from .listen_cmds import _do_start_listen
 
-    obj = ctx.obj or {}
     _do_start_listen(
         bind=bind or obj.get("bind") or DEFAULT_BIND,
         token_file=token_file or obj.get("token_file"),
@@ -139,11 +134,17 @@ def listen_start(
     default=False,
     help="Emit a machine-readable JSON result envelope on stdout.",
 )
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments as JSON without stopping."
+)
+@click.option("-y", "--yes", is_flag=True, help="Approve stopping the listener.")
 @click.pass_context
 def listen_stop(
     ctx: click.Context,
     grace_secs: float,
     as_json: bool,
+    dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Stop the running sac listen daemon.
 
@@ -161,15 +162,29 @@ def listen_stop(
 
     \b
     Example:
-        sac listen stop                  # SIGTERM, 10s grace, then SIGKILL
-        sac listen stop                  # stop the daemon
-        sac listen stop --json           # machine-readable envelope
+        sac listen stop --yes                  # SIGTERM, 10s grace, then SIGKILL
+        sac listen stop --yes                  # stop the daemon
+        sac listen stop --yes --json           # machine-readable envelope
+        sac listen stop --dry-run        # argument preview
 
     \b
     Exit codes:
-        0  stopped, or already down (idempotent)
+        0  argument preview, stopped or already down (idempotent)
         1  could not stop (PID survived SIGKILL / port still wedged)
+        2  missing --yes/-y approval
     """
+    if dry_run:
+        from ._listen_preview import show_listen_preview
+
+        show_listen_preview(
+            "stop",
+            bind=(ctx.obj or {}).get("bind") or DEFAULT_BIND,
+            grace_secs=grace_secs,
+        )
+        return
+    from ._listen_stop_approval import require_listener_stop_approval
+
+    require_listener_stop_approval(yes)
     force = False
     import json as _json
 

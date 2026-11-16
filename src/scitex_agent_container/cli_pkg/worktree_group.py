@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import click
 
+from .._worktree_policy_cli._discovery import build_policy_group
 from . import _worktree_gc
 
 
@@ -28,27 +29,12 @@ def worktree_group() -> None:
 
     \b
     Examples:
-      $ sac worktree gc --repo ~/proj/scitex-todo    # read-only report
-      $ sac worktree gc --apply --all                # act
+      $ sac worktree clean --repo ~/proj/example-project    # read-only report
+      $ sac worktree clean --yes --all                # act
     """
 
 
-@worktree_group.command(
-    "policy",
-    context_settings={"ignore_unknown_options": True},
-    add_help_option=False,
-)
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def policy(args: tuple[str, ...]) -> None:
-    """Inspect and enforce the packaged Git worktree policy.
-
-    Example: sac worktree policy inspect --repo .
-    """
-    from .._worktree_policy_cli import main
-
-    raise SystemExit(main(list(args)))
-
-
+worktree_group.add_command(build_policy_group())
 _worktree_gc.register(worktree_group)
 
 __all__ = ["worktree_group"]

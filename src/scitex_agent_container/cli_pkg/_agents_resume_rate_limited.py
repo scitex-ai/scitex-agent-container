@@ -28,6 +28,7 @@ import click
 from .._logging import render_rich
 from .._ratelimit import DEFAULT_INTERVAL, DEFAULT_PASS_CAP, Verdict, resume_pass
 from ._helpers import _json_flag
+from ._recovery_command_preview import emit_preview
 
 #: Colour per verdict. Anything that leaves an agent parked is loud on purpose;
 #: magenta is reserved for "we could not determine this", which must never read
@@ -69,18 +70,19 @@ def _print_report(report) -> None:
 @click.command(name="resume-rate-limited")
 @click.option(
     "--apply",
+    "--yes",
+    "-y",
     "apply",
     is_flag=True,
     default=False,
-    help="ACTUALLY wake the agents whose wall has lifted. Without this, nothing "
-    "is touched.",
+    help="Request guarded recovery; aliases --yes/-y. Checks may record pass state.",
 )
 @click.option(
     "--check",
     "check",
     is_flag=True,
     default=False,
-    help="Report only, mutate nothing (dry-run). This is already the DEFAULT.",
+    help="Observe without recovery actions; may record pass state (the default).",
 )
 @click.option(
     "--limit",
@@ -104,7 +106,12 @@ def _print_report(report) -> None:
     help="Also handle the MODEL-CAP shape: an agent frozen behind a Fable cap "
     "is moved onto opus[1m] and kicked. OFF by default — without it this "
     "command behaves exactly as it did before the branch existed. Needs "
-    "--apply to type anything.",
+    "--apply/--yes to type anything.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Describe arguments only; no observation or state recording.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for timers).")
 @click.pass_context
@@ -112,6 +119,7 @@ def resume_rate_limited(
     ctx: click.Context,
     apply: bool,
     check: bool,
+    dry_run: bool,
     limit: int,
     interval: float,
     switch_model: bool,
@@ -119,13 +127,18 @@ def resume_rate_limited(
 ) -> None:
     """Resume LIVE agents parked behind a provider rate wall that has RESET.
 
+    --dry-run reports arguments only, without pane captures, history or pass
+    recording. Default/--check still runs observation and may record state.
+    --yes/-y aliases --apply; approval conflicts with --dry-run or --check.
+
     \b
-    Detect (read-only — the DEFAULT):
+    Detect (observational pass — the DEFAULT):
       $ sac agents resume-rate-limited
       $ sac agents resume-rate-limited --check --json
     \b
     Remedy:
-      $ sac agents resume-rate-limited --apply
+      $ sac agents resume-rate-limited --yes
+      $ sac agents resume-rate-limited --dry-run --json
 
     THE RULE — the wall's own clock decides, and only a frozen pane qualifies:
 
@@ -173,11 +186,22 @@ def resume_rate_limited(
     could not be determined — an unreadable pane, an unreadable reset clause,
     or an unreadable resume history.
     """
+    if apply and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --apply/--yes/-y")
     if apply and check:
         raise click.UsageError(
-            "--apply and --check are contradictory. Dry-run is the DEFAULT: "
-            "drop both flags to preview, pass --apply to resume."
+            "--apply/--yes and --check are contradictory. Use --dry-run for "
+            "arguments only, or --apply/--yes to request guarded recovery."
         )
+
+    if dry_run:
+        emit_preview(
+            "resume-rate-limited",
+            limit=limit,
+            interval=interval,
+            switch_model=switch_model,
+        )
+        return
 
     outcome = resume_pass(
         apply=apply, limit=limit, interval=interval, switch_model=switch_model
@@ -200,34 +224,49 @@ def resume_rate_limited(
         )
         raise SystemExit(code)
 
-    mode = "apply" if apply else "check (read-only)"
+    mode = "apply" if apply else "check (records pass state)"
     shown = outcome.of(*_ALWAYS_SHOWN)
-    render_rich(f"[bold]sac agents resume-rate-limited[/bold]  {mode} — "
+    render_rich(
+        f"[bold]sac agents resume-rate-limited[/bold]  {mode} — "
         f"{len(shown)} agent(s) behind a rate wall, "
-        f"{len(outcome.reports) - len(shown)} with nothing to report\n", __name__)
+        f"{len(outcome.reports) - len(shown)} with nothing to report\n",
+        __name__,
+    )
     for report in shown:
         _print_report(report)
 
     counts = outcome.counts()
     if counts:
-        render_rich("\n" + "  ".join(f"{k.lower()}={v}" for k, v in sorted(counts.items())), __name__)
+        render_rich(
+            "\n" + "  ".join(f"{k.lower()}={v}" for k, v in sorted(counts.items())),
+            __name__,
+        )
 
     stuck = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET, Verdict.SWITCH_FAILED)
     if stuck:
-        render_rich(f"\n[red]{len(stuck)} agent(s) are STILL parked and sac could not "
-            f"get them working again.[/red] Each is recorded as degraded.", __name__)
+        render_rich(
+            f"\n[red]{len(stuck)} agent(s) are STILL parked and sac could not "
+            f"get them working again.[/red] Each is recorded as degraded.",
+            __name__,
+        )
     blind = outcome.of(
         Verdict.RESET_UNKNOWN, Verdict.UNREADABLE, Verdict.SWITCH_UNVERIFIED
     )
     if blind:
-        render_rich(f"\n[magenta]{len(blind)} agent(s) could not be DETERMINED.[/magenta] "
+        render_rich(
+            f"\n[magenta]{len(blind)} agent(s) could not be DETERMINED.[/magenta] "
             f"A wall whose reset clause does not parse needs a new pattern in "
             f"_ratelimit._banner; a switch whose outcome the pane will not show "
             f"needs a human to look at that pane. Nothing here can resolve "
-            f"either by guessing.", __name__)
+            f"either by guessing.",
+            __name__,
+        )
     if not outcome.heartbeat_ok:
-        render_rich("\n[yellow]note:[/yellow] this pass could not record that it RAN. "
-            "A silent enforcer and a satisfied one look identical.", __name__)
+        render_rich(
+            "\n[yellow]note:[/yellow] this pass could not record that it RAN. "
+            "A silent enforcer and a satisfied one look identical.",
+            __name__,
+        )
     raise SystemExit(code)
 
 

@@ -28,7 +28,7 @@ Surface
   ``could-not-determine`` are three distinct verdicts, and the third one
   can never be constructed to look like the first.
 * :func:`render` — the human table.
-* ``sac guard deletions`` — the same thing from any hook, agent or shell,
+* ``sac guard validate-deletions`` — the same thing from any hook, agent or shell,
   with declared exit codes (0 / 3 / 4).
 
 The symbol primitives (:func:`detect_deletions`, :func:`symbol_set`,

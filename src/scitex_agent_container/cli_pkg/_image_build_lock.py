@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
 import socket
+import stat
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,8 +38,30 @@ def _owner_text(handle: TextIO) -> str:
 
 
 @contextmanager
+def _lock_file(lock_path: Path) -> Iterator[TextIO]:
+    """Admit a single-link regular inode without following the final symlink."""
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK
+    descriptor = os.open(lock_path, flags, 0o666)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError(
+                errno.EINVAL,
+                "refusing build lock that is not a singly-linked regular file",
+                str(lock_path),
+            )
+        with os.fdopen(descriptor, "a+", encoding="utf-8", closefd=False) as handle:
+            yield handle
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
 def image_build_lock(artifact_dir: Path, *, layer: str) -> Iterator[None]:
     """Own one layer's staging directory exclusively or fail immediately.
+
+    The final lock entry must be a singly-linked regular file. Ancestor
+    directories are outside this entry-admission check.
 
     The kernel releases ``flock`` when a process exits, including after an
     interrupted build.  The lock spans staging and the complete container
@@ -45,7 +69,7 @@ def image_build_lock(artifact_dir: Path, *, layer: str) -> Iterator[None]:
     """
     artifact_dir.mkdir(parents=True, exist_ok=True)
     lock_path = artifact_dir / ".build.lock"
-    with lock_path.open("a+", encoding="utf-8") as handle:
+    with _lock_file(lock_path) as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:

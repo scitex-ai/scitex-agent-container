@@ -349,7 +349,7 @@ def test_restart_dispatches_the_peers_own_verb():
     # Act
     restart_peer_listen("spartan", _PEERS, runner=runner)
     # Assert
-    assert runner.calls[0][0][-3:] == ["sac", "listen", "restart"]
+    assert runner.calls[0][0][-4:] == ["sac", "listen", "restart", "--yes"]
 
 
 def test_restart_reports_failure_on_nonzero_exit():

@@ -1,4 +1,4 @@
-"""The ONE mutating operation in ``sac host sync``: a fast-forward.
+"""The checkout-changing operation in ``sac host sync``: a fast-forward.
 
 Everything else in :mod:`.._hostsync` is inert. Keeping the single write
 in its own small module means the blast radius of this verb can be

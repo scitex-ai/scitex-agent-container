@@ -109,7 +109,15 @@ def _print_result(result: SyncResult) -> None:
     "check_only",
     is_flag=True,
     default=False,
-    help="READ-ONLY: report drift and exit non-zero on it. Mutates nothing.",
+    help="Probe peer drift; fetches Git refs but never merges. Exit non-zero on drift.",
+)
+@click.option(
+    "--yes", "-y", is_flag=True, help="Approve guarded fast-forward reconciliation."
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show arguments only; no config lookup, SSH or Git fetch.",
 )
 @click.option(
     "--all",
@@ -131,10 +139,10 @@ def _print_result(result: SyncResult) -> None:
     is_flag=True,
     default=False,
     help=(
-        "READ-ONLY (requires --check): route each peer's verdict to an "
+        "Requires --check: route each peer's verdict to an "
         "record in sac's own event log — degraded / unknown / recovered — so "
         "the shout is DURABLE rather than a line in a journal. "
-        "Mutates no peer."
+        "Check refreshes peer Git refs; alarm also writes local event records."
     ),
 )
 @click.option(
@@ -155,6 +163,8 @@ def host_sync(
     ctx: click.Context,
     peer: str | None,
     check_only: bool,
+    yes: bool,
+    dry_run: bool,
     all_peers: bool,
     ref: str,
     repo: str,
@@ -170,13 +180,18 @@ def host_sync(
     hoped for.
 
     \b
-    Detect (read-only, cron-friendly — exits non-zero on drift):
+    Detect (fetch refs, preserve peer checkout; exits non-zero on drift):
       $ sac host sync --check spartan
       $ sac host sync --check --all --json
     \b
     Remedy (fast-forward only):
-      $ sac host sync spartan
-      $ sac host sync --all
+      $ sac host sync spartan --yes
+      $ sac host sync --all --yes
+
+    --dry-run prints an argument-only plan without loading config or contacting
+    peers; it does not verify targets, checkout state or CI. --check contacts
+    peers and refreshes Git refs via fetch. --alarm additionally records local
+    events. Approval cannot be combined with --dry-run or --check.
 
     Preconditions, each refusing LOUDLY with the next command to run:
 
@@ -200,6 +215,8 @@ def host_sync(
     is decided they should ride this same one-way, precondition-guarded
     channel rather than growing a second path to the same hosts.
     """
+    if yes and (dry_run or check_only):
+        raise click.UsageError("--yes/-y cannot be combined with --dry-run or --check")
     force = False
     if bool(peer) == all_peers:
         raise click.UsageError(
@@ -207,12 +224,40 @@ def host_sync(
             "(e.g. `sac host sync --check spartan` or `sac host sync --check --all`)"
         )
     if alarm and not check_only:
-        # Structural safety: the alarm rides ONLY the read-only detector. It
-        # must never be reachable from a mutating sync run — a scheduled
+        # Structural safety: the alarm rides ONLY the non-merging detector. It
+        # must never be reachable from a fast-forward sync run — a scheduled
         # alarm that could fast-forward a peer is Stage 1, not this.
         raise click.UsageError(
-            "--alarm only rides the read-only --check form (never a mutating "
+            "--alarm only rides the --check form (never a fast-forward "
             "sync).  Use:  sac host sync --check --all --alarm"
+        )
+
+    if dry_run:
+        payload = {
+            "operation": "host.sync",
+            "mode": "check" if check_only else "sync",
+            "dry_run": True,
+            "scope": "arguments_only",
+            "peer": peer,
+            "all_peers": all_peers,
+            "ref": ref,
+            "repo": repo,
+            "timeout": timeout,
+            "alarm": alarm,
+            "exit_zero": exit_zero,
+            "verified": False,
+        }
+        if _json_flag(ctx, as_json):
+            click.echo(json.dumps(payload, indent=2))
+        else:
+            click.echo(json.dumps(payload, indent=2))
+            click.echo(
+                "Preview only: no config lookup, SSH, fetch, merge or event write."
+            )
+        return
+    if not check_only and not yes:
+        raise click.UsageError(
+            "sync requires --yes/-y; use --dry-run to preview or --check to inspect"
         )
 
     cfg = _load_cfg()
@@ -281,7 +326,7 @@ def host_sync(
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(status)
 
-    mode = "check (read-only)" if check_only else "sync"
+    mode = "check (fetch refs; no merge)" if check_only else "sync"
     render_rich(
         f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n", __name__
     )
@@ -295,7 +340,7 @@ def host_sync(
             f"[yellow]drift detected on {len(drifted)} peer(s):[/yellow] "
             f"{', '.join(drifted)}\n"
             "  These peers are NOT running the centre's code. Reconcile with:\n"
-            f"    sac host sync {drifted[0]}",
+            f"    sac host sync {drifted[0]} --yes",
             __name__,
         )
     elif code == 0:

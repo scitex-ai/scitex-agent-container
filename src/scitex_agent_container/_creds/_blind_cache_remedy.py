@@ -43,7 +43,7 @@ def _blind_cache_remedy(quota_cache_path: Path | str | None) -> str:
             f"{where}. Fix: run `sac accounts refresh-quota-cache` on THIS "
             "host and READ ITS OUTPUT — if it reports no accounts stored "
             "(exit 3) it cannot help, and the real fix is `sac accounts save "
-            "<name>` (or `sac accounts sync-live`) here first."
+            "<name>` (or `sac accounts sync-live --yes`) here first."
         )
     if state == "unreadable":
         return (
@@ -66,7 +66,7 @@ def _blind_cache_remedy(quota_cache_path: Path | str | None) -> str:
             "populator run has stored one. Fix: run `sac accounts "
             "refresh-quota-cache` on THIS host and READ ITS OUTPUT — if it "
             "reports no accounts stored (exit 3) it cannot help, and the real "
-            "fix is `sac accounts save <name>` (or `sac accounts sync-live`) "
+            "fix is `sac accounts save <name>` (or `sac accounts sync-live --yes`) "
             "here first, then re-run the refresh. If that refresh POPULATES "
             "the file and a later pick is blind AGAIN, the populator is not "
             "the problem — look for another writer on this path before "

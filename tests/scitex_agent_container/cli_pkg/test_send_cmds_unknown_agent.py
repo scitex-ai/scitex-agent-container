@@ -47,6 +47,7 @@ def _instances_store(pg_schema: str):
     """
     yield
 
+
 _YAML_DIRS = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
 _STATE_DB = "SCITEX_AGENT_CONTAINER_STATE_DB"
 
@@ -98,8 +99,9 @@ def only_alpha_defined(tmp_path: Path) -> Iterator[Path]:
     yaml_root.mkdir()
     _write_spec(yaml_root, "alpha")
     (tmp_path / "workdir").mkdir()
-    with _env(_YAML_DIRS, str(yaml_root)), _env(
-        _STATE_DB, str(tmp_path / "isolated-state.db")
+    with (
+        _env(_YAML_DIRS, str(yaml_root)),
+        _env(_STATE_DB, str(tmp_path / "isolated-state.db")),
     ):
         importlib.reload(_state_store_mod)
         try:
@@ -109,7 +111,7 @@ def only_alpha_defined(tmp_path: Path) -> Iterator[Path]:
 
 
 def _refuse(name: str) -> str:
-    return CliRunner().invoke(send, [name, "hi"]).output
+    return CliRunner().invoke(send, ["--yes", name, "hi"]).output
 
 
 # ---------------------------------------------------------------------------

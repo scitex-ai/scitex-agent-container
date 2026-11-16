@@ -1,4 +1,4 @@
-"""``sac versions`` — scitex-* versions across the layers sac owns.
+"""``sac list-versions`` — scitex-* versions across the layers sac owns.
 
 scitex-dev's ``ecosystem check-versions`` reports scitex-* versions across
 6 layers (PyPI, GitHub, both hosts' venvs, CI, editable) but cannot see the
@@ -22,6 +22,7 @@ sac emits RAW base + overlay rows; scitex-dev's aggregator derives the
 from __future__ import annotations
 
 import json as _json
+from copy import copy
 
 import click
 
@@ -49,7 +50,7 @@ def _render_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-@click.command("versions")
+@click.command("list-versions")
 @click.option(
     "--json/--table",
     "as_json",
@@ -82,9 +83,9 @@ def versions(as_json, live, containers_dir, base_only):
 
     \b
     Examples:
-      $ sac versions --json                 # baked-manifest path (routine)
-      $ sac versions --json --live          # ground-truth exec pip-list
-      $ sac versions --table                # human-readable
+      $ sac list-versions --json                 # baked-manifest path (routine)
+      $ sac list-versions --json --live          # ground-truth exec pip-list
+      $ sac list-versions --table                # human-readable
     """
     rows = collect_versions(
         live=live,
@@ -98,3 +99,10 @@ def versions(as_json, live, containers_dir, base_only):
 
 
 __all__ = ["versions", "LAYER_BASE"]
+
+
+# Keep scripts callable while discovery advertises an explicit read action.
+_legacy_versions = copy(versions)
+_legacy_versions.name = "versions"
+_legacy_versions.hidden = True
+_legacy_versions.deprecated = "Use list-versions instead."

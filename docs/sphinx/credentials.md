@@ -7,7 +7,11 @@ slugs match.
 
 ## OpenAI Codex
 
-Run `sac accounts sync-openai` to collect the active Codex login into
+Preview with `sac accounts sync-openai --dry-run`. The preview reports arguments
+only and does not read login material or determine the account identity.
+`--yes` approves the local copy; it does not log in or verify model access.
+
+Run `sac accounts sync-openai --yes` to collect the active Codex login into
 `~/.scitex/agent-container/accounts/openai/<account-slug>/auth.json`. The
 provider directory is part of storage identity, so `openai:<account-slug>`
 cannot collide with the legacy Claude store at `accounts/<account-slug>/`.
@@ -37,7 +41,7 @@ Start the scitex-genai gateway with its account homes and a local gateway key:
 
 ```bash
 pip install 'scitex-agent-container[codex]'
-sac accounts sync-openai
+sac accounts sync-openai --yes
 export SCITEX_GENAI_GATEWAY_API_KEY="$(openssl rand -hex 32)"
 scitex-genai-gateway --host 127.0.0.1 --port 18765
 ```

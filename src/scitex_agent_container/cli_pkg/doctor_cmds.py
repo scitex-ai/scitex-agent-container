@@ -201,7 +201,7 @@ def _render_fleet(ctx: click.Context, as_json: bool, strict: bool, timeout: int)
         )
     elif not rows:
         render_rich("[dim](no peers configured — nothing to drift-check. "
-            "Add peers with `sac host add <name> --ssh ...`.)[/dim]", __name__)
+            "Add peers with `sac host add <name> --ssh ... --yes`.)[/dim]", __name__)
     else:
         render_rich("[bold]fleet spec-source drift[/bold]", __name__)
         width = max((len(r.host) for r in rows), default=4)

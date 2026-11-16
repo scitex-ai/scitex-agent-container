@@ -1,4 +1,4 @@
-"""CLI tests for ``sac versions`` (scitex-* version introspection).
+"""CLI tests for ``sac list-versions`` (scitex-* version introspection).
 
 PA-306: no mocks. ``CliRunner`` drives the real click command; the
 base-image exec path runs a REAL fake ``apptainer`` binary on PATH (a
@@ -115,7 +115,23 @@ def test_versions_registered_on_main_group(containers_dir: Path):
     # Act — resolve through the top-level LazyGroup, proving registration.
     result = runner.invoke(
         main,
-        ["versions", "--live", "--base-only", "--containers-dir", str(containers_dir)],
+        ["list-versions", "--live", "--base-only", "--containers-dir", str(containers_dir)],
     )
     # Assert
     assert result.exit_code == 0 and json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("format_option", ["--json", "--table"])
+def test_legacy_versions_preserves_payload_and_warns_separately(
+    containers_dir, format_option
+):
+    # Arrange
+    runner = CliRunner()
+    options = [format_option, "--live", "--base-only", "--containers-dir", str(containers_dir)]
+    canonical = runner.invoke(main, ["list-versions", *options])
+    # Act
+    legacy = runner.invoke(main, ["versions", *options])
+    # Assert
+    assert (legacy.exit_code, legacy.stdout, "Use list-versions instead." in legacy.stderr) == (
+        canonical.exit_code, canonical.stdout, True
+    )

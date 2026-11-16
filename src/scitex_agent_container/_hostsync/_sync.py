@@ -2,7 +2,7 @@
 
 The order is the whole design:
 
-1. **probe** (read-only)     — what code is actually on the peer?
+1. **probe** (fetch refs)     — what code is actually on the peer?
 2. **decide** (:mod:`._model`) — is that state safe to fast-forward?
 3. **guard** (:mod:`._ci_guard`) — is CI using that checkout right now?
 4. **apply** (:mod:`._apply`)  — one fast-forward, or nothing at all.
@@ -139,10 +139,10 @@ def check_peer(
     timeout: int = 120,
     runner=subprocess.run,
 ) -> SyncResult:
-    """Read-only: what is on ``peer``, and does it match the centre?
+    """Check peer drift by refreshing refs, without merging its checkout.
 
-    Mutates NOTHING. This is what ``--check`` runs, and it is the half of
-    the verb the operator asked for first: detection is the product.
+    Runs the fetch-capable probe. It preserves tracked working-tree content
+    and HEAD, but Git refs may change. It is not an offline preview.
     """
     before = probe_peer(peer, peers, ref=ref, timeout=timeout, runner=runner)
     if before.is_undetermined:

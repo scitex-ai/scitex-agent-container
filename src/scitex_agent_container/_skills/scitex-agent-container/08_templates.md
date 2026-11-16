@@ -1,56 +1,78 @@
 ---
 description: |
-  [TOPIC] Templates and Examples
-  [DETAILS] Templates and Examples — see file body for details..
+  [TOPIC] Agent templates and scaffolding
+  [DETAILS] Discover installed inline presets and local directory templates, create a spec, and distinguish scaffolding/schema checks from launch readiness.
 tags: [scitex-agent-container-templates]
 ---
 
-# Templates and Examples
+# Agent templates and scaffolding
 
-Two directories under `config/` ship YAML you can copy:
-
-- `examples/agent-templates/` — six minimal **pattern** templates (one per deployment pattern)
-- `examples/agents/` — concrete real-world configs
-
-Both are validated by `tests/test_templates_v3_valid.py`. The SLURM template additionally renders an sbatch script in CI to catch YAML/dataclass drift.
-
-## Pattern matrix
-
-| Template | Pattern | Distinguishing key |
-|---|---|---|
-| `apptainer.yaml` | claude-session inside Apptainer SIF | `spec.runtime: apptainer`, `spec.image: *.sif` (default) |
-| `ssh.yaml` | remote agent via SSH | dispatched cross-host via `sac --on <peer>` (F-CS12) |
-
-MCP wiring is no longer a separate template — drop a `.mcp.json` into the agent's `to_home/` directory and it lands at `$HOME/.mcp.json` at start (ADR-0006). Docker / podman / local-bare-metal patterns deleted after F-CS17 made sac apptainer-only.
-
-## Instantiating (dir-as-SSoT)
-
-The v3 loader derives the agent name from the parent directory, not from `metadata.name`. To instantiate:
+## Installed scaffolding command
 
 ```bash
-mkdir -p ~/.scitex/agent-container/agents/my-agent
-cp examples/agent-templates/apptainer.yaml ~/.scitex/agent-container/agents/my-agent/spec.yaml
-# optional: add a to_home/ sibling for AGENTS.md / .mcp.json / .env / harness-specific assets
-sac agents start my-agent
+sac agents create my-agent --template minimal --dry-run
+sac agents create my-agent --template minimal --yes
+sac agents create --base-dir /path/to/agents --help
 ```
 
-For SSH-deployed agents, drop a sibling `to_home/` directory next to `spec.yaml` — the whole directory rsyncs to the remote and is materialized into the agent's `$HOME` at start.
+`scitex-agent-container` is the long entry-point spelling. `create` writes a
+spec and home skeleton; it does not start an agent. Inline creation may also
+attempt managed-home adoption. Review the target and emitted warnings before
+using its output for a launch.
 
-## When to add a new template
+Normal CLI creation requires `--yes/-y`. Scripts must supply it explicitly.
+An explicit Python/MCP creation call forwards approval; preview takes precedence.
+Approval does not permit overwriting a spec or bypass other backend checks.
 
-Add a new pattern template only when the new YAML shape isn't expressible by combining existing templates. If you find yourself documenting a specific operator decision, write to `examples/agents/` instead — examples are real configs frozen in time, templates are minimal patterns.
+`--dry-run` reports arguments only and hides `--set` values. It does not read
+templates or credentials, resolve the default root, check destination state
+or qualify a launch. MCP `agent_create(dry_run=True)` also prevents `start=True`.
+Cold CLI startup may initialize shared logging; preview does not write agent files.
+The public Python entry point is
+`scitex_agent_container.agent.create(..., dry_run=True)`, the same callable as MCP.
 
-When adding a template:
+The built-in `minimal` and `full` definitions live in
+`cli_pkg/_create_templates.py`. They are available through the installed CLI.
+Their model and endpoint fields follow the selected engine. The full preset
+uses `SCITEX_CARDS_AGENT_ID` for card identity. Credential, image, engine and
+host readiness still need separate qualification; schema acceptance alone
+does not establish that the agent can start.
 
-1. Drop the YAML in `examples/agent-templates/<name>.yaml`.
-2. Add `<name>.yaml` to the `expected` set in `test_minimal_templates_cover_expected_patterns`.
-3. Add a runtime-specific assertion to `test_templates_v3_valid.py` that exercises the field shape unique to your pattern (e.g. for slurm, render the sbatch script and check for hardener strings).
+## Directory templates
 
-## Examples
+The command discovers `_template_<kind>/` directories under the selected
+agents root. `--base-dir` selects that root explicitly; help scans it at
+invocation time. Use the displayed list for that environment rather than a
+fixed catalog. Built-in `minimal` and `full` names retain their inline meaning.
 
-`examples/agents/` holds concrete configs that aren't patterns:
+Directory templates are copied and their `SAC_PLACEHOLDER_*` tokens filled
+using `--project`, `--agent-id` and repeated `--set KEY=VALUE`. Unresolved
+tokens fail and partial directory-template output is removed. Existing inline
+specs are not overwritten; force replacement is unsupported. CLI name and
+reserved-slot checks precede writes. GUI callers use the shared
+`cli_pkg/_create.py:scaffold_agent` backend and own their name validation.
 
-- `newbie-docker.yaml` — Hawthorne-effect-free naive-user simulation; documents the 2026-04-12 contamination incident lesson.
-- `researcher-opus.yaml` — Opus-powered researcher with on-failure restart + backoff tuned for long sessions.
+The loader derives an agent's name from its spec's parent directory. Built-in
+scaffolding creates a `to_home/` sibling for optional home assets; directory
+templates can supply their own tree. Review those assets and the resulting
+spec before starting the agent.
 
-Examples are loaded by `test_example_loads` to guard against schema drift, but they are not part of the pattern guarantee — feel free to add new ones for any non-trivial fleet member you ship.
+## Repository examples and maintenance
+
+In a source checkout, `examples/agents/*/spec.yaml` contains copy-and-adapt
+examples. These files are separate from the inline presets and locally
+discovered directory templates; this guide does not promise that checkout
+examples exist beside every installed wheel.
+
+Use the owning implementation and its existing controls when changing them:
+
+- `cli_pkg/_create.py` and `cli_pkg/_create_templates.py`;
+  `tests/scitex_agent_container/cli_pkg/test__create.py` and
+  `tests/scitex_agent_container/cli_pkg/test__create_templates.py` cover
+  scaffolding, template fields, refusals, placeholders and live help discovery.
+- `tests/integration/test_templates_v3_valid.py` loads the current repository
+  examples and checks their names/runtime and selected home assets. Those
+  checks do not launch an agent, provision an image or admit a live provider.
+
+Keep source, installed CLI help and the relevant tests aligned. Generated or
+served documentation and actual runtime readiness require separate evidence.

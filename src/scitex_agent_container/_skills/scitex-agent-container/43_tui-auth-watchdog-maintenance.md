@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] TUI auth watchdog — package-matcher distance heuristic, auth-heal wiring, and the extend-the-matcher runbook (companion to the detection-contract core in 42_tui-auth-watchdog.md)
-  [DETAILS] Continues the TUI auth-banner detection contract from [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md): §5 near-prompt/distance (the package matcher's prompt-anchored signal, PR #627) and §6 the two tmux servers, then how `auth-heal.py` wraps the pure matcher with grace/debounce/cap guards, the runbook for extending the patterns when Claude Code's Ink TUI rendering changes, and the `canary_ok()` blindness alarm. Read the core invariants §1–§4 in 42 first. Load this before touching `tui_auth_detect.py`, `auth_status.py`, `auth-heal.py`, or `sac agents auth-status`.
+  [DETAILS] Continues the TUI auth-banner detection contract from [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md): §5 near-prompt/distance (the package matcher's prompt-anchored signal, PR #627) and §6 the two tmux servers, then how `auth-heal.py` wraps the pure matcher with grace/debounce/cap guards, the runbook for extending the patterns when Claude Code's Ink TUI rendering changes, and the `canary_ok()` blindness alarm. Read the core invariants §1–§4 in 42 first. Load this before touching `tui_auth_detect.py`, `auth_status.py`, `auth-heal.py`, or `sac agents show-auth-status`.
 tags: [scitex-agent-container-tui-auth-watchdog-maintenance, auth, tui, watchdog, runbook]
 ---
 
@@ -112,7 +112,7 @@ matcher stops flagging (or starts false-flagging). Do this:
    python3 tui_auth_detect.py --report    # live fleet, READ-ONLY
    # package matcher:
    pytest tests/scitex_agent_container/_runners/_tmux/   # auth_status + prompts
-   sac agents auth-status --json          # live on-demand check
+   sac agents show-auth-status --json          # live on-demand check
    ```
 5. **The non-negotiable rule:** every rendering-dependent change ships a NEW
    fixture proving **BOTH** directions still resolve — the true-positive (a

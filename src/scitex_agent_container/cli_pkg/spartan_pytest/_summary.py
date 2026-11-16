@@ -1,13 +1,15 @@
 """Pure parsers/formatters for the Spartan pytest summary.
 
-Kept dependency-free (stdlib only) so unit tests can exercise every
-behaviour locally without ssh/SLURM.  See the package docstring in
-``__init__.py`` for the full architecture.
+Summary data and parsing use the standard library; target validation raises
+Click usage errors. All helpers can be exercised locally without SSH/SLURM.
+See the package docstring for the complete runner architecture.
 """
 
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import dataclass, field
 
 import click
@@ -26,20 +28,31 @@ class PytestSummary:
     errors: int = 0
     duration_s: float = 0.0
     failed_tests: list[str] = field(default_factory=list)
+    pytest_exit: int | None = None
+    capture_exit: int | None = None
+    slurm_job_id: str | None = None
 
     @property
     def all_passed(self) -> bool:
-        """True iff zero ``failed`` and zero ``errors``."""
-        return self.failed == 0 and self.errors == 0
+        """No count or explicit process/capture failures.
+
+        Legacy count-only Python records remain readable. CLI acceptance
+        additionally requires process evidence, matching job ID and successful accounting.
+        """
+        return (
+            self.failed == 0
+            and self.errors == 0
+            and self.pytest_exit in (None, 0)
+            and self.capture_exit in (None, 0)
+        )
 
 
 def _parse_summary(blob: str) -> PytestSummary:
     """Parse the remote ``summary.json`` string into a :class:`PytestSummary`.
 
-    Defensive: missing fields default to 0/empty.  Returns an
-    ``errors=1`` summary on malformed JSON so the caller's exit-code
-    mapper still produces a sensible (failure) verdict — pure-function
-    contract preserved.
+    Complete, typed counters are required. Invalid records return an error
+    result rather than silently defaulting to a green run. Legacy records
+    with explicit counters remain readable without process-exit metadata.
     """
     try:
         data = json.loads(blob)
@@ -47,12 +60,42 @@ def _parse_summary(blob: str) -> PytestSummary:
         return PytestSummary(errors=1)
     if not isinstance(data, dict):
         return PytestSummary(errors=1)
+    counters = [data.get(key) for key in ("passed", "failed", "errors")]
+    if any(type(value) is not int or value < 0 for value in counters):
+        return PytestSummary(errors=1)
+    duration = data.get("duration_s", 0.0)
+    if type(duration) not in (int, float):
+        return PytestSummary(errors=1)
+    try:
+        duration = float(duration)
+    except OverflowError:
+        return PytestSummary(errors=1)
+    if not math.isfinite(duration) or duration < 0:
+        return PytestSummary(errors=1)
+    failed_tests = data.get("failed_tests", [])
+    if not isinstance(failed_tests, list) or any(
+        not isinstance(name, str) for name in failed_tests
+    ):
+        return PytestSummary(errors=1)
+    exits = {}
+    for key in ("pytest_exit", "capture_exit"):
+        value = data.get(key)
+        if key in data and (type(value) is not int or not 0 <= value <= 255):
+            return PytestSummary(errors=1)
+        exits[key] = value
+    job_id = data.get("slurm_job_id")
+    if "slurm_job_id" in data and (
+        not isinstance(job_id, str) or re.fullmatch(r"[1-9][0-9]*", job_id) is None
+    ):
+        return PytestSummary(errors=1)
     return PytestSummary(
-        passed=int(data.get("passed", 0) or 0),
-        failed=int(data.get("failed", 0) or 0),
-        errors=int(data.get("errors", 0) or 0),
-        duration_s=float(data.get("duration_s", 0.0) or 0.0),
-        failed_tests=list(data.get("failed_tests", []) or []),
+        passed=counters[0],
+        failed=counters[1],
+        errors=counters[2],
+        duration_s=duration,
+        failed_tests=failed_tests,
+        slurm_job_id=job_id,
+        **exits,
     )
 
 
@@ -65,6 +108,9 @@ def _format_summary(summary: PytestSummary, *, repo: str, branch: str) -> str:
         f"  failed:     {summary.failed}",
         f"  errors:     {summary.errors}",
         f"  duration_s: {summary.duration_s:.1f}",
+        f"  pytest_exit: {summary.pytest_exit if summary.pytest_exit is not None else 'not recorded'}",
+        f"  capture_exit: {summary.capture_exit if summary.capture_exit is not None else 'not recorded'}",
+        f"  slurm_job_id: {summary.slurm_job_id if summary.slurm_job_id is not None else 'not recorded'}",
     ]
     if summary.failed_tests:
         lines.append("  failed tests:")

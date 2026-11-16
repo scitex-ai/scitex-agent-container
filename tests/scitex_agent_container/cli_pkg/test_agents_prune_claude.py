@@ -184,7 +184,7 @@ def test_cli_exits_zero_on_successful_archive(_registered):
     name, _ = _registered
     runner = CliRunner()
     # Act
-    result = runner.invoke(archive_claude_bloat, [name])
+    result = runner.invoke(archive_claude_bloat, [name, "--yes"])
     # Assert
     assert result.exit_code == 0
 
@@ -194,7 +194,7 @@ def test_cli_prints_archived_summary_line(_registered):
     name, _ = _registered
     runner = CliRunner()
     # Act
-    result = runner.invoke(archive_claude_bloat, [name])
+    result = runner.invoke(archive_claude_bloat, [name, "--yes"])
     # Assert — single-line summary format locked by the doctrine.
     assert "archived: " in result.output
 
@@ -204,7 +204,7 @@ def test_cli_summary_includes_file_count(_registered):
     name, _ = _registered
     runner = CliRunner()
     # Act
-    result = runner.invoke(archive_claude_bloat, [name])
+    result = runner.invoke(archive_claude_bloat, [name, "--yes"])
     # Assert
     assert "1,500 files" in result.output
 
@@ -216,7 +216,7 @@ def test_cli_unknown_agent_exits_nonzero(tmp_path: Path, env_save_restore):
     env_save_restore.set("HOME", str(home))
     runner = CliRunner()
     # Act
-    result = runner.invoke(archive_claude_bloat, ["nope-not-registered"])
+    result = runner.invoke(archive_claude_bloat, ["nope-not-registered", "--yes"])
     # Assert
     assert result.exit_code == 2
 
@@ -260,7 +260,7 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
     Registry().add(name=name, config_path=str(spec_path), screen_name=name)
     runner = CliRunner()
     # Act
-    result = runner.invoke(archive_claude_bloat, [name])
+    result = runner.invoke(archive_claude_bloat, [name, "--yes"])
     # Assert
     assert "nothing to archive" in result.output
 
@@ -272,9 +272,98 @@ def test_cli_does_not_delete_original_source(_registered):
     name, workdir = _registered
     runner = CliRunner()
     # Act
-    runner.invoke(archive_claude_bloat, [name])
+    runner.invoke(archive_claude_bloat, [name, "--yes"])
     archive_root = next((workdir / ".claude").glob(".archived-*"))
     moved_dir = archive_root / "hooks" / "pre-tool-use" / ".pending"
     # Assert — moved tree carries the full original file count, proving
     # move-not-delete semantics.
     assert len(list(moved_dir.iterdir())) == 1_500
+
+
+@pytest.fixture
+def forbidden_archive_lookup():
+    import importlib
+
+    module = importlib.import_module(
+        "scitex_agent_container.cli_pkg.agents_prune_claude"
+    )
+    original = module._resolve_agent_workdir
+    calls = []
+
+    def forbidden(name):
+        calls.append(name)
+        raise AssertionError("refusal/preview must not look up the agent")
+
+    module._resolve_agent_workdir = forbidden
+    try:
+        yield calls
+    finally:
+        module._resolve_agent_workdir = original
+
+
+@pytest.mark.parametrize("flags", [[], ["--yes", "--dry-run"], ["-y", "--dry-run"]])
+def test_refusal_precedes_agent_lookup(forbidden_archive_lookup, flags):
+    # Arrange
+    # Act
+    result = CliRunner().invoke(archive_claude_bloat, ["worker", *flags])
+    # Assert
+    assert (result.exit_code, "--yes" in result.output, forbidden_archive_lookup) == (
+        2,
+        True,
+        [],
+    )
+
+
+@pytest.mark.parametrize("prefix, suffix", [(["--json"], []), ([], ["--json"])])
+def test_preview_is_unverified_arguments_without_lookup(
+    forbidden_archive_lookup, prefix, suffix
+):
+    import json
+
+    from scitex_agent_container.cli import main
+
+    # Arrange
+    args = [*prefix, "agents", "archive-claude-bloat", "worker", "--dry-run", *suffix]
+    # Act
+    result = CliRunner().invoke(main, args)
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout), forbidden_archive_lookup) == (
+        0,
+        {
+            "action": "archive-claude-bloat",
+            "agent": "worker",
+            "dry_run": True,
+            "scope": "arguments_only",
+            "verified": False,
+        },
+        [],
+    )
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+@pytest.mark.parametrize("prefix, suffix", [(["--json"], []), ([], ["--json"])])
+def test_approved_archive_json_matches_actual_retained_tree(
+    _registered, approval, prefix, suffix
+):
+    import json
+
+    from scitex_agent_container.cli import main
+
+    # Arrange
+    name, workdir = _registered
+    original = workdir / ".claude/hooks/pre-tool-use/.pending"
+    args = [*prefix, "agents", "archive-claude-bloat", name, approval, *suffix]
+    # Act
+    result = CliRunner().invoke(main, args)
+    payload = json.loads(result.stdout)
+    target = Path(payload["moved"][0]["to"])
+    # Assert
+    assert (
+        result.exit_code,
+        payload["agent"],
+        Path(payload["workdir"]),
+        payload["moved"][0]["files"],
+        original.exists(),
+        len(list(target.iterdir())),
+        (target / "f1499").read_bytes(),
+    ) == (0, name, workdir, 1500, False, 1500, b"x")

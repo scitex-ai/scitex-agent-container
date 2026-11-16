@@ -285,7 +285,7 @@ alarm() {
   local summary="$1" detail="$2"
   [ "$NOTIFY_ENABLED" = "1" ] || return 0
   command -v sac >/dev/null 2>&1 || return 0
-  if sac fleet notify blocker \
+  if sac fleet notify blocker --yes \
       --from-agent "sac-listen-watchdog" \
       --summary "$summary" \
       --detail "$detail" \

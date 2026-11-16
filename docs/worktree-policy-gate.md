@@ -10,6 +10,17 @@ No operator-side executable is required. Operators who keep their own policy
 executable can still pass its path as `cli_path`; the engine schema and this
 page document the contract it must honor.
 
+## Discovering policy operations
+
+`sac worktree policy --help` lists the native operations. Command discovery
+also exposes each operation's required paths, intent choices and projection
+approval options from the same parser used to validate execution. Discovery
+does not inspect a repository, read a selected manifest or generate projections.
+
+Policy decisions remain JSON. Invalid arguments return a JSON error and exit 3;
+a denied request exits 2. `generate-projections --dry-run` previews supplied
+arguments without reading the manifest, while writes require explicit `--yes`.
+
 ## Launch behavior
 
 Before a write-capable `kind: Agent` task starts, SAC:
@@ -69,7 +80,7 @@ fallback.
 
 ## Recovering an absent owned checkout
 
-`sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID` is an explicit
+`sac agents restore-worktree NAME --expected-tip FULL_COMMIT_ID --dry-run` is an explicit
 dry-run operation on the agent's declared owning host. It reads the existing
 canonical runtime ownership record and asks the policy engine's
 `check-owned-restore` verb to approve only that recorded missing path and
@@ -79,7 +90,9 @@ the owner digest, primary branch/HEAD/status, retained full tip, worktree
 registration digest, policy/projection hashes, exact Git argv and receipt hash.
 
 After reviewing that receipt, apply the same operation with
-`--apply --receipt-sha256 RECEIPT_SHA256`. SAC refuses changed receipts,
+`--yes --receipt-sha256 RECEIPT_SHA256` (`-y` and `--apply` are aliases).
+Explicit `--dry-run` conflicts with approval and is refused before inspection.
+SAC refuses changed receipts,
 serializes official restores, repeats neutral approval immediately before
 normal `git worktree add PATH EXISTING_BRANCH`, and verifies the result. It
 preserves primary branch/content/HEAD, ownership bytes, retained branch tip
@@ -144,3 +157,54 @@ The external-CLI opt-in boundary is tested with the executable fixture under
 `tests/scitex_agent_container/_lifecycle/_fixtures/worktree-policy/`. It models
 the CLI protocol and real Git worktree operations, not a second policy engine.
 The engine itself is tested in-process with real Git repositories.
+
+
+## Inspecting the policy interface
+
+```bash
+sac worktree policy --help
+sac worktree policy inspect --repo /path/to/repository
+sac worktree policy assert-context --repo /path/to/repository --intent edit
+sac worktree policy check-projections
+sac worktree policy generate-projections --dry-run
+sac worktree policy generate-projections --yes
+```
+
+The delegated help displays the full command path and concrete examples.
+Standalone policy entry points retain their own calling program name; the
+Python parser/main functions accept an optional keyword-only `prog` for host
+adapters. This controls help text, not policy admission or operations.
+
+Inspection reports Git context. Edit admission is a separate `assert-context`
+request; a successful inspection is not permission to edit. Policy decisions
+remain JSON on stdout, with diagnostics on stderr: allow exits 0, deny exits 2,
+and argument/policy errors exit 3. `--help` exits before executing an operation,
+including `generate-projections`; it does not generate policy files. Actual
+projection generation requires explicit `--yes` (or `-y`) before policy selection
+or filesystem access. Without approval it returns a typed JSON error with exit 3;
+`SAC_ASSUME_YES` does not bypass this check. The preview runs before approval
+and remains non-authorizing even with `--yes`. Approved generation retains its
+host-configuration semantics. This help correction changes no hook, projection,
+authority-checkout or launch-admission rule.
+
+`generate-projections --dry-run` exits 0 with a JSON argument plan, including
+`allowed=false`, `decision="preview"`, `dry_run=true` and
+`scope="arguments_only"`. It reports supplied policy/output paths without
+resolving defaults, reading policy contents, checking projections or creating
+files. Omitted paths remain null. No policy/projection hash or edit permission
+is established. The existing lifecycle CLI adapter rejects this preview as an
+authorization result, despite its zero exit code.
+
+CLI startup may still read its global configuration/version cache and initialize
+logging. This is not a whole-process no-I/O guarantee. Ordinary generation keeps
+its host-configuration behavior; its normal policy selection occurs after
+argument parsing. This does not change the engine's admission rules, generated
+rule contents, hashes, hooks or custom-CLI opt-in.
+
+Source and controls: `_worktree_policy_cli/_cli.py`, `_cli_preview.py`,
+`tests/scitex_agent_container/_worktree_policy_cli/test__cli_preview.py`,
+`test__cli.py`, and `_lifecycle/_worktree_policy.py`'s CLI result admission.
+These scoped checks do not qualify arbitrary external policy executables,
+deployed hooks, launch supervision or served documentation. Existing external
+generation callers must add explicit approval before adopting this change.
+Generation approval controls are in the existing `test__cli.py` module.

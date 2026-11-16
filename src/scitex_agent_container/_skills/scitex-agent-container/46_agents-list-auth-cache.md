@@ -1,7 +1,7 @@
 ---
 description: |
-  [TOPIC] Why `sac agents list` can show `auth-failed` — the persisted auth-verdict cache (`agent_auth_state`) that `sac agents auth-status` writes and the fleet view reads, so a tmux-green agent can no longer hide a dead token.
-  [DETAILS] Continues [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md): the pane matcher's verdict is UPSERTed into the `agent_auth_state` table in `state.db` (`_state/auth_state.py`) and `sac agents list` reads that cache instead of probing auth inline (two pane captures seconds apart per agent would undo the list's latency budget). Covers the three properties that keep the cache from lying (only observed agents are written; verdicts carry `checked_at` and go STALE; a verdict older than the agent's `started_at` is discarded), and why the status asserts the VERIFIABLE `auth-failed` rather than Claude's misleading "Login expired" banner — with the `expiresAt`-based `revoked` / `expired` / `unknown` cause table (`_account/auth_failure_reason.py`) that separates an automated restart from waking the operator for a re-login. Load before touching `auth_state.py`, `auth_failure_reason.py`, `sac agents auth-status`, or the `sac agents list` status column.
+  [TOPIC] Why `sac agents list` can show `auth-failed` — the persisted auth-verdict cache (`agent_auth_state`) that `sac agents show-auth-status` writes and the fleet view reads, so a tmux-green agent can no longer hide a dead token.
+  [DETAILS] Continues [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md): the pane matcher's verdict is UPSERTed into the `agent_auth_state` table in `state.db` (`_state/auth_state.py`) and `sac agents list` reads that cache instead of probing auth inline (two pane captures seconds apart per agent would undo the list's latency budget). Covers the three properties that keep the cache from lying (only observed agents are written; verdicts carry `checked_at` and go STALE; a verdict older than the agent's `started_at` is discarded), and why the status asserts the VERIFIABLE `auth-failed` rather than Claude's misleading "Login expired" banner — with the `expiresAt`-based `revoked` / `expired` / `unknown` cause table (`_account/auth_failure_reason.py`) that separates an automated restart from waking the operator for a re-login. Load before touching `auth_state.py`, `auth_failure_reason.py`, `sac agents show-auth-status`, or the `sac agents list` status column.
 tags: [scitex-agent-container-agents-list-auth-cache, auth, list, cache, staleness]
 ---
 
@@ -18,7 +18,7 @@ agent had to be checked by hand for exactly this.
 
 ## The verdict is PERSISTED — that is what makes `sac agents list` honest
 
-`sac agents auth-status` is not only a report; it **writes**. Every verdict it
+`sac agents show-auth-status` is not only a report; it **writes**. Every verdict it
 reaches is UPSERTed into the `agent_auth_state` table in `state.db`
 (`_state/auth_state.py`), and `sac agents list` **reads that cache** — it never
 probes auth inline, because detection costs two pane captures seconds apart per

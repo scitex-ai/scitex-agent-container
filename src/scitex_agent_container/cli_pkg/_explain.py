@@ -596,8 +596,8 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
 def explain(name: str) -> None:
     """Render the FULL effective launch plan for agent NAME (no launch).
 
-    Mounts + --pwd are parsed from the same build_run_argv the runtime uses,
-    so what you see is exactly what `sac agents start` will do.
+    Example:
+      $ sac agents explain worker-agent
     """
     spec = _spec_path_for(name)
     if spec is None:

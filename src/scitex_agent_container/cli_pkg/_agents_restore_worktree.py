@@ -38,18 +38,35 @@ def _require_owning_host(config) -> None:
     "--expected-tip", required=True, help="Exact retained full branch commit ID."
 )
 @click.option(
-    "--apply", is_flag=True, help="Apply the exact previously reviewed receipt."
+    "--apply",
+    "--yes",
+    "-y",
+    "apply",
+    is_flag=True,
+    help="Apply the exact previously reviewed receipt.",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Preview the restore receipt (the default)."
 )
 @click.option("--receipt-sha256", help="SHA256 emitted by the unchanged dry-run plan.")
 def restore_worktree(
-    name: str, expected_tip: str, apply: bool, receipt_sha256: str | None
+    name: str, expected_tip: str, apply: bool, dry_run: bool, receipt_sha256: str | None
 ) -> None:
     """Restore only NAME's absent recorded checkout, dry-run by default.
 
     Preserve its primary checkout, ownership record, existing branch and
     history. This operation never starts or replaces an agent. General Git
     command policy remains unchanged. Output is a reviewable JSON receipt.
+    Replace FULL_COMMIT_SHA with the exact retained branch tip. Applying the
+    plan additionally requires --yes (alias --apply) and its unchanged
+    --receipt-sha256. Explicit --dry-run cannot be combined with approval.
+
+    \b
+    Example (preview only; use the exact canonical agent name):
+      $ sac agents restore-worktree worker-agent --expected-tip FULL_COMMIT_SHA --dry-run
     """
+    if apply and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --apply/--yes/-y")
     if apply and not receipt_sha256:
         raise click.ClickException(
             "--apply requires the exact dry-run --receipt-sha256"

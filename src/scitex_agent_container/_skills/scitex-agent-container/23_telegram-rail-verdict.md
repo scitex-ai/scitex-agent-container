@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Is an agent's Telegram rail UP, DOWN or unobserved — and how a MUTE agent raises the alarm when the rail it would use is the broken one.
-  [DETAILS] When a spec declares `server:claude-code-telegrammer` and no `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` REMOVES the MCP server (operator ruling). `runtimes/_cct_rail_verdict.assess_cct_rail` answers three-valued (up / down / unknown, where `unknown` is never rendered as fine); `runtimes/_cct_rail_alarm` records it in sac's event log under subsystem `cct-rail` and pushes a `blocker` at the LEAD (ADR-0013), i.e. over ANOTHER agent's Telegram. `sac agents cct-audit` also inspects the selected Hermes profile for the MCP and matching turn URL, and exits 1 on any down/unknown. A selected Hermes rail fails profile materialization when these required parts are absent; other harnesses retain the post-start alarm behavior. Token values are never rendered.
+  [DETAILS] When a spec declares `server:claude-code-telegrammer` and no `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` REMOVES the MCP server (operator ruling). `runtimes/_cct_rail_verdict.assess_cct_rail` answers three-valued (up / down / unknown, where `unknown` is never rendered as fine); `runtimes/_cct_rail_alarm` records it in sac's event log under subsystem `cct-rail` and pushes a `blocker` at the LEAD (ADR-0013), i.e. over ANOTHER agent's Telegram. `sac agents validate-telegram` also inspects the selected Hermes profile for the MCP and matching turn URL, and exits 1 on any down/unknown. A selected Hermes rail fails profile materialization when these required parts are absent; other harnesses retain the post-start alarm behavior. Token values are never rendered.
 tags: [scitex-agent-container-telegram-rail-verdict]
 ---
 
@@ -110,7 +110,7 @@ alarming verdict is RECORDED regardless; only the interrupt is rationed.
 ## The sweep
 
 ```
-sac agents cct-audit [--json] [--all] [--agents-dir DIR]
+sac agents validate-telegram [--json] [--all] [--agents-dir DIR]
 ```
 
 Read-only: starts nothing, restarts nothing, reads no token value. Lists every

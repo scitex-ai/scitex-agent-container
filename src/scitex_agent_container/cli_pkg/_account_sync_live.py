@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import click
 
+from ._helpers import _json_flag
+
 
 @click.command("sync-live")
 @click.option(
@@ -30,13 +32,21 @@ import click
         "default."
     ),
 )
-def account_sync_live(as_json: bool, poll: bool) -> None:
+@click.option(
+    "--dry-run", is_flag=True, help="Preview arguments without reading credentials."
+)
+@click.option("--yes", "-y", is_flag=True, help="Approve the live-credential snapshot.")
+def account_sync_live(as_json: bool, poll: bool, dry_run: bool, yes: bool) -> None:
     """Snapshot the live credential into its matching account store.
 
     Reads the live ``~/.claude/.credentials.json`` + the active email
     from ``~/.claude.json``, derives the store-name (email slugified),
     and snapshots the live cred in when the store is absent / older /
     expired. Idempotent — a no-op when the store already matches.
+
+    Requires --yes/-y before reading credentials. --dry-run reports arguments
+    only, without checking identity, expiry or store state, and overrides --yes.
+    Approved runs retain the existing best-effort OAuth identity lookup.
 
     Fails loud (non-zero exit) when the live credential is absent,
     malformed, or expired — never saves a stale token.
@@ -68,10 +78,20 @@ def account_sync_live(as_json: bool, poll: bool) -> None:
 
     \b
     Examples:
-      $ sac accounts sync-live
-      $ sac accounts sync-live --json
+      $ sac accounts sync-live --dry-run
+      $ sac accounts sync-live --yes
+      $ sac accounts sync-live --poll --yes --json
     """
     import json as _json
+
+    if dry_run:
+        click.echo(_json.dumps({"action": "sync-live", "dry_run": True, "poll": poll}))
+        return
+    if not yes:
+        raise click.UsageError(
+            "Credential snapshots require --yes/-y; use --dry-run to preview."
+        )
+    as_json = _json_flag(click.get_current_context(), as_json)
 
     from .._account.creds_sync import LiveCredInvalidError, sync_live
 
@@ -153,7 +173,7 @@ def account_watch_live(
 
     The "moment I log in -> auto-saved" daemon. Watches
     ``~/.claude/.credentials.json`` (inotify when ``inotifywait`` is
-    available, else a poll loop) and runs ``sync-live`` on every change.
+    available, else a poll loop) and runs the sync engine on every change.
     Safe to run as a long-lived background process; a transient
     expired/mid-rewrite live cred is logged and the watcher keeps going.
 

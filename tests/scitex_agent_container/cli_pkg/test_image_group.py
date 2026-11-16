@@ -855,7 +855,7 @@ def test_sandbox_from_layer_name_resolves_to_known_sif_and_calls_backend(home_tm
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "base"])
+        result = runner.invoke(image_group, ["sandbox", "base", "--yes"])
     # Assert
     assert (
         result.exit_code == 0
@@ -872,7 +872,7 @@ def test_sandbox_from_explicit_path_skips_layer_resolution(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", str(sif)])
+        result = runner.invoke(image_group, ["sandbox", str(sif), "--yes"])
     # Assert
     assert result.exit_code == 0
 
@@ -884,7 +884,7 @@ def test_sandbox_errors_when_layer_sif_not_built_yet(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "base"])
+        result = runner.invoke(image_group, ["sandbox", "base", "--yes"])
     # Assert
     assert result.exit_code != 0 and "Build it first" in result.output
 
@@ -895,7 +895,7 @@ def test_sandbox_errors_when_source_is_neither_path_nor_known_layer(home_tmp):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["sandbox", "totally-bogus-name"])
+        result = runner.invoke(image_group, ["sandbox", "totally-bogus-name", "--yes"])
     # Assert
     assert result.exit_code != 0 and "neither a path nor a known layer" in result.output
 
@@ -913,7 +913,7 @@ def test_update_with_no_package_flag_defaults_to_scitex_all(tmp_path):
     runner = CliRunner()
     # Act
     with _use_backend(backend):
-        result = runner.invoke(image_group, ["update", str(sb)])
+        result = runner.invoke(image_group, ["update", str(sb), "--yes"])
     # Assert
     assert (
         result.exit_code == 0
@@ -931,7 +931,7 @@ def test_update_passes_explicit_packages_through_to_backend(tmp_path):
     # Act
     with _use_backend(backend):
         result = runner.invoke(
-            image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy"]
+            image_group, ["update", str(sb), "-p", "numpy", "-p", "scipy", "--yes"]
         )
     # Assert
     assert result.exit_code == 0 and backend.calls["sandbox_update"][0][1][
@@ -1076,7 +1076,7 @@ def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
     # Act
     result = runner.invoke(
         image_group,
-        ["switch", "2026-0914-010000", "--layer", "scitex"],
+        ["switch", "2026-0914-010000", "--layer", "scitex", "--yes"],
     )
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-scitex" / "sac-scitex.sif"
@@ -1098,7 +1098,7 @@ def test_rollback_activates_immediately_older_base_image(home_tmp):
     )
     runner = CliRunner()
     # Act
-    result = runner.invoke(image_group, ["rollback"])
+    result = runner.invoke(image_group, ["rollback", "--yes"])
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
     top = ig._CONTAINERS_DIR / "sac-base.sif"
@@ -1122,7 +1122,7 @@ def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
     top.symlink_to(Path("sac-base") / artifacts[0].name)
 
     # Act
-    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base"])
+    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base", "--yes"])
 
     # Assert
     actual = (
@@ -1141,7 +1141,7 @@ def test_switch_rejects_path_traversal_version(home_tmp):
     runner = CliRunner()
 
     # Act
-    result = runner.invoke(image_group, ["switch", "../outside"])
+    result = runner.invoke(image_group, ["switch", "../outside", "--yes"])
 
     # Assert
     actual = (
@@ -1170,7 +1170,7 @@ def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
     # Act
     try:
         result = CliRunner().invoke(
-            image_group, ["switch", "2026-0914-010000", "--layer", "base"]
+            image_group, ["switch", "2026-0914-010000", "--layer", "base", "--yes"]
         )
     finally:
         _image_activation._atomic_symlink = saved_atomic_symlink

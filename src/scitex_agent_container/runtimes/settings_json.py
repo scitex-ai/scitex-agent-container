@@ -128,24 +128,16 @@ _HOOKS_CONFIG = {
                     "type": "command",
                     "command": "scitex-agent-container event ingest stop",
                 },
-                # The never-stop-when-task-remains actuator. While the agent's board holds
-                # runnable work, this CONVERTS the stop into taking the next
-                # item: the completion of one unit of work is the trigger to
-                # pull the next, so "idle with work pending" is unreachable
-                # by design rather than a state something notices later and
-                # repairs. (Incident 2026-07-18: an agent sat idle at its
-                # prompt for 80+ minutes holding 5 in_progress cards, and the
-                # OPERATOR noticed it twice; a notification was sent and
-                # changed nothing, because a stopped agent reads nothing.)
-                #
-                # Blocking alone would not be enough — a refused stop leaves
-                # the agent sitting there idle — so the hook hands back the
-                # detector's parsed next_action list as the continuation
-                # prompt. Fails OPEN (allows the stop, logs loudly) whenever
-                # the detector cannot be read. See the _never_stop_when_task_remains package.
+                # Relay the board provider's Stop-hook decision and continuation
+                # reason. SAC owns deployment, fail-open handling and the bounded
+                # loop guard; the provider owns board semantics and what to do next.
+                # Preferred hook JSON is forwarded; legacy structured verdicts
+                # retain their bounded compatibility conversion. A block does not
+                # establish that a task was actually claimed or completed.
+                # Unreadable decisions allow the stop and produce an alarm.
                 {
                     "type": "command",
-                    "command": "scitex-agent-container never-stop-when-task-remains",
+                    "command": "scitex-agent-container dev hooks decide-stop",
                 },
             ],
         }

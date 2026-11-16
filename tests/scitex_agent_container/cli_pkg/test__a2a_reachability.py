@@ -1,4 +1,4 @@
-"""``sac a2a reachability`` end to end — real Click, real registry, real ssh leg.
+"""``sac a2a validate-reachability`` end to end — real Click, real registry, real ssh leg.
 
 The verb is the scheduled job's entry point, so what is pinned here is the
 CONTRACT the supervisor's execution log reads: the exit codes (0 / 1 / 3),
@@ -30,8 +30,7 @@ from scitex_agent_container._listen.peer_tokens import write_peer_token
 from scitex_agent_container._network._ssh_curl import STATUS_MARKER
 from scitex_agent_container.cli_pkg.a2a_group import a2a
 
-_HOSTS_YAML = textwrap.dedent(
-    """\
+_HOSTS_YAML = textwrap.dedent("""\
     hosts:
       probe-box:
         kind: workstation
@@ -45,8 +44,7 @@ _HOSTS_YAML = textwrap.dedent(
         kind: workstation
         ssh_alias: null
         scitex_root: "~/.scitex"
-    """
-)
+    """)
 
 _CONFIG_YAML = "host:\n  canonical: probe-box\n"
 
@@ -90,7 +88,9 @@ def _seed_token(home: Path, host: str = "peer-with-alias") -> None:
 
 
 def _run(args):
-    return CliRunner().invoke(a2a, ["reachability", *args], catch_exceptions=False)
+    return CliRunner().invoke(
+        a2a, ["validate-reachability", *args], catch_exceptions=False
+    )
 
 
 def _rows(result) -> dict[str, dict]:
@@ -340,3 +340,29 @@ def test_an_unknown_host_name_is_a_usage_error_naming_the_known_hosts(fleet):
     result = _run(args)
     # Assert
     assert result.exit_code == 2 and "peer-with-alias" in result.output
+
+
+def test_help_prefers_validate_reachability(fleet):
+    # Arrange
+    args = ["--help"]
+    # Act
+    result = CliRunner().invoke(a2a, args, catch_exceptions=False)
+    # Assert
+    assert (
+        result.exit_code,
+        "validate-reachability" in result.stdout,
+        "\n  reachability " in result.stdout,
+    ) == (0, True, False)
+
+
+def test_legacy_reachability_keeps_json_stdout_and_warns(fleet):
+    # Arrange
+    args = ["reachability", "--all", "--json"]
+    # Act
+    result = CliRunner().invoke(a2a, args, catch_exceptions=False)
+    # Assert
+    assert (
+        result.exit_code,
+        {row["reachable"] for row in json.loads(result.stdout)["hosts"]},
+        "validate-reachability" in result.stderr,
+    ) == (3, {None}, True)

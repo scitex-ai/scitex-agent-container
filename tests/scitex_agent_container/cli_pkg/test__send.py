@@ -48,9 +48,7 @@ def _instances_store(pg_schema: str):
     yield
 
 
-# ---------------------------------------------------------------------------
 # Collaborator swaps (test seams — no mocks, no monkeypatch)
-# ---------------------------------------------------------------------------
 
 
 @contextmanager
@@ -64,7 +62,6 @@ def _swap_post_turn(fn) -> Iterator[None]:
         _send_mod._post_turn = saved  # type: ignore[assignment]
 
 
-# ---------------------------------------------------------------------------
 # Fresh OAuth credentials fixture
 #
 # PR #114 wired ``preflight_send_creds`` into ``send_to_agent`` so a stale
@@ -78,7 +75,6 @@ def _swap_post_turn(fn) -> Iterator[None]:
 # injection seam (see ``_send.send_to_agent`` docstring) — tests that
 # need to exercise the post-preflight code path pass an explicit tmp
 # creds file so the preflight passes deterministically on any host.
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -108,10 +104,8 @@ def fresh_lead_creds_path(tmp_path) -> Path:
     return creds
 
 
-# ---------------------------------------------------------------------------
 # state.db isolation fixture: redirect env so the helper sees an empty
 # db unless the test seeds rows itself.
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -171,9 +165,7 @@ def _seed_remote(name: str, peer: str, a2a_port: int) -> None:
     record_instance_start(name=name, host=peer, a2a_port=a2a_port)
 
 
-# ---------------------------------------------------------------------------
 # Spec test 1-3: status="ok" on successful reply + response_text present
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_returns_dict_with_status_field(
@@ -230,9 +222,7 @@ def test_agent_send_returns_response_text_field_on_success(
     assert result["response_text"] == "the reply"
 
 
-# ---------------------------------------------------------------------------
 # Spec test 4: agent not running → status="error"
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_status_error_when_agent_not_running(state_store_env):
@@ -251,9 +241,7 @@ def test_agent_send_error_message_when_agent_not_running(state_store_env):
     assert "not running" in result["error"]
 
 
-# ---------------------------------------------------------------------------
 # Spec test 5: slow sidecar → status="timeout"
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_status_timeout_on_slow_sidecar(
@@ -302,9 +290,7 @@ def test_agent_send_timeout_error_message_quotes_timeout_value(
     assert "2s" in result["error"]
 
 
-# ---------------------------------------------------------------------------
 # Spec test 6: prompt + key mutually exclusive → ValueError
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_prompt_and_key_mutually_exclusive(state_store_env):
@@ -332,9 +318,7 @@ def test_agent_send_neither_prompt_nor_key_raises_value_error(state_store_env):
     assert isinstance(raised, ValueError)
 
 
-# ---------------------------------------------------------------------------
 # Spec test 7: cross-host row → ssh:// URL used
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_cross_host_routes_through_ssh(
@@ -387,9 +371,7 @@ def test_agent_send_local_host_uses_loopback_url(
     assert captured["url"] == "http://127.0.0.1:12345/v1/turn"
 
 
-# ---------------------------------------------------------------------------
 # Bonus: response_metadata + a2a_port missing branch + non-200 branch
-# ---------------------------------------------------------------------------
 
 
 def test_agent_send_includes_response_metadata_on_success(
@@ -444,7 +426,6 @@ def test_agent_send_error_when_sidecar_returns_non_200(
     assert result["status"] == "error"
 
 
-# ---------------------------------------------------------------------------
 # State-aware failure diagnosis (PS-NN: send_to_agent attaches a
 # ``diagnosis`` to the timeout / error returns so the caller can tell
 # "still booting" / "alive & busy" / "dead" / "port unreachable" apart).
@@ -452,7 +433,6 @@ def test_agent_send_error_when_sidecar_returns_non_200(
 # Real state: the ``heartbeats`` diary table + ``instances`` row + a real
 # local TCP listener are used — no mocks. ``record_heartbeat`` writes a
 # real row; a throwaway socket binds a real port.
-# ---------------------------------------------------------------------------
 
 
 def _record_heartbeat(name: str, state: str, *, pid=None, ts=None) -> None:
@@ -717,7 +697,6 @@ def test_agent_send_diagnosis_port_reachable_when_listener_bound(
     assert result["diagnosis"]["port_reachable"] is True
 
 
-# ---------------------------------------------------------------------------
 # Non-blocking dispatch (default wait=False)
 #
 # The default path validates reachability and returns PROMPTLY with
@@ -726,7 +705,6 @@ def test_agent_send_diagnosis_port_reachable_when_listener_bound(
 # used to PROVE the blocking POST never fires in non-blocking mode (it
 # would hang the caller). Reachability uses a REAL bound listener so the
 # diagnosis sees port_reachable=True — no mocks.
-# ---------------------------------------------------------------------------
 
 
 @contextmanager
@@ -785,7 +763,10 @@ def test_agent_send_nonblocking_payload_carries_track_command(
                 "alpha", "now bump the threshold", lead_creds_path=fresh_lead_creds_path
             )
     # Assert
-    assert result["track_command"] == "sac agents send alpha 'now bump the threshold'"
+    assert (
+        result["track_command"]
+        == "sac agents send --yes -- alpha 'now bump the threshold'"
+    )
 
 
 def test_agent_send_nonblocking_track_command_argv_is_a_list(
@@ -798,7 +779,15 @@ def test_agent_send_nonblocking_track_command_argv_is_a_list(
         with _exploding_post_turn():
             result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
     # Assert
-    assert result["track_command_argv"] == ["sac", "agents", "send", "alpha", "hi"]
+    assert result["track_command_argv"] == [
+        "sac",
+        "agents",
+        "send",
+        "--yes",
+        "--",
+        "alpha",
+        "hi",
+    ]
 
 
 def test_agent_send_nonblocking_reports_delivered_subscriber_count(
@@ -860,7 +849,6 @@ def test_agent_send_nonblocking_not_running_still_errors(state_store_env):
     assert result["status"] == "error"
 
 
-# ---------------------------------------------------------------------------
 # Registry split-brain regression (2026-06-19, figrecipe→beta).
 #
 # A locally-running agent whose ``instances`` row went STALE (the
@@ -883,7 +871,6 @@ def test_agent_send_nonblocking_not_running_still_errors(state_store_env):
 # shares: those tests never touch the allocator, and making the whole module
 # depend on a database would skip all of agent_send's coverage on a host that
 # has none.
-# ---------------------------------------------------------------------------
 
 
 def _seed_port_claim(name: str, port: int) -> None:

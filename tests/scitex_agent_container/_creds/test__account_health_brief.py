@@ -48,7 +48,7 @@ def empty_store_brief(tmp_path) -> str:
 
 def test_empty_store_brief_names_the_fixing_command(empty_store_brief):
     # Arrange
-    expected = "sac accounts sync-live"
+    expected = "sac accounts sync-live --yes"
     # Act
     actual = empty_store_brief
     # Assert

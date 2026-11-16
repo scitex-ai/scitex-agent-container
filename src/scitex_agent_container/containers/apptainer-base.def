@@ -122,7 +122,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
         git openssh-client sshpass autossh git-crypt \
-        rsync \
+        rsync unzip \
         build-essential pkg-config \
         libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
         python3 python3-pip python3-venv python3-dev \
@@ -222,6 +222,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     mkdir -p /opt/npm-global
     npm config set prefix /opt/npm-global
     export PATH=/opt/npm-global/bin:$PATH
+    # The agent runs as UID 1000; /root is private and cannot hold runtime tools.
+    export PUPPETEER_CACHE_DIR=/opt/browser-cache
     npm install -g \
         prettier \
         eslint \
@@ -247,7 +249,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the decoupling is STRUCTURAL (standalone npm CLI vs the SDK's
     # internal bundle), not a frozen version mismatch; see section 6b for
     # the caveat about SDK/claude-session agents.
-    npx puppeteer browsers install chrome-headless-shell || true
+    # Puppeteer 25 requires unzip; section 1 installs it before npm postinstall.
+    npx puppeteer browsers install chrome-headless-shell
 
     # ---- 3b. bun runtime (pinned) --------------------------------------
     # The fleet's CCT stack (claude-code-telegrammer TS server + poller,
@@ -274,8 +277,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # ---- 3c. A STABLE PATH FOR THE BROWSER -----------------------------
     # Puppeteer installs under a VERSION-NUMBERED directory:
     #
-    #   /root/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome
-    #   /root/.cache/puppeteer/chrome-headless-shell/linux-<ver>/.../chrome-headless-shell
+    #   /opt/browser-cache/chrome/linux-148.0.7778.97/chrome-linux64/chrome
+    #   /opt/browser-cache/chrome-headless-shell/linux-<ver>/.../chrome-headless-shell
     #
     # and the install above is UNPINNED, so that <ver> moves on every
     # rebuild. Nothing outside this image can therefore name the browser
@@ -299,17 +302,16 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     for _b in chrome chrome-headless-shell; do
         # Highest version last, so a cache holding several resolves to the
         # newest rather than to whatever sorts first lexically.
-        _found=$(ls -1d /root/.cache/puppeteer/"$_b"/linux-*/*/"$_b" 2>/dev/null | sort -V | tail -n 1)
+        _found=$(ls -1d /opt/browser-cache/"$_b"/linux-*/*/"$_b" 2>/dev/null | sort -V | tail -n 1)
         if [ -n "$_found" ] && [ -x "$_found" ]; then
             ln -sfn "$_found" /opt/browser/"$_b"
             echo "BROWSER: /opt/browser/$_b -> $_found"
+            /opt/browser/"$_b" --headless --no-sandbox --disable-gpu --dump-dom about:blank
         else
-            # LOUD, because the `|| true` above makes a failed download
-            # indistinguishable from a successful one. An image that
-            # silently ships without a browser is exactly how the fleet came
-            # to run two dead MCP servers without anyone noticing.
-            echo "BROWSER: WARNING - no $_b under /root/.cache/puppeteer;" \
-                 "browser MCP servers will not start in this image" >&2
+            # Both stable paths are runtime contracts for browser MCP tools.
+            # Reject incomplete downloads instead of publishing a broken image.
+            echo "BROWSER: FAIL - no executable $_b under /opt/browser-cache" >&2
+            exit 1
         fi
     done
     unset _b _found
@@ -1091,6 +1093,7 @@ EOF
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
     # those earlier entries do NOT shadow the npm claude symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    export PUPPETEER_CACHE_DIR=/opt/browser-cache
     export HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
     export HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
     # Hermes PM tool store (agent-browser + pinned Chromium, section 6c-2).

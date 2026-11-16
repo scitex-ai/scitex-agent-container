@@ -161,7 +161,7 @@ peers:
 def test_host_list_rich_states_no_peers_when_nothing_is_routable(
     cfg_path: Path, empty_registry: Path
 ):
-    """"No peers" now means neither source offered a route.
+    """ "No peers" now means neither source offered a route.
 
     Before the registry became a route source this only had to check
     config.yaml. A host with an empty ``peers:`` block but a populated
@@ -214,7 +214,9 @@ def test_host_list_omits_a_registry_host_with_no_ssh_alias(
     # Act
     result = CliRunner().invoke(host_list, ["--json"])
     # Assert
-    assert "ywata-note-win" not in [p["name"] for p in json.loads(result.stdout)["peers"]]
+    assert "ywata-note-win" not in [
+        p["name"] for p in json.loads(result.stdout)["peers"]
+    ]
 
 
 def test_host_list_rich_renders_alias_arrow_for_local(cfg_path: Path):
@@ -466,3 +468,44 @@ def test_library_warning_reaches_the_merged_cli_runner_output(
     merged = result.output + "\n" + "\n".join(result.emitted_warnings)
     # Assert
     assert _RETIRED_ALIAS_WARNING in merged
+
+
+@pytest.fixture(params=[False, True], ids=["absent", "populated"])
+def peer_read_home(tmp_path, env_save_restore, request):
+    """Own HOME and binary token fixtures; inventory only, no live secrets."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env_save_restore.set("HOME", str(home))
+    directory = home / ".scitex" / "agent-container" / "peer-tokens"
+    if request.param:
+        directory.mkdir(parents=True)
+        (directory / "host-z.token").write_bytes(b"\xffsynthetic-z")
+        (directory / "host-a.token").write_bytes(b"\xffsynthetic-a")
+    expected = ["host-a", "host-z"] if request.param else []
+
+    def snapshot():
+        files = {p.name: p.read_bytes() for p in directory.glob("*")}
+        return directory.exists(), files
+
+    return expected, snapshot, snapshot()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["host", "list-peers", "--json"],
+        ["--json", "host", "list-peers"],
+    ],
+    ids=["local", "inherited"],
+)
+def test_peer_listing_json_preserves_registry_and_hides_bearers(peer_read_home, args):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+
+    expected, snapshot, before = peer_read_home
+    want = 0, {"peer_hosts": expected}, before
+    # Act
+    result = CliRunner().invoke(main, args)
+    payload = json.loads(result.stdout)
+    # Assert
+    assert (result.exit_code, payload, snapshot()) == want

@@ -17,6 +17,8 @@ import signal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from scitex_agent_container._runners import session_daemon
 from scitex_agent_container._runners._incarnation import (
     EXIT_ONESHOT_COMPLETE,
@@ -111,18 +113,23 @@ def test_daemon_beats_carry_turns_completed(tmp_path: Path) -> None:
     assert hb is not None and hb["turns_completed"] == 0
 
 
-def test_daemon_resident_beat_state_is_ready(tmp_path: Path) -> None:
+@pytest.mark.parametrize("sample_delay_s", (0.05, 0.2))
+def test_daemon_resident_beat_state_is_ready(
+    tmp_path: Path, sample_delay_s: float
+) -> None:
     # Arrange: sample the beat MID-RUN from inside the driver, after the
-    # loop's first tick has landed (the driver runs while resident).
+    # loop's first tick has landed, including delayed observer scheduling.
     sampled: dict[str, Any] = {}
 
     async def _sampling_driver(name: str, state_dir: Path, **kwargs: Any) -> None:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(sample_delay_s)
         sampled.update(read_heartbeat(state_dir) or {})
+        # Stop only after sampling the resident beat. An independent timer
+        # could stop the real daemon before a delayed observer resumed.
+        os.kill(os.getpid(), signal.SIGTERM)
         await _drain_driver(name, state_dir, **kwargs)
 
     async def _scenario() -> int:
-        _sigterm_soon(0.15)
         return await session_daemon.run_session_daemon(
             "ag-ready",
             turn_driver=_sampling_driver,

@@ -238,6 +238,14 @@ def register_migrate_command(dev_group: click.Group) -> None:
         Nothing is deleted. Displaced units go to `.old/<timestamp>/`
         beside them, and a unit's drop-ins are carried across the rename
         rather than orphaned under the old name.
+
+        \b
+        Examples:
+          $ sac dev migrate-job-names
+          $ sac dev migrate-job-names --unit-dir ./units
+
+        The examples preview only; --yes performs the planned cutover.
+        A pending preview exits 2 to signal that approval is still required.
         """
         directory = unit_dir if unit_dir is not None else UNIT_DIR
 

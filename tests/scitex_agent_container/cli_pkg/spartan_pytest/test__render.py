@@ -1,18 +1,26 @@
-"""Tests for ``_render_sbatch_script`` + ``DEFAULT_RESERVATION``.
+"""Renderer text and actual Bash pipeline controls in owned fixtures.
 
-Pure-string output: the renderer takes (repo, branch, reservation,
-scratch_dir, job_tag) and emits the sbatch script body. No shell-out,
-no mocks — every assertion is on the rendered text.
-
-Style: STX-TQ002 AAA markers, STX-TQ007 one assert per test, no mocks
-(the renderer is a pure function — there is nothing to mock).
+The renderer is pure. Pipeline tests execute its Bash output with real tee
+and summary serialization around inert git/install/pytest tools; they do
+not install dependencies or run a real target package or cluster job.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+
+import pytest
+
 from scitex_agent_container.cli_pkg.spartan_pytest import (
     DEFAULT_RESERVATION,
+    _parse_summary,
     _render_sbatch_script,
+    _resolve_exit_code,
 )
 
 
@@ -84,3 +92,120 @@ def test_default_reservation_is_operator_sapphire_pool():
     actual = DEFAULT_RESERVATION
     # Assert
     assert actual == expected
+
+
+@pytest.mark.parametrize("field", ["reservation", "scratch_dir", "job_tag"])
+@pytest.mark.parametrize("control", ["\r", "\n", "\x00"])
+def test_render_refuses_line_breaking_header_values(field, control):
+    # Arrange
+    fields = dict(
+        repo="owned/fixture",
+        branch="main",
+        reservation="owned",
+        scratch_dir="/owned/run",
+        job_tag="main",
+    )
+    fields[field] += control + "#SBATCH --time=99:00:00"
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match=field + " must be single-line"):
+        _render_sbatch_script(**fields)
+
+
+@pytest.fixture
+def rendered_job_tools(tmp_path, env_save_restore):
+    """Use inert install/test tools around the actual rendered Bash pipeline."""
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    real_tee = shutil.which("tee")
+    (binary / "git").write_text(
+        '#!/bin/sh\nif [ "$1" = clone ]; then mkdir -p checkout; fi\n'
+    )
+    (binary / "python").write_text(
+        '#!/bin/sh\ncase "${1-}:${2-}" in\n'
+        "  -m:pip) exit 0;;\n"
+        '  -m:pytest) printf "%s\\n" "$SAC_FIXTURE_PYTEST_LOG"; exit "$SAC_FIXTURE_PYTEST_EXIT";;\n'
+        f'  *) exec {shlex.quote(sys.executable)} "$@";;\nesac\n'
+    )
+    (binary / "tee").write_text(
+        f'#!/bin/sh\n{shlex.quote(real_tee)} "$@"\nexit "$SAC_FIXTURE_CAPTURE_EXIT"\n'
+    )
+    for path in binary.iterdir():
+        path.chmod(0o700)
+    env_save_restore.set("PATH", str(binary) + os.pathsep + os.environ["PATH"])
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("SLURM_JOB_ID", "123")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "pytest_exit,capture_exit,expected",
+    [
+        (0, 0, 0),
+        (5, 0, 5),
+        (3, 0, 3),
+        (0, 1, 1),
+        (1, 1, 1),
+    ],
+)
+def test_rendered_bash_retains_real_pipeline_exit_evidence(
+    rendered_job_tools, env_save_restore, pytest_exit, capture_exit, expected
+):
+    # Arrange
+    root = rendered_job_tools
+    env_save_restore.set("SAC_FIXTURE_PYTEST_LOG", "3 passed in 0.1s")
+    env_save_restore.set("SAC_FIXTURE_PYTEST_EXIT", str(pytest_exit))
+    env_save_restore.set("SAC_FIXTURE_CAPTURE_EXIT", str(capture_exit))
+    scratch = root / "scratch"
+    script = root / "job.sh"
+    script.write_text(
+        _render_sbatch_script(
+            repo="owned/fixture",
+            branch="main",
+            reservation="owned",
+            scratch_dir=str(scratch),
+            job_tag="fixture",
+        )
+    )
+    # Act
+    result = subprocess.run(
+        ["bash", str(script)], cwd=root, capture_output=True, text=True, timeout=30
+    )
+    summary = json.loads((scratch / "summary.json").read_text())
+    # Assert
+    assert (
+        result.returncode,
+        summary["pytest_exit"],
+        summary["capture_exit"],
+        summary["passed"],
+        _resolve_exit_code(_parse_summary(json.dumps(summary))),
+    ) == (expected, pytest_exit, capture_exit, 3, int(expected != 0))
+
+
+def test_rendered_job_records_scheduler_id_from_environment(
+    rendered_job_tools, env_save_restore
+):
+    # Arrange
+    root = rendered_job_tools
+    env_save_restore.set("SAC_FIXTURE_PYTEST_LOG", "3 passed in 0.1s")
+    env_save_restore.set("SAC_FIXTURE_PYTEST_EXIT", "0")
+    env_save_restore.set("SAC_FIXTURE_CAPTURE_EXIT", "0")
+    env_save_restore.set("SLURM_JOB_ID", "987654")
+    scratch = root / "scratch"
+    script = root / "job.sh"
+    script.write_text(
+        _render_sbatch_script(
+            repo="owned/fixture",
+            branch="main",
+            reservation="owned",
+            scratch_dir=str(scratch),
+            job_tag="fixture",
+        )
+    )
+    # Act
+    result = subprocess.run(
+        ["bash", str(script)], cwd=root, capture_output=True, text=True, timeout=30
+    )
+    summary = _parse_summary((scratch / "summary.json").read_text())
+    # Assert
+    assert (result.returncode, summary.slurm_job_id) == (0, "987654")

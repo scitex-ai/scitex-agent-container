@@ -435,9 +435,9 @@ def _extract_install_functions() -> str:
 
 def _run_apply(tmp_path, home, *, override: str | None):
     """Copy the real unit, run apply_secrets_envrc against it, return text."""
-    unit = tmp_path / "sac-listen.service"
+    unit = tmp_path / "owned listen.service"
     unit.write_text(_SERVICE.read_text())
-    fns = tmp_path / "fns.sh"
+    fns = tmp_path / "owned functions.sh"
     fns.write_text(_extract_install_functions())
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -445,9 +445,9 @@ def _run_apply(tmp_path, home, *, override: str | None):
         env.pop("SAC_SECRETS_ENVRC", None)
     else:
         env["SAC_SECRETS_ENVRC"] = override
-    script = f". {fns}\napply_secrets_envrc {unit}\n"
+    script = '. "$1"\napply_secrets_envrc "$2"\n'
     subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", script],
+        ["bash", "-euo", "pipefail", "-c", script, "sac-test", fns, unit],
         env=env,
         capture_output=True,
         text=True,
@@ -525,21 +525,21 @@ def test_apply_is_idempotent(tmp_path):
     secrets = home / ".bash.d" / "secrets" / "010_scitex"
     secrets.mkdir(parents=True)
     (secrets / "00_aaa.src").write_text("export BAR=2\n")
-    unit = tmp_path / "sac-listen.service"
+    unit = tmp_path / "owned listen.service"
     unit.write_text(_SERVICE.read_text())
-    fns = tmp_path / "fns.sh"
+    fns = tmp_path / "owned functions.sh"
     fns.write_text(_extract_install_functions())
     env = os.environ.copy()
     env["HOME"] = str(home)
     env.pop("SAC_SECRETS_ENVRC", None)
     script = (
-        f". {fns}\n"
-        f"apply_secrets_envrc {unit}\n"
-        f"apply_secrets_envrc {unit}\n"
+        '. "$1"\n'
+        'apply_secrets_envrc "$2"\n'
+        'apply_secrets_envrc "$2"\n'
     )
     # Act
     subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", script],
+        ["bash", "-euo", "pipefail", "-c", script, "sac-test", fns, unit],
         env=env, capture_output=True, text=True, check=True, timeout=15,
     )
     # Assert — exactly one line after two applies.

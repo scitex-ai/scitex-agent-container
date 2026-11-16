@@ -94,7 +94,7 @@ def render_status_lines(payload: dict) -> list[str]:
     lines.append(f"  health probe:   {payload['health_url']} -> {probe}")
     if not serving:
         lines.append(
-            "  hint: run `sac listen restart` (inspect the process if a wedged "
+            "  hint: run `sac listen restart --yes` (inspect the process if a wedged "
             "remnant holds the port)."
         )
     return lines

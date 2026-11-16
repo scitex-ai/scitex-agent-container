@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.38.4"
+version = "0.39.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -91,9 +91,9 @@ dependencies = [
     # Required by the control plane's Store/schema/ACL, exchange-status and
     # managed-home APIs. 0.61.0 first ships ensure_dotscitex_managed_by_git;
     # the earlier Store correctness floors are recorded in the history below.
-    # (0.62.4.dev0 was never published; nothing in this tree imports past
-    # the released auditor API, so the floor stays at the release.)
-    "scitex-dev>=0.61.0",
+    # 0.62.24 adds native nested-path deprecated_alias forwarding, required
+    # by the retained Stop entry's real `dev hooks decide-stop` route.
+    "scitex-dev>=0.62.24",
     # SAC directly opens PostgreSQL channel connections and classifies lost
     # connections with psycopg exceptions. Match scitex_dev.store's driver
     # floor and binary extra so a bare install does not require system libpq.
@@ -238,10 +238,11 @@ gui = [
     # (css/app/app-header.css + data-stx-app-header) the dashboard adopts.
     "django>=4.2",
     # SSoT pin: scitex-sdk behavior is part of our render contract
-    # (0.3.14 fail-fasts the project picker with no provider; older
-    # minors render an empty slot). An open floor let CI resolve a
-    # newer SDK than dev venvs and red the gate on identical code.
-    "scitex-sdk[gui]==0.3.14",
+    # (0.3.17 includes the canonical header, keyword filter, and explicit
+    # user-scope capability contracts adopted by the dashboard). An open
+    # floor previously let CI resolve a newer SDK than dev venvs and
+    # red the gate on identical code.
+    "scitex-sdk[gui]==0.3.17",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -494,7 +495,7 @@ dev = [
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
     # Same SSoT pin as [gui] above — the two must not drift.
-    "scitex-sdk[gui]==0.3.14",
+    "scitex-sdk[gui]==0.3.17",
 ]
 docs = [
     "sphinx>=7.0",
@@ -815,7 +816,11 @@ path = "scripts/hatch_build.py"
 # path, which is the one release CI actually takes.
 exclude = [".git"]
 
+[tool.hatch.build.targets.sdist.force-include]
+".scitex/dev/cli-audit-dict.yaml" = ".scitex/dev/cli-audit-dict.yaml"
+
 [tool.hatch.build.targets.wheel.force-include]
+".scitex/dev/cli-audit-dict.yaml" = "scitex_agent_container/_cli_audit_dict.yaml"
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
 # In-process worktree policy assets. They must be reachable from an INSTALLED
 # sac on hosts where the repo is not on disk: the engine resolves them via

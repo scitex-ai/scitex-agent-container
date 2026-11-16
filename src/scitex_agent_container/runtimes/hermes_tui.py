@@ -313,7 +313,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         except HermesTuiRpcError as exc:
             return str(exc)
 
-    def control_state(self, config: AgentConfig) -> dict | None:
+    def _control_snapshot(self, config: AgentConfig) -> dict | None:
         from ._hermes_tui_rpc import HermesTuiRpcError
 
         state_dir = state_dir_for_config(config)
@@ -323,6 +323,22 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         except HermesTuiRpcError as exc:
             readiness = {"status": "unavailable", "detail": str(exc)}
         state["gateway_readiness"] = readiness
+        return state
+
+    def observe_control_state(self, config: AgentConfig) -> dict | None:
+        """Publish durable/readiness evidence without activating the renderer."""
+        state = self._control_snapshot(config)
+        state["pending_clarification_observation"] = {
+            "state": "unknown", "reason": "not_queried_passively"
+        }
+        return state
+
+    def control_state(self, config: AgentConfig) -> dict | None:
+        """Read the interactive control projection, which may attach a viewer."""
+        from ._hermes_tui_rpc import HermesTuiRpcError
+
+        state_dir = state_dir_for_config(config)
+        state = self._control_snapshot(config)
         reader = self._pending_clarification_reader
         if reader is None:
             from ._hermes_tui_rpc import observe_pending_clarification

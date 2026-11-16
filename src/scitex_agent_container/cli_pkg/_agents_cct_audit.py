@@ -1,4 +1,4 @@
-"""``sac agents cct-audit`` — who declares a Telegram rail, and who actually has one.
+"""``sac agents validate-telegram`` — who declares a Telegram rail, and who actually has one.
 
 WHY A SWEEP AND NOT JUST THE START-TIME ALARM
     :mod:`..runtimes._cct_rail_alarm` fires when an agent STARTS. That closes
@@ -42,6 +42,7 @@ TOKEN VALUES ARE NEVER READ
 from __future__ import annotations
 
 import json
+from copy import copy
 from pathlib import Path
 
 import click
@@ -224,7 +225,7 @@ def _render_table(rows: list[dict]) -> None:
     render_rich(table, __name__)
 
 
-@click.command(name="cct-audit")
+@click.command(name="validate-telegram")
 @click.option(
     "--all",
     "include_unrequested",
@@ -249,6 +250,10 @@ def cct_audit(
     as_json: bool,
 ) -> None:
     """Audit every spec's Telegram rail: declared vs actually resolved.
+
+    \b
+    Example:
+      $ sac agents validate-telegram --agents-dir /path/to/specs --json
 
     \b
     THE FAILURE THIS SWEEPS UP:
@@ -316,8 +321,13 @@ def cct_audit(
 
 
 def register(group: click.Group) -> None:
-    """Attach ``cct-audit`` to the ``sac agents`` group."""
+    """Attach ``validate-telegram`` and its hidden legacy alias to the ``sac agents`` group."""
     group.add_command(cct_audit)
+    legacy = copy(cct_audit)
+    legacy.name = "cct-audit"
+    legacy.hidden = True
+    legacy.deprecated = "Use sac agents validate-telegram."
+    group.add_command(legacy)
 
 
 __all__ = ["cct_audit", "register"]

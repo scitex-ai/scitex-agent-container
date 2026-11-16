@@ -304,6 +304,7 @@ def build_argv(
     dry_run: bool = False,
     adopt: bool = False,
     force: bool = False,
+    as_json: bool = False,
     exe: str = "scitex-dev",
     leaf: object | None = None,
 ) -> list[str]:
@@ -354,6 +355,10 @@ def build_argv(
             argv.append(name)
         else:
             argv += ["--name", name]
+    if as_json:
+        from ._dev_jobs_json import json_arguments
+
+        argv += json_arguments(delegation.path, delegation.verb, leaf=leaf)
     if dry_run:
         argv.append("--dry-run")
     if yes:
@@ -395,6 +400,7 @@ def invoke(
     dry_run: bool = False,
     adopt: bool = False,
     force: bool = False,
+    as_json: bool = False,
 ) -> int:
     """Run the resolved ``scitex-dev ecosystem`` command; return its exit code.
 
@@ -450,6 +456,7 @@ def invoke(
             dry_run=dry_run,
             adopt=adopt,
             force=force,
+            as_json=as_json,
             exe=exe,
         )
     )

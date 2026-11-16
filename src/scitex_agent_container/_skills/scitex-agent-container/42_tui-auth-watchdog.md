@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] TUI auth-failure pattern-recognition — the watchdog that reads a `tui-<agent>` pane and tells a REAL "Login expired" banner apart from an agent QUOTING it
-  [DETAILS] SDK-runner agents write a machine-readable `session.jsonl`; TUI agents write their transcript INSIDE the container overlay, invisible to file scans, so the ONLY way to see a login-stuck TUI agent is to read its tmux pane. Under the operator's `:ro`-mount + hard-restart auth ruling this pane-reader is the SOLE safety net (no mount mode prevents the stale-in-memory-OAuth-token death — only detect→restart recovers it). This leaf is the detection contract's CORE invariants (§1–§4); the package-matcher distance heuristic (§5), tmux topology (§6), auth-heal wiring, and the extend-the-matcher runbook live in the companion [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md). Load it before touching `tui_auth_detect.py`, `auth_status.py`, or `sac agents auth-status`.
+  [DETAILS] SDK-runner agents write a machine-readable `session.jsonl`; TUI agents write their transcript INSIDE the container overlay, invisible to file scans, so the ONLY way to see a login-stuck TUI agent is to read its tmux pane. Under the operator's `:ro`-mount + hard-restart auth ruling this pane-reader is the SOLE safety net (no mount mode prevents the stale-in-memory-OAuth-token death — only detect→restart recovers it). This leaf is the detection contract's CORE invariants (§1–§4); the package-matcher distance heuristic (§5), tmux topology (§6), auth-heal wiring, and the extend-the-matcher runbook live in the companion [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md). Load it before touching `tui_auth_detect.py`, `auth_status.py`, or `sac agents show-auth-status`.
 tags: [scitex-agent-container-tui-auth-watchdog, auth, tui, watchdog, detection]
 ---
 
@@ -35,7 +35,7 @@ There are **two** implementations. Do not confuse them.
 | | LIVE watchdog | PACKAGE matcher |
 |---|---|---|
 | File | `~/.scitex/agent-container/bin/tui_auth_detect.py` (dotfiles-tracked) | `src/scitex_agent_container/_runners/_tmux/auth_status.py` (merged PR #627) |
-| Consumed by | `auth-heal.py` **cron** — the actual running safety net | `sac agents auth-status` — on-demand check **and the cache WRITER** |
+| Consumed by | `auth-heal.py` **cron** — the actual running safety net | `sac agents show-auth-status` — on-demand check **and the cache WRITER** |
 | Corroboration | frozen **whole-pane SHA-1 signature** across two runs | frozen **(banner-kind, distance-from-prompt)** across two runs + near-prompt gating |
 | Status | **this is what protects the fleet today** | hardened check + intended future replacement |
 

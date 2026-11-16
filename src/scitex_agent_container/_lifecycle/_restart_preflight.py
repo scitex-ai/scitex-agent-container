@@ -337,7 +337,7 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
         f'"Login expired · Please run /login" to every prompt. The running '
         f"container has been LEFT UP (not stopped), so {name!r} keeps working "
         f"on its current credential. Fix: `sac accounts refresh {label}` (or "
-        f"`claude /login` as that account, then `sac accounts sync-live`), "
+        f"`claude /login` as that account, then `sac accounts sync-live --yes`), "
         f"then retry the restart. [{reason}]"
     )
 

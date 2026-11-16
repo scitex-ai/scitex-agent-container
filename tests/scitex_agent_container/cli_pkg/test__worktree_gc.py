@@ -327,6 +327,128 @@ def test_apply_over_cap_records_an_event(repo, worktree, event_log):
         ["--repo", str(repo), "--apply", "--cap", "0", "--min-age-hours", "0"],
     )
     # Assert
-    degraded = read_events(event_log, subsystem="worktree-gc",
-                           event=SUBJECT_DEGRADED)
+    degraded = read_events(event_log, subsystem="worktree-gc", event=SUBJECT_DEGRADED)
     assert len(degraded) == 1
+
+
+@pytest.mark.parametrize(
+    "flags,removed",
+    [
+        ([], False),
+        (["--dry-run"], False),
+        (["--apply"], True),
+        (["--yes"], True),
+        (["-y"], True),
+    ],
+)
+@pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
+def test_canonical_clean_preserves_modes_and_private_git_state(
+    repo, worktree, event_log, flags, removed, prefix, suffix
+):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    path = worktree("canonical")
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            *prefix,
+            "worktree",
+            "clean",
+            "--repo",
+            str(repo),
+            "--min-age-hours",
+            "0",
+            "--no-alarm",
+            *flags,
+            *suffix,
+        ],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        path.exists(),
+        json.loads(result.stdout)["removed"],
+        event_log.exists(),
+    ) == (0, not removed, int(removed), False)
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+def test_clean_approval_conflicts_leave_worktree_intact(
+    repo, worktree, event_log, approval
+):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    path = worktree("conflict")
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            "worktree",
+            "clean",
+            "--repo",
+            str(repo),
+            approval,
+            "--dry-run",
+            "--min-age-hours",
+            "0",
+            "--no-alarm",
+        ],
+    )
+    # Assert
+    assert (result.exit_code, path.exists(), event_log.exists()) == (2, True, False)
+
+
+def test_legacy_gc_still_returns_json_and_warns_only_stderr(repo, worktree, event_log):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    path = worktree("legacy")
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            "--json",
+            "worktree",
+            "gc",
+            "--repo",
+            str(repo),
+            "--min-age-hours",
+            "0",
+            "--no-alarm",
+        ],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        path.exists(),
+        json.loads(result.stdout)["removed"],
+        "deprecated" in result.stderr,
+        "deprecated" in result.stdout,
+    ) == (
+        0,
+        True,
+        0,
+        True,
+        False,
+    )
+
+
+def test_worktree_help_shows_clean_and_hides_legacy_gc():
+    # Arrange
+    from scitex_agent_container.cli_pkg.worktree_group import worktree_group
+
+    # Act
+    result = CliRunner().invoke(worktree_group, ["--help"])
+    # Assert
+    assert (
+        result.exit_code,
+        "  clean " in result.stdout,
+        "  gc " in result.stdout,
+    ) == (
+        0,
+        True,
+        False,
+    )

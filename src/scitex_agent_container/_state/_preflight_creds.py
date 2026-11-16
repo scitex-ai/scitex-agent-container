@@ -326,7 +326,7 @@ def check_spec_oauth_credentials(
         f"agent {name!r}: every credential its spec declares is unusable "
         f"({len(failures)} candidate(s) checked, none passed):\n{detail}\n"
         "Fix: `claude /login` to one of those accounts then "
-        "`sac accounts sync-live` on this host, or export "
+        "`sac accounts sync-live --yes` on this host, or export "
         "ANTHROPIC_API_KEY / SAC_ANTHROPIC_API_KEY to use the API-key "
         "auth path instead."
     )

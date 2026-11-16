@@ -22,7 +22,7 @@ from scitex_agent_container.runtimes.settings_json import (
 )
 
 #: The command Claude Code must end up invoking on every turn end.
-_ACTUATOR = "scitex-agent-container never-stop-when-task-remains"
+_ACTUATOR = "scitex-agent-container dev hooks decide-stop"
 
 #: The actuator's FIRST released spelling. Already-deployed agents have this
 #: string sitting in their ``settings.json`` right now, so the rename is a
@@ -200,7 +200,9 @@ def test_migration_leaves_exactly_one_actuator(tmp_path: Path):
     actuators = [
         c
         for c in commands
-        if "never-stop-when-task-remains" in c or "take-next-item" in c
+        if c == _ACTUATOR
+        or "never-stop-when-task-remains" in c
+        or "take-next-item" in c
     ]
     # Assert
     assert actuators == [_ACTUATOR]
@@ -231,3 +233,38 @@ def test_migration_is_idempotent(tmp_path: Path):
     commands = _stop_commands(_write_and_read(tmp_path))
     # Assert
     assert commands.count(_ACTUATOR) == 1
+
+
+def test_mixed_previous_and_current_settings_materialize_one_stop_relay(tmp_path):
+    # Arrange
+    directory = tmp_path / ".claude"
+    directory.mkdir()
+    previous = "scitex-agent-container never-stop-when-task-remains"
+    commands = [previous, _ACTUATOR, "echo preserve"]
+    (directory / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": command}
+                                for command in commands
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    # Act
+    _write_and_read(tmp_path)
+    result = _stop_commands(_write_and_read(tmp_path))
+
+    # Assert
+    assert (result.count(_ACTUATOR), previous in result, "echo preserve" in result) == (
+        1,
+        False,
+        True,
+    )

@@ -204,7 +204,7 @@ async def _forward_to_remote(
     destination's host bearer is read from
     ``peer-tokens/<target_host>.token`` on the forwarding host. The
     operator populates that registry with ``sac host add-peer <host>
-    <token>`` (one entry per peer). The forwarder uses that bearer
+    <token> --yes`` (one entry per peer). The forwarder uses that bearer
     on the wire — not its own, not the original caller's.
 
     Missing ``peer-tokens/<host>.token`` is a **loud failure**: 502

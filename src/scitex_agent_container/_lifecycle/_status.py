@@ -491,7 +491,7 @@ def agent_status(
     # circuit-breaker latch), which is distinct from liveness and idle state.
     if config is not None:
         try:
-            control = runtime.control_state(config) if runtime is not None else None
+            control = runtime.observe_control_state(config) if runtime is not None else None
         except Exception:  # stx-allow: fallback (reason: optional adapter observation must not break status)
             control = None
         if control is not None:

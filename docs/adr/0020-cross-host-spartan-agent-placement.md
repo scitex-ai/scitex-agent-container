@@ -76,7 +76,7 @@ process).
 5. **Cross-register peer-tokens** (WI-4 per-host bearer registry, ADR-0015).
    Master gets `peer-tokens/spartan.token` (Spartan's listen bearer);
    Spartan gets `peer-tokens/ywata-note-win.token` (the master's). Use
-   `sac host add-peer <host> <token>`, or copy **host-side**
+   `sac host add-peer <host> <token> --yes`, or copy **host-side**
    (`ssh spartan cat <token> > master/peer-tokens/spartan.token`) so the
    secret never transits your own context.
 

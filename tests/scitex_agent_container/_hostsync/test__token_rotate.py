@@ -240,7 +240,7 @@ def test_rotation_restarts_the_peers_listen(cfg_file, master_cfg, peer_tokens_di
     # Act
     _rotate(master_cfg, peer_tokens_dir, runner)
     # Assert
-    assert runner.calls[3][0][-3:] == ["sac", "listen", "restart"]
+    assert runner.calls[3][0][-4:] == ["sac", "listen", "restart", "--yes"]
 
 
 def test_rotation_verifies_with_two_probes(cfg_file, master_cfg, peer_tokens_dir):

@@ -1,52 +1,21 @@
-"""Run the hook executable and classify the RESULT — never its contents.
+"""Classify the configured board provider's result for Stop-hook decisions.
 
-OWNERSHIP BOUNDARY (agreed with scitex-cards)
----------------------------------------------
-**scitex-cards ships the hook executable.** It emits the Claude Code
-Stop-hook JSON itself — ``decision: "block"`` plus the ``reason`` that
-becomes the agent's next instruction. It owns both ends of that contract.
+Preferred protocol: provider-authored hook JSON with a ``decision`` is
+normalized to allow/block; block payloads are forwarded without composing a
+Cards-specific continuation here. An exit-0 response also allows the stop.
 
-**sac registers it and nothing else.** Settings materialisation, deployment
-to every agent, the de-dupe algebra, the loop guard, fail-open.
+Compatibility protocol: exit 2 is accepted only with a parsed stdout verdict
+containing ``runnable``. A positive verdict is converted to a bounded block
+reason from ``items`` fields ``card_id``, ``reason`` and ``next_action``.
+This legacy conversion remains intentional compatibility; it is not a claim
+that this adapter has no knowledge of the old verdict shape. Volatile fields
+are excluded so repeated unchanged reasons can trip the loop guard.
 
-So this module deliberately has **zero knowledge of scitex-cards' output
-format**. It does not read ``items[]``, ``card_id``, ``next_action``, or
-``idle_seconds``, and it does not parse numbered hint lines. An earlier
-draft did all of that, which made cards' stdout an API they could not change
-without breaking us — the exact coupling that was deleted in the other
-direction when cards' bridge was killed for depending on sac. Removing their
-dependency on us and then quietly building ours on them would have left the
-same knot tied the other way round.
-
-What this module DOES read is the **Claude Code hook protocol**, which is
-owned by Claude Code and is the shared standard both sides already target:
-
-* stdout carrying a hook-protocol object (it has ``decision``) → **passed
-  through verbatim**.
-* exit 0 → allow the stop.
-* exit 2 **plus** a parseable verdict on stdout (it has ``runnable``) →
-  block, with a reason composed from THAT PAYLOAD.
-* exit 2 with nothing parseable on stdout → ``UNKNOWN``.
-* anything else → ``UNKNOWN``.
-
-A RESULT IS ONLY ADMISSIBLE IF WE CAN PARSE IT
-----------------------------------------------
-An exit code on its own is not an answer. Exit 2 is both "work remains" and
-the universal CLI usage-error code, so a host whose scitex-cards predates
-``may-stop`` exits 2 with click's ``No such command`` on stderr. Treating
-that as an affirmative block turned "I could not determine whether you may
-stop" into "you may NOT stop" — UNKNOWN collapsed into the blocking pole,
-the one direction this gate must never fail in — and then handed the usage
-text back to the agent as its next instruction.
-
-So: only a payload we can actually read counts as a verdict, and only the
-detector's own words may become a ``reason``. Raw stderr never does.
-
-THREE STATES, NEVER TWO
------------------------
-``allow`` / ``block`` / ``unknown``. "The check said nothing is runnable"
-and "we could not tell" are different facts and must not collapse into the
-same pole. Only ``unknown`` fails open.
+Exit 2 alone is also a CLI usage-error status, so it cannot prove that work
+remains. Missing/unreadable positive verdicts, provider failures and timeouts
+are UNKNOWN, not an instruction to continue. Raw stderr is diagnostic only
+and never becomes the next instruction. SAC owns invocation, identity,
+fail-open and loop-state handling; board semantics belong to the provider.
 """
 
 from __future__ import annotations

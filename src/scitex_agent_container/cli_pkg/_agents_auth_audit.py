@@ -1,4 +1,4 @@
-"""``sac agents auth-audit`` — compare auth verdicts against pane LAYOUT. Read-only.
+"""``sac agents validate-auth-verdicts`` — compare auth verdicts with pane layout.
 
 WHY THIS COMMAND EXISTS INSTEAD OF A RESTARTER
     The obvious version of this feature — detect login-required agents and
@@ -27,14 +27,15 @@ WHAT IT DOES
     positives. This command exists to count them BEFORE anything acts on them.
 
 IT NEVER RESTARTS ANYTHING
-    There is no ``--apply``. The restart arm ships only once this comparison is
-    clean across the fleet and a true-positive pane has actually been captured.
+    There is no ``--apply``. This command records observations in a local
+    journal; lifecycle recovery and its policy are separate operations.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from copy import copy
 
 import click
 from rich.table import Table
@@ -115,7 +116,7 @@ def _rows(observe_s: float, journal: Journal) -> list[dict]:
     return rows
 
 
-@click.command(name="auth-audit")
+@click.command(name="validate-auth-verdicts")
 @click.option(
     "--observe",
     "observe_s",
@@ -153,8 +154,12 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
       VERDICT=AUTH-FAILED + LAYOUT=DEAD   -> a genuine candidate.
       anything UNKNOWN                    -> we learned nothing; do nothing.
 
-    Exits 1 if any false positive is found — that is the gate on ever enabling
-    an automated restarter.
+    Exits 1 if any false positive is found. This command reports observations;
+    recovery policy and an actual restart are separate operations.
+
+    \b
+    Example:
+      $ sac agents validate-auth-verdicts --help
     """
     journal = Journal.open(log_path())
     journal.event("AUDIT-START", f"observe={observe_s:.0f}s (read-only, no restarts)")
@@ -204,14 +209,19 @@ def auth_audit(ctx: click.Context, observe_s: float, as_json: bool) -> None:
     if bad:
         render_rich(f"\n[red]{len(bad)} agent(s) are flagged AUTH-FAILED but their "
             f"banner is HISTORY:[/red] {', '.join(r['agent'] for r in bad)}\n"
-            "  Restarting these would destroy live work. An automated restarter "
-            "MUST NOT be enabled while this count is non-zero.", __name__)
+            "  Review these observations before recovery; this audit never "
+            "restarts agents.", __name__)
     raise SystemExit(1 if bad else 0)
 
 
 def register(agent_group) -> None:
-    """Attach ``auth-audit`` to the parent ``agents`` Click group."""
+    """Attach verdict validation and its hidden legacy alias to ``agents``."""
     agent_group.add_command(auth_audit)
+    legacy = copy(auth_audit)
+    legacy.name = "auth-audit"
+    legacy.hidden = True
+    legacy.deprecated = "Use sac agents validate-auth-verdicts."
+    agent_group.add_command(legacy)
 
 
 __all__ = ["auth_audit", "register"]

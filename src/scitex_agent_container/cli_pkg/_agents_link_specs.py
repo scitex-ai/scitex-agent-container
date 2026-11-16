@@ -290,6 +290,10 @@ def link_specs(
     target is changed. Apply refuses uncommitted selected sources. A dry-run
     exits 1 while either link drift or selected-source git drift remains, so
     the same command is a deterministic deployment gate.
+
+    \b
+    Example (preview only; ./agent-definitions must already exist):
+      $ sac agents link-specs --source ./agent-definitions --only worker-agent --json
     """
     source = source_root.expanduser().resolve(strict=True)
     target = (target_root or _live_agents_root()).expanduser().absolute()

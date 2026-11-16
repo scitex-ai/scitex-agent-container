@@ -16,7 +16,7 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 from __future__ import annotations
 
 import json
-import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,7 @@ from scitex_agent_container.cli_pkg._agents_reconcile import reconcile
 
 
 @pytest.fixture(autouse=True)
-def empty_fleet(tmp_path: Path):
+def empty_fleet(tmp_path: Path, env_save_restore):
     # Arrange — point the verb at an EMPTY tmp registry (env override, the
     # same seam `sac agents refresh-acl` honours) so no test can ever read
     # or restart the operator's real agents. Explicit save/restore.
@@ -37,16 +37,17 @@ def empty_fleet(tmp_path: Path):
         "SCITEX_AGENT_CONTAINER_RUNTIME_DIR": str(tmp_path / "runtime"),
         "SCITEX_TODO_TASKS_YAML_SHARED": str(tmp_path / "tasks.yaml"),
     }
-    saved = {k: os.environ.get(k) for k in keys}
-    os.environ.update(keys)
+    for key, value in keys.items():
+        env_save_restore.set(key, value)
     try:
         yield reg
     finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        # Group discovery can import this constant-bearing module under the
+        # temporary runtime. Restore the environment before deriving it again.
+        module = sys.modules.get("scitex_agent_container._runners._session_state")
+        if module is not None:
+            env_save_restore.reload_after_restore(module)
+
 
 
 def _runner() -> CliRunner:
@@ -201,3 +202,23 @@ def test_verb_is_registered_on_the_agents_group():
     names = sorted(agent_group.commands)
     # Assert
     assert "reconcile" in names
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+def test_approval_spellings_select_the_existing_apply_mode(approval):
+    # Arrange: the module's empty_fleet fixture prevents real-agent actions.
+    runner = _runner()
+    # Act
+    result = runner.invoke(reconcile, [approval, "--json"])
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout)["mode"]) == (0, "apply")
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+def test_all_approval_spellings_preserve_explicit_preview_conflict(approval):
+    # Arrange
+    runner = _runner()
+    # Act
+    result = runner.invoke(reconcile, [approval, "--dry-run"])
+    # Assert
+    assert (result.exit_code, "Dry-run is the DEFAULT" in result.stderr) == (2, True)

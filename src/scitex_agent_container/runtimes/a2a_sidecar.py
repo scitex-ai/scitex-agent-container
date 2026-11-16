@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -216,11 +217,29 @@ def _adopt_legacy_sidecar(config: AgentConfig, pid_path: Path) -> int | None:
     return pid
 
 
-def start_sidecar(config: AgentConfig) -> int | None:
-    """Spawn the A2A sidecar for ``config``. Return PID, or None if disabled."""
+def start_sidecar(
+    config: AgentConfig, *, listener: socket.socket | None = None
+) -> int | None:
+    """Spawn the A2A sidecar, optionally inheriting a matching POSIX listener.
+
+    ``listener`` must already listen at the configured host/port. It remains
+    caller-owned; the child receives its own inherited descriptor reference.
+    Return the PID, or None when disabled. Invalid listeners are refused.
+    """
     a2a = _read_a2a_block(config)
     if a2a is None:
+        if listener is not None:
+            raise ValueError("Listener handoff requires an enabled A2A configuration")
         return None
+
+    port = int(a2a["port"])
+    host = str(a2a.get("host", "127.0.0.1"))
+    handler = str(a2a.get("handler", "echo"))
+    fd = None
+    if listener is not None:
+        from scitex_agent_container.a2a._listener import _validate_listener
+
+        fd = _validate_listener(listener.fileno(), host, port)
 
     pid_path = _pid_path(config)
     if pid_path.exists():
@@ -250,10 +269,6 @@ def start_sidecar(config: AgentConfig) -> int | None:
     if adopted is not None:
         return adopted
 
-    port = int(a2a["port"])
-    host = str(a2a.get("host", "127.0.0.1"))
-    handler = str(a2a.get("handler", "echo"))
-
     workdir = Path(config.expanded_workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     log_path = _log_path(config)
@@ -275,6 +290,9 @@ def start_sidecar(config: AgentConfig) -> int | None:
         "-v",
     ]
 
+    if fd is not None:
+        cmd.extend(["--fd", str(fd)])
+
     log_fp = None
     try:
         log_fp = log_path.open("ab")
@@ -293,6 +311,7 @@ def start_sidecar(config: AgentConfig) -> int | None:
             stdout=stdout_target,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            pass_fds=() if fd is None else (fd,),
         )
     except (
         OSError

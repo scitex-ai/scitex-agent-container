@@ -6,11 +6,11 @@ wired in the agent's ``.claude/settings.local.json``::
 
     "hooks": {
       "PreToolUse":        [{"matcher": "", "hooks": [
-        {"type": "command", "command": "scitex-agent-container ingest-hook-event pretool"}
+        {"type": "command", "command": "sac event ingest pretool"}
       ]}],
-      "PostToolUse":       [...hook-event posttool],
-      "UserPromptSubmit":  [...hook-event prompt],
-      "Stop":              [...hook-event stop]
+      "PostToolUse":       [...sac event ingest posttool],
+      "UserPromptSubmit":  [...sac event ingest prompt],
+      "Stop":              [...sac event ingest stop]
     }
 
 The agent name is resolved in this order:
@@ -69,8 +69,8 @@ def hook_event(kind: str, agent_flag: str) -> None:
 
     \b
     Example:
-      $ echo '{"tool":"Read"}' | sac event ingest PreToolUse
-      $ echo '{}' | sac event ingest Stop --agent head-ywata-note-win
+      $ echo '{"tool":"Read"}' | sac event ingest pretool --agent example-agent
+      $ echo '{}' | sac event ingest stop --agent example-agent
     """
     # stx-allow: fallback (reason: hook handler must never crash the host agent; any error in stdin read, JSON parse, or event append is swallowed so the tool call is not aborted)
     try:

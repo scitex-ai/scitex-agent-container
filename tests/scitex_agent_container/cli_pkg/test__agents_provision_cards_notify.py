@@ -67,7 +67,9 @@ def _spec(root: Path, *, notify_port: int = 55433, pguser: str | None = None) ->
     return path
 
 
-def test_dry_run_derives_exact_direct_row_without_changing_passfile(tmp_path: Path) -> None:
+def test_dry_run_derives_exact_direct_row_without_changing_passfile(
+    tmp_path: Path,
+) -> None:
     # Arrange
     path = _private(
         tmp_path / ".pgpass",
@@ -197,7 +199,9 @@ def test_cli_honours_explicit_pguser(tmp_path: Path) -> None:
 def test_cli_refuses_non_direct_notify_dsn_without_writing(tmp_path: Path) -> None:
     # Arrange
     _spec(tmp_path, notify_port=55432)
-    path = _private(tmp_path / ".pgpass", "scitex-primary:55432:*:alice__scitex-hub:secret\n")
+    path = _private(
+        tmp_path / ".pgpass", "scitex-primary:55432:*:alice__scitex-hub:secret\n"
+    )
     before = path.read_bytes()
 
     # Act
@@ -208,7 +212,11 @@ def test_cli_refuses_non_direct_notify_dsn_without_writing(tmp_path: Path) -> No
     )
 
     # Assert
-    assert (result.exit_code != 0, "port 55433" in result.output, path.read_bytes()) == (
+    assert (
+        result.exit_code != 0,
+        "port 55433" in result.output,
+        path.read_bytes(),
+    ) == (
         True,
         True,
         before,
@@ -248,7 +256,9 @@ def test_source_and_target_hosts_must_match(tmp_path: Path) -> None:
         "postgresql://another-primary:55433/scitex"
     )
     spec.write_text(yaml.safe_dump(document), encoding="utf-8")
-    path = _private(tmp_path / ".pgpass", "scitex-primary:55432:*:alice__scitex-hub:secret\n")
+    path = _private(
+        tmp_path / ".pgpass", "scitex-primary:55432:*:alice__scitex-hub:secret\n"
+    )
 
     # Act
     result = CliRunner().invoke(
@@ -261,4 +271,130 @@ def test_source_and_target_hosts_must_match(tmp_path: Path) -> None:
     assert (result.exit_code != 0, "same host and database" in result.output) == (
         True,
         True,
+    )
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+@pytest.mark.parametrize("inspection", ["--check", "--dry-run"])
+def test_approval_conflicts_before_spec_resolution(tmp_path, approval, inspection):
+    # Arrange
+    absent = tmp_path / "absent"
+    # Act
+    result = CliRunner().invoke(
+        provision_cards_notify, ["--root", str(absent), approval, inspection]
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        absent.exists(),
+        "cannot be combined" in result.output or "mutually exclusive" in result.output,
+    ) == (2, False, True)
+
+
+@pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
+def test_argument_preview_never_resolves_missing_specs(tmp_path, prefix, suffix):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    absent = tmp_path / "missing-specs"
+    passfile = tmp_path / "missing-passfile"
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            *prefix,
+            "agents",
+            "provision-cards-notify",
+            "--root",
+            str(absent),
+            "--pgpass",
+            str(passfile),
+            "--agent",
+            "one",
+            "--agent",
+            "two",
+            "--check",
+            "--dry-run",
+            *suffix,
+        ],
+    )
+    # Assert
+    assert (result.exit_code, json.loads(result.stdout), list(tmp_path.iterdir())) == (
+        0,
+        {
+            "action": "provision-cards-notify",
+            "dry_run": True,
+            "scope": "arguments_only",
+            "verified": False,
+            "root": str(absent),
+            "agents": ["one", "two"],
+            "pgpass": str(passfile),
+        },
+        [],
+    )
+
+
+@pytest.mark.parametrize("approval", ["--apply", "--yes", "-y"])
+@pytest.mark.parametrize("prefix,suffix", [(["--json"], []), ([], ["--json"])])
+def test_approval_aliases_write_actual_private_rows(tmp_path, approval, prefix, suffix):
+    # Arrange
+    from scitex_agent_container.cli import main
+
+    _spec(tmp_path, pguser="shared_role")
+    path = _private(
+        tmp_path / ".pgpass", "scitex-primary:55432:*:shared_role:private-fixture\n"
+    )
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            *prefix,
+            "agents",
+            "provision-cards-notify",
+            "--root",
+            str(tmp_path),
+            "--agent",
+            "hub",
+            approval,
+            *suffix,
+        ],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        json.loads(result.stdout)["rows"][0]["status"],
+        path.read_text(),
+        stat_mode(path),
+        "private-fixture" in result.output,
+    ) == (
+        0,
+        "provisioned",
+        "scitex-primary:55432:*:shared_role:private-fixture\n"
+        "scitex-primary:55433:scitex:shared_role:private-fixture\n",
+        0o600,
+        False,
+    )
+
+
+def test_later_invalid_passfile_prevents_any_earlier_write(tmp_path):
+    # Arrange
+    first = _private(
+        tmp_path / "first.pgpass", "scitex-primary:55432:*:alice__hub:one\n"
+    )
+    second = _private(
+        tmp_path / "second.pgpass", "scitex-primary:55432:*:wrong_role:two\n"
+    )
+    before = (first.read_bytes(), second.read_bytes())
+    # Act
+    error = _notify_error(
+        lambda: provision([_request(first), _request(second)], apply_changes=True)
+    )
+    # Assert
+    assert (
+        "no matching port-55432" in str(error),
+        first.read_bytes(),
+        second.read_bytes(),
+    ) == (
+        True,
+        *before,
     )

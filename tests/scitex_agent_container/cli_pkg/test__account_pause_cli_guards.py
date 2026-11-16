@@ -290,7 +290,7 @@ def test_resume_reports_an_unremovable_record_instead_of_crashing(
 ):
     """A ClickException, not a stack trace: exit 1 with a sentence."""
     # Arrange
-    args = ["resume", BETA]
+    args = ["resume", BETA, "--yes"]
     # Act
     result = CliRunner().invoke(pause_cli, args, env=env)
     # Assert
@@ -300,7 +300,7 @@ def test_resume_reports_an_unremovable_record_instead_of_crashing(
 def test_resume_says_the_account_is_still_paused(pause_cli, env, unremovable_record):
     """The one thing he must not be left believing is that it worked."""
     # Arrange
-    args = ["resume", BETA]
+    args = ["resume", BETA, "--yes"]
     # Act
     result = CliRunner().invoke(pause_cli, args, env=env)
     # Assert
@@ -310,7 +310,7 @@ def test_resume_says_the_account_is_still_paused(pause_cli, env, unremovable_rec
 def test_resume_does_not_raise_a_bare_oserror(pause_cli, env, unremovable_record):
     """The failure this replaces: an unhandled IsADirectoryError."""
     # Arrange
-    args = ["resume", BETA]
+    args = ["resume", BETA, "--yes"]
     # Act
     result = CliRunner().invoke(pause_cli, args, env=env)
     # Assert
@@ -322,7 +322,7 @@ def test_a_removable_record_is_still_removed(pause_cli, env, two_accounts: Path)
     # Arrange
     CliRunner().invoke(pause_cli, ["pause", BETA, "--reason", "quota rest"], env=env)
     # Act
-    CliRunner().invoke(pause_cli, ["resume", BETA], env=env)
+    CliRunner().invoke(pause_cli, ["resume", BETA, "--yes"], env=env)
     # Assert
     assert not pause_path(two_accounts / BETA).exists()
 

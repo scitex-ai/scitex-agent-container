@@ -12,7 +12,7 @@ Routes (mirroring the spec):
 * ``GET /agents/`` — JSON list of agents.
 * ``GET /agents/<name>/.well-known/agent-card.json`` — per-agent AgentCard
   (sac dict shape; preserves the ``x-scitex-agent-container`` extension).
-* ``POST /agents/<name>`` — SDK JSON-RPC dispatcher.
+* ``POST /agents/<name>/message:send`` — SDK JSON-RPC dispatcher.
 
 Card projection: see :mod:`._card`. The HTTP ``.well-known`` route serves
 the dict projection (which keeps sac-extension fields). The SDK's
@@ -28,7 +28,6 @@ store.
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
 from typing import Any
 
@@ -53,11 +52,13 @@ from scitex_agent_container.a2a._card import (
     project_card_proto,
     validate_card_v1,
 )
+from scitex_agent_container.a2a._card_interface import agent_interface
 from scitex_agent_container.a2a._delivery_report import report_zero_delivery
 from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_ack import inbox_ack_route
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
+from scitex_agent_container.a2a._serve import serve
 
 log = slogging.getLogger(__name__)
 # ---------------------------------------------------------------------
@@ -66,9 +67,7 @@ log = slogging.getLogger(__name__)
 
 
 class _AgentDispatcher:
-    """Bundle the SDK's per-agent components (executor, task store,
-    handler, jsonrpc dispatcher route) under a single object.
-    """
+    """Bundle each agent's SDK executor, task store and JSON-RPC dispatcher."""
 
     def __init__(
         self,
@@ -161,26 +160,19 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
     async def get_fleet_card(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
-        return _validated(fleet_card(base, agents), "fleet card")
+        card = fleet_card(base, agents, protocol_binding="JSONRPC")
+        return _validated(card, "fleet card")
 
     async def list_agents(request: Request) -> Response:
         base = _base_url(request)
         agents = sorted(ctx.yamls.keys())
-        # Each member entry mirrors the v1 AgentCard shape: binding URLs
-        # live under ``supportedInterfaces[]`` (ADR-0004 D11), not a
-        # top-level ``url`` (which v1 dropped).
         return JSONResponse(
             {
                 "agents": [
                     {
                         "name": n,
                         "supportedInterfaces": [
-                            {
-                                "url": f"{base}/agents/{n}",
-                                "protocolBinding": "HTTP+JSON",
-                                "tenant": n,
-                                "protocolVersion": "1.0",
-                            }
+                            agent_interface(base, n, protocol_binding="JSONRPC")
                         ],
                     }
                     for n in agents
@@ -193,8 +185,8 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         v3 = ctx.yamls.get(name)
         if v3 is None:
             return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
-        base = _base_url(request)
-        return _validated(project_card(name, v3, base), f"agent card {name!r}")
+        card = project_card(name, v3, _base_url(request), protocol_binding="JSONRPC")
+        return _validated(card, f"agent card {name!r}")
 
     async def post_agent(request: Request) -> Response:
         name = request.path_params["name"]
@@ -261,9 +253,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             )
         return JSONResponse({"tasks": tasks})
 
-    # ADR-0004: A2A v1.0 REST binding. /v1/ prefix is prohibited by the
-    # v1 spec; sac uses /agents/<name>/... as its multi-agent extension
-    # over the single-agent v1 REST endpoints.
+    # Advertise the JSON-RPC transport served at this REST-shaped path.
     routes = [
         Route("/.well-known/agent-card.json", get_fleet_card, methods=["GET"]),
         Route("/agents/", list_agents, methods=["GET"]),
@@ -272,7 +262,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             get_agent_card,
             methods=["GET"],
         ),
-        # A2A v1 REST binding: POST /message:send. sac prefixes per agent.
+        # Public JSON-RPC endpoint; keep its established path for existing clients.
         Route("/agents/{name}/message:send", post_agent, methods=["POST"]),
         # sac extensions (not in A2A spec):
         Route(
@@ -472,50 +462,6 @@ def build_app(
 
     ctx = _ServerCtx(yamls=yamls, dispatchers=dispatchers)
     return _build_app(ctx)
-
-
-def serve(
-    agent_yamls: list[Path],
-    *,
-    host: str = "127.0.0.1",
-    port: int = 8888,  # stx-allow: STX-NL001
-    handler: str = "echo",
-) -> None:
-    """Run the A2A HTTP server in the foreground via uvicorn.
-
-    ``handler`` is the *default* selector — agents whose yaml sets
-    ``spec.a2a.handler: <key>`` override it.
-    """
-    try:
-        import uvicorn
-    except Exception as exc:  # pragma: no cover  # stx-allow: fallback (reason: optional dependency not installed)
-        # Broaden: uvicorn import can fail with non-ImportError if a
-        # transitive dep (httptools, websockets) is mis-built. Surface
-        # any such failure as an actionable ImportError.
-        raise ImportError(
-            "uvicorn is required to run 'sac a2a serve'; install with "
-            "'pip install uvicorn'."
-        ) from exc
-
-    base_url = f"http://{host}:{port}"
-    app = build_app(
-        agent_yamls,
-        default_handler=handler,
-        base_url=base_url,
-        listen_port=port,
-    )
-
-    log.info(
-        "sac-a2a (a2a-sdk) listening on http://%s:%d (default handler: %s)",
-        host,
-        port,
-        handler,
-    )
-    socket.setdefaulttimeout(60)
-    # ``ws="none"`` — A2A is HTTP/JSON-RPC + SSE only. Skipping the
-    # websockets protocol avoids the uvicorn 0.27 ↔ websockets 15
-    # incompatibility (``websockets.legacy`` removed in 14+).
-    uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
 
 
 __all__ = ["build_app", "serve"]

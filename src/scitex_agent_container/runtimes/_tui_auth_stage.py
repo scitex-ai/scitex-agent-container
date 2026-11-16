@@ -296,7 +296,7 @@ def _assert_credentials_usable(dst: Path, *, source: Path) -> None:
             f"TUI auth: staged credentials at {dst} is missing or empty "
             f"(source was {source}). Re-stage by running "
             "`sac accounts save <acct>` on the credential-holding host "
-            "or `sac accounts sync-live`."
+            "or `sac accounts sync-live --yes`."
         )
     try:
         payload = json.loads(dst.read_text(encoding="utf-8"))
@@ -313,7 +313,7 @@ def _assert_credentials_usable(dst: Path, *, source: Path) -> None:
             f"`claudeAiOauth` block (source was {source}). The TUI "
             "needs the full OAuth payload — re-stage via "
             "`claude /login` to the target account then "
-            "`sac accounts sync-live`."
+            "`sac accounts sync-live --yes`."
         )
     access = oauth.get("accessToken")
     if not isinstance(access, str) or not access:
@@ -329,7 +329,7 @@ def _assert_credentials_usable(dst: Path, *, source: Path) -> None:
             f"TUI auth: staged credentials at {dst} are expired "
             f"(expiresAt={expires_at!r}, now_ms={int(now_ms)}). "
             f"Source was {source}. Refresh via `sac accounts "
-            "sync-live` (operator) or `claude /login` then re-stage."
+            "sync-live --yes` (operator) or `claude /login` then re-stage."
         )
 
 

@@ -115,7 +115,7 @@ is **not complete** until the SIF is rebuilt and agents are restarted:
 | `src/scitex_agent_container/_lifecycle/_in_sif_*` | In-SIF broker + HTTP client (SAC-from-SAC) | Rebuild `:scitex`, restart agents |
 | `src/scitex_agent_container/_mcp/*` | In-SIF MCP server + channel (push hub client, A2A) | Rebuild `:scitex`, restart agents |
 | `src/scitex_agent_container/runtimes/_apptainer_*` | Host argv builder (binds, isolation, creds, fakeroot) | Restart agents (new spawn picks up host install) |
-| `src/scitex_agent_container/_listen/*` | Host sac-listen daemon (push hub, spawn broker) | `sac listen restart` or `systemctl --user restart sac-listen.service` |
+| `src/scitex_agent_container/_listen/*` | Host sac-listen daemon (push hub, spawn broker) | `sac listen restart --yes` or `systemctl --user restart sac-listen.service` |
 | `src/scitex_agent_container/_state/_acl_broker_client.py` and other in-SIF state clients | In-SIF state access | Rebuild `:scitex`, restart agents |
 | `containers/apptainer-*.def` | The SIF recipes themselves | Rebuild `:base` **and** `:scitex` |
 | Anything in `_creds`, `_account` invoked from inside the SIF | In-SIF credential handling | Rebuild `:scitex`, restart agents |
@@ -146,7 +146,7 @@ sac image build base    -y    # ~15-25 min
 sac image build scitex  -y    # ~10-20 min  (FROM :base)
 
 # 4. Restart the host listen daemon (picks up _listen/* changes).
-sac listen restart            # or: systemctl --user restart sac-listen.service
+sac listen restart --yes      # or: systemctl --user restart sac-listen.service
 
 # 5. Restart agents. They re-spawn against the freshly built SIF +
 #    pick up new host-side argv from the updated (re-installed!)
@@ -155,6 +155,12 @@ sac listen restart            # or: systemctl --user restart sac-listen.service
 #    `sac agent stop <name> && sac agent start <name>`, or the
 #    operator's job-scheduler hook.
 ```
+
+Current explicit listener `start`, `stop`, and `restart` commands require
+`--yes` (or `-y`). Use `sac listen restart --dry-run` to preview arguments;
+it does not inspect daemon state or establish restart readiness. Upgrade the
+executable and its automated callers together; older peers may reject the new
+flags. Bare `sac listen` remains a compatibility startup path.
 
 For accounts the rebuild is also the trigger to roll a stale OAuth
 token over: a `sac accounts refresh --all --skip-active` is run by the
@@ -238,8 +244,8 @@ been bumped past 0.21.3.
 * `docs/images.md` — full build / sandbox / freeze / rollback flow,
   plus the `~/.scitex/<pkg>/{containers,bin}` convention.
 * `scripts/systemd/README.md` — host-daemon (sac-listen) operations,
-  including the `sac listen restart` recovery verb that runs the
-  SIGTERM → SIGKILL → relaunch sequence atomically.
+  including the `sac listen restart --yes` recovery verb that runs the
+  SIGTERM → SIGKILL → relaunch sequence.
 * `docs/adr/0001-isolation-hardening.md` — the D1/D5 isolation flags
   that `runtimes/_apptainer_*` injects; if these change, a host
   reinstall is enough for the argv builder, but running agents still

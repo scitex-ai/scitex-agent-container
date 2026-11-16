@@ -325,7 +325,7 @@ def resumed_result(pause_cli, env, two_accounts: Path):
     CliRunner().invoke(
         pause_cli, ["pause", BETA, "--reason", "quota rest"], env=env
     )
-    return CliRunner().invoke(pause_cli, ["resume", BETA], env=env)
+    return CliRunner().invoke(pause_cli, ["resume", BETA, "--yes"], env=env)
 
 
 def test_resuming_a_paused_account_exits_zero(resumed_result):
@@ -382,7 +382,7 @@ def resumed_still_forbidden_result(pause_cli, env, two_accounts: Path):
             detail="oauth_not_allowed_for_organization",
         ),
     )
-    return CliRunner().invoke(pause_cli, ["resume", BETA], env=env)
+    return CliRunner().invoke(pause_cli, ["resume", BETA, "--yes"], env=env)
 
 
 def test_resuming_a_cancelled_account_reports_forbidden(

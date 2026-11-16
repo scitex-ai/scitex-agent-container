@@ -19,30 +19,10 @@ anywhere. AAA, one assert per test (STX-TQ002 / PA-307), >=3-word names.
 
 from __future__ import annotations
 
-import importlib
-from pathlib import Path
-
 import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._registry_register import registry_register
-
-# ---------------------------------------------------------------------------
-# Fixtures — point state.db at a per-test tmp file so we don't touch
-# the operator's real registry.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db_path(tmp_path: Path, env_save_restore) -> Path:
-    p = tmp_path / "state.db"
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
-    import scitex_agent_container._state.state_store as mod
-
-    importlib.reload(mod)
-    yield p
-    importlib.reload(mod)
-
 
 # ---------------------------------------------------------------------------
 # Happy path — the row lands in comms_nodes
@@ -50,14 +30,14 @@ def db_path(tmp_path: Path, env_save_restore) -> Path:
 
 
 def test_registry_register_writes_comms_nodes_row_with_given_name(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
     from scitex_agent_container._state.state_store_nodes import lookup_comms_node
@@ -65,14 +45,14 @@ def test_registry_register_writes_comms_nodes_row_with_given_name(
     assert result.exit_code == 0 and lookup_comms_node(name="lead") is not None
 
 
-def test_registry_register_records_host_and_port_verbatim(db_path: Path, pg_schema: str) -> None:
+def test_registry_register_records_host_and_port_verbatim(pg_schema: str) -> None:
     # Arrange — pin that the verb persists the args the operator typed,
     # not some derived value.
     runner = CliRunner()
     # Act
     runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
     from scitex_agent_container._state.state_store_nodes import lookup_comms_node
@@ -81,9 +61,7 @@ def test_registry_register_records_host_and_port_verbatim(db_path: Path, pg_sche
     assert info["host"] == "lead-host" and info["a2a_port"] == 7878
 
 
-def test_registry_register_reports_this_host_as_the_origin(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_registry_register_reports_this_host_as_the_origin(pg_schema: str) -> None:
     # Arrange — provenance is the store's ``_origin`` now, stamped from the
     # writing node, so a locally-registered entry names THIS host rather
     # than the NULL the old ``source_host`` column carried.
@@ -93,7 +71,7 @@ def test_registry_register_reports_this_host_as_the_origin(
     # Act
     runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
     from scitex_agent_container._state.state_store_nodes import lookup_comms_node
@@ -102,9 +80,7 @@ def test_registry_register_reports_this_host_as_the_origin(
     assert info["source_host"] == socket.gethostname()
 
 
-def test_explicit_source_host_relays_without_claiming_the_name(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_explicit_source_host_relays_without_claiming_the_name(pg_schema: str) -> None:
     # Arrange — the operator relays a peer's entry from a third host.
     # ``--source-host`` declares that, and the INSERT path has no stored
     # record to compare against, so it must succeed rather than read as a
@@ -114,6 +90,7 @@ def test_explicit_source_host_relays_without_claiming_the_name(
     result = runner.invoke(
         registry_register,
         [
+            "--yes",
             "--name",
             "peer-2",
             "--host",
@@ -130,9 +107,7 @@ def test_explicit_source_host_relays_without_claiming_the_name(
     assert result.exit_code == 0 and lookup_comms_node(name="peer-2") is not None
 
 
-def test_registry_register_after_resolves_via_resolve_node_host(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_registry_register_after_resolves_via_resolve_node_host(pg_schema: str) -> None:
     # Arrange — the operator-facing contract: after `sac registry register`
     # succeeds, resolve_node_host (the production lookup callers use to
     # route cross-host A2A) must return the row. This guards the seam
@@ -140,7 +115,7 @@ def test_registry_register_after_resolves_via_resolve_node_host(
     runner = CliRunner()
     runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Act
     from scitex_agent_container._state.state_store_nodes import resolve_node_host
@@ -155,20 +130,18 @@ def test_registry_register_after_resolves_via_resolve_node_host(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_register_idempotent_when_same_host_and_port(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_registry_register_idempotent_when_same_host_and_port(pg_schema: str) -> None:
     # Arrange — second invocation with identical args must NOT exit
     # non-zero and must NOT create a duplicate row.
     runner = CliRunner()
     runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Act
     second = runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
     from scitex_agent_container._state.state_store_nodes import list_comms_nodes
@@ -183,7 +156,7 @@ def test_registry_register_idempotent_when_same_host_and_port(
 
 
 def test_registry_register_exits_nonzero_on_cross_source_conflict(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange — first registration claims (host=A, port=7878), second
     # tries to overwrite with (host=B, port=7878) from a DIFFERENT
@@ -193,6 +166,7 @@ def test_registry_register_exits_nonzero_on_cross_source_conflict(
     runner.invoke(
         registry_register,
         [
+            "--yes",
             "--name",
             "lead",
             "--host",
@@ -207,6 +181,7 @@ def test_registry_register_exits_nonzero_on_cross_source_conflict(
     result = runner.invoke(
         registry_register,
         [
+            "--yes",
             "--name",
             "lead",
             "--host",
@@ -222,7 +197,7 @@ def test_registry_register_exits_nonzero_on_cross_source_conflict(
 
 
 def test_registry_register_does_not_overwrite_existing_row_on_conflict(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange — pair with the exit-code test above: the existing row
     # must survive the rejected second invocation untouched.
@@ -230,6 +205,7 @@ def test_registry_register_does_not_overwrite_existing_row_on_conflict(
     runner.invoke(
         registry_register,
         [
+            "--yes",
             "--name",
             "lead",
             "--host",
@@ -243,6 +219,7 @@ def test_registry_register_does_not_overwrite_existing_row_on_conflict(
     runner.invoke(
         registry_register,
         [
+            "--yes",
             "--name",
             "lead",
             "--host",
@@ -266,43 +243,43 @@ def test_registry_register_does_not_overwrite_existing_row_on_conflict(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_register_requires_name_flag(db_path: Path, pg_schema: str) -> None:
+def test_registry_register_requires_name_flag(pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(
         registry_register,
-        ["--host", "lead-host", "--a2a-port", "7878"],
+        ["--yes", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert — missing --name is a click UsageError
     assert result.exit_code != 0
 
 
-def test_registry_register_requires_host_flag(db_path: Path, pg_schema: str) -> None:
+def test_registry_register_requires_host_flag(pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(
         registry_register,
-        ["--name", "lead", "--a2a-port", "7878"],
+        ["--yes", "--name", "lead", "--a2a-port", "7878"],
     )
     # Assert
     assert result.exit_code != 0
 
 
-def test_registry_register_requires_a2a_port_flag(db_path: Path, pg_schema: str) -> None:
+def test_registry_register_requires_a2a_port_flag(pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
     result = runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host"],
+        ["--yes", "--name", "lead", "--host", "lead-host"],
     )
     # Assert
     assert result.exit_code != 0
 
 
-def test_registry_register_rejects_non_positive_port(db_path: Path, pg_schema: str) -> None:
+def test_registry_register_rejects_non_positive_port(pg_schema: str) -> None:
     # Arrange — register_comms_node enforces a2a_port > 0; the verb
     # surfaces that as a UsageError (exit 2). The 0-port footgun was
     # the EXACT production-bug signature ADR-0014 closed the door on.
@@ -310,7 +287,7 @@ def test_registry_register_rejects_non_positive_port(db_path: Path, pg_schema: s
     # Act
     result = runner.invoke(
         registry_register,
-        ["--name", "lead", "--host", "lead-host", "--a2a-port", "0"],
+        ["--yes", "--name", "lead", "--host", "lead-host", "--a2a-port", "0"],
     )
     # Assert
     assert result.exit_code != 0
@@ -330,3 +307,111 @@ def test_registry_register_is_wired_into_registry_group() -> None:
     commands = set(registry_group.commands.keys())
     # Assert
     assert "register" in commands
+
+
+@pytest.fixture
+def offline_registry(tmp_path, env_save_restore):
+    """Own home and intentionally unreachable store: no fleet connection."""
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / ".scitex"))
+    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://invalid@127.0.0.1:1/invalid")
+    return ["--name", "preview-node", "--host", "preview-host", "--a2a-port", "7878"]
+
+
+def test_registration_requires_approval_before_opening_storage(offline_registry):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(registry_register, offline_registry)
+    # Assert
+    assert (result.exit_code, "--yes" in result.stderr) == (2, True)
+
+
+@pytest.mark.parametrize("approval", [[], ["--yes"], ["-y"]])
+def test_registration_preview_stays_offline_even_with_approval(
+    offline_registry, approval
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        registry_register, [*offline_registry, "--dry-run", *approval]
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        "would register comms_nodes" in result.stdout,
+        "existing ownership/conflicts are not checked" in result.stdout,
+    ) == (0, True, True)
+
+
+@pytest.fixture
+def existing_registration(pg_schema):
+    """Own a real stored route, preserving the complete lookup payload."""
+    from scitex_agent_container._state.state_store_nodes import (
+        lookup_comms_node,
+        register_comms_node,
+    )
+
+    register_comms_node(name="existing-preview", host="original-host", a2a_port=7878)
+    return lookup_comms_node(name="existing-preview")
+
+
+def test_unapproved_registration_preserves_an_existing_route(existing_registration):
+    # Arrange
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
+
+    args = [
+        "--name",
+        "existing-preview",
+        "--host",
+        "replacement-host",
+        "--a2a-port",
+        "7879",
+    ]
+    # Act
+    result = CliRunner().invoke(registry_register, args)
+    # Assert
+    assert (result.exit_code, lookup_comms_node(name="existing-preview")) == (
+        2,
+        existing_registration,
+    )
+
+
+def test_preview_preserves_a_conflicting_route_even_with_approval(
+    existing_registration,
+):
+    # Arrange
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
+
+    args = [
+        "--name",
+        "existing-preview",
+        "--host",
+        "replacement-host",
+        "--a2a-port",
+        "7879",
+        "--source-host",
+        "another-source",
+        "--dry-run",
+        "--yes",
+    ]
+    # Act
+    result = CliRunner().invoke(registry_register, args)
+    # Assert
+    assert (result.exit_code, lookup_comms_node(name="existing-preview")) == (
+        0,
+        existing_registration,
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments", [["--name", ""], ["--host", ""], ["--a2a-port", "0"]]
+)
+def test_preview_rejects_invalid_inputs_without_storage(offline_registry, arguments):
+    # Arrange
+    args = [*offline_registry, *arguments, "--dry-run", "--yes"]
+    # Act
+    result = CliRunner().invoke(registry_register, args)
+    # Assert
+    assert result.exit_code == 2

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+from click.testing import CliRunner
 
 from scitex_agent_container._listen.peer_tokens import write_peer_token
 from scitex_agent_container._listen.server import create_app
@@ -41,6 +42,7 @@ from scitex_agent_container._state.lead_inbox import (
 )
 from scitex_agent_container._state.state_store_channel import list_undelivered
 from scitex_agent_container._state.state_store_nodes import record_lineage
+from scitex_agent_container.cli_pkg.fleet_group import fleet_group
 
 TOKEN = "test-lead-inbox-token"
 
@@ -79,9 +81,7 @@ def test_envelope_carries_from_agent_under_metadata() -> None:
 
 def test_envelope_summary_lands_in_message_parts_text() -> None:
     # Arrange
-    env = build_lead_envelope(
-        kind="status", summary="phase 2 of 4", from_agent="alice"
-    )
+    env = build_lead_envelope(kind="status", summary="phase 2 of 4", from_agent="alice")
     # Act
     text = env["params"]["message"]["parts"][0]["text"]
     # Assert
@@ -265,12 +265,7 @@ def lead_env(tmp_path: Path, env_save_restore):
     # bound uvicorn port (a placeholder lives here so ``resolve_lead``
     # succeeds even in tests that don't start uvicorn).
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "lead:\n"
-        "  name: lead\n"
-        "  host: 127.0.0.1\n"
-        "  a2a_port: 1\n"
-    )
+    cfg.write_text("lead:\n  name: lead\n  host: 127.0.0.1\n  a2a_port: 1\n")
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
 
     try:
@@ -299,10 +294,7 @@ def _setup_lead_at_port(lead_env, port: int) -> None:
     own).
     """
     cfg = lead_env["cfg"]
-    cfg.write_text(
-        "lead:\n  name: lead\n  host: 127.0.0.1\n"
-        f"  a2a_port: {port}\n"
-    )
+    cfg.write_text(f"lead:\n  name: lead\n  host: 127.0.0.1\n  a2a_port: {port}\n")
     write_peer_token(peer_host="127.0.0.1", token=TOKEN)
 
 
@@ -328,9 +320,7 @@ def test_push_to_lead_returns_server_msg_id(lead_env, pg_schema: str) -> None:
     # Arrange
     kind = "done"
     # Act
-    out = _push_kind(
-        lead_env, kind=kind, summary="PR merged", from_agent="alice"
-    )
+    out = _push_kind(lead_env, kind=kind, summary="PR merged", from_agent="alice")
     # Assert
     assert isinstance(out.get("msg_id"), str) and out["msg_id"]
 
@@ -339,9 +329,7 @@ def test_push_to_lead_persists_event_with_kind(lead_env, pg_schema: str) -> None
     # Arrange — push then read back from the durable table.
     kind = "blocker"
     # Act
-    _push_kind(
-        lead_env, kind=kind, summary="creds expired", from_agent="alice"
-    )
+    _push_kind(lead_env, kind=kind, summary="creds expired", from_agent="alice")
     rows = list_undelivered(target="lead")
     # Assert — the persisted event carries the typed kind so a fresh
     # subscriber (or Phase 2's registry consumer) sees it.
@@ -379,9 +367,7 @@ def test_push_to_lead_loud_on_missing_peer_token(lead_env) -> None:
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     # Act
     # Assert — pytest.raises is the assertion (TQ007: one per test).
-    with _run_listen(app, port), pytest.raises(
-        LeadInboxError, match="peer token"
-    ):
+    with _run_listen(app, port), pytest.raises(LeadInboxError, match="peer token"):
         push_to_lead(
             kind="done",
             summary="x",
@@ -419,7 +405,9 @@ def test_push_to_lead_loud_on_unreachable_lead(lead_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env, pg_schema: str) -> None:
+def test_regression_agent_completion_event_lands_in_lead_inbox(
+    lead_env, pg_schema: str
+) -> None:
     # Arrange — real lead listen on a free port; real peer-token; real
     # same-group lineage so the ACL admits the send. The agent identity
     # is ``alice``; the lead identity is ``lead`` (matches lead_env's
@@ -459,4 +447,37 @@ def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env, pg_sche
     ), (
         f"completion event did not land in lead inbox as expected: "
         f"rows={rows!r} reply={reply!r}"
+    )
+
+
+@pytest.mark.parametrize("approval", ["--yes", "-y"])
+def test_notify_approved_cli_persists_real_inbox_event(
+    lead_env, pg_schema: str, approval: str
+) -> None:
+    # Arrange
+    port = _free_port()
+    _setup_lead_at_port(lead_env, port)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="lead", parent="root")
+    app = create_app(token=TOKEN, local_host="127.0.0.1")
+    # Act
+    with _run_listen(app, port):
+        result = CliRunner().invoke(
+            fleet_group,
+            [
+                "notify",
+                "done",
+                "--summary",
+                "approved CLI event",
+                "--from-agent",
+                "alice",
+                "--json",
+                approval,
+            ],
+        )
+    rows = list_undelivered(target="lead")
+    # Assert
+    assert (result.exit_code, [row["event"]["content"] for row in rows]) == (
+        0,
+        ["approved CLI event"],
     )

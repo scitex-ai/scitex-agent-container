@@ -1,4 +1,4 @@
-"""``sac whoami`` — in-container self-orientation (where / how / role / how-to).
+"""``sac agents show-identity`` — in-container self-orientation (where / how / role / how-to).
 
 Every sac agent must be able to answer, from INSIDE its own container:
 (1) WHERE am I, (2) HOW am I being run, (3) WHAT is my role, and
@@ -394,7 +394,7 @@ def render_whoami_text(facts: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-@click.command("whoami")
+@click.command("whoami", hidden=True, deprecated="Use sac agents show-identity.")
 @click.option(
     "--json",
     "as_json",
@@ -404,7 +404,7 @@ def render_whoami_text(facts: dict) -> str:
 )
 @click.pass_context
 def whoami(ctx: click.Context, as_json: bool) -> None:
-    """Who am I? Answerable from INSIDE the agent container.
+    """Show identity and execution context from inside the agent container.
 
     \b
     Sections:
@@ -418,6 +418,10 @@ def whoami(ctx: click.Context, as_json: bool) -> None:
     through $SCITEX_AGENT_CONTAINER_YAML_DIRS, the agent's own spec.yaml.
     Underivable facts render an honest placeholder (null under --json); no
     secret value (e.g. the listen bearer) is ever printed.
+
+    Examples:
+      $ sac agents show-identity
+      $ sac agents show-identity --json
     """
     from ._helpers import _json_flag
 

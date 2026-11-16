@@ -260,7 +260,7 @@ so instead of thrashing.
 1. logs a **LOUD ERROR** to the journal (`journalctl --user -u
    sac-listen-health`) so the restart is VISIBLE, not silent;
 2. best-effort emits the anomaly on the **one** operator alarm path
-   (`sac fleet notify blocker`) — this may fail (the listen is the transport
+   (`sac fleet notify blocker --yes`) — this may fail (the listen is the transport
    for that notify), but is tried so a peer/lead listen or a recovered inbox
    still surfaces it;
 3. runs `systemctl --user reset-failed && restart sac-listen.service` (the
@@ -500,7 +500,7 @@ real `claude /login` is finally needed.
 
 A SECOND federated `scitex_dev.jobs` job (same mechanism as above;
 `_jobs_plugin.py`). Runs `sac host sync --check --all --alarm` hourly:
-the **read-only** one-way-sync drift detector (mutates no peer), with
+the one-way-sync drift detector (fetches peer Git refs; never merges), with
 `--alarm` recording each verdict in sac's own append-only event log
 (`sac-events.jsonl`, subsystem `host-sync`) as `subject-degraded` /
 `subject-unknown` / `subject-recovered`. This makes the Stage-0 detector

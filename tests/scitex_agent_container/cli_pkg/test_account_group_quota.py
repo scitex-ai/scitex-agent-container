@@ -1,7 +1,7 @@
-"""Tests for ``sac account quota`` (agent self-awareness, #16 PART 4).
+"""Tests for ``sac accounts get-quota`` (agent self-awareness, #16 PART 4).
 
 Reads ``$CLAUDE_AGENT_ACCOUNT`` + the bound quota-cache.json and prints
-THIS agent's own account + live quota numbers — for use inside a Claude
+THIS agent's own account + cached quota numbers — for use inside a Claude
 turn so the agent can see "am I about to hit the 5h cap" without going
 through the listen daemon.
 
@@ -62,7 +62,7 @@ def test_account_quota_human_emits_compact_line(
     env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota"])
+    result = runner.invoke(account, ["get-quota"])
     # Assert — exact format documented in the docstring (compact, eye-parseable).
     assert result.output.strip() == "account=alpha 5h=17 percent 7d=3 percent ttl=7.74h"
 
@@ -75,7 +75,7 @@ def test_account_quota_human_exits_zero_on_success(
     env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota"])
+    result = runner.invoke(account, ["get-quota"])
     # Assert
     assert result.exit_code == 0
 
@@ -88,7 +88,7 @@ def test_account_quota_json_emits_deterministic_shape(
     env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota", "--json"])
+    result = runner.invoke(account, ["get-quota", "--json"])
     payload = json.loads(result.stdout)
     # Assert — exact keys the in-agent consumer can rely on.
     assert payload == {
@@ -129,7 +129,7 @@ def test_account_quota_human_rounds_percentage_field(
     env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota"])
+    result = runner.invoke(account, ["get-quota"])
     # Assert
     assert expected_fragment in result.output
 
@@ -146,17 +146,17 @@ def test_account_quota_human_prints_unavailable_without_account_env(
     env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, SAMPLE)))
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota"])
+    result = runner.invoke(account, ["get-quota"])
     # Assert
     assert result.output.strip() == "unavailable"
 
 
 def test_account_quota_human_exits_zero_by_default_when_unavailable() -> None:
     # Arrange — operator contract: a missing cache must NOT abort a
-    # Claude turn pipelining `sac account quota` for soft routing.
+    # Claude turn pipelining `sac accounts get-quota` for soft routing.
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota"])
+    result = runner.invoke(account, ["get-quota"])
     # Assert
     assert result.exit_code == 0
 
@@ -165,7 +165,7 @@ def test_account_quota_strict_exits_nonzero_when_unavailable() -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota", "--strict"])
+    result = runner.invoke(account, ["get-quota", "--strict"])
     # Assert
     assert result.exit_code == 1
 
@@ -174,7 +174,7 @@ def test_account_quota_json_emits_null_when_unavailable() -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota", "--json"])
+    result = runner.invoke(account, ["get-quota", "--json"])
     # Assert — JSON consumers can branch on `if quota is None:`.
     assert result.output.strip() == "null"
 
@@ -183,7 +183,7 @@ def test_account_quota_json_exits_zero_by_default_when_unavailable() -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota", "--json"])
+    result = runner.invoke(account, ["get-quota", "--json"])
     # Assert
     assert result.exit_code == 0
 
@@ -192,6 +192,29 @@ def test_account_quota_json_strict_exits_nonzero_when_unavailable() -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(account, ["quota", "--json", "--strict"])
+    result = runner.invoke(account, ["get-quota", "--json", "--strict"])
     # Assert
     assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("bound_account", [False, True])
+def test_legacy_quota_keeps_payload_on_stdout_and_warning_on_stderr(
+    tmp_path, env_save_restore, json_output, bound_account
+):
+    # Arrange
+    env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, SAMPLE)))
+    env_save_restore.set(
+        "CLAUDE_AGENT_ACCOUNT", {False: "", True: "alpha-example-com"}[bound_account]
+    )
+    options = {False: [], True: ["--json"]}[json_output]
+    runner = CliRunner()
+    canonical = runner.invoke(account, ["get-quota", *options])
+    # Act
+    legacy = runner.invoke(account, ["quota", *options])
+    # Assert
+    assert (
+        legacy.exit_code,
+        legacy.stdout,
+        "Use accounts get-quota instead." in legacy.stderr,
+    ) == (canonical.exit_code, canonical.stdout, True)

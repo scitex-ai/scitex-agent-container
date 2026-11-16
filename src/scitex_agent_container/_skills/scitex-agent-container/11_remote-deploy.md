@@ -14,7 +14,7 @@ still ships `spec.remote` hard-errors at `sac agents check` time with a
 redirect to `spec.host` / `spec.hosts`.
 
 Cross-host placement is now declared with two mutually exclusive fields
-plus the `sac --on <peer>` dispatcher.
+plus the `sac --on <peer>` dispatcher. [Host synchronization](../../../../docs/host-sync.md) covers code/config previews, inspection and approved writes.
 
 ## YAML — singleton on one peer
 

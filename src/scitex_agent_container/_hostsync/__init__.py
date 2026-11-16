@@ -10,7 +10,7 @@ v0.21.20) with no post-merge pull anywhere, and it was found by hand.
 This package closes that gap in two halves, and the first half is the
 product:
 
-* :func:`check_peer` — READ-ONLY drift detection. Mutates nothing, exits
+* :func:`check_peer` — drift detection with Git-ref refresh, no merge; exits
   non-zero on drift so a cron can alarm on it. This is the half that
   would have caught both of 2026-07-14's silent incidents.
 * :func:`sync_peer` — the fast-forward-only remedy, behind loud

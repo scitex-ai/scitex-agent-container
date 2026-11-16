@@ -136,11 +136,32 @@ function agentNameFromUrl(url) {
   }
 }
 
+function rowIsCrossHost(name) {
+  if (!name || typeof CSS === "undefined" || !CSS.escape) return false;
+  const row = document.querySelector(
+    'tr.agent-row[data-agent-name="' + CSS.escape(name) + '"]'
+  );
+  return !!(row && row.classList.contains("cross"));
+}
+
 function retargetFleetComposer(name, href) {
   const host = chatHost();
   if (!host || !name) return;
   const form = host.querySelector('form[data-composer="fleet-dm"]');
   if (!form) return;
+  if (rowIsCrossHost(name)) {
+    /* Operator 2026-11-01: cross-host messaging is not supported in this
+       console — leave the composer parked (disabled) and point at
+       scitex-cards instead of enabling a send that cannot complete. */
+    const area = form.querySelector("textarea[name='message']");
+    if (area) {
+      area.setAttribute(
+        "placeholder",
+        "Cross-host messaging isn't supported — reach " + name + " through scitex-cards."
+      );
+    }
+    return;
+  }
   const path = String(href || "").split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
   if (path) form.setAttribute("action", path + "/message");
   const area = form.querySelector("textarea[name='message']");
@@ -148,7 +169,7 @@ function retargetFleetComposer(name, href) {
   if (area) {
     area.id = "msg-" + name;
     area.removeAttribute("disabled");
-    area.setAttribute("placeholder", "Message " + name + "… (Enter to send, Shift+Enter for a new line)");
+    area.setAttribute("placeholder", "Message " + name + "… (Enter or Ctrl+Enter to send, Shift+Enter for a new line)");
     if (label) label.setAttribute("for", area.id);
   }
   for (const btn of Array.from(form.querySelectorAll("button[disabled]"))) {
@@ -358,25 +379,11 @@ function initFleet() {
   /* Buzz filter (operator 2026-10-23): free-substring match across the
      row's name + carried facts (state text + data-agent-* attributes).
      Vanilla, no bundler; fails open (no match hiding when JS is off). */
-  const box = document.querySelector("[data-role='agents-filter']");
-  if (box) {
-    box.addEventListener("input", () => applyFilter(box.value, table));
-    /* Ctrl/⌘+K focuses the filter (global-header palette idiom). */
-    document.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        box.focus();
-        box.select();
-      }
-    });
-    box.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        box.value = "";
-        applyFilter("", table);
-        box.blur();
-      }
-    });
-  }
+  const filterMount = document.querySelector('[data-stx-filter-field][data-filter-id="agents-filter"]');
+  filterMount?.addEventListener("input", (event) => {
+    if (event.target instanceof HTMLInputElement) applyFilter(event.target.value, table);
+  });
+
 }
 
 /* Pinned agents (operator 2026-10-26): favorites float above the state
@@ -538,7 +545,7 @@ function applyFilter(query, table) {
 
 /* DM composer: Enter-to-send + emoji stamp (operator 2026-10-24,
  * Telegram-learned slice A). Delegated on document because the composer
- * arrives via fetch-injection into the DM pane. Enter (no modifiers)
+ * arrives via fetch-injection into the DM pane. Enter or Ctrl/Command+Enter
  * submits through requestSubmit so dispatch_id + validation still run;
  * Shift+Enter keeps the newline. The emoji button toggles a small
  * curated popover that inserts at the cursor. Vanilla, no bundler. */
@@ -597,46 +604,101 @@ function toggleEmojiPopover(button) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key !== "Enter" || e.shiftKey || e.altKey || e.isComposing) return;
   const form = e.target instanceof Element ? e.target.closest('form[data-composer] textarea[name="message"]') : null;
   if (!form) return;
   const composer = dmComposerOf(form);
   if (!composer) return;
   e.preventDefault();
   if (typeof composer.requestSubmit === "function") composer.requestSubmit();
-  else composer.submit();
+  else composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 });
 
 /* Fleet composer send-in-place (operator 2026-10-26): the fleet composer
  * POSTs via fetch so Enter-to-send never navigates away from the fleet
  * page (the native POST redirects to the agent detail page). Success
  * clears the input and refreshes the DM thread through the existing
- * fragment path; any failure falls back to the native submit so the
- * server-rendered notice banner still reports the delivery outcome. */
+ * fragment path. A refusal stays inline with the draft and dispatch id;
+ * retrying as a native POST would navigate away and may submit twice. */
+function composerError(form, message, pending = false) {
+  let notice = form.querySelector("[data-composer-error]");
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.setAttribute("data-composer-error", "");
+    notice.setAttribute("role", "alert");
+    notice.className = "agents-bannor err";
+    form.appendChild(notice);
+  }
+  notice.className = pending ? "agents-bannor warn" : "agents-bannor err";
+  notice.textContent = message;
+  notice.hidden = !message;
+}
+
+function renewComposerDispatch(form) {
+  const field = form.querySelector("input[name='dispatch_id']");
+  if (field) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    field.value = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  }
+}
+
 document.addEventListener("submit", (e) => {
-  const form = e.target instanceof Element ? e.target.closest('form[data-composer="fleet-dm"]') : null;
+  const form = e.target instanceof Element ? e.target.closest('form[data-composer]') : null;
   if (!form) return;
-  const action = String(form.getAttribute("action") || "");
-  if (!/\/message\/?$/.test(action)) return;
+  if (!form.closest('.agents-app[data-page="fleet"]')) return;
+  // Even a missing/invalid target must stay on the dashboard with its draft.
   e.preventDefault();
+  const action = String(form.getAttribute("action") || "");
+  if (!/\/message\/?$/.test(action)) {
+    composerError(form, "Select an agent before sending a message.");
+    return;
+  }
+  if (form.dataset.sending === "true") return;
+  const area = form.querySelector("textarea[name='message']");
+  const sentText = area ? area.value : "";
+  const payload = JSON.stringify([action, sentText]);
+  if (form.dataset.uncertainPayload === payload) {
+    composerError(form, "Delivery is unconfirmed. Check the agent before starting a new draft; this message will not be sent again.");
+    return;
+  }
+  if (form.dataset.dispatchPayload && form.dataset.dispatchPayload !== payload) {
+    renewComposerDispatch(form);
+  }
+  form.dataset.dispatchPayload = payload;
+  form.dataset.sending = "true";
+  composerError(form, "");
+  const button = form.querySelector("button[type='submit']");
+  if (button) button.disabled = true;
   fetch(action, {
     method: "POST",
     body: new FormData(form),
     credentials: "same-origin",
     headers: { Accept: "application/json" },
   })
-    .then((r) => r.json().catch(() => ({ ok: false })))
+    .then((r) => r.json()
+      .catch(() => ({ ok: false, message: "The server did not confirm delivery." }))
+      .then((result) => ({ ...result, ok: r.ok && result.ok === true })))
     .then((result) => {
       if (result && result.ok === true) {
-        const area = form.querySelector("textarea[name='message']");
-        if (area) { area.value = ""; area.focus(); }
-        loadIntoPanel(action.replace(/\/message\/?$/, "") + "?partial=1");
+        renewComposerDispatch(form);
+        form.dataset.dispatchPayload = "";
+        if (form.getAttribute("action") === action) {
+          if (area) { if (area.value === sentText) area.value = ""; area.focus(); }
+          loadIntoPanel(action.replace(/\/message\/?$/, "") + "?partial=1");
+          if (result.state === "accepted") composerError(form, result.message, true);
+        }
         return;
       }
-      form.submit();
+      if (result.state === "unknown") form.dataset.uncertainPayload = payload;
+      composerError(form, String((result && (result.message || result.error)) || "Message delivery was not confirmed."));
     })
     .catch(() => {
-      form.submit();
+      form.dataset.uncertainPayload = payload;
+      composerError(form, "Message delivery was not confirmed. Your draft is kept; check the agent before starting a new draft.");
+    })
+    .finally(() => {
+      form.dataset.sending = "false";
+      if (button) button.disabled = false;
     });
 });
 

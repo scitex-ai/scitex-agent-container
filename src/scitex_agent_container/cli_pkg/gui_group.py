@@ -70,7 +70,13 @@ def gui_serve(
     dry_run: bool,
     as_json: bool,
 ) -> None:
-    """Run the Agents dashboard in the foreground."""
+    """Run the Agents dashboard in the foreground.
+
+    \b
+    Examples:
+      sac gui serve --dry-run --json
+      sac gui serve --port 8080
+    """
     force = False
     _guard_bind(host, allow_remote)
     if dry_run:
@@ -104,7 +110,13 @@ def gui_open(
     dry_run: bool,
     as_json: bool,
 ) -> None:
-    """Open the dashboard, starting a detached server when necessary."""
+    """Open the dashboard, starting a detached server when necessary.
+
+    \b
+    Examples:
+      sac gui open --dry-run --json
+      sac gui open --no-browser
+    """
     _guard_bind(host, allow_remote)
     if dry_run:
         payload = {"would_open": True, "host": host, "port": port}
@@ -158,7 +170,13 @@ def gui_open(
 @gui_group.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def gui_status(as_json: bool) -> None:
-    """Report whether the standalone Agents dashboard is running."""
+    """Report whether the standalone Agents dashboard is running.
+
+    \b
+    Examples:
+      sac gui status
+      sac gui status --json
+    """
     current = _embed().gui_status(PACKAGE)
     if as_json:
         click.echo(json.dumps(current))
@@ -173,7 +191,13 @@ def gui_status(as_json: bool) -> None:
 @click.option("--yes", "yes", "-y", is_flag=True, help="Confirm stopping the server.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def gui_stop(dry_run: bool, yes: bool, as_json: bool) -> None:
-    """Stop the standalone Agents dashboard."""
+    """Stop the standalone Agents dashboard.
+
+    \b
+    Examples:
+      sac gui stop --dry-run --json
+      sac gui stop --yes
+    """
     embed = _embed()
     current = embed.gui_status(PACKAGE)
     if not current.get("running"):

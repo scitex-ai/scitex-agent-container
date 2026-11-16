@@ -69,12 +69,19 @@ back link and the lifecycle form action are correct at any mount.
         <dt>Model</dt><dd>{{ agent.model }}</dd>
         <dt>Project</dt><dd>{{ agent.project }}</dd>
         <dt>Host</dt><dd>{{ agent.host }}</dd>
-        <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
-        <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
-        <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
-        <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
         {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
       </dl>
+      {# Compass L518: pid / port / turn URL / session sit behind a native #}
+      {# <details> disclosure — collapsed until needed, no-JS safe. #}
+      <details class="detail-advanced" data-advanced="runtime">
+        <summary>Advanced runtime details</summary>
+        <dl class="kv">
+          <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
+          <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
+          <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
+          <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
+        </dl>
+      </details>
     </section>
 
     <section class="detail-card detail-tabpanel" role="tabpanel" id="dp-{{ agent.name }}-activity" aria-labelledby="dt-{{ agent.name }}-activity" data-detail-panel="activity" tabindex="0">
@@ -120,7 +127,12 @@ back link and the lifecycle form action are correct at any mount.
       agent's OWN bridge endpoint (its published turn_url) — the GUI never
       constructs a host/port and never drives tmux. Each submit carries a
       dispatch id so a double-click cannot inject the text twice.
+      Operator 2026-11-01: cross-host messaging is not supported in this
+      console — the composer is replaced with a cards pointer so the page
+      never offers a path that cannot complete. Lifecycle control above
+      is unaffected (separate cross-host allowlist).
       {% endcomment %}
+      {% if not cross_host %}
       {# Message thread (operator 2026-10-23): chat-style, Cards DM idiom #}
       {# ported leaf-side (no cross-app dependency, different ports). Same #}
       {# POST endpoint + gate; operator sends render right, session lines #}
@@ -170,6 +182,13 @@ back link and the lifecycle form action are correct at any mount.
           {% endfor %}
         </div>
       </form>
+      {% else %}
+      <h3 class="control-sub" id="message">Messages</h3>
+      <p class="dim"><i class="fas fa-globe"></i> Cross-host messaging isn't
+      supported in this console — reach {{ agent.name }} through
+      scitex-cards. Lifecycle control above remains available to
+      cross-host operators.</p>
+      {% endif %}
       {% else %}
       <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for

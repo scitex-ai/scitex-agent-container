@@ -11,19 +11,10 @@ Each test follows the AAA shape with a single, narrow assert.
 
 from __future__ import annotations
 
-import functools
-import os
 import signal
-import socket
 import subprocess
-import sys
-import time
 from pathlib import Path
 
-import pytest
-import yaml
-
-from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes.a2a_sidecar import (
     LOG_FILENAME,
     PID_FILENAME,
@@ -36,144 +27,16 @@ from scitex_agent_container.runtimes.a2a_sidecar import (
     stop_sidecar,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers / fixtures
-# ---------------------------------------------------------------------------
-
-
-def _free_port() -> int:
-    """Claim and immediately release a localhost port via a real socket bind."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
-def _wait_pid_dead(pid: int, timeout: float = 5.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not _process_alive(pid):
-            return True
-        time.sleep(0.05)
-    return False
-
-
-def _wait_pid_alive(pid: int, timeout: float = 5.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if _process_alive(pid):
-            return True
-        time.sleep(0.05)
-    return False
-
-
-def _marked_sleeper(marker: Path) -> subprocess.Popen:
-    """A live process whose KERNEL argv carries ``marker``.
-
-    ``python -c ... <marker>`` rather than ``sh -c``: a shell tail-execs
-    its single command and the extra argv word is lost with it, which
-    would silently defeat the ownership probe this stands in for.
-    """
-    return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)", str(marker)]
-    )
-
-
-def _kill(pid: int | None) -> None:
-    if pid is not None and _process_alive(pid):
-        os.kill(pid, 15)  # SIGTERM
-        _wait_pid_dead(pid, timeout=5.0)
-
-
-def _write_yaml(
-    path: Path, *, port: int | None, handler: str = "echo", name: str = "sidecar-test"
-) -> Path:
-    """Write a minimal v3 agent YAML with the requested ``spec.a2a`` block."""
-    doc: dict = {
-        "apiVersion": "scitex/v3",
-        "kind": "Agent",
-        "metadata": {"name": name},
-        "spec": {},
-    }
-    if port is not None:
-        doc["spec"]["a2a"] = {
-            "port": port,
-            "host": "127.0.0.1",
-            "handler": handler,
-        }
-    path.write_text(yaml.safe_dump(doc))
-    return path
-
-
-@pytest.fixture
-def workdir(tmp_path: Path) -> Path:
-    wd = tmp_path / "work"
-    wd.mkdir()
-    return wd
-
-
-def _config(
-    workdir: Path,
-    *,
-    config_path: str = "",
-    name: str = "alpha",
-) -> AgentConfig:
-    return AgentConfig(
-        name=name,
-        runtime="apptainer",
-        workdir=str(workdir),
-        config_path=config_path,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Per-agent keying of the pid/log pair
-#
-# The defect: pid + log used to live at ``{workdir}/a2a-sidecar.*`` with no
-# agent identity in the path, so two agents sharing a workdir shared one
-# sidecar and the second start silently returned the FIRST agent's pid.
-# ---------------------------------------------------------------------------
-
-
-def test_pid_path_differs_per_agent_in_one_shared_workdir(workdir: Path) -> None:
-    # Arrange: two agents, ONE workdir — the clone / twin / relocate shape.
-    cfg_a = _config(workdir, name="shared-wd-alpha")
-    cfg_b = _config(workdir, name="shared-wd-bravo")
-    # Act
-    paths = {_pid_path(cfg_a), _pid_path(cfg_b)}
-    # Assert
-    assert len(paths) == 2
-
-
-def test_log_path_differs_per_agent_in_one_shared_workdir(workdir: Path) -> None:
-    # Arrange
-    cfg_a = _config(workdir, name="shared-wd-alpha")
-    cfg_b = _config(workdir, name="shared-wd-bravo")
-    # Act
-    paths = {_log_path(cfg_a), _log_path(cfg_b)}
-    # Assert
-    assert len(paths) == 2
-
-
-def test_pid_path_is_keyed_by_the_agent_name_directory(workdir: Path) -> None:
-    # Arrange: identity belongs in the DIRECTORY, like every other per-agent
-    # runtime artefact (pid / heartbeat.json / session.jsonl / runner.log).
-    cfg = _config(workdir, name="dir-keyed-agent")
-    # Act
-    parent_name = _pid_path(cfg).parent.name
-    # Assert
-    assert parent_name == "dir-keyed-agent"
-
-
-def test_pid_path_refuses_an_unnamed_agent(workdir: Path) -> None:
-    # Arrange: a silent fallback to a shared path here would reproduce the bug.
-    cfg = _config(workdir, name="")
-    # Act
-    resolve = functools.partial(_pid_path, cfg)
-    # Assert
-    with pytest.raises(ValueError, match="empty name"):
-        resolve()
+from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
+    _config,
+    _free_port,
+    _kill,
+    _marked_sleeper,
+    _wait_pid_alive,
+    _write_yaml,
+    shared_workdir_pair as shared_workdir_pair,
+    workdir as workdir,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -369,38 +232,6 @@ def test_start_sidecar_clears_stale_pid_file_and_respawns(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def shared_workdir_pair(tmp_path: Path):
-    """Two REAL sidecars for two agents sharing ONE workdir.
-
-    Function-scoped (each test gets its own pair) so no assertion can
-    depend on another having run first.
-    """
-    root = tmp_path / "pair"
-    root.mkdir()
-    wd = root / "SHARED-WORKDIR"
-    wd.mkdir()
-    port_a, port_b = _free_port(), _free_port()
-    spec_a = _write_yaml(root / "a.yaml", port=port_a, name="pair-alpha")
-    spec_b = _write_yaml(root / "b.yaml", port=port_b, name="pair-bravo")
-    cfg_a = _config(wd, config_path=str(spec_a), name="pair-alpha")
-    cfg_b = _config(wd, config_path=str(spec_b), name="pair-bravo")
-
-    pid_a = start_sidecar(cfg_a)
-    pid_b = start_sidecar(cfg_b)
-    _wait_pid_alive(pid_a, timeout=10.0)
-    _wait_pid_alive(pid_b, timeout=10.0)
-    yield {
-        "cfg_a": cfg_a,
-        "cfg_b": cfg_b,
-        "pid_a": pid_a,
-        "pid_b": pid_b,
-        "port_b": port_b,
-    }
-    _kill(pid_a)
-    _kill(pid_b)
-    _pid_path(cfg_a).unlink(missing_ok=True)
-    _pid_path(cfg_b).unlink(missing_ok=True)
 
 
 def test_second_agent_in_a_shared_workdir_gets_its_own_pid(

@@ -920,7 +920,6 @@ def test_conversation_records_error_when_sdk_module_attribute_missing(
     # Arrange
     state_dir = tmp_path / "alpha"
     broken = _BrokenSDKModule("broken_sdk")
-
     async def _run():
         inbox, _fut = await _seed_inbox("x")
         await runner._run_conversation(
@@ -933,15 +932,16 @@ def test_conversation_records_error_when_sdk_module_attribute_missing(
             sdk_module=broken,
             build_sdk_options_fn=_fake_build_options,
         )
+        return _fut.exception()
 
     # Act
-    asyncio.run(_run())
+    failure = asyncio.run(_run())
     rows = [
         json.loads(line)
         for line in (state_dir / "session.jsonl").read_text().splitlines()
     ]
     # Assert
-    assert rows[-1]["kind"] == "sdk_missing"
+    assert (rows[-1]["kind"], str(failure)) == ("sdk_missing", "sdk import: simulated absence: AssistantMessage")
 
 
 # ---------------------------------------------------------------------------

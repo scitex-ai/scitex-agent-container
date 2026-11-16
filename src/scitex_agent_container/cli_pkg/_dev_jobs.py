@@ -165,6 +165,8 @@ def _delegate(
     dry_run: bool = False,
     adopt: bool = False,
     force: bool = False,
+    *,
+    as_json: bool = False,
 ) -> int:
     """Resolve + run one ecosystem delegation. THE single mutation seam.
 
@@ -200,6 +202,7 @@ def _delegate(
         dry_run=dry_run,
         adopt=adopt,
         force=force,
+        **({"as_json": True} if as_json else {}),
     )
 
 
@@ -250,6 +253,8 @@ def _add_list_command(grp, group: str) -> None:
             click.echo(f"  {_names.local(j.name):24s} every {cadence}")
             click.echo(f"  {'':24s} {j.command}")
             click.echo(f"  {'':24s} {j.description}")
+
+    _list.epilog = f"Example:\n  $ sac dev {group} list --json"
 
 
 def _adoption_options(verb: str):
@@ -324,6 +329,7 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
             rc = rc or code
         raise SystemExit(rc)
 
+    _bulk.epilog = f"Example:\n  $ sac dev {group} {verb} --dry-run"
     _bulk.help = (
         f"{_VERB_SUMMARY[verb]} sac's {group} jobs via scitex-dev.\n\n"
         "\b\nNAME is the short local name (e.g. `accounts-refresh`); the "
@@ -354,15 +360,29 @@ def _add_named_command(grp, group: str, verb: str) -> None:
         hidden=not mutating,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _named(name, dry_run, yes, _verb=verb):
+    def _named(name, dry_run, yes, _verb=verb, as_json=False):
         _announce_deprecation(group)
         wanted = _resolve_one(group, name)
-        raise SystemExit(_delegate(_kind_of(group), _verb, wanted, yes, dry_run))
+        raise SystemExit(
+            _delegate(
+                _kind_of(group),
+                _verb,
+                wanted,
+                yes,
+                dry_run,
+                **({"as_json": True} if as_json else {}),
+            )
+        )
 
+    from ._dev_jobs_json import add_status_json_option
+
+    add_status_json_option(_named)
+    flag = "--dry-run" if mutating else "--json"
+    _named.epilog = f"Example:\n  $ sac dev {group} {verb} JOB_NAME {flag}"
     _named.help = (
         f"{_VERB_SUMMARY[verb]} one of sac's {group} jobs via scitex-dev.\n\n"
         "\b\nNAME is the short local name (e.g. `accounts-refresh`); the "
-        "canonical form works too."
+        "canonical form works too. Choose NAME from the corresponding list command."
     )
 
 

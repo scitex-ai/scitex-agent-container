@@ -179,14 +179,9 @@ export PATH="$VENV/bin:$PATH"
 
 echo "py=$("$VENV/bin/python" -V) target=$TMPDIR/site"
 
-# Install scitex-agent-container + its [all,dev] extras WITH deps into the writable target.
-# Fallback chain mirrors scitex-agent-container's historical bare-uv/pip workflow so a
-# packaging hiccup in an optional extra doesn't strand CI: [all,dev] → [dev] →
-# bare. uv first (fast resolver), pip as a final safety net.
-uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[all,dev]" ||
-    uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[dev]" ||
-    uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e "." ||
-    pip install --target="$TMPDIR/site" -e ".[dev]"
+# Install scitex-agent-container + its [all,dev] extras in one attempt.
+# A resolver or cache failure must stop qualification, never reduce extras.
+uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[all,dev]"
 
 # The CI SIF ships no SYSTEM tzdata, so zoneinfo.ZoneInfo("Asia/Tokyo") (the
 # account-list renderer's TZ resolver; ~290 clock assertions assume +09:00)

@@ -84,3 +84,116 @@ def test_disk_fires_on_zero_test_threshold(home_tmp: Path) -> None:
     result = runner.invoke(image_group, ["disk", "--alert-threshold", "0"])
     # Assert
     assert result.exit_code == 0 and "ALERT" in result.output
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        ["image", "show-disk-usage", "--json"],
+        ["--json", "image", "show-disk-usage"],
+        ["image", "disk", "--json"],
+        ["--json", "image", "disk"],
+    ],
+)
+@pytest.mark.parametrize("threshold,expected_alert", [("0", True), ("101", False)])
+def test_json_disk_report_preserves_threshold_contract(
+    home_tmp, prefix, threshold, expected_alert
+):
+    # Arrange
+    import json
+
+    from scitex_agent_container.cli_pkg._main import main
+
+    target = Path(ig._CONTAINERS_DIR)
+    # Act
+    result = CliRunner().invoke(
+        main, [*prefix, "--path", str(target), "--alert-threshold", threshold]
+    )
+    data = json.loads(result.stdout)
+    expected_percent = data["used_bytes"] / data["total_bytes"] * 100.0
+    # Assert
+    assert (
+        result.exit_code,
+        data["path"],
+        data["alert"],
+        data["alert_threshold_percent"],
+        data["used_percent"],
+        data["used_bytes"] + data["free_bytes"] <= data["total_bytes"],
+        list(target.iterdir()),
+    ) == (0, str(target), expected_alert, float(threshold), expected_percent, True, [])
+
+
+@pytest.mark.parametrize("threshold", ["-1", "102", "nan", "inf"])
+def test_json_disk_invalid_threshold_preserves_usage_error(home_tmp, threshold):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+
+    missing = home_tmp / "not-created"
+    # Act
+    result = CliRunner().invoke(
+        main,
+        [
+            "image",
+            "show-disk-usage",
+            "--json",
+            "--path",
+            str(missing),
+            "--alert-threshold",
+            threshold,
+        ],
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        missing.exists(),
+        "--alert-threshold must be between" in result.stderr,
+    ) == (2, "", False, True)
+
+
+def test_json_disk_missing_target_remains_a_measurement_error(home_tmp):
+    # Arrange
+    from scitex_agent_container.cli_pkg._main import main
+
+    missing = home_tmp / "not-created"
+    # Act
+    result = CliRunner().invoke(
+        main, ["image", "show-disk-usage", "--json", "--path", str(missing)]
+    )
+    # Assert
+    assert (
+        result.exit_code,
+        result.stdout,
+        missing.exists(),
+        "Cannot measure" in result.stderr,
+    ) == (1, "", False, True)
+
+
+def test_disk_legacy_alias_warns_without_polluting_json(home_tmp):
+    # Arrange
+    import json
+
+    from scitex_agent_container.cli_pkg._main import main
+
+    # Act
+    result = CliRunner().invoke(
+        main, ["image", "disk", "--path", str(home_tmp), "--json"]
+    )
+    data = json.loads(result.stdout)
+    # Assert
+    assert (result.exit_code, data["path"], "show-disk-usage" in result.stderr) == (
+        0,
+        str(home_tmp),
+        True,
+    )
+
+
+def test_disk_completion_hides_old_noun_and_advertises_action():
+    # Arrange
+    import click
+
+    context = click.Context(image_group)
+    # Act
+    names = [item.value for item in image_group.shell_complete(context, "")]
+    # Assert
+    assert ("show-disk-usage" in names, "disk" in names) == (True, False)

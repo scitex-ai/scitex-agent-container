@@ -1,17 +1,16 @@
 """Apply the deployment-side rules to the executable's verdict.
 
-The executable decides WHETHER to block and WHAT to say. This module owns
-only what sac owns:
+The detector normalizes provider results, including the supported legacy
+conversion. This decision layer owns:
 
 * **fail-open** on an unreadable executable,
 * **the loop guard**, which needs to know how many times THIS SESSION has
   been blocked — session state, which the executable has no view of. That
   is why the guard lives here and not with scitex-cards.
 
-There is deliberately no continuation composer any more. The ``reason`` that
-becomes the agent's next instruction is authored by the executable and
-passed through untouched; an earlier draft rendered it here from parsed
-fields, which meant sac had to know their output format.
+This layer consumes the detector's normalized verdict. Preferred hook JSON
+is provider-authored; the detector also retains the legacy structured-verdict
+conversion. Neither path treats raw provider stderr as a continuation reason.
 
 Decision table::
 
@@ -81,8 +80,8 @@ def decide(agent: str, verdict: Verdict) -> HookDecision:
             f"{MAX_CONSECUTIVE_BLOCKS} on an unchanged block reason for {agent}"
         )
 
-    # Forward their decision verbatim. If they emitted hook JSON we pass that
-    # object through; otherwise we wrap their opaque stderr as the reason.
+    # Forward the normalized payload, including any legacy conversion done by
+    # the detector. The fallback is Verdict.reason, never raw provider stderr.
     payload = (
         dict(verdict.payload)
         if verdict.payload is not None

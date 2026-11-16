@@ -96,7 +96,9 @@ def test_fleet_quick_actions_hidden_on_cross_host_for_local_only(
 def test_fleet_quick_actions_shown_on_cross_host_for_operator(
     client, loopback, env_save_restore, audit_log
 ):
-    # Arrange — op1 is in BOTH lists, so the cross-host row gate opens.
+    # Arrange — op1 is in BOTH lists, so the cross-host row gate opens for
+    # lifecycle verbs; the message form stays out (operator 2026-11-01:
+    # cross-host messaging unsupported, use scitex-cards).
     env_save_restore.set(IDENTITY_ENV, "op1")
     env_save_restore.set(OPS_ENV, "op1")
     env_save_restore.set(CROSS_ENV, "op1")
@@ -105,7 +107,7 @@ def test_fleet_quick_actions_shown_on_cross_host_for_operator(
     # Act
     html = _seeded_fleet_html(client, "op1", [row])
     # Assert
-    assert 'value="stop"' in html and "/gamma/message" in html
+    assert 'value="stop"' in html and "/gamma/message" not in html
 
 
 def test_fleet_row_message_post_reports_delivery(client, loopback, env_save_restore, audit_log):
@@ -241,3 +243,40 @@ def test_mounted_a2a_uses_hub_shell(hub_client, loopback, env_save_restore):
     html = hub_client.get("/apps/agent-container/a2a/").content.decode()
     # Assert
     assert 'id="hub-global-header"' in html and "workspace-three-col" not in html and "agents-app" in html and "agents.css" in html
+
+
+# ── cross-host messaging is not supported: no path, loud refusal ─────────────
+def test_cross_host_message_post_refused_as_json(client, loopback, env_save_restore, audit_log):
+    # Arrange — op1 may operate cross-host, but messaging is unsupported.
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    env_save_restore.set(CROSS_ENV, "op1")
+    # Act
+    resp = client.post(
+        "/gamma/message", {"message": "hello across"},
+        HTTP_ACCEPT="application/json",
+    )
+    # Assert — loud 409 naming the supported path, never a silent drop.
+    assert resp.status_code == 409 and "scitex-cards" in resp.json()["error"]
+
+
+def test_cross_host_message_post_redirects_refused(client, loopback, env_save_restore):
+    # Arrange — same gate through the browser form path (no error page).
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    env_save_restore.set(CROSS_ENV, "op1")
+    # Act
+    resp = client.post("/gamma/message", {"message": "hello across"})
+    # Assert
+    assert resp.status_code in (302, 303) and "state=refused" in resp["Location"]
+
+
+def test_detail_cross_host_shows_cards_pointer_not_composer(client, loopback, env_save_restore):
+    # Arrange — op1 may operate cross-host (lifecycle stays available).
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    env_save_restore.set(CROSS_ENV, "op1")
+    # Act
+    html = client.get("/gamma/").content.decode()
+    # Assert — notice names scitex-cards; no message composer is offered.
+    assert "scitex-cards" in html and 'id="msg-gamma"' not in html

@@ -34,7 +34,7 @@ Auth on the wire (WI-2 / WI-4, 2026-05-21): cross-host calls into
 another sac listen's ``message:send`` carry the destination host's
 listen bearer, pulled from
 ``~/.scitex/agent-container/peer-tokens/<peer-host>.token`` on the
-caller's side (registered via ``sac host add-peer <host> <token>``).
+caller's side (registered via ``sac host add-peer <host> <token> --yes``).
 The destination's :class:`BearerAuthMiddleware` admits the request
 as an *administrative* caller; the destination's ACL then gates on
 ``metadata.from_agent`` per handoff §4 ("ACL is enforced at the

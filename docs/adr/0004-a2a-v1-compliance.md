@@ -27,20 +27,30 @@ custom dialect plus v1.0 in parallel").
 
 ### D10. Route prefix `/agents/` → `/agents/`.
 
-All sac REST routes drop the `/v1/` prefix:
+SAC routes drop the `/v1/` prefix:
 
 | Old | New |
 |---|---|
 | `GET /.well-known/agent.json` | `GET /.well-known/agent-card.json` |
 | `GET /agents/` | `GET /agents/` |
 | `GET /agents/<name>/.well-known/agent.json` | `GET /agents/<name>/.well-known/agent-card.json` |
-| `POST /agents/<name>` | `POST /agents/<name>/message:send` (A2A v1 REST binding) |
+| `POST /agents/<name>` | `POST /agents/<name>/message:send` (SDK JSON-RPC dispatcher) |
 | `GET /agents/<name>/inbox/stream` | `GET /agents/<name>/inbox/stream` (sac extension) |
 | `GET /agents/<name>/_active` | `GET /agents/<name>/_active` (sac extension) |
 
-The `/agents/<name>/` prefix is sac's multi-agent extension above the
-A2A REST binding (the spec defines single-agent paths; sac fans
-several agents from one listen process).
+The `/agents/<name>/` prefix selects an agent within one server. Despite
+its REST-shaped path, `message:send` forwards JSON-RPC envelopes to the SDK,
+not REST request bodies. SDK-server per-agent cards and member discovery therefore
+advertise `JSONRPC` with that exact endpoint URL. Shared projection defaults
+remain `HTTP+JSON` for existing listen/session HTTP adapters; the SDK server
+selects its binding explicitly. The SDK protobuf adapter
+preserves these interfaces. Skills without capability or skill labels use
+the declared role (or `agent`) as a tag; declared tags remain unchanged.
+
+This is not full REST-binding conformance. The fleet root card remains a
+discovery summary, not an executable fleet dispatcher. Protobuf parsing
+checks field types; required-field validation and actual transport round trips
+are separate checks. See `test__card_phase3.py` and `test__card_interface.py`.
 
 ## sac extension namespace
 

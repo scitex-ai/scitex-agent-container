@@ -1,24 +1,10 @@
-"""``sac accounts keepalive`` — push ACCESS-ONLY credentials out to peers.
+"""Distribute current access-only credentials through the owning backend.
 
-The operator-facing leg of :mod:`.._account.token_keepalive`. Lives in its
-own module (like ``_account_mint_token`` / ``_account_refresh``) to keep
-``account_group`` under the per-file line cap; attached onto the group at
-import time.
-
-THE INVARIANT THIS MAINTAINS
-----------------------------
-Exactly ONE host in the fleet holds OAuth REFRESH material — as of
-2026-08-10 that is ``scitex-nas-03``. Every other host is READ-ONLY with
-respect to the session: it receives ACCESS-ONLY copies and can never
-trigger the refresh-token rotation that would revoke everyone else's
-token. ``sac accounts mint-token`` already mints that shape; this command
-is what DELIVERS it, and what keeps the access-only hosts alive — without
-a run before each expiry they simply go dark.
-
-NOTHING IS SCHEDULED HERE. Running this on a timer is a separate,
-deliberate decision and is expressly NOT hand-rolled as a unit file or a
-cron line — those go missing. The recurrence belongs in scitex-dev's
-periodic-job primitive, declared by sac. This module ships the verb only.
+``send-credentials`` and its hidden ``keepalive`` alias share this command.
+Ordinary transfers retain holder discovery, pause, validity, publication and
+peer-verification gates. ``--dry-run`` reports supplied arguments before those
+operations; it establishes no credential, destination or readiness facts.
+Scheduling belongs to the separate SAC JobSpec and Dev job dispatcher.
 """
 
 from __future__ import annotations
@@ -227,6 +213,12 @@ def register_keepalive_command(group: click.Group) -> None:
         default=False,
         help="Emit a JSON array of per-peer records on stdout.",
     )
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Preview arguments without reading credentials or contacting peers.",
+    )
+    @click.option("-y", "--yes", is_flag=True, help="Approve credential distribution.")
     def account_keepalive(
         account_labels: tuple[str, ...],
         all_accounts: bool,
@@ -236,18 +228,16 @@ def register_keepalive_command(group: click.Group) -> None:
         sweep: bool,
         optional_peers: tuple[str, ...],
         as_json: bool,
+        dry_run: bool = False,
+        yes: bool = False,
     ) -> None:
         """Copy this host's CURRENT access token to peers, access-only.
 
-        COPIES — it never mints or refreshes. Minting ROTATES the
-        single-use refresh token, which revokes the access token every
-        running agent is holding; that is what killed ten agents on
-        2026-08-10. This reads the master's stored credential as it
-        stands, strips the refreshToken (via the same
-        ``mint_access_only_artifact`` the ``mint-token`` verb uses),
-        refuses to send it if it is nearly dead, backs up whatever it
-        replaces on the peer, publishes at 0600, and PROVES the peer's own
-        copy answers HTTP 200 before anything is restarted.
+        Copies stored access material without minting or refreshing. The
+        backend strips refresh material, refuses nearly expired credentials,
+        backs up the destination, publishes privately and verifies the peer's
+        own copy before an optional sweep. Explicit --yes/-y is required;
+        --dry-run takes precedence and establishes no transfer readiness.
 
         Every refusal is loud and names the account and the peer. No token
         value is ever printed — only paths, hostnames, seconds and opaque
@@ -255,13 +245,43 @@ def register_keepalive_command(group: click.Group) -> None:
 
         \b
         Examples (peer keys below are real; run --help to see THIS host's):
-          $ sac accounts send-credentials --account alpha-example-com --to scitex-compute-04
-          $ sac accounts send-credentials --all --to scitex-compute-04 --to ywata-note-win
-          $ sac accounts send-credentials --all --to scitex-compute-04 --sweep
+          $ sac accounts send-credentials --yes --account alpha-example-com --to scitex-compute-04
+          $ sac accounts send-credentials --yes --all --to scitex-compute-04 --to ywata-note-win
+          $ sac accounts send-credentials --yes --all --to scitex-compute-04 --sweep
+          $ sac accounts send-credentials --all --to scitex-compute-04 --dry-run
         """
         force = False
         import json as _json
         import sys
+
+        from ._credential_preview import (
+            credential_distribution_preview,
+            validate_account_selection,
+            validate_optional_peers,
+        )
+
+        if dry_run:
+            plan = credential_distribution_preview(
+                account_labels=account_labels,
+                all_accounts=all_accounts,
+                peers=peers,
+                min_validity=min_validity,
+                remote_path=remote_path,
+                sweep=sweep,
+                optional_peers=optional_peers,
+            )
+            click.echo(_json.dumps(plan, ensure_ascii=False, indent=2))
+            return
+
+        from ._credential_approval import require_distribution_approval
+
+        require_distribution_approval(
+            yes=yes,
+            account_labels=account_labels,
+            all_accounts=all_accounts,
+            peers=peers,
+            optional_peers=optional_peers,
+        )
 
         from .._account.snapshot_push import SnapshotPushError
         from .._account.token_keepalive import (
@@ -273,10 +293,7 @@ def register_keepalive_command(group: click.Group) -> None:
         )
         from . import _account_keepalive_pause as _kp
 
-        if bool(account_labels) == all_accounts:
-            raise click.UsageError(
-                "pass exactly one of --account <slug> (repeatable) or --all."
-            )
+        validate_account_selection(account_labels, all_accounts)
 
         accounts = list(account_labels)
         if all_accounts:
@@ -300,13 +317,7 @@ def register_keepalive_command(group: click.Group) -> None:
         # accepting a name that is not in --to would let a typo disarm
         # nothing while looking like it disarmed something.
         optional = set(optional_peers)
-        unknown_optional = sorted(optional - set(peers))
-        if unknown_optional:
-            raise click.UsageError(
-                "--optional-peer names host(s) absent from --to: "
-                f"{', '.join(unknown_optional)}. An optional peer must also "
-                "be a target, or the declaration applies to nothing."
-            )
+        validate_optional_peers(peers, optional_peers)
 
         floor = MIN_VALIDITY_S if min_validity is None else min_validity
         records: list[dict[str, Any]] = []
@@ -350,8 +361,7 @@ def register_keepalive_command(group: click.Group) -> None:
                 # it was on, or the silence returns. The outcome line below
                 # follows; it never replaces this one.
                 click.echo(
-                    f"  {peer:20s}  {account_label}: pushing "
-                    "access-only credential...",
+                    f"  {peer:20s}  {account_label}: pushing access-only credential...",
                     err=True,
                 )
                 # stx-allow: fallback (reason: one unreachable or refusing
@@ -414,9 +424,7 @@ def register_keepalive_command(group: click.Group) -> None:
             # Same pre-attempt naming as the push loop: a run killed between
             # the verified push and the sweep restart would otherwise die
             # without saying it was sweeping THIS peer.
-            click.echo(
-                f"  {peer:20s}  sweeping login-expired agents...", err=True
-            )
+            click.echo(f"  {peer:20s}  sweeping login-expired agents...", err=True)
             # stx-allow: fallback (reason: the credential IS published and
             # verified at this point; a sweep failure must be reported
             # against THIS peer and must not discard the successful push or
@@ -456,12 +464,8 @@ def register_keepalive_command(group: click.Group) -> None:
 
     group.add_command(account_keepalive, "send-credentials")
 
-    # ``keepalive`` is a PUBLISHED contract, so this is a migration, not a
-    # rename: the old name keeps WORKING and is merely hidden from --help.
-    # A redirect that printed "renamed to X" and exited would break the
-    # systemd units and operator muscle memory that already call it, which
-    # is the opposite of what a rename is for. Remove the alias only once
-    # nothing on any host invokes it.
+    # Keep the published alias and shared options. Both names require approval;
+    # installed timers must migrate before this candidate is released.
     legacy = click.Command(
         name="keepalive",
         callback=_deprecated(account_keepalive.callback),
@@ -475,12 +479,7 @@ def register_keepalive_command(group: click.Group) -> None:
 
 
 def _deprecated(callback):
-    """Wrap ``callback`` so the legacy name says so — on stderr, then runs.
-
-    stderr, not stdout: ``--json`` consumers parse stdout, and a warning
-    that lands there would turn a working script into a JSON parse error.
-    That is the whole failure this alias exists to prevent.
-    """
+    """Warn on stderr, preserving JSON stdout, then invoke the shared callback."""
     import functools
 
     @functools.wraps(callback)
@@ -488,8 +487,8 @@ def _deprecated(callback):
         click.echo(
             "warning: `sac accounts keepalive` is now "
             "`sac accounts send-credentials` — it copies credentials to "
-            "peers, which is what the new name says. The old name still "
-            "works and will be removed once nothing calls it.",
+            "peers. The alias shares --dry-run and --yes; migrate callers "
+            "to the canonical command.",
             err=True,
         )
         return callback(*args, **kwargs)

@@ -726,7 +726,7 @@ def test_revoke_existing_grant_exits_zero(isolated_state_store: Path, pg_schema:
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
     # Act
-    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b", "--yes"])
     # Assert
     assert res.exit_code == 0
 
@@ -735,7 +735,7 @@ def test_revoke_removes_row_from_comms_grants(isolated_state_store: Path, pg_sch
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
-    runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    runner.invoke(a2a, ["revoke", "worker-a", "worker-b", "--yes"])
     # Act
     from scitex_agent_container._state.state_store_nodes import list_comms_grants
 
@@ -752,7 +752,7 @@ def test_revoke_missing_grant_is_noop_zero_exit(isolated_state_store: Path, pg_s
     # Arrange: no grant exists
     runner = CliRunner()
     # Act
-    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b", "--yes"])
     # Assert
     assert res.exit_code == 0
 
@@ -764,7 +764,7 @@ def test_revoke_missing_grant_emits_noop_marker(
     # Arrange
     runner = CliRunner()
     # Act
-    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    res = runner.invoke(a2a, ["revoke", "worker-a", "worker-b", "--yes"])
     # Assert
     assert "no-op" in res.output
 
@@ -800,7 +800,7 @@ def test_grants_empty_table_renders_no_grants_marker(
     # Arrange
     runner = CliRunner()
     # Act
-    res = runner.invoke(a2a, ["grants"])
+    res = runner.invoke(a2a, ["list-grants"])
     # Assert
     assert "no grants" in res.output
 
@@ -812,7 +812,7 @@ def test_grants_json_empty_table_is_empty_array(
     # Arrange
     runner = CliRunner()
     # Act
-    res = runner.invoke(a2a, ["grants", "--json"])
+    res = runner.invoke(a2a, ["list-grants", "--json"])
     # Assert
     assert json.loads(res.output) == []
 
@@ -822,7 +822,7 @@ def test_grants_json_lists_inserted_grant(isolated_state_store: Path, pg_schema:
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b", "--note", "demo"])
     # Act
-    res = runner.invoke(a2a, ["grants", "--json"])
+    res = runner.invoke(a2a, ["list-grants", "--json"])
     rows = json.loads(res.output)
     # Assert
     assert any(
@@ -839,7 +839,7 @@ def test_grants_rich_table_shows_sender_and_target(
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "alpha", "beta"])
     # Act
-    res = runner.invoke(a2a, ["grants"])
+    res = runner.invoke(a2a, ["list-grants"])
     # Assert
     assert "alpha" in res.output and "beta" in res.output
 
@@ -850,7 +850,7 @@ def test_grants_json_orders_by_insertion(isolated_state_store: Path, pg_schema: 
     runner.invoke(a2a, ["grant", "first-sender", "first-target"])
     runner.invoke(a2a, ["grant", "second-sender", "second-target"])
     # Act
-    res = runner.invoke(a2a, ["grants", "--json"])
+    res = runner.invoke(a2a, ["list-grants", "--json"])
     rows = json.loads(res.output)
     # Assert
     assert rows[0]["sender"] == "first-sender" and rows[1]["sender"] == (
@@ -865,9 +865,9 @@ def test_grants_json_after_revoke_drops_the_row(
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
-    runner.invoke(a2a, ["revoke", "worker-a", "worker-b"])
+    runner.invoke(a2a, ["revoke", "worker-a", "worker-b", "--yes"])
     # Act
-    res = runner.invoke(a2a, ["grants", "--json"])
+    res = runner.invoke(a2a, ["list-grants", "--json"])
     # Assert
     assert json.loads(res.output) == []
 

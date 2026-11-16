@@ -4,6 +4,105 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+## [0.39.0] - 2026-11-16
+
+### Added
+- `sac config show|deploy|check|import`: harness-neutral agent config
+  (`~/.scitex/agent-container/.agents`, project layer wins) rendered into
+  Claude Code's native `~/.claude` / `<root>/.claude`; `AGENTS.md` is the only
+  instruction file (ADR-0033). Deploy backs up, never deletes.
+
+### Fixed
+- Require explicit approval for peer-token CLI writes; add token-free argument
+  previews and JSON metadata while preserving containment and idempotent removal.
+- Accept standard `--yes/-y` approval spellings for agent reconciliation
+  while retaining `--apply`, preview defaults and existing restart guards.
+- Add offline registry registration previews and require explicit approval
+  before accessing the routing store; retain backend conflict checks.
+- Expose root diagnostics as `list-ports`, `list-versions` and
+  `show-provenance`; retain hidden legacy aliases with warnings on stderr.
+- Forward service/timer status JSON through the installed scitex-dev backend,
+  refusing undeclared JSON capability; add grammar-derived job command examples.
+- Add an offline `a2a revoke --dry-run` plan and require `--yes` before
+  withdrawing an explicit directed grant; preserve reverse grants and history.
+- Require `accounts resume --yes` before removing a local pause record; keep
+  `--dry-run` read-only even with approval and preserve unpaused no-op behavior.
+- Expose CI inspection as `ci explain`, `ci list-runners` and `ci list-blocked`;
+  retain hidden deprecated `why`, `runners` and `blocked` aliases with unchanged
+  read behavior and JSON output.
+- Expose read-only role/grant/quota discovery as `agents list-roles`,
+  `a2a list-grants` and `accounts get-quota`; retain hidden deprecated aliases for existing scripts.
+- Reserve the unspent 0.38.7 version for these pending changes.
+- Preserve lazy command enumeration and custom command lookup through the console
+  bootstrap facade. External CLI auditors can discover the Python API and MCP
+  interfaces without invoking the console wrapper; execution still uses the
+  existing source-authority guard and pre-Click processing.
+- Contain peer-token reads, writes and CLI removal to validated single host
+  identifiers; reject token-file symlinks while retaining directory symlinks.
+- Use exclusive private staging files for atomic token writes so a predictable
+  temporary-path symlink cannot redirect credential output.
+
+## [0.38.6] - 2026-11-02
+
+### Fixed
+- Read status session identity through the selected runtime's ownership proof,
+  including Hermes container/host aliases. Keep status and activity available
+  with explicit unknown session evidence when proof fails. Passive status reads
+  no longer activate the Hermes renderer to inspect optional clarification state.
+- Stop CI and release qualification when the full declared dependency install
+  fails, rather than retrying with reduced extras. Use the reviewed shared
+  installer with a fresh private package cache for each job, and honor the
+  repository's bounded worker setting.
+- Resolve the scientific umbrella, staged SAC and staged Cards together with
+  dependency checking enabled. Refuse an image whose installed requirements
+  conflict. The scientific layer requires the compatible scitex 2.30.9 cohort
+  to be published before building; CLI/base publication is independent.
+- Install the ZIP extractor required by Puppeteer before browser downloads.
+  Reject missing browser executables and require both stable browser paths to
+  launch headlessly before accepting a base image. Keep the browser cache outside
+  the private build home so the non-root agent can use those executables.
+- Keep both dashboard message composers on the current page when Enter or
+  Ctrl/Command+Enter submits. Shift+Enter inserts a newline. Preserve the draft
+  and show inline errors after refusal or uncertain transport; do not blindly
+  resubmit an identical uncertain dispatch. Refresh dispatch IDs after confirmed
+  success, while treating IDs as correlation rather than durable deduplication.
+- Forward supported local messages through the authenticated listener proxy
+  instead of dialing host-loopback bridges from the web container. Report
+  canonical acceptance as pending completion. Retain the explicit HTTP 409
+  refusal and Cards guidance for unsupported cross-host dashboard messages.
+- Keep fleet tables, notices, Details panels and message content square,
+  matching the shared content style.
+- Fit fleet panes and composers to the shared workspace viewport, preserve SDK
+  phone pane visibility, and honor host dock clearance. Keep injected Details
+  fragments at their natural height rather than applying full-page sizing.
+- Content-version leaf static assets so source updates invalidate cached styles
+  and scripts without requiring a package version change.
+- Preserve the fleet project-label fallback. Include pagehead spacing and the
+  correction for multiline template comments from the superseded 0.38.5 preview.
+- Read only the Hermes replay watermark after slash commands, avoiding retained
+  event downloads that exceed the WebSocket frame limit on long runs. Omit
+  gateway bearer queries from command and message connection errors.
+
+### Changed
+- Adopt the SDK keyword-filter field with its leading icon, keyword placeholder,
+  and muted Ctrl+K/Esc hint. Escape clears the field and releases focus. Pin both
+  GUI and development dependencies exactly to SDK 0.3.17 so this renderer and the
+  shared header and scope contracts resolve consistently.
+- Expand packaged Hermes skill 47 with the generalized source, host symlink,
+  to_home, overlay, generated home, Apptainer, project, and fleet checklist.
+  Skills 48 and 49 document main/judge availability preflights, subscription
+  errors, existing bounded quota-restart behavior, and safe credential handling.
+  These are troubleshooting and resolution guidance, not a new quota engine.
+
+## 0.38.5 (unpublished preview, superseded by 0.38.6)
+
+- Previewed exact GUI/dev SDK 0.3.16 pins for the shared scope capability contract;
+  the combined 0.38.6 candidate supersedes those pins with SDK 0.3.17.
+- Added fleet pagehead spacing and prevented multiline template-comment leakage
+  (PR #1694); these changes are included in 0.38.6.
+
 ## [0.38.4] - 2026-11-01
 
 - Remove the expired `sac dev systemd` compatibility group; use `service` or `timer` for the declared job kind. The original retirement deadline remains enforced.
@@ -17,8 +116,6 @@ versioning follows [SemVer](https://semver.org/).
 - Distinguish optional missing secret slots and unverified shell-expression differences from actionable explicit missing names and conflicting literals.
 - Preserve explicitly configured native Hermes hooks when regenerating model profiles.
 - Require scitex-logging 0.2.4 and document/test restart output and warning classification.
-
-## [Unreleased]
 
 ## [0.38.2] - 2026-10-31
 

@@ -208,12 +208,17 @@ def register_pause_commands(group: click.Group) -> None:
             "fails every agent boot."
         ),
     )
-    def account_pause(name: str, reason: str, yes: bool) -> None:
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Validate the pause and show its target without changing account files.",
+    )
+    def account_pause(name: str, reason: str, yes: bool, dry_run: bool) -> None:
         """Stop using an account WITHOUT deleting it — a decision, not a fault.
 
         For the workflow of stopping a subscription and putting it back
         later. Nothing is deleted and no credential is touched;
-        `sac accounts resume NAME` puts it back in one command.
+        `sac accounts resume NAME --yes` puts it back in one command.
 
         EXACTLY WHAT A PAUSE STOPS, stated narrowly on purpose. No NEW
         agent boot picks the account, quota rotation never lands on it,
@@ -240,6 +245,11 @@ def register_pause_commands(group: click.Group) -> None:
         credential — the path is printed. Peers stop receiving the
         credential immediately and drop the account when their copy
         expires.
+
+        \b
+        Example:
+          $ sac accounts pause worker-account --reason "subscription rest" --dry-run
+          $ sac accounts pause worker-account --reason "subscription rest"
         """
         from .._creds._pause import Pause, pause_path, read_pause, write_pause
 
@@ -252,7 +262,7 @@ def register_pause_commands(group: click.Group) -> None:
 
         account_dir = _resolve_account_dir(name)
         existing = read_pause(name, account_dir)
-        if existing.problem:
+        if existing.problem and not dry_run:
             click.echo(
                 f"note: the existing pause record was not usable "
                 f"({existing.problem}). Overwriting it.",
@@ -266,6 +276,14 @@ def register_pause_commands(group: click.Group) -> None:
                 "would leave the picker with nothing and fail every "
                 "agent boot. Pass --yes if that is what you want."
             )
+
+        if dry_run:
+            click.echo(
+                f"would pause {name}: {reason.strip()}\n"
+                f"  record: {pause_path(account_dir)}\n"
+                "  dry run: no account files changed."
+            )
+            return
 
         record = Pause(
             name=name,
@@ -284,12 +302,23 @@ def register_pause_commands(group: click.Group) -> None:
         click.echo(
             f"paused {name}: {record.reason}\n"
             f"  record: {pause_path(account_dir)}\n"
-            f"  nothing was deleted; `sac accounts resume {name}` lifts it."
+            f"  nothing was deleted; `sac accounts resume {name} --yes` lifts it."
         )
 
     @group.command("resume")
     @click.argument("name")
-    def account_resume(name: str) -> None:
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Show the pause record that would be removed without changing it.",
+    )
+    @click.option(
+        "--yes",
+        "-y",
+        is_flag=True,
+        help="Confirm removal of the local pause record.",
+    )
+    def account_resume(name: str, dry_run: bool, yes: bool) -> None:
         """Put a paused account back in service. The inverse of `pause`.
 
         Prints the reason that was lifted, how long the pause stood, and
@@ -298,12 +327,39 @@ def register_pause_commands(group: click.Group) -> None:
         is a different problem with a different fix (restore the
         subscription; the entitlement probe picks it up within 30
         minutes on its own).
+
+        Preview validates the stored account and reads its pause record. It
+        does not remove that record, query a provider or establish model access.
+        Removing a record requires --yes; an unpaused account remains a no-op.
+
+        \b
+        Example:
+          $ sac accounts resume worker-account --dry-run
+          $ sac accounts resume worker-account --yes
         """
         from .._creds._account_health import account_health
         from .._creds._pause import clear_pause, pause_path, read_pause
 
         account_dir = _resolve_account_dir(name)
         existing = read_pause(name, account_dir)
+        if dry_run:
+            if existing.active or existing.problem:
+                detail = existing.reason if existing.active else "unusable pause record"
+                click.echo(
+                    f"would resume {name}: {detail}\n"
+                    f"  record: {pause_path(account_dir)}\n"
+                    "  dry run: no account files changed; model access not checked."
+                )
+            else:
+                click.echo(f"{name} was not paused — nothing to lift (dry run).")
+            return
+        if not yes and (
+            existing.active or existing.problem or pause_path(account_dir).exists()
+        ):
+            raise click.ClickException(
+                f"refusing to remove the pause record for '{name}' without --yes. "
+                "Use --dry-run to inspect it; pass --yes to resume the account."
+            )
         # :func:`clear_pause` deliberately propagates every OSError that
         # is not FileNotFoundError, because a permission-denied unlink
         # means the pause is STILL THERE and calling that "nothing to
@@ -313,7 +369,7 @@ def register_pause_commands(group: click.Group) -> None:
         # costs one command ended in a Python stack trace on a
         # read-only store.
         try:
-            removed = clear_pause(account_dir)
+            removed = clear_pause(account_dir) if yes else False
         except OSError as exc:
             raise click.ClickException(
                 f"could not remove {pause_path(account_dir)} ({exc}) — "

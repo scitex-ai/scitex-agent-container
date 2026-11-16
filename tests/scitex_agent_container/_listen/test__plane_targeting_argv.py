@@ -38,7 +38,14 @@ _DISRUPTIVE = [
     ["systemctl", "--user", "stop", "sac-listen.service"],
     ["systemctl", "restart", "sac-listen"],
     ["sac", "listen", "restart"],
+    ["sac", "listener", "restart", "--yes"],
+    ["sac", "listener", "stop", "--yes"],
+    ["scitex-agent-container", "listener", "stop", "--yes"],
+    ["pkill", "-f", "sac listener"],
     ["sac", "listen", "stop"],
+    ["sac", "listen", "stop", "--yes"],
+    ["scitex-agent-container", "listen", "stop"],
+    ["scitex-agent-container", "listen", "stop", "--yes"],
     ["/home/ywatanabe/.scitex/agent-container/venv/bin/sac", "listen", "restart"],
     ["pkill", "-f", "sac listen"],
     ["killall", "sac-listen"],
@@ -71,6 +78,7 @@ def test_a_detected_command_carries_a_reason(argv) -> None:
 # ---------------------------------------------------------------------------
 
 _SAFE = [
+    ["scitex-agent-container", "listen", "status"],
     # A read of the same unit: the caller wants the output, not a 202.
     ["systemctl", "--user", "status", "sac-listen.service"],
     ["systemctl", "--user", "is-active", "sac-listen.service"],
@@ -78,6 +86,8 @@ _SAFE = [
     ["systemctl", "--user", "restart", "sac-creds-watch.service"],
     # start kills nobody, and on a down daemon it is the recovery path.
     ["sac", "listen", "start"],
+    ["sac", "listener", "start", "--yes"],
+    ["scitex-agent-container", "listener", "status", "--json"],
     # Ordinary sac work.
     ["sac", "agents", "list"],
     ["sac", "agents", "restart", "some-agent"],

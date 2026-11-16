@@ -20,19 +20,20 @@ line summary is printed per move::
 
     archived: <from> -> <to> (N files, M MB)
 
-Move-don't-delete is the invariant. The operator can always reverse a
-mistake with one ``mv`` — the data still lives at the recorded archive
-path until they ``rm -rf`` it themselves.
+Successful moves retain their trees at the recorded archive path. Review
+that retained data before manual restoration; the mover does not provide
+a rollback transaction.
 
 This command is intentionally narrower than the existing
 ``prune-claude`` (which carries dry-run logic for ``.pending/`` records
 and git-aware worktree merge checks). ``archive-claude-bloat`` is the
-nuclear-but-recoverable button: whatever the audit calls bloat, get it
-out of the SDK's discovery walk RIGHT NOW.
+broader archive operation. It requires explicit approval; argument-only
+preview does not resolve the agent or inspect its workdir.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from pathlib import Path
@@ -40,6 +41,7 @@ from pathlib import Path
 import click
 
 from .._workdir import audit_workdir_claude
+from ._helpers import _json_flag
 
 # ---------------------------------------------------------------------------
 # Workdir resolution
@@ -164,8 +166,27 @@ def _format_move(record: dict) -> str:
 
 @click.command(name="archive-claude-bloat")
 @click.argument("name", required=True)
-def archive_claude_bloat(name: str) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Describe arguments without agent lookup, scanning or moving files.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Approve audit-driven moves into the archive bucket.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit recorded moves as JSON.")
+@click.pass_context
+def archive_claude_bloat(
+    ctx: click.Context, name: str, dry_run: bool, yes: bool, as_json: bool
+) -> None:
     """Archive F-CS8 bloat sources from an agent's ``<workdir>/.claude/``.
+
+    Requires --yes/-y. --dry-run reports arguments only, without registry
+    lookup or scanning; it does not list sources or validate the agent.
+    Approval conflicts with --dry-run.
 
     Resolves the agent's workdir, runs the same ``audit_workdir_claude``
     that the start-time banner uses, and MOVES every ``bloat_sources``
@@ -177,21 +198,53 @@ def archive_claude_bloat(name: str) -> None:
 
         archived: <from> -> <to> (N files, M MB)
 
+    The legacy mover records only successful moves and skips vanished or
+    failing sources. An empty result does not prove that the tree is clean.
+
     Exits 0 when the run completed (with or without moves), 2 when the
     agent name is unknown / unregistrable.
 
     \b
     Examples:
-      $ sac agents archive-claude-bloat proj-heavy-agent
-      $ sac agents archive-claude-bloat proj-grant
+      $ sac agents archive-claude-bloat proj-heavy-agent --dry-run
+      $ sac agents archive-claude-bloat proj-grant --yes
     """
+    if yes and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with --yes/-y")
+    if dry_run:
+        click.echo(
+            json.dumps(
+                {
+                    "action": "archive-claude-bloat",
+                    "agent": name,
+                    "dry_run": True,
+                    "scope": "arguments_only",
+                    "verified": False,
+                },
+                indent=2,
+            )
+        )
+        return
+    if not yes:
+        raise click.UsageError(
+            "Archiving requires --yes/-y; use --dry-run to preview arguments."
+        )
     workdir = _resolve_agent_workdir(name)
     if not workdir:
         click.echo(f"unknown agent or missing workdir: {name}", err=True)
         raise SystemExit(2)
     moved = archive_bloat_sources(workdir)
+    if _json_flag(ctx, as_json):
+        click.echo(
+            json.dumps(
+                {"agent": name, "workdir": str(workdir), "moved": moved}, indent=2
+            )
+        )
+        return
     if not moved:
-        click.echo("no bloat sources detected by audit; nothing to archive.")
+        click.echo(
+            "nothing to archive: no moves recorded (no bloat or sources skipped during apply)."
+        )
         return
     for record in moved:
         click.echo(_format_move(record))

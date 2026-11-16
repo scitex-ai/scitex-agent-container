@@ -3,7 +3,7 @@
 
 """``sac guard`` — mechanical gates over a delegated code change.
 
-One verb today: ``sac guard deletions``. It exists so the
+One verb today: ``sac guard validate-deletions``. It exists so the
 unrequested-deletion check is reachable from a hook, a shell, or any agent
 — not only from the trials harness that first needed it. A gate with
 exactly one caller is a script; a gate anything can call is a gate.
@@ -18,22 +18,21 @@ entry point is a migration, not a rename.
 from __future__ import annotations
 
 import json as _json
+from copy import copy
 
 import click
 
-from ._helpers import HelpRecursiveGroup
+from ._helpers import HelpRecursiveGroup, _json_flag
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-@click.group(
-    "guard", cls=HelpRecursiveGroup, context_settings=CONTEXT_SETTINGS
-)
+@click.group("guard", cls=HelpRecursiveGroup, context_settings=CONTEXT_SETTINGS)
 def guard_group() -> None:
     """Mechanical gates a delegated change must pass."""
 
 
-@guard_group.command("deletions", context_settings=CONTEXT_SETTINGS)
+@guard_group.command("validate-deletions", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "--repo",
     type=click.Path(file_okay=False),
@@ -41,25 +40,39 @@ def guard_group() -> None:
     show_default=True,
     help="Repository to inspect (used with --base/--target).",
 )
-@click.option("--base", default=None,
-              help="Git ref holding the BEFORE tree (e.g. HEAD, origin/develop).")
-@click.option("--target", default=None,
-              help="Git ref holding the AFTER tree. Default: the working tree.")
-@click.option("--before", type=click.Path(), default=None,
-              help="BEFORE snapshot directory (pairs with --after).")
-@click.option("--after", type=click.Path(), default=None,
-              help="AFTER snapshot directory (pairs with --before).")
+@click.option(
+    "--base",
+    default=None,
+    help="Git ref holding the BEFORE tree (e.g. HEAD, origin/develop).",
+)
+@click.option(
+    "--target",
+    default=None,
+    help="Git ref holding the AFTER tree. Default: the working tree.",
+)
+@click.option(
+    "--before",
+    type=click.Path(),
+    default=None,
+    help="BEFORE snapshot directory (pairs with --after).",
+)
+@click.option(
+    "--after",
+    type=click.Path(),
+    default=None,
+    help="AFTER snapshot directory (pairs with --before).",
+)
 @click.option(
     "--allow",
     "allowed",
     multiple=True,
     metavar="KEY",
     help="A deletion the task DID require: 'path::func:name', "
-         "'path::class:Name', or a bare path for a whole file. Repeatable.",
+    "'path::class:Name', or a bare path for a whole file. Repeatable.",
 )
-@click.option("--json", "as_json", is_flag=True, default=False,
-              help="Output as JSON.")
-def deletions(repo, base, target, before, after, allowed, as_json) -> None:
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_context
+def deletions(ctx, repo, base, target, before, after, allowed, as_json) -> None:
     """Report code a change deleted WITHOUT being asked to.
 
     Compares the symbols (module-level defs and classes, plus methods) in
@@ -85,11 +98,11 @@ def deletions(repo, base, target, before, after, allowed, as_json) -> None:
 
     \b
     Examples:
-      $ sac guard deletions --base HEAD                 # worktree vs HEAD
-      $ sac guard deletions --base origin/develop --target HEAD
-      $ sac guard deletions --before /tmp/a --after /tmp/b
-      $ sac guard deletions --base HEAD --allow 'calc.py::func:clamp'
-      $ sac guard deletions --base HEAD --json
+      $ sac guard validate-deletions --base HEAD                 # worktree vs HEAD
+      $ sac guard validate-deletions --base origin/develop --target HEAD
+      $ sac guard validate-deletions --before /tmp/a --after /tmp/b
+      $ sac guard validate-deletions --base HEAD --allow 'calc.py::func:clamp'
+      $ sac guard validate-deletions --base HEAD --json
     """
     from .._guard import check_deletions, render
 
@@ -101,11 +114,18 @@ def deletions(repo, base, target, before, after, allowed, as_json) -> None:
         after=after,
         allowed=allowed,
     )
-    if as_json:
+    if _json_flag(ctx, as_json):
         click.echo(_json.dumps(report.to_dict(), indent=2))
     else:
         click.echo(render(report), err=report.exit_code != 0)
     raise SystemExit(report.exit_code)
+
+
+_legacy_deletions = copy(deletions)
+_legacy_deletions.name = "deletions"
+_legacy_deletions.hidden = True
+_legacy_deletions.deprecated = "Use guard validate-deletions instead."
+guard_group.add_command(_legacy_deletions)
 
 
 __all__ = ["deletions", "guard_group"]

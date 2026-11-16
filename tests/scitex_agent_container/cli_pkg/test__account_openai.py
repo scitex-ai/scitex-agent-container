@@ -143,7 +143,7 @@ def test_sync_openai_collects_active_login(sandbox_home: Path):
     # Arrange
     _write_codex_auth(sandbox_home)
     # Act
-    result = CliRunner().invoke(account, ["sync-openai"])
+    result = CliRunner().invoke(account, ["sync-openai", "--yes"])
     stored = (
         sandbox_home
         / ".scitex"

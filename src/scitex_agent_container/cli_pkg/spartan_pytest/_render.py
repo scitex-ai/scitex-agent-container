@@ -32,6 +32,13 @@ DEFAULT_TIMEOUT_S = 30 * 60
 DEFAULT_POLL_INTERVAL_S = 15
 
 
+def _validate_header_fields(**fields: str) -> None:
+    """Refuse line-breaking controls in values embedded in Slurm headers."""
+    for name, value in fields.items():
+        if any(control in value for control in ("\r", "\n", "\x00")):
+            raise ValueError(f"{name} must be single-line text without NUL characters")
+
+
 def _render_sbatch_script(
     *,
     repo: str,
@@ -55,6 +62,9 @@ def _render_sbatch_script(
     4. Runs ``pytest -q --no-cov --maxfail=20``, capturing pass/fail
        counts to ``summary.json``.
     """
+    _validate_header_fields(
+        reservation=reservation, scratch_dir=scratch_dir, job_tag=job_tag
+    )
     scratch_repr = repr(scratch_dir)
     quoted_scratch = shlex.quote(scratch_dir)
     quoted_repo = shlex.quote(repo)
@@ -94,7 +104,9 @@ def _render_sbatch_script(
         "set +e\n"
         "python -m pytest -q --no-cov --maxfail=20 2>&1 "
         f"| tee {quoted_scratch}/pytest.log\n"
-        "PYTEST_EXIT=$?\n"
+        'PIPE_RESULTS=("${PIPESTATUS[@]}")\n'
+        "PYTEST_EXIT=${PIPE_RESULTS[0]}\n"
+        "CAPTURE_EXIT=${PIPE_RESULTS[1]}\n"
         "set -e\n"
         "END_TS=$(date +%s)\n"
         "DURATION=$((END_TS - START_TS))\n"
@@ -104,7 +116,7 @@ def _render_sbatch_script(
         "# Python helper keeps the sbatch script portable across\n"
         "# pytest versions (no pytest-json-report dep required).\n"
         "python - <<PYEOF\n"
-        "import json, re, pathlib\n"
+        "import json, os, re, pathlib\n"
         f"log_path = pathlib.Path({scratch_repr}) / 'pytest.log'\n"
         "log = log_path.read_text(errors='replace') if log_path.exists() else ''\n"
         "passed = failed = errors = 0\n"
@@ -124,12 +136,16 @@ def _render_sbatch_script(
         "    'failed': failed,\n"
         "    'errors': errors,\n"
         "    'duration_s': $DURATION,\n"
+        "    'pytest_exit': $PYTEST_EXIT,\n"
+        "    'capture_exit': $CAPTURE_EXIT,\n"
+        "    'slurm_job_id': os.environ.get('SLURM_JOB_ID'),\n"
         "    'failed_tests': failed_tests,\n"
         "}\n"
         f"out = pathlib.Path({scratch_repr}) / 'summary.json'\n"
         "out.write_text(json.dumps(summary, indent=2))\n"
         "PYEOF\n"
         "\n"
+        'if [[ "$CAPTURE_EXIT" -ne 0 ]]; then exit "$CAPTURE_EXIT"; fi\n'
         "exit $PYTEST_EXIT\n"
     )
 

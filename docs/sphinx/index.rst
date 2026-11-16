@@ -78,7 +78,7 @@ Quick Example
     sac agents status my-agent --json
 
     # Send a follow-up turn to a running agent
-    sac agents send my-agent "What is 2+2?"
+    sac agents send --yes my-agent "What is 2+2?"
 
     # Tail the structured transcript
     sac agents tail my-agent

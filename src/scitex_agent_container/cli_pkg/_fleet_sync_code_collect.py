@@ -1,9 +1,12 @@
-"""Local git-state collector for ``sac fleet sync-code --collect``.
+"""Local git-state collector for ``sac fleet validate-checkouts --collect``.
 
 Shells out to git per checkout (``~/proj/scitex-*`` + ``~/.dotfiles``)
 and reports the installed ``sac`` version. Emits one JSON manifest on
 stdout; exits non-zero only when collection itself fails (no git, no
 proj dir) — a dirty tree or a behind HEAD is DATA, not failure.
+
+Collection refreshes origin refs with git fetch; checked-out files are
+not changed. Legacy sync-code worker invocation remains supported.
 
 Triple-gate values (branch / dirty / ahead / behind) let the lead host
 tell the operator WHY a host can't fast-forward, not merely THAT it

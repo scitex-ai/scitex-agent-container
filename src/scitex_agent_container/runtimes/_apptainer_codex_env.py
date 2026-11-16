@@ -200,7 +200,7 @@ def sync_subscription_auth(config: AgentConfig, codex_home: Path) -> Path | None
         raise ProviderEnvError(
             "Codex subscription must explicitly name provider 'openai' and a "
             "qualified openai:<slug> account collected by "
-            "`sac accounts sync-openai`"
+            "`sac accounts sync-openai --yes`"
         )
     source = (
         Path.home()
@@ -216,7 +216,7 @@ def sync_subscription_auth(config: AgentConfig, codex_home: Path) -> Path | None
     except OSError as exc:
         raise ProviderEnvError(
             f"selected OpenAI account {qualified!r} is unavailable at {source}; "
-            "run `sac accounts sync-openai --name <slug>` first"
+            "run `sac accounts sync-openai --name <slug> --yes` first"
         ) from exc
     from .._account.codex_account import _atomic_write
 
