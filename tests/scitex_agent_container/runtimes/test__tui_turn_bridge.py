@@ -399,21 +399,30 @@ def _get(port: int, path: str) -> tuple[int, dict]:
         return exc.code, json.loads(exc.read() or b"{}")
 
 
-def _wait_exchange(port: int, exchange_id: str) -> dict:
-    # 2000 iterations, not 100. Measured 2026-10-16 on the org CI runner:
-    # with 32 xdist workers churning, the background visibility retry had
-    # completed 2 of 3 native calls when the old ~100 ms budget expired, so
-    # test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit
-    # read a still-102 exchange (same commit passed the 3.11/3.13 legs —
-    # scheduling, not a defect). The loop still returns the moment the
-    # exchange leaves 202, so a healthy run costs nothing extra; only a
-    # genuinely stuck exchange now waits ~2 s instead of ~0.1 s per probe.
-    for _ in range(2000):
+def _wait_exchange(
+    port: int,
+    exchange_id: str,
+    *,
+    pending: tuple[int, ...] = (202,),
+    timeout_s: float = 3.0,
+) -> dict:
+    # Returns the first read whose code is not in ``pending``. Bounded by
+    # WALL TIME, not an iteration count: under 32 xdist workers on the org CI
+    # runner each GET can take far longer than the sleep, so an iteration
+    # budget expired early (measured 2026-10-16). A healthy run returns on
+    # the first terminal read; only a genuinely stuck exchange waits.
+    # Callers waiting for a FINAL outcome pass ``pending=(202, 102)``: 102 is
+    # "still retrying", and returning it raced the background visibility
+    # retry (test_visible_delivery_retries_one_exchange_then_finishes_without
+    # _resubmit read 102 when its third native call had not yet run).
+    deadline = time.monotonic() + timeout_s
+    while True:
         _status, body = _get(port, f"/v1/exchanges/{exchange_id}")
-        if body["status_code"]["code"] != 202:
+        if body["status_code"]["code"] not in pending:
+            return body
+        if time.monotonic() >= deadline:
             return body
         time.sleep(0.001)
-    return body
 
 
 def test_post_v1_turn_delivers_text_to_on_turn(bridge_factory) -> None:
@@ -654,9 +663,7 @@ def test_a2a_envelope_defaults_to_steer_and_allows_explicit_queue(
 ) -> None:
     # Arrange
     modes = []
-    port = bridge_factory(
-        lambda _text, **kwargs: modes.append(kwargs["delivery_mode"])
-    )
+    port = bridge_factory(lambda _text, **kwargs: modes.append(kwargs["delivery_mode"]))
 
     def envelope(dispatch_id: str, metadata: dict | None = None) -> dict:
         return {
@@ -703,9 +710,7 @@ def test_turn_rejects_unknown_delivery_mode_before_opening_exchange(
     calls = []
     port = bridge_factory(lambda *_args, **_kwargs: calls.append(True))
     # Act
-    status, body = _post(
-        port, "/v1/turn", {"text": "hello", "delivery_mode": "maybe"}
-    )
+    status, body = _post(port, "/v1/turn", {"text": "hello", "delivery_mode": "maybe"})
     # Assert
     assert (status, body, calls) == (
         400,
@@ -744,7 +749,9 @@ def test_post_inject_failure_concludes_ordinary_exchange_with_502(
     ) == (202, 502, "failed", True, True)
 
 
-@pytest.mark.parametrize("number,name", [(errno.ENOSPC, "ENOSPC"), (errno.EDQUOT, "EDQUOT")])
+@pytest.mark.parametrize(
+    "number,name", [(errno.ENOSPC, "ENOSPC"), (errno.EDQUOT, "EDQUOT")]
+)
 def test_bare_telegram_storage_failure_returns_structured_507(
     bridge_factory, number, name
 ) -> None:
@@ -974,7 +981,9 @@ def test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit(
     second_status, second = _post(port, "/v1/turn", payload)
     second_probe = _wait_exchange(port, second["exchange_id"])
     third_status, third = _post(port, "/v1/turn", payload)
-    final = _wait_exchange(port, third["exchange_id"])
+    final = _wait_exchange(
+        port, third["exchange_id"], pending=(202, 102), timeout_s=10.0
+    )
 
     # Assert
     assert (
