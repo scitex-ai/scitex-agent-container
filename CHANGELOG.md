@@ -6,7 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.4] - 2026-11-17
+
 ### Fixed
+- Relocation rejects boolean `exit_code` values in host-exec JSON on both the
+  local argv and remote probe paths; `true`/`false` were accepted as measured
+  statuses because `bool` subclasses `int` (#1758).
+- Test suite's subprocess-coverage `.pth` hook now actually starts coverage in
+  child interpreters (site executes only `import` lines) (#1757).
 - Release proof now admits the reviewed CLI-vocabulary packaging
   (`.scitex/dev/cli-audit-dict.yaml`, sdist identity force-include + wheel
   `_cli_audit_dict.yaml`) added in 5a0c3eea. The proof's literal reviewed
