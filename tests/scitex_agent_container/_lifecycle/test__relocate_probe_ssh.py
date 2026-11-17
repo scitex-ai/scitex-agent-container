@@ -31,6 +31,7 @@ from scitex_agent_container._lifecycle._relocate_probe_ssh import (
     peer_preamble,
     run_probe_script,
 )
+from scitex_agent_container._lifecycle._relocate_shell import run_argv_on_host
 from scitex_agent_container._state.host_config import PeerSpec
 
 SCRIPT = 'M=SAC_RELOC\necho "$M begin"\necho "$M end"\n'
@@ -313,3 +314,55 @@ def test_a_script_that_exits_non_zero_is_not_an_ssh_failure(peers) -> None:
     failed = run.ssh_failed
     # Assert
     assert failed is False
+
+
+@pytest.mark.parametrize("exit_code", [False, True])
+def test_remote_boolean_exit_code_is_rejected_as_unmeasured(peers, exit_code):
+    # Arrange
+    execute = _exec_returning({"exit_code": exit_code, "stdout": "", "stderr": ""})
+
+    # Act
+    def run():
+        return run_probe_script("hop", SCRIPT, exec_fn=execute, peers=peers)
+
+    # Assert
+    with pytest.raises(ProbeTransportError, match="integer exit_code"):
+        run()
+
+
+@pytest.mark.parametrize("exit_code", [False, True])
+def test_local_boolean_exit_code_is_rejected_as_unmeasured(exit_code):
+    # Arrange
+    execute = _exec_returning({"exit_code": exit_code, "stdout": "", "stderr": ""})
+
+    # Act
+    def run():
+        return run_argv_on_host(["sh", "-c", SCRIPT], exec_fn=execute)
+
+    # Assert
+    with pytest.raises(ProbeTransportError, match="integer exit_code"):
+        run()
+
+
+@pytest.mark.parametrize("exit_code", [-9, 0, 1, 255])
+def test_remote_integer_exit_codes_remain_exact_measured_statuses(peers, exit_code):
+    # Arrange
+    execute = _exec_returning({"exit_code": exit_code, "stdout": "x", "stderr": "e"})
+    # Act
+    result = run_probe_script("hop", SCRIPT, exec_fn=execute, peers=peers)
+    # Assert
+    assert (result.exit_code, type(result.exit_code), result.stdout, result.stderr) == (
+        exit_code, int, "x", "e",
+    )
+
+
+@pytest.mark.parametrize("exit_code", [-9, 0, 1, 255])
+def test_local_integer_exit_codes_remain_exact_measured_statuses(exit_code):
+    # Arrange
+    execute = _exec_returning({"exit_code": exit_code, "stdout": "x", "stderr": "e"})
+    # Act
+    result = run_argv_on_host(["sh", "-c", SCRIPT], exec_fn=execute)
+    # Assert
+    assert (result.exit_code, type(result.exit_code), result.stdout, result.stderr) == (
+        exit_code, int, "x", "e",
+    )

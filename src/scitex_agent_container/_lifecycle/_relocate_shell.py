@@ -145,7 +145,7 @@ def run_argv_on_host(
             f"the command on {what} timed out after {timeout_s:.0f}s; nothing was measured"
         )
     exit_code = body.get("exit_code")
-    if not isinstance(exit_code, int):
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
         raise ProbeTransportError(
             f"host_exec body carried no integer exit_code (got {exit_code!r})"
         )
