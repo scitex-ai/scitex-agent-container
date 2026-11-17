@@ -6,6 +6,15 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Release proof now admits the reviewed CLI-vocabulary packaging
+  (`.scitex/dev/cli-audit-dict.yaml`, sdist identity force-include + wheel
+  `_cli_audit_dict.yaml`) added in 5a0c3eea. The proof's literal reviewed
+  packaging shape was not updated with it, so every 0.39.x build failed with
+  "reviewed SAC sdist selection changed" and nothing after 0.38.4 published.
+  `release-identity.py` is split into by-path siblings (`release_metadata`,
+  `release_archive`, `release_payload`).
+
 ## [0.39.3] - 2026-11-17
 
 ### Fixed
