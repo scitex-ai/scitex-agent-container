@@ -150,8 +150,18 @@ CONTRIBUTING, examples/, mirror tests), Python API exports.
 
 ## Release
 
-`develop → main` PR. Tag from `main` after merge. `pyproject.toml`
-version bump in the same PR. CI publishes to PyPI on tag push.
+1. Version bump (`pyproject.toml`) + `CHANGELOG.md` in a `chore(release)`
+   PR into `develop`.
+2. Tag **the `develop` merge commit of that PR** (`vX.Y.Z`) and push the tag.
+   CI tests, builds and publishes to PyPI on tag push.
+3. After it is published, promote `develop → main` in a separate PR.
+
+Never tag a `main` merge commit. The release proof
+(`.github/ci/release-identity.py resolve`) requires the tag commit to be in
+`develop`'s history and refuses to publish otherwise ("release source is not
+on the accepted develop history"). A `develop → main` merge commit exists
+only on `main`, so a tag on it builds and then fails at publish. That is how
+0.39.0–0.39.4 were tagged without being published.
 
 ## License + CLA
 
