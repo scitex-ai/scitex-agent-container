@@ -138,12 +138,20 @@ def _ssh_url(url):
     return url.replace("http://127.0.0.1:", "ssh://public-peer.invalid:")
 
 
+# Each ssh control call spawns one cold-interpreter shim (fresh
+# ``sys.executable`` + httpx import). 2 s was enough on an idle host but the
+# v0.39.2 release leg on the loaded org runner hit it (``rc=124``). A healthy
+# call returns as soon as the receipt arrives, so this costs nothing when
+# green. Same reasoning as test_ssh_turn_receipt_is_polled_over_the_same_transport.
+_SSH_BUDGET_S = 10
+
+
 def test_ssh_control_preserves_the_real_receiver_receipt(ssh_http_shim):
     # Arrange
     ssh_http_shim.install()
     with _control_server() as (url, _requests):
         # Act
-        response = post_control_to_url(_ssh_url(url), "Enter", timeout_s=2)
+        response = post_control_to_url(_ssh_url(url), "Enter", timeout_s=_SSH_BUDGET_S)
     # Assert
     assert response == {"delivered": True, "receipt": "public-control-receipt"}
 
@@ -153,7 +161,7 @@ def test_ssh_control_routes_only_to_the_declared_host(ssh_http_shim):
     ssh_http_shim.install()
     with _control_server() as (url, _requests):
         # Act
-        post_control_to_url(_ssh_url(url), "Enter", timeout_s=2)
+        post_control_to_url(_ssh_url(url), "Enter", timeout_s=_SSH_BUDGET_S)
     # Assert
     assert [call["host"] for call in ssh_http_shim.invocations()] == [
         "public-peer.invalid"
@@ -165,7 +173,7 @@ def test_ssh_control_reaches_only_the_explicit_endpoint_and_key(ssh_http_shim):
     ssh_http_shim.install()
     with _control_server() as (url, requests):
         # Act
-        post_control_to_url(_ssh_url(url), "Enter", timeout_s=2)
+        post_control_to_url(_ssh_url(url), "Enter", timeout_s=_SSH_BUDGET_S)
     # Assert
     assert requests == [
         {
