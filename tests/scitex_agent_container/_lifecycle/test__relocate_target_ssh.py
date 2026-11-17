@@ -88,7 +88,12 @@ def _owned_delivery(tmp_path, status, *, missing_tool=None):
                 env=env,
                 text=True,
                 capture_output=True,
-                timeout=min(timeout_s, 10),
+                # Cap 30 s, not 10 s: the shell runs a cold ``sac`` CLI (plus
+                # subprocess coverage under CI). On the loaded org runner the
+                # f8bd6207 develop run hit 10 s AFTER sac had already printed
+                # its ok JSON — slow, not stuck. Green runs exit as soon as the
+                # shell does; the 0.5 s timeout-diagnostics test is unaffected.
+                timeout=min(timeout_s, 30),
             )
         except subprocess.TimeoutExpired as exc:
             exc.add_note(

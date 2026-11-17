@@ -6,10 +6,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.runtimes.a2a_sidecar import _log_path, _pid_path
-from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import (
-    _config,
-    workdir as workdir,
-)
+from tests.scitex_agent_container.runtimes._a2a_sidecar_fixture import _config
 
 
 def test_pid_path_differs_per_agent_in_one_shared_workdir(workdir: Path) -> None:

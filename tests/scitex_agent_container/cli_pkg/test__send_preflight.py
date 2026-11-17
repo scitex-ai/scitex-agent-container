@@ -25,6 +25,12 @@ def target_spec(tmp_path, env_save_restore, doc):
     path = directory / "spec.yaml"
     path.write_text(yaml.safe_dump(doc))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(directory.parent))
+    # An ambient API key makes check_spec_oauth_credentials skip the file
+    # check entirely, so these OAuth-expiry cases would pass or fail by host:
+    # scitex-compute-04's CI runners inherited ANTHROPIC_API_KEY (2026-11-17)
+    # and both expiry tests saw "ok". The spec's selected file must decide.
+    env_save_restore.delete("ANTHROPIC_API_KEY")
+    env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
     return path
 
 

@@ -6,7 +6,19 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.39.2] - 2026-11-17
+## [0.39.3] - 2026-11-17
+
+### Fixed
+- `stop()` for tmux sessions now waits for the session to disappear before
+  reporting, so `sac agents stop/restart` no longer reports a failed stop on a
+  busy host when the stop actually worked (#1755).
+- Test suite no longer depends on host speed or ambient credentials: readiness
+  waits use wall-clock deadlines sized for a loaded CI runner (#1756, #1759,
+  #1760, #1761), and the send-preflight expiry tests clear `ANTHROPIC_API_KEY`
+  / `SAC_ANTHROPIC_API_KEY` so the selected credential file decides (#1762).
+  These flakes kept 0.39.2's release gate red.
+
+## [0.39.2] - 2026-11-17 (tagged, not published)
 
 ### Fixed
 - Release build witness recognises the shared pytest-matrix leg names

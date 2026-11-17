@@ -143,9 +143,7 @@ class TmuxManager:
         diagnostics_path = effective_session_env.pop(
             "SAC_TMUX_START_DIAGNOSTICS_PATH", None
         )
-        boot_stderr_path = effective_session_env.pop(
-            "SAC_TMUX_BOOT_STDERR_PATH", None
-        )
+        boot_stderr_path = effective_session_env.pop("SAC_TMUX_BOOT_STDERR_PATH", None)
         stderr_redirect = (
             f"exec 2>> {shlex.quote(str(boot_stderr_path))}\n"
             if boot_stderr_path
@@ -230,9 +228,11 @@ class TmuxManager:
             capture_output=True,
             check=False,
         )
+        from ._session_gone import wait_session_gone
 
-        time.sleep(0.5)
-        return process_tree_dead and not TmuxManager.exists(session_name)
+        return process_tree_dead and wait_session_gone(
+            session_name, exists=TmuxManager.exists
+        )
 
     @staticmethod
     def session_activity(session_name: str) -> int | None:

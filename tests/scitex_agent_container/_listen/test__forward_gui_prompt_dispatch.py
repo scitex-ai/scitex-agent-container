@@ -6,9 +6,6 @@ from scitex_agent_container._django._control import new_dispatch_id
 from tests.scitex_agent_container._django.test__control_listener_message import (
     Bridge,
 )
-from tests.scitex_agent_container._django.test__control_listener_message import (
-    endpoints as endpoints,
-)
 
 
 def test_local_listener_forward_threads_dispatch_option(endpoints, pg_schema):

@@ -138,7 +138,11 @@ def main_short_run(real_upstream_server):
                 args, stdout=output, stderr=subprocess.STDOUT, env=child_env
             )
             try:
-                wait_for_proxy(child, state_dir, base, timeout=5.0)
+                # 30 s, not 5 s: the child is a cold interpreter importing the
+                # proxy stack; on the loaded org runner the v0.39.2 release leg
+                # ran out of a 5 s budget. wait_for_proxy returns on the first
+                # healthy read and fails fast if the child exits.
+                wait_for_proxy(child, state_dir, base, timeout=30.0)
                 child.send_signal(signal.SIGTERM)
                 rc = child.wait(timeout=2.0)
             except Exception as exc:
