@@ -7,5 +7,6 @@ fixture of the same name still overrides these.
 """
 
 from ._a2a_sidecar_fixture import shared_workdir_pair, workdir
+from ._tui_turn_bridge_helpers import bridge_factory, isolated_home
 
-__all__ = ["shared_workdir_pair", "workdir"]
+__all__ = ["bridge_factory", "isolated_home", "shared_workdir_pair", "workdir"]
