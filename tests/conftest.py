@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import itertools
 import os
-import sysconfig
 from pathlib import Path
 from typing import Iterator
 
 import pytest
+
+from tests._subprocess_coverage import ensure_subprocess_coverage_shim
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -305,33 +306,7 @@ os.environ["SAC_LISTEN_POLLER_LOOPS_DISABLED"] = "1"
 # promises stdout is EXACTLY one JSON document.
 
 
-def _ensure_subprocess_coverage_shim() -> None:
-    """Drop an idempotent ``.pth`` shim in site-packages so every child
-    Python interpreter auto-starts coverage via
-    ``coverage.process_startup()``.
-    """
-    purelib = Path(sysconfig.get_paths()["purelib"])
-    pth = purelib / "_scitex_agent_container_subprocess_coverage.pth"
-    # ``import coverage`` MUST stay inside the guard: a ``.pth`` runs at
-    # every interpreter startup, so an unconditional import taxes ~120ms
-    # onto each non-coverage `python`/`sac` invocation. Mirror the shape
-    # of the sibling ``a1_coverage.pth``.
-    shim = (
-        "import os\n"
-        "if os.environ.get('COVERAGE_PROCESS_START'):\n"
-        "    import coverage\n"
-        "    coverage.process_startup()\n"
-    )
-    try:
-        if not pth.exists() or pth.read_text() != shim:
-            pth.write_text(shim)
-    except OSError:
-        # site-packages may be read-only (e.g. system Python). Local
-        # dev venvs are writable and that's where this matters.
-        pass
-
-
-_ensure_subprocess_coverage_shim()
+ensure_subprocess_coverage_shim()
 
 # Expose shared no-mocks helpers (subprocess_shim, env_save_restore,
 # ssh_exec_shim, ssh_http_shim, dead_port) as session-wide fixtures so any test
