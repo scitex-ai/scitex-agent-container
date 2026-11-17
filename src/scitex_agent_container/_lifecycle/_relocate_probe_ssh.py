@@ -265,7 +265,7 @@ def run_probe_script(
             "nothing about the target was measured"
         )
     exit_code = body.get("exit_code")
-    if not isinstance(exit_code, int):
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
         raise ProbeTransportError(
             f"host_exec body carried no integer exit_code (got {exit_code!r})"
         )
