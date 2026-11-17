@@ -6,7 +6,17 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.39.4] - 2026-11-17
+## [0.39.5] - 2026-11-17
+
+First published 0.39.x release. It ships everything listed under 0.39.0–0.39.4.
+
+### Fixed
+- Release docs (`CONTRIBUTING.md`) now say to tag the `develop` merge commit
+  and promote to `main` afterwards. The release proof only publishes tags on
+  `develop` history, so tags cut on `main` merge commits built and then failed
+  at publish.
+
+## [0.39.4] - 2026-11-17 (tagged, not published)
 
 ### Fixed
 - Relocation rejects boolean `exit_code` values in host-exec JSON on both the
