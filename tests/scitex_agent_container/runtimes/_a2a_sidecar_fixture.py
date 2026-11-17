@@ -210,11 +210,17 @@ def shared_workdir_pair(tmp_path: Path):
         try:
             pid_a = start_sidecar(cfg_a, listener=listener_a)
             pid_b = start_sidecar(cfg_b, listener=listener_b)
+            # 30 s, not 10 s: the sidecar imports uvicorn + a2a-sdk at boot.
+            # On the org CI runner under 32 xdist workers the v0.39.2 release
+            # leg timed out with the child's log showing "listening" but not
+            # yet "Started server process" — slow import, not a defect. The
+            # wait returns the moment the child serves, so healthy runs pay
+            # nothing; a child that dies still fails fast via the exit check.
             wait_for_sidecar(
-                pid_a, port_a, cfg_a.name, timeout=10.0, log_path=_log_path(cfg_a)
+                pid_a, port_a, cfg_a.name, timeout=30.0, log_path=_log_path(cfg_a)
             )
             wait_for_sidecar(
-                pid_b, port_b, cfg_b.name, timeout=10.0, log_path=_log_path(cfg_b)
+                pid_b, port_b, cfg_b.name, timeout=30.0, log_path=_log_path(cfg_b)
             )
             # Startup must succeed while the parent still reserves both listeners.
             # Then drop only the parent's references; the native children keep them.
