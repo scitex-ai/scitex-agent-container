@@ -15,7 +15,7 @@ versioning follows [SemVer](https://semver.org/).
   `release-identity.py` is split into by-path siblings (`release_metadata`,
   `release_archive`, `release_payload`).
 
-## [0.39.3] - 2026-11-17
+## [0.39.3] - 2026-11-17 (tagged, not published)
 
 ### Fixed
 - `stop()` for tmux sessions now waits for the session to disappear before
