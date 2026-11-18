@@ -111,6 +111,7 @@ def validate_sandbox_config(config: Any) -> None:
             raise ValueError(
                 f"{name}: spec.apptainer.raw_args sets {flag}, which spec.sandbox controls"
             )
+    _require_tui_runtime(config, name)
     failover = getattr(config, "hermes_failover", None)
     accounts = getattr(failover, "accounts", None) or {}
     pool = sorted({str(k) for keys in accounts.values() for k in (keys or [])})
@@ -140,3 +141,26 @@ def seal_profile_env(config: Any, env: Mapping[str, str], *, auth_env: str) -> d
         )
     kept, _ = filter_env(env, allowed_env_names(config))
     return kept
+
+
+def _require_tui_runtime(config: Any, name: str) -> None:
+    """Sealed runs are supervised from the tmux launch (TuiSessionRuntime).
+
+    Any other runtime would render the sealed argv without ``begin_run`` or
+    the supervisor (no proxy, no env seal) — refuse instead of degrading.
+    Configs without a resolvable runtime (unit-test stand-ins) are skipped.
+    """
+    if not hasattr(config, "runtime"):
+        return
+    try:
+        from .._lifecycle._runtime_select import _get_runtime
+        from ..runtimes.tui_session import TuiSessionRuntime
+
+        runtime = _get_runtime(config)
+    except (ImportError, ValueError, RuntimeError):
+        return
+    if not isinstance(runtime, TuiSessionRuntime):
+        raise ValueError(
+            f"{name}: spec.sandbox needs a tmux-supervised TUI runtime "
+            f"(spec.runtime: tui); {type(runtime).__name__} is not supported"
+        )

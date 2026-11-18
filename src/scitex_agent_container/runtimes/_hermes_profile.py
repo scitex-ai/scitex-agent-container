@@ -319,7 +319,15 @@ def _bind_mcp_runtime_env(
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
-    runtime_env = effective_env(config)
+    sealed = getattr(config, "sandbox", None) is not None
+    # A sealed run (spec.sandbox) gets no fleet-default env, in its MCP
+    # entries either: config.yaml is readable inside the container.
+    runtime_env = effective_env(config, defaults={}) if sealed else effective_env(config)
+    if sealed:
+        from .._sandbox import allowed_env_names
+
+        allowed = allowed_env_names(config)
+        runtime_env = {k: v for k, v in runtime_env.items() if k in allowed}
     apptainer = getattr(config, "apptainer", None)
     # raw_args are appended after curated --env flags in the production argv,
     # so they are the real last-wins launch environment.  apply_pg_identity()

@@ -29,7 +29,7 @@ SANDBOX = {
 def sealed(tmp_path) -> tuple[AgentConfig, Path]:
     cfg = AgentConfig(
         name="sealed-a",
-        runtime="apptainer",
+        runtime="tui",
         workdir=str(tmp_path / "work"),
         sandbox=parse_sandbox(SANDBOX),
     )
@@ -103,7 +103,7 @@ def test_spec_overlay_is_refused_at_argv_build(tmp_path):
 
     cfg = AgentConfig(
         name="sealed-b",
-        runtime="apptainer",
+        runtime="tui",
         workdir=str(tmp_path),
         sandbox=parse_sandbox(SANDBOX),
         apptainer=ApptainerSpec(overlay=str(tmp_path / "ov")),
@@ -162,3 +162,14 @@ def test_unsealed_spec_keeps_host_network(tmp_path):
     )
     # Assert
     assert "--network" not in out and "unshare" not in out
+
+
+def test_sealed_sdk_runtime_is_refused(tmp_path):
+    # Arrange
+    cfg = AgentConfig(
+        name="sealed-sdk", runtime="apptainer", workdir=str(tmp_path), sandbox=parse_sandbox(SANDBOX)
+    )
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="TUI runtime"):
+        ApptainerContainerRuntime().build_run_argv(cfg, state_dir=tmp_path / "s", sif_path=tmp_path / "x.sif")

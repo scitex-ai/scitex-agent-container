@@ -155,10 +155,30 @@ def _read_env_file(path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
+def _under(path: Path, roots: tuple[Path, ...]) -> bool:
+    try:
+        real = path.resolve()
+    except OSError:
+        return False
+    return any(real == r or r in real.parents for r in roots)
+
+
 def seal_env_flags(
-    argv: list[str], allowed: frozenset[str], secrets_dir: Path
+    argv: list[str],
+    allowed: frozenset[str],
+    secrets_dir: Path,
+    *,
+    scrub_roots: tuple[Path, ...] = (),
 ) -> tuple[list[str], dict]:
-    """Drop disallowed env; re-write kept env-file entries into ``secrets_dir``."""
+    """Drop disallowed env; re-write kept env-file entries into ``secrets_dir``.
+
+    An env file that lives under one of ``scrub_roots`` (dirs the container
+    can READ: the bound state dir, the run's $HOME) is also rewritten IN
+    PLACE with the allowed entries only, or removed when none remain: the
+    seal must cover the file, not just the variables apptainer exports
+    (SAC's 0600 secret env file sits in the state dir bound at
+    /state/<name>; $HOME/.env carries pool tokens and .envrc values).
+    """
     out: list[str] = []
     kept: set[str] = set()
     dropped: set[str] = set()
@@ -186,9 +206,15 @@ def seal_env_flags(
             else:
                 dropped.add(key)
         else:
-            pairs = _read_env_file(Path(value))
+            src = Path(value)
+            pairs = _read_env_file(src)
             good = [(k, v) for k, v in pairs if k in allowed]
             dropped.update(k for k, _ in pairs if k not in allowed)
+            if src.is_file() and _under(src, scrub_roots):
+                if good:
+                    atomic_write_text(src, "".join(f"{k}={v}\n" for k, v in good))
+                else:
+                    src.unlink(missing_ok=True)
             if good:
                 n_files += 1
                 dest = secrets_dir / f"env-{n_files:02d}"
@@ -245,7 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     cmd = rewrite_run_paths(
         cmd, {str(link): str(run_dir), str(state_dir / "home"): str(rp.home)}
     )
-    cmd, env_names = seal_env_flags(cmd, frozenset(a.allow_env), rp.secrets)
+    cmd, env_names = seal_env_flags(
+        cmd,
+        frozenset(a.allow_env),
+        rp.secrets,
+        scrub_roots=(state_dir.resolve(), rp.home.resolve()),
+    )
     allow = []
     for entry in a.egress_allow:
         host, _, port = entry.rpartition(":")

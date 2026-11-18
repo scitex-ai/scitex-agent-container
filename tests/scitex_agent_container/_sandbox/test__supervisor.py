@@ -203,3 +203,37 @@ def test_sigterm_is_recorded_before_the_container_exits(tmp_path):
     rec = json.loads((run / "out" / "outcome.json").read_text())
     # Assert
     assert rec["exit"]["signal"] == signal.SIGTERM and rec["status"] == "exited"
+
+
+def test_env_file_in_a_readable_dir_is_scrubbed_in_place(tmp_path):
+    # Arrange
+    home = tmp_path / "home"
+    home.mkdir()
+    src = home / ".env"
+    src.write_text("MODEL_KEY=v\nGITHUB_TOKEN=g\n")
+    # Act
+    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(home,))
+    # Assert
+    assert src.read_text() == "MODEL_KEY=v\n"
+
+
+def test_env_file_with_nothing_allowed_is_removed(tmp_path):
+    # Arrange
+    state = tmp_path / "state"
+    (state / "secret-env").mkdir(parents=True)
+    src = state / "secret-env" / "apptainer.env"
+    src.write_text("SAC_LISTEN_BEARER=b\n")
+    # Act
+    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(state,))
+    # Assert
+    assert not src.exists()
+
+
+def test_env_file_outside_readable_dirs_is_left_alone(tmp_path):
+    # Arrange
+    src = tmp_path / "elsewhere.env"
+    src.write_text("GITHUB_TOKEN=g\n")
+    # Act
+    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(tmp_path / "home",))
+    # Assert
+    assert src.read_text() == "GITHUB_TOKEN=g\n"
