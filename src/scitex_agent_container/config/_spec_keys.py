@@ -45,6 +45,9 @@ _KNOWN_SPEC_KEYS = frozenset(
         # REMOVED 2026-06-23 — host access + cwd are explicit binds +
         # workdir now; a spec still carrying it is rejected loud. Do NOT
         # reuse this name: secret scoping is the separate secret_scope axis.
+        "sandbox",  # sealed run: egress allowlist + env seal + per-run
+        # reset + outcome record. OPTIONAL block (absent = not sealed); its
+        # own parser rejects unknown sub-keys. See _sandbox._spec.
         "secret_scope",  # pool-secret scope: full (default) | capsule —
         # how much of the operator pool lands in the agent env. DEFAULTED,
         # not required: a NEW axis the live corpus predates. See

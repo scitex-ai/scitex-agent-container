@@ -622,6 +622,9 @@ def materialize_hermes_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    from .._sandbox import seal_profile_env
+
+    profile_env = seal_profile_env(config, profile_env, auth_env=plan.endpoint.auth_env)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -709,6 +712,9 @@ def materialize_hermes_tui_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    from .._sandbox import seal_profile_env
+
+    profile_env = seal_profile_env(config, profile_env, auth_env=plan.endpoint.auth_env)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
