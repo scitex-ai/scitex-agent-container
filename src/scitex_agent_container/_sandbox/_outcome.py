@@ -106,12 +106,12 @@ def manifest_diff(before: dict, after: dict) -> dict[str, Any]:
     }
 
 
-def hermes_usage(state_db: Path) -> dict[str, Any] | None:
+def hermes_usage(harness_db: Path) -> dict[str, Any] | None:
     """Token / cost columns of Hermes' ``sessions`` table, when Hermes ran."""
-    if not Path(state_db).is_file():
+    if not Path(harness_db).is_file():
         return None
     try:
-        con = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=2)
+        con = sqlite3.connect(f"file:{harness_db}?mode=ro", uri=True, timeout=2)
     except sqlite3.Error as exc:
         return {"harness": "hermes", "error": str(exc)}
     try:
@@ -146,12 +146,12 @@ _READ_TOOLS = {"read_file": "path", "search_files": "path", "view_file": "path"}
 _MAX_ARG = 400
 
 
-def _snapshot(state_db: Path, scratch: Path) -> Path:
+def _snapshot(harness_db: Path, scratch: Path) -> Path:
     """Copy ``state.db`` with its WAL/SHM so a read sees the live rows."""
     scratch.mkdir(parents=True, exist_ok=True)
-    for p in Path(state_db).parent.glob(Path(state_db).name + "*"):
+    for p in Path(harness_db).parent.glob(Path(harness_db).name + "*"):
         shutil.copyfile(p, scratch / p.name)
-    return scratch / Path(state_db).name
+    return scratch / Path(harness_db).name
 
 
 def _tool_calls(rows) -> tuple[list[dict[str, Any]], Any]:
@@ -192,7 +192,7 @@ def _tool_calls(rows) -> tuple[list[dict[str, Any]], Any]:
     return calls, first_assistant
 
 
-def hermes_transcript(state_db: Path, scratch: Path) -> dict[str, Any] | None:
+def hermes_transcript(harness_db: Path, scratch: Path) -> dict[str, Any] | None:
     """Tool calls and files read, from Hermes' own message transcript.
 
     ``source`` names where the data came from: the harness transcript, not a
@@ -201,11 +201,11 @@ def hermes_transcript(state_db: Path, scratch: Path) -> dict[str, Any] | None:
     agent received); shell commands appear in ``tool_calls`` only, because
     what a command reads cannot be known from its text.
     """
-    if not Path(state_db).is_file():
+    if not Path(harness_db).is_file():
         return None
     source = "harness transcript (hermes state.db messages)"
     try:
-        con = sqlite3.connect(_snapshot(state_db, scratch), timeout=2)
+        con = sqlite3.connect(f"file:{_snapshot(harness_db, scratch)}?mode=ro", uri=True, timeout=2)
         try:
             rows = con.execute(
                 "SELECT role, tool_calls, tool_call_id, content, timestamp "
