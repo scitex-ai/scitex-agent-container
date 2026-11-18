@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.6] - 2026-11-18
+
 ### Fixed
 - Authoritative heartbeat leases are recorded again for writers that are not
   enrolled in the nonce-challenge protocol. The `instances` row builder
