@@ -892,7 +892,7 @@ def test_docs_job_uses_the_central_sphinx_workflow():
     # Assert
     assert actual == (
         "scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml"
-        "@cd4e545a20a1e35385ffe88f4a963ae3c500819b",
+        "@3015806d742fba23cae7f782b169fe0732756ab3",
         '${{ vars.CI_RUNS_ON || \'["ubuntu-latest"]\' }}',
     )
 
@@ -933,7 +933,7 @@ def test_import_job_uses_the_central_import_workflow():
     # Assert
     assert actual == (
         "scitex-ai/.github/.github/workflows/import-smoke.yml"
-        "@cd4e545a20a1e35385ffe88f4a963ae3c500819b",
+        "@3015806d742fba23cae7f782b169fe0732756ab3",
         '${{ vars.CI_RUNS_ON || \'["ubuntu-latest"]\' }}',
     )
 

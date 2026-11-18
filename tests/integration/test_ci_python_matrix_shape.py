@@ -130,9 +130,7 @@ def test_release_matrix_carries_no_event_condition():
 
     # Act
     is_plain_literal = (
-        isinstance(raw, str)
-        and "${{" not in raw
-        and isinstance(json.loads(raw), list)
+        isinstance(raw, str) and "${{" not in raw and isinstance(json.loads(raw), list)
     )
 
     # Assert
@@ -193,7 +191,7 @@ def test_pr_gate_job_names_match_the_required_status_checks():
     # a caller-local `runs-on` or `steps` would fork execution policy back
     # into this repo, which is exactly what ci.yml exists to end.
     central = "scitex-ai/.github/.github/workflows/"
-    pin = "@cd4e545a20a1e35385ffe88f4a963ae3c500819b"
+    pin = "@3015806d742fba23cae7f782b169fe0732756ab3"
     expected = {
         "pytest-matrix": f"{central}pytest-matrix.yml{pin}",
         "import-smoke": f"{central}import-smoke.yml{pin}",
@@ -225,4 +223,20 @@ def test_release_gate_is_the_pr_gate_workflow_at_the_same_revision():
     assert release_uses == pr_uses, (
         f"release test gate uses {release_uses!r} but the PR gate uses "
         f"{pr_uses!r}; the two gates must be the same bytes"
+    )
+
+
+def test_pr_and_release_test_legs_share_the_45_minute_limit():
+    """Operator 2026-11-18: sac's pytest legs get 45 minutes (shared default
+    is 30) at CI_XDIST_WORKERS=2; the PR and release gates must agree."""
+    # Arrange
+    pr_with = _load(PR_GATE_WORKFLOW)["jobs"]["pytest-matrix"]["with"]
+
+    # Act
+    release_with = _load(RELEASE_WORKFLOW)["jobs"]["test"]["with"]
+
+    # Assert
+    assert (pr_with.get("timeout_minutes"), release_with.get("timeout_minutes")) == (
+        45,
+        45,
     )
