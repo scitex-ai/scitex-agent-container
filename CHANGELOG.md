@@ -6,9 +6,31 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.39.6] - 2026-11-18
+
+### Fixed
+- Authoritative heartbeat leases are recorded again for writers that are not
+  enrolled in the nonce-challenge protocol. The `instances` row builder
+  indexed the optional `nonce_challenge` / `nonce_echo` (and other optional)
+  fields as required, so every unenrolled renewal raised
+  `KeyError: 'nonce_challenge'` and was dropped. `sac listen` logged this as
+  "diary instance-heartbeat write failed". Absent optional fields are now
+  stored as `None`, which also clears a stale challenge. The heartbeat half of
+  `state_store_instances` now lives in `state_store_instances_heartbeat`
+  (names are re-exported).
+- The shipped `sac-listen.service` template now runs `sac listen start --yes`
+  instead of the deprecated bare `sac listen`.
+
 ## [0.39.5] - 2026-11-17
 
 First published 0.39.x release. It ships everything listed under 0.39.0–0.39.4.
+
+### Breaking (since 0.39.0)
+- `sac listen start` requires `--yes`/`-y` (cd27d056). A systemd unit or
+  drop-in whose `ExecStart` runs `sac listen start ...` without `--yes`
+  crash-loops after upgrading with "Listener start requires --yes/-y"
+  (exit 2). Add `--yes` to every such `ExecStart`, including bind-overlay
+  drop-ins. Bare `sac listen` (deprecated) still boots without it.
 
 ### Fixed
 - Release docs (`CONTRIBUTING.md`) now say to tag the `develop` merge commit

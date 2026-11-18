@@ -50,7 +50,13 @@ Type=simple
 # A unit file that pins a stale interpreter is a config that is correct about
 # what it SAYS and wrong about what it RUNS.
 # ==========================================================================
-ExecStart=@SAC_BIN@ listen
+#
+# `listen start --yes`, NOT bare `listen` (deprecated) and NOT a bare
+# `listen start`: since 0.39.0 the explicit start verb requires approval, and
+# installing this unit IS that approval. Every host drop-in that overrides
+# ExecStart (e.g. a bind overlay) must carry `--yes` too, or the unit
+# crash-loops with "Listener start requires --yes/-y" (exit 2).
+ExecStart=@SAC_BIN@ listen start --yes
 # Single tail point for both streams: `journalctl --user -u sac-listen`. The
 # pre-flight diagnostics from listen_cmds.py (token file / pidfile / health URL)
 # land here, so the boot trace is visible with no extra config.
