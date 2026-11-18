@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
 import subprocess
 import sys
+from pathlib import Path
 
 from scitex_agent_container._sandbox._supervisor import (
     EXIT_SETUP,
     SizeWatchdog,
-    run_dir_bytes,
     main,
     minimal_process_env,
     rewrite_run_paths,
+    run_dir_bytes,
     seal_env_flags,
 )
 
@@ -149,3 +148,58 @@ def test_size_watchdog_terminates_an_oversized_run(tmp_path):
     rc = child.wait(timeout=10)
     # Assert
     assert rc != 0 and dog.exceeded_at_bytes >= 2_000_000
+
+
+def _prepared_run(tmp_path):
+    import json
+
+    state = tmp_path / "state"
+    run = tmp_path / "run"
+    for d in ("home", "out", "secrets", "rt/sock"):
+        (run / d).mkdir(parents=True)
+    (run / "out" / "outcome.json").write_text(json.dumps({"status": "prepared"}))
+    (state / "sandbox").mkdir(parents=True)
+    (state / "sandbox" / "run").symlink_to(run)
+    image = tmp_path / "x.sif"
+    image.write_bytes(b"img")
+    return state, run, image
+
+
+def _supervise(state, image, cmd):
+    return subprocess.Popen(
+        [sys.executable, "-m", "scitex_agent_container._sandbox", "supervise",
+         "--state-dir", str(state), "--agent", "a", "--image", str(image), "--", *cmd],
+    )  # fmt: skip
+
+
+def test_natural_exit_code_is_recorded(tmp_path):
+    # Arrange
+    state, run, image = _prepared_run(tmp_path)
+    proc = _supervise(state, image, [sys.executable, "-c", "raise SystemExit(7)"])
+    # Act
+    proc.wait(timeout=60)
+    # Assert
+    assert (run / "out" / "exit_code").read_text() == "7\n"
+
+
+def test_sigterm_is_recorded_before_the_container_exits(tmp_path):
+    # Arrange
+    import json
+    import signal
+    import time
+
+    state, run, image = _prepared_run(tmp_path)
+    proc = _supervise(
+        state, image, [sys.executable, "-c", "import time; time.sleep(60)"]
+    )
+    deadline = time.monotonic() + 30
+    while json.loads((run / "out" / "outcome.json").read_text())["status"] != "running":
+        if time.monotonic() > deadline:
+            raise TimeoutError("supervisor never reached 'running'")
+        time.sleep(0.1)
+    # Act
+    proc.send_signal(signal.SIGTERM)
+    proc.wait(timeout=30)
+    rec = json.loads((run / "out" / "outcome.json").read_text())
+    # Assert
+    assert rec["exit"]["signal"] == signal.SIGTERM and rec["status"] == "exited"

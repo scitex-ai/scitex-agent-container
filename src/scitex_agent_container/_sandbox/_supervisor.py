@@ -300,6 +300,25 @@ def main(argv: list[str] | None = None) -> int:
         watchdog.start()
 
     def _forward(signum, _frame):
+        # Record the termination FIRST: a pane teardown follows SIGTERM with
+        # SIGKILL within seconds, often before apptainer's runtime parent has
+        # finished unmounting, so the post-wait write below may never run.
+        if rec.get("status") == "running":
+            rec.update(
+                {
+                    "status": "exited",
+                    "ended_at": utc_now(),
+                    "exit": {
+                        "code": None,
+                        "signal": signum,
+                        "reason": f"terminated by {signal.Signals(signum).name} "
+                        "(e.g. `sac agents stop`); forwarded to the container",
+                    },
+                    "egress": proxy.summary(),
+                }
+            )
+            atomic_write_text(rp.exit_code, f"{128 + signum}\n", mode=0o644)
+            atomic_write_json(rp.outcome, rec)
         try:
             child.send_signal(signum)
         except ProcessLookupError:
