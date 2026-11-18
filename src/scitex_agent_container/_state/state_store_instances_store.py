@@ -103,6 +103,8 @@ import socket
 import threading
 from typing import TYPE_CHECKING, Any, Callable
 
+from .heartbeat_columns import HEARTBEAT_LEASE_COLUMNS, heartbeat_field_policies
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.store import Row, Store, StoreTarget
 
@@ -135,25 +137,8 @@ OWNERSHIP_FIELDS = (
     "scope_unit",
     "scope_invocation_id",
 )
-HEARTBEAT_LEASE_FIELDS = (
-    "heartbeat_boot_id",
-    "heartbeat_seq",
-    "heartbeat_state",
-    "heartbeat_agent_id",
-    "heartbeat_spec_id",
-    "heartbeat_runtime",
-    "heartbeat_harness",
-    "heartbeat_engine",
-    "heartbeat_model",
-    "heartbeat_session_id",
-    "heartbeat_monotonic_ns",
-    "heartbeat_observed_at",
-    "heartbeat_progress_at",
-    "heartbeat_progress_seq",
-    "heartbeat_card_id",
-    "heartbeat_card_role",
-    "lease_expires_at",
-)
+#: Every heartbeat column, from the one declaration in :mod:`.heartbeat_columns`.
+HEARTBEAT_LEASE_FIELDS = HEARTBEAT_LEASE_COLUMNS
 EVOLVING_FIELDS = OWNERSHIP_FIELDS + HEARTBEAT_LEASE_FIELDS
 
 
@@ -265,8 +250,9 @@ def run_with_reconnect(operation: "Callable[[Store], Any]") -> Any:
 def instances_schema() -> Any:
     """The declared ``sac_instances`` schema, as this module opens it.
 
-    Twenty fields, matching :data:`.._store_plugin.INSTANCES` field for
-    field. The store name is the bare table name — ``sac_`` is the plugin
+    Matches :data:`.._store_plugin.INSTANCES` field for field (the
+    heartbeat block is derived from :mod:`.heartbeat_columns` in both).
+    The store name is the bare table name — ``sac_`` is the plugin
     namespace, not the store's, exactly as ``comms_nodes`` is opened under
     its bare name while the plugin declares ``sac_comms_nodes``.
 
@@ -341,23 +327,9 @@ def instances_schema() -> Any:
             "spawned_by": data(FieldKind.TEXT, lww),
             "started_at": data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
             "last_heartbeat_at": data(FieldKind.TEXT, MergeRule.MAX),
-            "heartbeat_boot_id": data(FieldKind.TEXT, lww),
-            "heartbeat_seq": data(FieldKind.INTEGER, lww),
-            "heartbeat_state": data(FieldKind.TEXT, lww),
-            "heartbeat_agent_id": data(FieldKind.TEXT, lww),
-            "heartbeat_spec_id": data(FieldKind.TEXT, lww),
-            "heartbeat_runtime": data(FieldKind.TEXT, lww),
-            "heartbeat_harness": data(FieldKind.TEXT, lww),
-            "heartbeat_engine": data(FieldKind.TEXT, lww),
-            "heartbeat_model": data(FieldKind.TEXT, lww),
-            "heartbeat_session_id": data(FieldKind.TEXT, lww),
-            "heartbeat_monotonic_ns": data(FieldKind.INTEGER, lww),
-            "heartbeat_observed_at": data(FieldKind.REAL, lww),
-            "heartbeat_progress_at": data(FieldKind.REAL, lww),
-            "heartbeat_progress_seq": data(FieldKind.INTEGER, lww),
-            "heartbeat_card_id": data(FieldKind.TEXT, lww),
-            "heartbeat_card_role": data(FieldKind.TEXT, lww),
-            "lease_expires_at": data(FieldKind.REAL, lww),
+            # Derived from the one heartbeat declaration; see
+            # ``heartbeat_columns`` and ``_store_plugin.INSTANCES``.
+            **heartbeat_field_policies(data),
             "iter_count": data(FieldKind.INTEGER, MergeRule.MAX),
             "input_tokens": data(FieldKind.INTEGER, MergeRule.MAX),
             "output_tokens": data(FieldKind.INTEGER, MergeRule.MAX),

@@ -13,6 +13,10 @@ def installed_skill_records(config, *, packages=None, list_pages=None):
     from scitex_dev._ecosystem._skills.skills import list_skills
     from scitex_dev.skill_registry import SkillRecord, hash_skill_tree
 
+    if getattr(config, "sandbox", None) is not None and packages is None:
+        # Sealed run: only the spec's own to_home reaches the agent; skills
+        # of packages installed next to the LAUNCHING SAC are host state.
+        return ()
     if packages is None:
         enabled = {item.name: item.skills_enabled for item in load_config().packages}
         enabled.update(_load_knob_state().get("skills", {}))

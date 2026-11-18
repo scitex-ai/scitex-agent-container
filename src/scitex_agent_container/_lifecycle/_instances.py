@@ -192,8 +192,10 @@ def record_local_instance(
 
     host = _resolve_host(None)
     # Immutable spec identity (card sac-identity-spec-uuid-20261026):
-    # first-seen-stable backfill. A spec without ``uuid`` gets one
-    # stamped into its spec.yaml here, on the host that starts it.
+    # first-seen-stable. A spec without ``uuid`` gets one minted into its
+    # RUNTIME state dir, never into the committed spec.yaml: the spec-
+    # authority gate refuses a dirty spec repo, so stamping the file made
+    # every second start fail (issue #1777).
     # Best-effort ON PURPOSE: a stamp failure (read-only spec dir,
     # unmappable block) must never break a start — the row simply
     # stays unstamped and the resolver treats it as unknown.
@@ -202,9 +204,10 @@ def record_local_instance(
         config_path = str(getattr(config, "config_path", "") or "")
         if config_path:
             try:
-                from ..config._spec_uuid import ensure_spec_uuid
+                from ..config._spec_uuid import runtime_spec_uuid
+                from ..runtimes.tui_session import state_dir_for_config
 
-                spec_uuid = ensure_spec_uuid(config_path)
+                spec_uuid = runtime_spec_uuid(state_dir_for_config(config))
             except Exception:  # stx-allow: fallback (reason: the uuid stamp is bookkeeping about a start that must proceed; an unstamped row resolves by name exactly as before)
                 spec_uuid = ""
     # End stale active rows for this name+host (e.g. a previous crash
