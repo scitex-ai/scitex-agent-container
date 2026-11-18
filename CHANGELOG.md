@@ -6,6 +6,7 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Added
 - `spec.sandbox` — sealed runs (docs/sandbox.md). Egress allowlist
   (`--network none` + an in-container user/net-namespace gateway whose only
@@ -25,6 +26,29 @@ versioning follows [SemVer](https://semver.org/).
 - Sealed (sandboxed) solver agents no longer receive SAC's fleet-default
   binds: the jail checked only spec binds, so `~/.scitex/cards` (rw) and host
   `/tmp` reached every solver.
+=======
+## [0.39.7] - 2026-11-19
+
+### Fixed
+- Authoritative heartbeat leases are recorded again (#1775). Since 0.39.6
+  every renewal was dropped with
+  `KeyError: 'heartbeat_session_jsonl_delta_bytes'`: the writer mapped
+  `session_jsonl_delta_bytes`, `subagent_jsonl_delta_bytes`,
+  `nonce_challenge` and `nonce_echo` to columns that neither `instances`
+  schema declared. The heartbeat field set is now declared once, in
+  `_state/heartbeat_columns.py`; the writer map, optional-field set,
+  `ALLOWED_FIELDS`, `_store_plugin.INSTANCES`, `instances_schema()` and
+  `HEARTBEAT_LEASE_FIELDS` all derive from it. The byte deltas are REAL and
+  the nonces TEXT, all optional LAST_WRITER_WINS DATA columns.
+  `heartbeat_progress_seq` is now written, so the progress-sequence
+  regression check against the previous beat can run.
+
+### Deploy
+- On managed PostgreSQL, provision the four new nullable `instances` columns
+  before any host runs 0.39.7:
+  `provision_store_acl(host_store(pkg='scitex_agent_container', name='instances'), instances_schema())`
+  as a member of the owner role. Older versions ignore the extra columns.
+>>>>>>> origin/develop
 
 ## [0.39.6] - 2026-11-18
 

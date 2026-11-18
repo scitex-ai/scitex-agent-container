@@ -8,32 +8,12 @@ import time
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-ALLOWED_FIELDS = frozenset(
-    {
-        "agent_id",
-        "spec_id",
-        "host",
-        "runtime",
-        "harness",
-        "engine",
-        "model",
-        "session_id",
-        "boot_id",
-        "seq",
-        "monotonic_ns",
-        "observed_at",
-        "progress_at",
-        "progress_seq",
-        "session_jsonl_delta_bytes",
-        "subagent_jsonl_delta_bytes",
-        "nonce_challenge",
-        "nonce_echo",
-        "state",
-        "lease_expires_at",
-        "card_id",
-        "card_role",
-    }
-)
+from .heartbeat_columns import HEARTBEAT_COLUMNS
+
+# Every field a beat may carry: ``host`` (the row identity) plus exactly the
+# fields the instances row stores, declared once in :mod:`.heartbeat_columns`.
+# Deriving it here means a field validation accepts always has a column.
+ALLOWED_FIELDS = frozenset(HEARTBEAT_COLUMNS) | {"host"}
 RESIDENT_STATES = frozenset({"idle", "active", "blocked"})
 CARD_ROLES = frozenset({"", "developer", "reviewer"})
 DEFAULT_FUTURE_SKEW_S = 5.0
