@@ -11,8 +11,19 @@ RETIRED_MODULE_STEM = "state" + "_db"
 RETIRED_ENV = "SCITEX_AGENT_CONTAINER_STATE" + "_DB"
 
 
+#: READ-ONLY readers of ANOTHER program's SQLite file, never a SAC state store.
+#: ``_sandbox/_outcome.py`` reads a harness's own transcript/usage database
+#: (Hermes ``state.db``) from a copied snapshot opened ``mode=ro`` to fill a
+#: sealed run's outcome record; it cannot create or keep SAC state in SQLite.
+SQLITE_READ_ONLY_READERS = frozenset({SOURCE / "_sandbox" / "_outcome.py"})
+
+
 def _python_sources() -> list[Path]:
     return sorted(SOURCE.rglob("*.py"))
+
+
+def _sqlite_guarded_sources() -> list[Path]:
+    return [p for p in _python_sources() if p not in SQLITE_READ_ONLY_READERS]
 
 
 def test_retired_module_name_is_absent_from_source_paths() -> None:
@@ -64,7 +75,7 @@ def test_state_store_facade_is_the_only_current_facade() -> None:
 
 def test_source_never_imports_sqlite_runtime() -> None:
     # Arrange
-    paths = _python_sources()
+    paths = _sqlite_guarded_sources()
     # Act
     offenders: list[Path] = []
     for path in paths:
@@ -89,7 +100,7 @@ def test_source_never_imports_sqlite_runtime() -> None:
 
 def test_source_has_no_sqlite_connection_that_can_create_a_state_file() -> None:
     # Arrange
-    paths = _python_sources()
+    paths = _sqlite_guarded_sources()
     connect_spelling = "sqlite3" + ".connect"
     # Act
     offenders = [
@@ -119,3 +130,12 @@ def test_store_python_api_replaces_the_database_noun_without_an_alias() -> None:
     module_state = ((api_root / "store.py").is_file(), (api_root / "db.py").exists())
     # Assert
     assert module_state == (True, False)
+
+
+def test_sqlite_readers_open_read_only() -> None:
+    # Arrange
+    sources = [p.read_text(encoding="utf-8") for p in SQLITE_READ_ONLY_READERS]
+    # Act
+    writable = [s for s in sources if s.count("sqlite3" + ".connect(") != s.count("mode=ro")]
+    # Assert
+    assert writable == []

@@ -6,6 +6,26 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `spec.sandbox` — sealed runs (docs/sandbox.md). Egress allowlist
+  (`--network none` + an in-container user/net-namespace gateway whose only
+  way out is a host-side CONNECT proxy; blocked and allowed attempts logged
+  as jsonl, no host iptables/netns/sudo), an environment seal (explicit names
+  + ONE model key; fleet env, fleet binds, host `~/.claude` projection and
+  launching-venv skills never reach the agent; apptainer is started with a
+  minimal process env), a fresh per-run writable layer on durable disk
+  (directory overlay, `$HOME`, `/tmp`, `/uvwork`, the whole run dir capped by
+  a `run.size` watchdog; removed or archived afterwards) and an atomic per-run `outcome.json` (timestamps, exit status,
+  image sha256, SAC version, env names, egress summary, token usage, files
+  written, plus tool calls and files read from the harness transcript). A sealed
+  agent gets no builtin sac MCP / `server:sac` channel. Loopback listeners are mirrored to the host so host-side RPC
+  (Hermes' TUI gateway) keeps working.
+
+### Fixed
+- Sealed (sandboxed) solver agents no longer receive SAC's fleet-default
+  binds: the jail checked only spec binds, so `~/.scitex/cards` (rw) and host
+  `/tmp` reached every solver.
+
 ## [0.39.7] - 2026-11-19
 
 ### Fixed

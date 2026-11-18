@@ -456,6 +456,12 @@ class TuiSessionRuntime(
         if force:
             for stale in live_now:
                 self._mux.stop(stale)
+        if not dry_run:
+            # Sealed run (spec.sandbox): a FRESH run dir + $HOME before the
+            # workspace materialises into it (no-op when not sandboxed).
+            from .._sandbox import begin_run
+
+            begin_run(config, state_dir_for_config(config))
         self.materialize_workspace(config)
 
         from .._lifecycle._runtime_select import (
@@ -520,7 +526,19 @@ class TuiSessionRuntime(
         boot_stderr_log.parent.mkdir(parents=True, exist_ok=True)
         boot_stderr_log.write_text("")
         boot_stderr_log.chmod(0o600)
-        command = " ".join(shlex.quote(a) for a in argv)
+        launch_argv = argv
+        from .._sandbox import is_sandboxed, supervised_argv
+
+        if is_sandboxed(config):
+            image = getattr(self, "_resolved_sif_path", None)
+            if image is None:
+                raise TuiAuthStageError(
+                    f"sealed run {config.name!r}: no resolved SIF to record"
+                )
+            launch_argv = supervised_argv(
+                config, argv, state_dir=state_dir_for_config(config), image=str(image)
+            )
+        command = " ".join(shlex.quote(a) for a in launch_argv)
         started = bool(
             self._mux.start(
                 session_name=name,
@@ -643,6 +661,11 @@ class TuiSessionRuntime(
                     f"tmux session {name!r} and its owned process cgroup are gone"
                 )
             stopped_any = True
+        # Sealed run: outcome (usage, files) + run.after once the pane is gone.
+        from .._sandbox import end_run, is_sandboxed
+
+        if is_sandboxed(config):
+            end_run(config, state_dir_for_config(config))
         return stopped_any
 
     def is_running(
