@@ -129,54 +129,130 @@ def _line(report: str, key: str) -> str:
 
 
 def test_allowlisted_host_is_reachable(runs):
-    assert _line(runs[0]["report"], "ALLOWED") == "ALLOWED=200"
+    # Arrange
+    report = runs[0]["report"]
+    # Act
+    line = _line(report, "ALLOWED")
+    # Assert
+    assert line == "ALLOWED=200"
 
 
 def test_other_host_is_refused_by_the_proxy(runs):
-    assert "response 403" in _line(runs[0]["report"], "BLOCKED")
+    # Arrange
+    report = runs[0]["report"]
+    # Act
+    line = _line(report, "BLOCKED")
+    # Assert
+    assert "response 403" in line
 
 
 def test_refused_host_is_logged(runs):
-    assert any(b.get("via") == "proxy" and b.get("host") == "github.com" for b in runs[0]["blocked"])
+    # Arrange
+    blocked = runs[0]["blocked"]
+    # Act
+    hosts = {b.get("host") for b in blocked if b.get("via") == "proxy"}
+    # Assert
+    assert "github.com" in hosts
 
 
 def test_direct_connect_is_refused_and_logged(runs):
-    assert any(b.get("via") == "direct" and b.get("port") == 443 for b in runs[0]["blocked"])
+    # Arrange
+    blocked = runs[0]["blocked"]
+    # Act
+    ports = {b.get("port") for b in blocked if b.get("via") == "direct"}
+    # Assert
+    assert 443 in ports
 
 
-def test_only_allowed_env_names_enter(runs):
-    names = set(_line(runs[0]["report"], "ENV")[4:].split())
-    assert {"KEEP_ME", "MODEL_KEY_X"} <= names and "DROP_ME" not in names
+def test_allowed_env_names_enter(runs):
+    # Arrange
+    report = runs[0]["report"]
+    # Act
+    names = set(_line(report, "ENV")[4:].split())
+    # Assert
+    assert {"KEEP_ME", "MODEL_KEY_X"} <= names
+
+
+def test_disallowed_env_name_does_not_enter(runs):
+    # Arrange
+    report = runs[0]["report"]
+    # Act
+    names = set(_line(report, "ENV")[4:].split())
+    # Assert
+    assert "DROP_ME" not in names
 
 
 def test_dropped_env_names_are_recorded(runs):
-    assert runs[0]["rec"]["env"]["dropped"] == ["DROP_ME"]
+    # Arrange
+    rec = runs[0]["rec"]
+    # Act
+    dropped = rec["env"]["dropped"]
+    # Assert
+    assert dropped == ["DROP_ME"]
 
 
 def test_loopback_listener_is_mirrored_to_the_host(runs):
-    assert runs[0]["mirror"] == [200]
+    # Arrange
+    run = runs[0]
+    # Act
+    statuses = run["mirror"]
+    # Assert
+    assert statuses == [200]
 
 
 def test_second_run_sees_no_file_of_the_first(runs):
-    assert _line(runs[1]["report"], "PREV") == "PREV=none/none"
+    # Arrange
+    report = runs[1]["report"]
+    # Act
+    line = _line(report, "PREV")
+    # Assert
+    assert line == "PREV=none/none"
 
 
 def test_container_exit_code_is_recorded(runs):
-    assert [r["rec"]["exit"] for r in runs] == [{"code": 0}, {"code": 0}]
+    # Arrange
+    recs = [r["rec"] for r in runs]
+    # Act
+    exits = [rec["exit"] for rec in recs]
+    # Assert
+    assert exits == [{"code": 0}, {"code": 0}]
 
 
-def test_outcome_record_is_complete(runs):
+def test_outcome_record_is_finalized(runs):
+    # Arrange
+    rec = runs[0]["rec"]
+    # Act
+    status = rec["status"]
+    # Assert
+    assert status == "finalized"
+
+
+def test_outcome_record_has_every_field(runs):
+    # Arrange
     rec = runs[0]["rec"]
     keys = ("started_at", "ended_at", "sac_version", "image", "egress", "files", "token_usage")
-    assert rec["status"] == "finalized" and all(rec.get(k) for k in keys)
+    # Act
+    missing = [k for k in keys if not rec.get(k)]
+    # Assert
+    assert missing == []
 
 
 def test_image_digest_is_recorded(runs):
-    assert len(runs[0]["rec"]["image"]["sha256"]) == 64
+    # Arrange
+    rec = runs[0]["rec"]
+    # Act
+    digest = rec["image"]["sha256"]
+    # Assert
+    assert len(digest) == 64
 
 
 def test_home_writes_are_listed(runs):
-    assert "marker" in runs[0]["rec"]["files"]["home_written"]["created"]
+    # Arrange
+    rec = runs[0]["rec"]
+    # Act
+    created = rec["files"]["home_written"]["created"]
+    # Assert
+    assert "marker" in created
 
 
 def test_overlay_writes_are_listed(runs):
