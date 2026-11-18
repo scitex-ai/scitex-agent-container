@@ -6,7 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Added
 - `spec.sandbox` — sealed runs (docs/sandbox.md). Egress allowlist
   (`--network none` + an in-container user/net-namespace gateway whose only
@@ -26,7 +25,7 @@ versioning follows [SemVer](https://semver.org/).
 - Sealed (sandboxed) solver agents no longer receive SAC's fleet-default
   binds: the jail checked only spec binds, so `~/.scitex/cards` (rw) and host
   `/tmp` reached every solver.
-=======
+
 ## [0.39.7] - 2026-11-19
 
 ### Fixed
@@ -48,7 +47,6 @@ versioning follows [SemVer](https://semver.org/).
   before any host runs 0.39.7:
   `provision_store_acl(host_store(pkg='scitex_agent_container', name='instances'), instances_schema())`
   as a member of the owner role. Older versions ignore the extra columns.
->>>>>>> origin/develop
 
 ## [0.39.6] - 2026-11-18
 
