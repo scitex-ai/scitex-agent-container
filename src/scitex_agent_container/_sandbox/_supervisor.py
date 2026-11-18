@@ -36,10 +36,76 @@ from ._layout import RunPaths, run_link
 from ._outcome import atomic_write_json, atomic_write_text, manifest, read_json, utc_now
 from ._proxy import EgressProxy
 
-__all__ = ["main", "minimal_process_env", "rewrite_run_paths", "seal_env_flags"]
+__all__ = [
+    "SizeWatchdog",
+    "main",
+    "minimal_process_env",
+    "rewrite_run_paths",
+    "run_dir_bytes",
+    "seal_env_flags",
+]
 
 #: Exit status when the run cannot even be set up (no container started).
 EXIT_SETUP = 96
+#: How often the run.size watchdog measures the run dir, and the grace
+#: between its SIGTERM and SIGKILL.
+SIZE_POLL_S = 5.0
+SIZE_KILL_GRACE_S = 10.0
+
+
+def run_dir_bytes(run_dir: Path, exclude: tuple[str, ...] = ("out", "secrets")) -> int:
+    """Allocated bytes under ``run_dir`` (overlay, $HOME, /tmp, /uvwork, ...)."""
+    total = 0
+    for entry in os.scandir(run_dir):
+        if entry.name in exclude:
+            continue
+        if not entry.is_dir(follow_symlinks=False):
+            total += entry.stat(follow_symlinks=False).st_blocks * 512
+            continue
+        for dirpath, _dirs, files in os.walk(entry.path):
+            for fn in files:
+                try:
+                    total += os.lstat(os.path.join(dirpath, fn)).st_blocks * 512
+                except OSError:
+                    continue
+    return total
+
+
+class SizeWatchdog(threading.Thread):
+    """Enforces ``run.size`` over the WHOLE writable run dir.
+
+    A FUSE ext3 overlay image would cap only the rootfs layer and is slow
+    on loaded hosts; measuring the run dir caps $HOME, /tmp and /uvwork too.
+    On overflow the container is terminated and the reason recorded.
+    """
+
+    def __init__(
+        self, run_dir: Path, limit_bytes: int, child, *, poll_s: float = SIZE_POLL_S
+    ):
+        super().__init__(name="sac-size-watchdog", daemon=True)
+        self.run_dir, self.limit, self.child, self.poll_s = (
+            run_dir,
+            limit_bytes,
+            child,
+            poll_s,
+        )
+        self.exceeded_at_bytes: int | None = None
+        self.peak = 0
+        self.stop_evt = threading.Event()
+
+    def run(self) -> None:
+        while not self.stop_evt.wait(self.poll_s):
+            used = run_dir_bytes(self.run_dir)
+            self.peak = max(self.peak, used)
+            if used > self.limit:
+                self.exceeded_at_bytes = used
+                self.child.terminate()
+                if (
+                    self.stop_evt.wait(SIZE_KILL_GRACE_S) is False
+                    and self.child.poll() is None
+                ):
+                    self.child.kill()
+                return
 
 
 def minimal_process_env(parent: dict | None = None) -> dict[str, str]:
@@ -156,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image", required=True)
     ap.add_argument("--egress-allow", action="append", default=[])
     ap.add_argument("--allow-env", action="append", default=[])
+    ap.add_argument("--size-mb", type=int, default=0)
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
@@ -227,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
     ).start()
 
     child = subprocess.Popen(cmd, env=minimal_process_env(dict(os.environ)))
+    watchdog = None
+    if a.size_mb > 0:
+        watchdog = SizeWatchdog(run_dir, a.size_mb * 1024 * 1024, child)
+        watchdog.start()
 
     def _forward(signum, _frame):
         try:
@@ -242,6 +313,14 @@ def main(argv: list[str] | None = None) -> int:
     for p in rp.secrets.glob("env-*"):
         p.unlink(missing_ok=True)
     exit_doc = {"code": rc} if rc >= 0 else {"code": None, "signal": -rc}
+    if watchdog is not None:
+        watchdog.stop_evt.set()
+        rec["size"] = {"limit_mb": a.size_mb, "peak_bytes": watchdog.peak}
+        if watchdog.exceeded_at_bytes is not None:
+            exit_doc["reason"] = (
+                f"run.size exceeded: {watchdog.exceeded_at_bytes} bytes > {a.size_mb} MB; "
+                "container terminated by SAC"
+            )
     rec.update(
         {"status": "exited", "ended_at": utc_now(), "exit": exit_doc, "egress": summary}
     )

@@ -14,8 +14,8 @@ versioning follows [SemVer](https://semver.org/).
   + ONE model key; fleet env, fleet binds, host `~/.claude` projection and
   launching-venv skills never reach the agent; apptainer is started with a
   minimal process env), a fresh per-run writable layer on durable disk
-  (size-capped overlay image, `$HOME`, `/tmp`, `/uvwork`; removed or archived
-  afterwards) and an atomic per-run `outcome.json` (timestamps, exit status,
+  (directory overlay, `$HOME`, `/tmp`, `/uvwork`, the whole run dir capped by
+  a `run.size` watchdog; removed or archived afterwards) and an atomic per-run `outcome.json` (timestamps, exit status,
   image sha256, SAC version, env names, egress summary, token usage, files
   written). Loopback listeners are mirrored to the host so host-side RPC
   (Hermes' TUI gateway) keeps working.

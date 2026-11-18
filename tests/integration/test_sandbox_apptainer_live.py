@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import threading
 import time
 import urllib.request
@@ -60,6 +61,14 @@ kill %1
 """
 
 
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 def _config(root: Path):
     sb = parse_sandbox(
         {
@@ -74,12 +83,13 @@ def _config(root: Path):
 
 
 def _one_run(cfg, state_dir: Path) -> dict:
+    port = _free_port()
     run_dir = begin_run(cfg, state_dir)
     argv = [
         "apptainer", "exec", "--containall", "--cleanenv", "--home", "/home/agent",
         "--bind", f"{state_dir}/home:/home/agent",
         "--env", "KEEP_ME=1", "--env", "DROP_ME=1", "--env", "MODEL_KEY_X=not-a-real-key",
-        *sandbox_flags(cfg, state_dir), SIF, *netgw_wrap(["bash", "-c", SCRIPT]),
+        *sandbox_flags(cfg, state_dir), SIF, *netgw_wrap(["bash", "-c", SCRIPT.replace("8765", str(port))]),
     ]  # fmt: skip
     mirror: list = []
 
@@ -87,7 +97,7 @@ def _one_run(cfg, state_dir: Path) -> dict:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             try:
-                mirror.append(urllib.request.urlopen("http://127.0.0.1:8765/", timeout=2).status)
+                mirror.append(urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2).status)
                 return
             except OSError:
                 time.sleep(0.5)
@@ -170,5 +180,18 @@ def test_home_writes_are_listed(runs):
 
 
 def test_overlay_writes_are_listed(runs):
+    # Arrange
     ov = runs[0]["rec"]["files"]["overlay_written"]
-    assert "/opt/marker" in ov.get("files", ["/opt/marker"] if not ov["available"] else [])
+    # Act
+    created = ov["created"]
+    # Assert
+    assert "opt/marker" in created
+
+
+def test_size_peak_is_recorded(runs):
+    # Arrange
+    size = runs[0]["rec"]["size"]
+    # Act
+    peak = size["peak_bytes"]
+    # Assert
+    assert 0 < peak < size["limit_mb"] * 1024 * 1024

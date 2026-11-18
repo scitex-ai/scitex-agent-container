@@ -1,7 +1,6 @@
 """Per-run lifecycle: fresh run dir + $HOME per start, finalize on stop.
 
-Runs the real ``begin_run`` / ``end_run`` (including ``apptainer overlay
-create`` when apptainer is installed; skipped otherwise). The run root is
+Runs the real ``begin_run`` / ``end_run``. The run root is
 ``tmp_path`` only when it is not under /tmp — the sandbox refuses tmp roots —
 so the root is taken from ``SAC_SANDBOX_TEST_ROOT`` when set, else these
 tests are skipped.
@@ -23,8 +22,8 @@ from scitex_agent_container._sandbox._spec import parse_sandbox
 
 ROOT = os.environ.get("SAC_SANDBOX_TEST_ROOT", "")
 pytestmark = pytest.mark.skipif(
-    not (ROOT and shutil.which("apptainer")),
-    reason="needs apptainer and SAC_SANDBOX_TEST_ROOT (a non-tmp scratch dir)",
+    not ROOT,
+    reason="needs SAC_SANDBOX_TEST_ROOT (a non-tmp scratch dir)",
 )
 
 
@@ -131,11 +130,3 @@ def test_current_run_follows_the_link(cfg_and_state):
     # Assert
     assert got == run_dir
 
-
-def test_overlay_is_capped_at_the_declared_size(cfg_and_state):
-    # Arrange
-    cfg, state = cfg_and_state
-    # Act
-    rp = RunPaths(begin_run(cfg, state))
-    # Assert
-    assert rp.overlay.stat().st_size == 64 * 1024 * 1024

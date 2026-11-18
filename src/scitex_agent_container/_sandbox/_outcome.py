@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sqlite3
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -26,7 +24,6 @@ __all__ = [
     "hermes_usage",
     "manifest",
     "manifest_diff",
-    "overlay_written",
     "read_json",
     "utc_now",
 ]
@@ -105,54 +102,6 @@ def manifest_diff(before: dict, after: dict) -> dict[str, Any]:
         "truncated": trunc,
     }
 
-
-def overlay_written(image: Path, *, timeout_s: float = 20.0) -> dict[str, Any]:
-    """Paths the run wrote into its overlay image (``upper/``), via ``debugfs``.
-
-    Read-only (``debugfs`` without ``-w``); ``available: false`` with the
-    reason when e2fsprogs is absent or the image is unreadable.
-    """
-    debugfs = shutil.which("debugfs") or (
-        "/usr/sbin/debugfs" if Path("/usr/sbin/debugfs").exists() else None
-    )
-    if debugfs is None:
-        return {"available": False, "reason": "debugfs (e2fsprogs) not installed"}
-    if not Path(image).is_file():
-        return {"available": False, "reason": f"overlay image absent: {image}"}
-    files: list[str] = []
-    pending = ["/upper"]
-    deadline = time.monotonic() + timeout_s
-    env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
-    while pending and len(files) < MAX_LISTED and time.monotonic() < deadline:
-        d = pending.pop()
-        proc = subprocess.run(
-            [debugfs, "-R", f'ls -p "{d}"', str(image)],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=timeout_s,
-            check=False,
-        )
-        for line in proc.stdout.splitlines():
-            # ``ls -p``: /<inode>/<octal mode>/<uid>/<gid>/<name>/<size>/
-            parts = line.strip().strip("/").split("/")
-            if len(parts) < 5 or parts[4] in ("", ".", ".."):
-                continue
-            try:
-                mode = int(parts[1], 8)
-            except ValueError:
-                continue
-            path = f"{d}/{parts[4]}"
-            if mode & 0o170000 == 0o040000:  # directory
-                pending.append(path)
-            else:
-                files.append(path[len("/upper") :])
-    return {
-        "available": True,
-        "files": sorted(files)[:MAX_LISTED],
-        "count": len(files),
-        "truncated": bool(pending) or len(files) >= MAX_LISTED,
-    }
 
 
 def hermes_usage(state_db: Path) -> dict[str, Any] | None:

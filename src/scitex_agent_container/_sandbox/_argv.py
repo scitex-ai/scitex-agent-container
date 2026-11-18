@@ -101,6 +101,8 @@ def supervised_argv(
         str(getattr(config, "name", "")),
         "--image",
         str(image),
+        "--size-mb",
+        str(sb.run_size_mb),
     ]
     for entry in sb.egress_allow_strings:
         out += ["--egress-allow", entry]

@@ -5,8 +5,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import subprocess
+import sys
+
 from scitex_agent_container._sandbox._supervisor import (
     EXIT_SETUP,
+    SizeWatchdog,
+    run_dir_bytes,
     main,
     minimal_process_env,
     rewrite_run_paths,
@@ -120,3 +125,27 @@ def test_unprepared_run_refuses_to_launch(tmp_path):
     rc = main(argv)
     # Assert
     assert rc == EXIT_SETUP
+
+
+def test_run_dir_bytes_ignores_out_and_secrets(tmp_path):
+    # Arrange
+    for d in ("home", "out", "secrets"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "f").write_bytes(b"x" * 100_000)
+    # Act
+    used = run_dir_bytes(tmp_path)
+    # Assert
+    assert 100_000 <= used < 200_000
+
+
+def test_size_watchdog_terminates_an_oversized_run(tmp_path):
+    # Arrange
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "big").write_bytes(b"x" * 2_000_000)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    dog = SizeWatchdog(tmp_path, 1_000_000, child, poll_s=0.1)
+    # Act
+    dog.start()
+    rc = child.wait(timeout=10)
+    # Assert
+    assert rc != 0 and dog.exceeded_at_bytes >= 2_000_000

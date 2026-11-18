@@ -6,7 +6,7 @@ A spec with a `sandbox:` block launches every run **sealed**:
 |---|---|
 | egress | the container gets `--net --network none`; the inner command runs under `netgw` (in-container, private user+net namespace) whose only way out is `127.0.0.1:3128` → unix socket → a host-side CONNECT proxy that tunnels **only** to `egress.allow`. Everything else is refused (403 / TCP RST / NXDOMAIN) and logged. No iptables, netns or sudo on the host. |
 | env | the container environment is `env.allow` + the keys of `spec.apptainer.env` + **one** `env.model_key` + SAC's declared launch wiring (`_sandbox/_env_policy.SAC_WIRING`). Fleet-default env and binds (`~/.scitex/cards`, host `/tmp`, quota cache …), host `~/.claude` commands/skills and skills of packages installed next to the launching SAC never reach the agent. apptainer itself is started with a minimal process environment, never `os.environ`. |
-| per-run reset | each start creates `<run.root>/<agent>/<run_id>/`: a `run.size`-capped sparse overlay image (the writable rootfs), a fresh `$HOME`, `/tmp` + `/var/tmp` (`--workdir`) and `/uvwork`. After the run, `run.after: remove` deletes every layer except `out/`; `archive` keeps them. |
+| per-run reset | each start creates `<run.root>/<agent>/<run_id>/`: a directory overlay (the writable rootfs), a fresh `$HOME`, `/tmp` + `/var/tmp` (`--workdir`) and `/uvwork`. `run.size` caps the WHOLE run dir: the supervisor measures it every 5 s and terminates the container on overflow (`exit.reason` says so). After the run, `run.after: remove` deletes every layer except `out/`; `archive` keeps them. |
 | outcome | `<run_dir>/out/outcome.json` (written atomically at every transition), `exit_code`, `egress_blocked.jsonl`, `egress_allowed.jsonl`, `egress_gateway.jsonl`. |
 
 ```yaml
@@ -19,7 +19,7 @@ spec:
       model_key: OPENCODE_GO_API_KEY_03  # the ONE model key; a Hermes failover pool must list only it
     run:
       root: /scratch/$USER/sac-runs      # durable disk; /tmp, /var/tmp, /dev/shm, /run are refused
-      size: 4G                           # overlay image cap
+      size: 4G                           # cap on the whole run dir (overlay + $HOME + /tmp + /uvwork)
       after: remove                      # remove | archive
 ```
 
@@ -36,7 +36,7 @@ when the supervisor was killed before it observed the container exit),
 `image` (path + sha256), `sac_version`, `policy`, `env` (passed / dropped
 NAMES, never values), `egress` (summary + log paths), `token_usage` (Hermes
 `state.db` totals when available), `files.home_written` and
-`files.overlay_written` (`debugfs` listing of the overlay's `upper/`),
+`files.overlay_written` (files in the overlay's `upper/`), `size` (limit + peak),
 `files.read: null` (SAC takes no syscall trace), `layers`.
 
 ## Host-side RPC still works
@@ -52,7 +52,9 @@ port on the host's `127.0.0.1` and relays each connection back in through the
   OpenCode panes). The headless SDK runner has no `begin_run` hook and its
   launch refuses with "no prepared run".
 * The image needs `python3`, `unshare` (util-linux) and `/dev/net/tun` support.
-* The home directory lives on `run.root` and is not covered by `run.size`
-  (only the overlay image is capped).
+* `run.size` is enforced by polling (5 s), so a burst can overshoot briefly
+  before the container is terminated. (A FUSE ext3 overlay image would be a
+  hard cap but stacks a third FUSE layer and stalled Hermes for minutes on a
+  loaded host.)
 * A same-uid agent can reach the proxy socket and so could append forged log
   lines; it can neither delete logged lines nor reach a non-allowlisted host.

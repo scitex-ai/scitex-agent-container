@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import secrets as _secrets
 import shutil
-import subprocess
+import stat
 import time
 from pathlib import Path
 from typing import Any
@@ -35,8 +35,7 @@ from ._outcome import (
     hermes_usage,
     manifest,
     manifest_diff,
-    overlay_written,
-    read_json,
+        read_json,
     utc_now,
 )
 
@@ -49,14 +48,6 @@ class SandboxRunError(RuntimeError):
 
 def new_run_id() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + _secrets.token_hex(3)
-
-
-def _minimal_env() -> dict[str, str]:
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8"}
-    home = os.path.expanduser("~")
-    if home and home != "~":
-        env["HOME"] = home
-    return env
 
 
 def _sac_version() -> str:
@@ -99,25 +90,6 @@ def _symlink(target: Path, link: Path) -> None:
     os.replace(tmp, link)
 
 
-def _create_overlay(path: Path, size_mb: int) -> None:
-    apptainer = shutil.which("apptainer", path=_minimal_env()["PATH"]) or shutil.which(
-        "apptainer"
-    )
-    if apptainer is None:
-        raise SandboxRunError("apptainer not found; cannot create the per-run overlay")
-    proc = subprocess.run(
-        [apptainer, "overlay", "create", "--sparse", "--size", str(size_mb), str(path)],
-        capture_output=True,
-        text=True,
-        env=_minimal_env(),
-        timeout=300,
-        check=False,
-    )
-    if proc.returncode != 0 or not path.is_file():
-        raise SandboxRunError(
-            f"apptainer overlay create failed (rc={proc.returncode}): {proc.stderr.strip()[-500:]}"
-        )
-
 
 def begin_run(config: Any, state_dir: Path) -> Path | None:
     """Prepare a fresh run for a sandboxed ``config``; ``None`` when not sandboxed."""
@@ -141,12 +113,11 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     run_dir = root / agent / run_id
     rp = RunPaths(run_dir)
     run_dir.mkdir(parents=True, mode=0o700)
-    for d in (rp.home, rp.workdir, rp.uvwork, rp.bin, rp.sock, rp.secrets, rp.out):
+    for d in (rp.home, rp.overlay, rp.workdir, rp.uvwork, rp.bin, rp.sock, rp.secrets, rp.out):
         d.mkdir(parents=True, mode=0o700, exist_ok=True)
     src = Path(__file__).with_name("netgw.py")
     shutil.copyfile(src, rp.bin / "netgw.py")
     os.chmod(rp.bin / "netgw.py", 0o444)
-    _create_overlay(rp.overlay, sb.run_size_mb)
     _home_aside(state_dir / "home")
     _symlink(rp.home, state_dir / "home")
     _symlink(run_dir, run_link(state_dir))
@@ -172,11 +143,20 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     return run_dir
 
 
+def _force_writable(func, path, _exc) -> None:
+    """rmtree retry for overlay ``work/`` dirs the kernel leaves mode 000."""
+    parent = os.path.dirname(path)
+    os.chmod(parent, os.stat(parent).st_mode | stat.S_IRWXU)
+    if os.path.isdir(path) and not os.path.islink(path):
+        os.chmod(path, stat.S_IRWXU)
+    func(path)
+
+
 def _remove_layers(rp: RunPaths) -> list[str]:
     removed = []
     for p in (rp.home, rp.workdir, rp.uvwork, rp.root / "rt", rp.overlay):
         if p.is_dir() and not p.is_symlink():
-            shutil.rmtree(p, ignore_errors=True)
+            shutil.rmtree(p, onexc=_force_writable)
         elif p.exists() or p.is_symlink():
             p.unlink(missing_ok=True)
         removed.append(str(p))
@@ -211,7 +191,7 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
         "read": None,
         "read_reason": "not recorded: no syscall trace is taken by SAC",
         "home_written": manifest_diff(before, manifest(rp.home)),
-        "overlay_written": overlay_written(rp.overlay),
+        "overlay_written": manifest_diff({}, manifest(rp.overlay / "upper")),
     }
     rec["token_usage"] = hermes_usage(rp.home / ".hermes" / "state.db") or {
         "available": False,

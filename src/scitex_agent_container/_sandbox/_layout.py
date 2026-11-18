@@ -5,7 +5,7 @@ Host::
     <state_dir>/sandbox/run        -> <run.root>/<agent>/<run_id>   (symlink, current run)
     <state_dir>/home               -> <run_dir>/home                (symlink while a run is live)
     <run_dir>/home/                fresh $HOME (/home/agent)
-    <run_dir>/overlay.img          sparse ext3 overlay, run.size cap (the writable rootfs layer)
+    <run_dir>/overlay/             directory overlay (the writable rootfs layer)
     <run_dir>/workdir/             apptainer --workdir (/tmp, /var/tmp)
     <run_dir>/uvwork/              /uvwork
     <run_dir>/rt/bin/netgw.py      the in-container gateway (bound read-only)
@@ -53,7 +53,7 @@ class RunPaths:
         self.root = Path(root)
 
     home = property(lambda s: s.root / "home")
-    overlay = property(lambda s: s.root / "overlay.img")
+    overlay = property(lambda s: s.root / "overlay")
     workdir = property(lambda s: s.root / "workdir")
     uvwork = property(lambda s: s.root / "uvwork")
     bin = property(lambda s: s.root / "rt" / "bin")
