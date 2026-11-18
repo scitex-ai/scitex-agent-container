@@ -308,27 +308,10 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write_json(rp.outcome, rec)
         return _fail_setup(f"egress proxy failed: {exc}")
     rec["egress"] = {"mode": "allowlist", "logs": proxy.summary()["logs"]}
-    atomic_write_json(rp.outcome, rec)
-
-    # The kept env-file values are consumed by apptainer at container start;
-    # drop them as soon as the gateway is up (and at the latest on exit).
-    def _shred_when_up():
-        while not stop_evt.wait(0.5):
-            if proxy.gateway_events.get("gateway_up"):
-                break
-        for p in rp.secrets.glob("env-*"):
-            p.unlink(missing_ok=True)
-
-    stop_evt = threading.Event()
-    threading.Thread(
-        target=_shred_when_up, name="sac-secret-shred", daemon=True
-    ).start()
-
-    child = subprocess.Popen(cmd, env=minimal_process_env(dict(os.environ)))
-    watchdog = None
-    if a.size_mb > 0:
-        watchdog = SizeWatchdog(run_dir, a.size_mb * 1024 * 1024, child)
-        watchdog.start()
+    # The child and watchdog exist only once the container starts; the signal
+    # handler is installed BEFORE the record says "running", so a stop that
+    # arrives in between is still recorded (and the container never starts).
+    live: dict = {"child": None, "watchdog": None}
 
     def _forward(signum, _frame):
         # Record the termination FIRST: a pane teardown follows SIGTERM with
@@ -348,17 +331,59 @@ def main(argv: list[str] | None = None) -> int:
                     "egress": proxy.summary(),
                 }
             )
-            if watchdog is not None:
-                rec["size"] = {"limit_mb": a.size_mb, "peak_bytes": watchdog.peak}
+            if live["watchdog"] is not None:
+                rec["size"] = {
+                    "limit_mb": a.size_mb,
+                    "peak_bytes": live["watchdog"].peak,
+                }
             atomic_write_text(rp.exit_code, f"{128 + signum}\n", mode=0o644)
             atomic_write_json(rp.outcome, rec)
-        try:
-            child.send_signal(signum)
-        except ProcessLookupError:
-            pass
+        if live["child"] is not None:
+            try:
+                live["child"].send_signal(signum)
+            except ProcessLookupError:
+                pass
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, _forward)
+    atomic_write_json(rp.outcome, rec)
+
+    # The kept env-file values are consumed by apptainer at container start;
+    # drop them as soon as the gateway is up (and at the latest on exit).
+    def _shred_when_up():
+        while not stop_evt.wait(0.5):
+            if proxy.gateway_events.get("gateway_up"):
+                break
+        for p in rp.secrets.glob("env-*"):
+            p.unlink(missing_ok=True)
+
+    stop_evt = threading.Event()
+    threading.Thread(
+        target=_shred_when_up, name="sac-secret-shred", daemon=True
+    ).start()
+
+    # Block the stop signals across check-and-launch: a stop that lands while
+    # Popen runs is delivered on unblock, when live["child"] is set.
+    stop_signals = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+    signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
+    if rec.get("status") != "running":  # stopped before the container started
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
+        stop_evt.set()
+        proxy.stop()
+        return 128 + int((rec.get("exit") or {}).get("signal") or 0)
+    child = subprocess.Popen(
+        cmd,
+        env=minimal_process_env(dict(os.environ)),
+        # the child must not inherit the blocked mask
+        preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals),
+    )
+    live["child"] = child
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
+    watchdog = None
+    if a.size_mb > 0:
+        watchdog = SizeWatchdog(run_dir, a.size_mb * 1024 * 1024, child)
+        live["watchdog"] = watchdog
+        watchdog.start()
     rc = child.wait()
     stop_evt.set()
     summary = proxy.stop()
