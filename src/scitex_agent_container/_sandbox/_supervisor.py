@@ -317,6 +317,8 @@ def main(argv: list[str] | None = None) -> int:
                     "egress": proxy.summary(),
                 }
             )
+            if watchdog is not None:
+                rec["size"] = {"limit_mb": a.size_mb, "peak_bytes": watchdog.peak}
             atomic_write_text(rp.exit_code, f"{128 + signum}\n", mode=0o644)
             atomic_write_json(rp.outcome, rec)
         try:
