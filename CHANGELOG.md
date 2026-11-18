@@ -17,7 +17,8 @@ versioning follows [SemVer](https://semver.org/).
   (directory overlay, `$HOME`, `/tmp`, `/uvwork`, the whole run dir capped by
   a `run.size` watchdog; removed or archived afterwards) and an atomic per-run `outcome.json` (timestamps, exit status,
   image sha256, SAC version, env names, egress summary, token usage, files
-  written). Loopback listeners are mirrored to the host so host-side RPC
+  written, plus tool calls and files read from the harness transcript). A sealed
+  agent gets no builtin sac MCP / `server:sac` channel. Loopback listeners are mirrored to the host so host-side RPC
   (Hermes' TUI gateway) keeps working.
 
 ### Fixed

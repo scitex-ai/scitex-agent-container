@@ -32,6 +32,7 @@ from ._layout import RunPaths, run_link
 from ._outcome import (
     SCHEMA,
     atomic_write_json,
+    hermes_transcript,
     hermes_usage,
     manifest,
     manifest_diff,
@@ -187,9 +188,16 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
             "(killed with its pane); see egress logs and harness logs",
         }
     before = read_json(rp.out / "home_manifest_start.json") or {}
+    transcript = hermes_transcript(rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp")
+    rec["tool_calls"] = transcript or {
+        "available": False,
+        "reason": "the harness left no transcript SAC can read",
+    }
     rec["files"] = {
-        "read": None,
-        "read_reason": "not recorded: no syscall trace is taken by SAC",
+        "read": (transcript or {}).get("files_read"),
+        "read_source": (transcript or {}).get(
+            "source", "unavailable: no harness transcript (SAC takes no syscall trace)"
+        ),
         "home_written": manifest_diff(before, manifest(rp.home)),
         "overlay_written": manifest_diff({}, manifest(rp.overlay / "upper")),
     }

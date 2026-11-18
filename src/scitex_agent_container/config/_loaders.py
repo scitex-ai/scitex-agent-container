@@ -357,7 +357,11 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # (SDK) / tui_channel_config (TUI) for the channel; the .mcp.json / options
     # merge for the tools server.
     _sac_optout = str(labels.get("sac-builtin", "")).strip().lower()
-    if _sac_optout not in ("off", "false", "0", "no"):
+    # A SEALED spec (spec.sandbox) gets no builtin control plane: the sac MCP
+    # tools (agent spawn/restart, host exec, store) are host authority, which
+    # a sealed run holds only by explicit grant (none exist yet in 0.40.0).
+    _sealed = spec.get("sandbox") is not None
+    if not _sealed and _sac_optout not in ("off", "false", "0", "no"):
         if "server:sac" not in {c.strip() for c in comms_spec.channels}:
             comms_spec.channels.append("server:sac")
         if "scitex-agent-container" not in mcp_servers:

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ __all__ = [
     "SCHEMA",
     "atomic_write_json",
     "atomic_write_text",
+    "hermes_transcript",
     "hermes_usage",
     "manifest",
     "manifest_diff",
@@ -103,7 +106,6 @@ def manifest_diff(before: dict, after: dict) -> dict[str, Any]:
     }
 
 
-
 def hermes_usage(state_db: Path) -> dict[str, Any] | None:
     """Token / cost columns of Hermes' ``sessions`` table, when Hermes ran."""
     if not Path(state_db).is_file():
@@ -136,4 +138,104 @@ def hermes_usage(state_db: Path) -> dict[str, Any] | None:
         "sessions": len(rows),
         "token_totals": totals,
         "per_session": [{c: r.get(c) for c in keep} for r in rows][:200],
+    }
+
+
+#: Hermes file tools whose ``path`` argument names a file the agent READ.
+_READ_TOOLS = {"read_file": "path", "search_files": "path", "view_file": "path"}
+_MAX_ARG = 400
+
+
+def _snapshot(state_db: Path, scratch: Path) -> Path:
+    """Copy ``state.db`` with its WAL/SHM so a read sees the live rows."""
+    scratch.mkdir(parents=True, exist_ok=True)
+    for p in Path(state_db).parent.glob(Path(state_db).name + "*"):
+        shutil.copyfile(p, scratch / p.name)
+    return scratch / Path(state_db).name
+
+
+def _tool_calls(rows) -> tuple[list[dict[str, Any]], Any]:
+    result_bytes = {
+        cid: len((content or "").encode())
+        for role, _, cid, content, _ in rows
+        if role == "tool" and cid
+    }
+    calls: list[dict[str, Any]] = []
+    first_assistant = None
+    for role, tool_calls, _, _, ts in rows:
+        if role != "assistant":
+            continue
+        if first_assistant is None:
+            first_assistant = ts
+        try:
+            items = json.loads(tool_calls) if tool_calls else []
+        except ValueError:
+            continue
+        for item in items if isinstance(items, list) else []:
+            fn = item.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                args = {"_raw": fn.get("arguments")}
+            if not isinstance(args, dict):
+                args = {"_raw": args}
+            calls.append(
+                {
+                    "t": ts,
+                    "tool": fn.get("name"),
+                    "args": {k: str(v)[:_MAX_ARG] for k, v in args.items()},
+                    "result_bytes": result_bytes.get(
+                        item.get("id") or item.get("call_id")
+                    ),
+                }
+            )
+    return calls, first_assistant
+
+
+def hermes_transcript(state_db: Path, scratch: Path) -> dict[str, Any] | None:
+    """Tool calls and files read, from Hermes' own message transcript.
+
+    ``source`` names where the data came from: the harness transcript, not a
+    syscall trace. ``files_read`` lists the ``path`` argument of Hermes'
+    file-reading tools (with offset/limit and the size of the result the
+    agent received); shell commands appear in ``tool_calls`` only, because
+    what a command reads cannot be known from its text.
+    """
+    if not Path(state_db).is_file():
+        return None
+    source = "harness transcript (hermes state.db messages)"
+    try:
+        con = sqlite3.connect(_snapshot(state_db, scratch), timeout=2)
+        try:
+            rows = con.execute(
+                "SELECT role, tool_calls, tool_call_id, content, timestamp "
+                "FROM messages ORDER BY id"
+            ).fetchall()
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError) as exc:
+        return {"source": source, "error": str(exc)}
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    calls, first_assistant = _tool_calls(rows)
+    files_read = [
+        {
+            "path": c["args"].get(_READ_TOOLS[c["tool"]]),
+            "tool": c["tool"],
+            "offset": c["args"].get("offset"),
+            "limit": c["args"].get("limit"),
+            "result_bytes": c["result_bytes"],
+            "t": c["t"],
+        }
+        for c in calls
+        if c["tool"] in _READ_TOOLS and c["args"].get(_READ_TOOLS[c["tool"]])
+    ]
+    return {
+        "source": source,
+        "first_assistant_message_at": first_assistant,
+        "tool_calls": calls[:MAX_LISTED],
+        "tool_call_counts": dict(Counter(c["tool"] for c in calls)),
+        "files_read": files_read[:MAX_LISTED],
+        "bytes_read_via_file_tools": sum(f["result_bytes"] or 0 for f in files_read),
+        "truncated": len(calls) > MAX_LISTED,
     }

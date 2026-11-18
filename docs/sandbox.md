@@ -5,6 +5,7 @@ A spec with a `sandbox:` block launches every run **sealed**:
 | concern | what SAC does |
 |---|---|
 | egress | the container gets `--net --network none`; the inner command runs under `netgw` (in-container, private user+net namespace) whose only way out is `127.0.0.1:3128` → unix socket → a host-side CONNECT proxy that tunnels **only** to `egress.allow`. Everything else is refused (403 / TCP RST / NXDOMAIN) and logged. No iptables, netns or sudo on the host. |
+| control plane | a sealed agent gets no builtin `sac` MCP server / `server:sac` channel (agent spawn, host exec and store tools are host authority). |
 | env | the container environment is `env.allow` + the keys of `spec.apptainer.env` + **one** `env.model_key` + SAC's declared launch wiring (`_sandbox/_env_policy.SAC_WIRING`). Fleet-default env and binds (`~/.scitex/cards`, host `/tmp`, quota cache …), host `~/.claude` commands/skills and skills of packages installed next to the launching SAC never reach the agent. apptainer itself is started with a minimal process environment, never `os.environ`. |
 | per-run reset | each start creates `<run.root>/<agent>/<run_id>/`: a directory overlay (the writable rootfs), a fresh `$HOME`, `/tmp` + `/var/tmp` (`--workdir`) and `/uvwork`. `run.size` caps the WHOLE run dir: the supervisor measures it every 5 s and terminates the container on overflow (`exit.reason` says so). After the run, `run.after: remove` deletes every layer except `out/`; `archive` keeps them. |
 | outcome | `<run_dir>/out/outcome.json` (written atomically at every transition), `exit_code`, `egress_blocked.jsonl`, `egress_allowed.jsonl`, `egress_gateway.jsonl`. |
@@ -37,7 +38,7 @@ when the supervisor was killed before it observed the container exit),
 NAMES, never values), `egress` (summary + log paths), `token_usage` (Hermes
 `state.db` totals when available), `files.home_written` and
 `files.overlay_written` (files in the overlay's `upper/`), `size` (limit + peak),
-`files.read: null` (SAC takes no syscall trace), `layers`.
+`tool_calls` and `files.read` (from the harness's own transcript — Hermes `state.db` messages: every tool call with its arguments and result size, the paths passed to file-reading tools, and the first assistant-message time; `source` names it; no syscall trace), `layers`.
 
 ## Host-side RPC still works
 
