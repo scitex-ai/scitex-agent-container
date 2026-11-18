@@ -71,10 +71,12 @@ jobs:
   # 0.38.4 to 0.39.0. The full supported set is a LITERAL input so a release can
   # never inherit a narrowed list (tests/integration/test_ci_python_matrix_shape.py).
   test:
-    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@cd4e545a20a1e35385ffe88f4a963ae3c500819b
+    uses: scitex-ai/.github/.github/workflows/pytest-matrix.yml@3015806d742fba23cae7f782b169fe0732756ab3
     with:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
       full_python_versions: '["3.11","3.12","3.13"]'
+      # Same per-leg limit as ci.yml (operator 2026-11-18; shared default 30).
+      timeout_minutes: 45
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
