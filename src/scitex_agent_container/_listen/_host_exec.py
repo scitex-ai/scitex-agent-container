@@ -8,14 +8,14 @@ in-container image builds (``sac image build``), cron/systemd apply
 otherwise require the operator's shell.
 
 FLOW:
-1. Bearer-authed by the outer middleware. An inner identity resolver used to
-   populate ``request.state.authenticated_node`` from a per-node bearer; it
-   was removed 2026-08-28 (nothing ever minted one), so that attribute is
-   absent and reads ``None`` — the host-wide bearer / admin path.
-2. Caller identity: prefer the authenticated node — which no longer arrives —
-   so in practice the optional body ``caller`` claim, self-asserted (same
-   caveat as the ``agents_start``/``agent_restart`` handlers). NOTE this is
-   what the GROUP GATE below is applied to.
+1. Bearer-authed by the outer middleware, which also resolves an optional
+   per-agent token (``X-SAC-Agent-Token``, minted at agent start) to
+   ``request.state.authenticated_agent`` — see :mod:`.agent_tokens`.
+2. Caller identity (:mod:`._host_exec_identity`): the agent token's name; a
+   body ``caller`` that disagrees with it is refused. Without a token the
+   body claim is accepted ONLY as a logged, audited legacy path for agents
+   started before tokens existed (``SAC_HOST_EXEC_REQUIRE_AGENT_TOKEN=1``
+   refuses it). The GROUP GATE below is applied to this name.
 3. GROUP GATE: resolve the caller's group via
    ``resolve_group_name`` and refuse with 403 unless it is one of
    ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator
@@ -26,7 +26,8 @@ FLOW:
    WEDGED" below for the three guards that bound it.
 5. Audit log every invocation as one JSONL line to
    ``~/.scitex/agent-container/runtime/logs/host_exec.log`` — {ts, caller,
-   caller_group, argv, cwd, exit_code, duration_s, timed_out}. The operator
+   identity, caller_group, argv, cwd, exit_code, duration_s, timed_out};
+   identity refusals are audited too (``refused``). The operator
    accepted that the log records without preventing (Q1a/Q2a); it is the
    forensic trail.
 
@@ -100,26 +101,28 @@ inferring from silence.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
-from pathlib import Path
-from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
-from .._logging import get_logger
 from .._state.state_store_acl_policy_store import POLICY_STORE
 from .._state.state_store_nodes import comms_policy_row_exists, resolve_group_names
 from ..config._group_resolver import groups_intersect
 from ._acl import deny_response
+from ._host_exec_audit import _AUDIT_LOG_PATH, _append_audit, _audit_log_path
 from ._host_exec_child import (
     _POST_KILL_DRAIN_S,
     _TERM_GRACE_S,
     ChildOutcome,
     _run_child,
+)
+from ._host_exec_identity import (
+    refusal_audit_entry,
+    require_agent_token_from_env,
+    resolve_caller_identity,
 )
 from ._host_exec_inflight import (
     InflightExec,
@@ -143,12 +146,6 @@ from ._plane_targeting_argv import targets_listen_plane
 # so those agents can run host ops and manage the fleet flexibly.
 ELIGIBLE_GROUPS: frozenset[str] = frozenset({"developer", "researcher", "privileged"})
 
-# Structured audit log — one JSONL entry per invocation. Path is fixed (matches
-# the other runtime logs). Test seam: monkeypatch ``_audit_log_path``.
-_AUDIT_LOG_PATH = (
-    Path.home() / ".scitex" / "agent-container" / "runtime" / "logs" / "host_exec.log"
-)
-
 # Guardrails
 _MAX_TIMEOUT_S: float = 3600.0  # 1h — image builds can take a while
 _DEFAULT_TIMEOUT_S: float = 300.0
@@ -167,36 +164,13 @@ _DEFAULT_TIMEOUT_S: float = 300.0
 _WATCHDOG_MARGIN_S: float = _TERM_GRACE_S + _POST_KILL_DRAIN_S + 10.0
 
 
-def _audit_log_path() -> Path:
-    return _AUDIT_LOG_PATH
-
-
-def _append_audit(entry: dict[str, Any]) -> None:
-    """Append one JSONL line. Best-effort — a failed audit log MUST NOT break
-    the response (the exec already ran; log the miss to stderr and continue)."""
-    path = _audit_log_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, sort_keys=True) + "\n")
-    except Exception as exc:  # stx-allow: fallback (best-effort audit; must not shadow the real exec result)
-        # Log so the miss is visible in the listen journal, then continue —
-        # the exec's real result still returns to the caller. Routed through
-        # scitex-logging rather than a raw stderr print: this is the sole
-        # account of a LOST AUDIT RECORD, so it must carry its origin and
-        # survive in the runtime log rather than only in whatever journal
-        # happened to be capturing the daemon's stderr.
-        get_logger(__name__).error(
-            f"audit log append failed at {path}: {exc}"
-        )
-
-
 async def host_exec(
     request: Request,
     *,
     group_resolver=resolve_group_names,
     registration_probe=comms_policy_row_exists,
     audit_writer=_append_audit,
+    require_agent_token: bool | None = None,
 ) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
 
@@ -274,14 +248,16 @@ async def host_exec(
         )
 
     # ---- 2. Caller identity + group gate -----------------------------------
-    authenticated = getattr(request.state, "authenticated_node", None)
-    caller = authenticated if authenticated is not None else claimed_caller
-    if not caller:
-        # Neither the per-node bearer nor a claimed caller resolved — refuse
-        # (arbitrary host-exec is never permitted without a resolvable caller).
-        return deny_response(
-            reason="host_exec requires a resolvable caller (per-node bearer or 'caller' body claim)"
-        )
+    if require_agent_token is None:
+        require_agent_token = require_agent_token_from_env()
+    resolved = resolve_caller_identity(
+        request.state, claimed_caller, require_agent_token=require_agent_token
+    )
+    caller = resolved.caller
+    if resolved.refusal is not None:
+        if caller:
+            audit_writer(refusal_audit_entry(resolved, claimed_caller, argv, cwd_raw))
+        return deny_response(reason=resolved.refusal)
 
     # MEMBERSHIP over the caller's WHOLE named-group set, not equality
     # against its primary group (incident 2026-08-10): eligibility is a
@@ -471,6 +447,7 @@ async def host_exec(
         {
             "ts": time.time(),
             "caller": caller,
+            "identity": resolved.identity,
             "caller_group": ",".join(authorised),
             "caller_groups": sorted(str(g).strip() for g in groups),
             "argv": argv,
@@ -509,6 +486,9 @@ async def host_exec(
 
 
 __all__ = [
+    "_AUDIT_LOG_PATH",
+    "_append_audit",
+    "_audit_log_path",
     "ELIGIBLE_GROUPS",
     "ChildOutcome",
     "InflightExec",

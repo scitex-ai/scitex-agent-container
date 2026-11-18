@@ -14,6 +14,10 @@ two env vars at start:
 * ``SAC_LISTEN_BEARER`` — the bearer the adapter must present or
   ``sac listen`` returns 401, the subscription never lands, and every
   lead ``a2a_send`` push reports ``delivered_subscriber_count=0``.
+* ``SAC_AGENT_TOKEN`` — this agent's own credential (minted at agent start,
+  see ``_listen.agent_tokens``). The bearer is host-wide; this token is what
+  lets ``sac listen`` tell WHICH agent is calling (``host_exec``). Its name
+  is secret-shaped, so the secret lift moves it into the 0600 env-file.
 
 This module returns the ``--env`` flags ``build_run_argv`` should append.
 The injection is UNCONDITIONAL w.r.t. the relaxed escape-hatch: relaxed
@@ -36,7 +40,25 @@ import scitex_logging as slogging
 logger = slogging.getLogger(__name__)
 
 
-def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:
+def agent_token_env_flags(state_dir) -> list[str]:
+    """``--env SAC_AGENT_TOKEN=...`` carrying the agent's STAGED token.
+
+    Staging activates nothing — only the real start path commits the token
+    (``_listen.agent_tokens``) — so ``sac agents explain`` / ``--dry-run``,
+    which build this same argv, never rotate a running agent's credential.
+    No ``state_dir`` yields ``[]``: the agent then uses the server's legacy
+    name-claim path.
+    """
+    if state_dir is None:
+        return []
+    from .._listen.agent_tokens import AGENT_TOKEN_ENV, stage_agent_token
+
+    return ["--env", f"{AGENT_TOKEN_ENV}={stage_agent_token(state_dir)}"]
+
+
+def listen_env_flags(
+    config, *, include_listener: bool = True, state_dir=None
+) -> list[str]:
     """Return the ``--env`` flags ``apptainer exec`` needs for the bus.
 
     When ``include_listener`` is true, forwards the bus-listen URL + bearer
@@ -199,6 +221,7 @@ def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:
         bearer = _read_listen_bearer()
         if bearer:
             flags += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
+            flags += agent_token_env_flags(state_dir)
         elif wants_bus:
             raise RuntimeError(
                 "spec.comms.channels includes 'server:sac' but the bus bearer "
@@ -222,4 +245,4 @@ def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:
     return flags
 
 
-__all__ = ["listen_env_flags"]
+__all__ = ["agent_token_env_flags", "listen_env_flags"]
