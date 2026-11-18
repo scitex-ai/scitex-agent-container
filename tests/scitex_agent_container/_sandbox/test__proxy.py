@@ -8,6 +8,7 @@ protocol ``netgw`` speaks.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -58,9 +59,14 @@ def proxy(tmp_path, echo_server):
 
 
 def _unix(path: Path) -> socket.socket:
+    """Connect like netgw does; long tmp paths go through a dir fd (Linux)."""
     s = socket.socket(socket.AF_UNIX)
     s.settimeout(5)
-    s.connect(str(path))
+    fd = os.open(Path(path).parent, os.O_PATH | os.O_DIRECTORY)
+    try:
+        s.connect(f"/proc/self/fd/{fd}/{Path(path).name}")
+    finally:
+        os.close(fd)
     return s
 
 
@@ -137,7 +143,9 @@ def test_listen_event_opens_a_host_mirror(proxy, tmp_path):
     # Arrange: the container side of the ingress socket
     got: list[bytes] = []
     ingress = socket.socket(socket.AF_UNIX)
-    ingress.bind(str(tmp_path / "sock" / "ingress.sock"))
+    sock_dir = os.open(tmp_path / "sock", os.O_PATH | os.O_DIRECTORY)
+    ingress.bind(f"/proc/self/fd/{sock_dir}/ingress.sock")
+    os.close(sock_dir)
     ingress.listen()
 
     def container_side():
