@@ -12,6 +12,11 @@ import os
 import time
 from typing import TYPE_CHECKING, Any
 
+from .heartbeat_columns import (
+    HEARTBEAT_COLUMNS,
+    NULL_READS_AS,
+    OPTIONAL_HEARTBEAT_FIELDS,
+)
 from .state_store_hostname import resolve_host as _resolve_host
 from .state_store_instances_store import ACTOR, instance_key, run_with_reconnect
 
@@ -19,44 +24,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.store import Store
 
 
-_HEARTBEAT_COLUMNS = {
-    "agent_id": "heartbeat_agent_id",
-    "spec_id": "heartbeat_spec_id",
-    "runtime": "heartbeat_runtime",
-    "harness": "heartbeat_harness",
-    "engine": "heartbeat_engine",
-    "model": "heartbeat_model",
-    "session_id": "heartbeat_session_id",
-    "boot_id": "heartbeat_boot_id",
-    "seq": "heartbeat_seq",
-    "monotonic_ns": "heartbeat_monotonic_ns",
-    "observed_at": "heartbeat_observed_at",
-    "progress_at": "heartbeat_progress_at",
-    "session_jsonl_delta_bytes": "heartbeat_session_jsonl_delta_bytes",
-    "subagent_jsonl_delta_bytes": "heartbeat_subagent_jsonl_delta_bytes",
-    "nonce_challenge": "heartbeat_nonce_challenge",
-    "nonce_echo": "heartbeat_nonce_echo",
-    "state": "heartbeat_state",
-    "lease_expires_at": "lease_expires_at",
-    "card_id": "heartbeat_card_id",
-    "card_role": "heartbeat_card_role",
-}
-
-# Fields a VALID beat may omit (validate_heartbeat never requires them): the
-# nonce pair is absent while a writer is not enrolled in the challenge
-# protocol, the byte deltas read as 0 when absent, and an un-leased beat has
-# no card. They are stored as None so a beat that drops out of enrollment
-# clears the previous challenge instead of leaving it stale on the row.
-_OPTIONAL_HEARTBEAT_FIELDS = frozenset(
-    {
-        "nonce_challenge",
-        "nonce_echo",
-        "session_jsonl_delta_bytes",
-        "subagent_jsonl_delta_bytes",
-        "card_id",
-        "card_role",
-    }
-)
+# The field set, its columns and which fields are optional are declared ONCE
+# in :mod:`.heartbeat_columns`, which both instances schemas also derive their
+# heartbeat block from -- so every column written here is a declared column.
+_HEARTBEAT_COLUMNS = HEARTBEAT_COLUMNS
+_OPTIONAL_HEARTBEAT_FIELDS = OPTIONAL_HEARTBEAT_FIELDS
 
 
 def _heartbeat_columns(validated: dict[str, object]) -> dict[str, object]:
@@ -83,9 +55,7 @@ def _heartbeat_from_instance(values: dict) -> dict[str, object] | None:
     }
     for field, column in _HEARTBEAT_COLUMNS.items():
         value = values.get(column)
-        heartbeat[field] = (
-            "" if value is None and field in {"card_id", "card_role"} else value
-        )
+        heartbeat[field] = NULL_READS_AS.get(field) if value is None else value
     return heartbeat
 
 
