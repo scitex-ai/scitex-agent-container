@@ -17,6 +17,7 @@ from scitex_agent_container.config._spec_uuid import (
     backfill_spec_uuids,
     ensure_spec_uuid,
     parse_spec_uuid,
+    runtime_spec_uuid,
 )
 from tests.scitex_agent_container.config.test__explicit_validation import (
     _explicit_doc,
@@ -185,3 +186,46 @@ def test_explicit_map_does_not_require_uuid() -> None:
     paths = [f.path for f in required_fields_for_kind("Agent")]
     # Assert
     assert "uuid" not in paths
+
+
+# --- issue #1777: the START path keeps its uuid in runtime state ----------
+
+
+def test_runtime_uuid_is_a_valid_uuid(tmp_path):
+    # Arrange
+    state = tmp_path / "state"
+    # Act
+    got = runtime_spec_uuid(state)
+    # Assert
+    assert str(_uuid.UUID(got)) == got
+
+
+def test_runtime_uuid_is_stable_across_starts(tmp_path):
+    # Arrange
+    state = tmp_path / "state"
+    first = runtime_spec_uuid(state)
+    # Act
+    second = runtime_spec_uuid(state)
+    # Assert
+    assert second == first
+
+
+def test_runtime_uuid_never_touches_the_spec(tmp_path):
+    # Arrange
+    spec = _write_text(tmp_path, _SPEC_TEXT)
+    before = spec.read_bytes()
+    # Act
+    runtime_spec_uuid(tmp_path / "state")
+    # Assert
+    assert spec.read_bytes() == before
+
+
+def test_malformed_runtime_uuid_refuses(tmp_path):
+    # Arrange
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "spec_uuid").write_text("not-a-uuid\n")
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="not a valid UUID"):
+        runtime_spec_uuid(state)
