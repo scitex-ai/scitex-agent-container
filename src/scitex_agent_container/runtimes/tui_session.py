@@ -288,6 +288,24 @@ class TuiSessionRuntime(
         if str(getattr(config, "harness", "") or "").lower() != "hermes":
             self._stop_inbox(config)
         self._maybe_stop_turn_bridge(config)
+        from .._sandbox import end_run
+
+        try:
+            stopped_any = self._stop_panes(config)
+        except Exception:
+            # A sealed run's outcome is finalized EVEN when the pane teardown
+            # check fails or is too slow under load; its layers stay until a
+            # later stop/start verifies the container is gone.
+            if is_sandboxed(config):
+                end_run(config, state_dir_for_config(config), teardown_verified=False)
+            raise
+        # Sealed run: outcome (usage, files) + run.after once the pane is gone.
+        if is_sandboxed(config):
+            end_run(config, state_dir_for_config(config))
+        return stopped_any
+
+    def _stop_panes(self, config: AgentConfig) -> bool:
+        """Tear down every live candidate session; raise if one survives."""
         stopped_any = False
         for name in candidate_session_names_for(config):
             if not self._mux.exists(name):
@@ -298,11 +316,6 @@ class TuiSessionRuntime(
                     f"tmux session {name!r} and its owned process cgroup are gone"
                 )
             stopped_any = True
-        # Sealed run: outcome (usage, files) + run.after once the pane is gone.
-        from .._sandbox import end_run, is_sandboxed
-
-        if is_sandboxed(config):
-            end_run(config, state_dir_for_config(config))
         return stopped_any
 
     def is_running(
@@ -403,4 +416,6 @@ class TuiSessionRuntime(
 
         So a caller's error can name the ACTUAL cause instead of guessing one.
         """
-        return _tui_delivery.why_not_deliverable(self._mux, self._session_name_or_canonical(config))
+        return _tui_delivery.why_not_deliverable(
+            self._mux, self._session_name_or_canonical(config)
+        )

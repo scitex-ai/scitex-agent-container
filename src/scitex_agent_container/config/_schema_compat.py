@@ -173,6 +173,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.add("compression")
         if "background_review" in raw_entry:
             allowed.add("background_review")
+        if "yolo" in raw_entry:
+            allowed.add("yolo")
         if "run_budget_seconds" in raw_entry:
             allowed.add("run_budget_seconds")
         if "approval_policy" in raw_entry:
@@ -246,6 +248,14 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 )
             elif type(raw_entry.get("background_review")) is not bool:
                 errors.append(f"{path}.background_review must be a boolean")
+
+        # ``yolo`` is read by config._hermes_yolo.parse_selected_hermes_yolo
+        # (``hermes chat --yolo``); schema and parser must agree on it.
+        if "yolo" in raw_entry:
+            if family != "hermes":
+                errors.append(f"{path}.yolo is only valid for the Hermes harness")
+            elif type(raw_entry.get("yolo")) is not bool:
+                errors.append(f"{path}.yolo must be a boolean")
 
         if "run_budget_seconds" in raw_entry:
             if family == "opencode":

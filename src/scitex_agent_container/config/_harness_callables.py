@@ -188,21 +188,25 @@ def _hermes_tui_inner_argv(
         configured_max_age or DEFAULT_MAX_SESSION_AGE_MINUTES,
         DEFAULT_MAX_SESSION_AGE_MINUTES,
     )
-    argv = [
-        "/usr/bin/tini",
-        "-s",
-        "--",
-        str(sac_installation(config).python),
-        "-m",
-        "scitex_agent_container.runtimes._hermes_tui_owner",
+    owner = "scitex_agent_container.runtimes._hermes_tui_owner"
+    python = str(sac_installation(config).python)
+    owner_args = [
         "--state-dir",
         f"/state/{config.name}",
         "--max-session-age-minutes",
         str(max_age),
     ]
-    if getattr(config, "sandbox", None) is not None:
-        # Sealed: the owner starts Hermes (and so every tool child) with
-        # the state dir and SAC itself hidden (runtimes/_hermes_hidden_launch).
+    if getattr(config, "sandbox", None) is None:
+        argv = ["/usr/bin/tini", "-s", "--", python, "-m", owner, *owner_args]
+    else:
+        # Sealed: the owner (which sees the control plane) never imports
+        # from the agent-writable cwd / PYTHONPATH, and starts Hermes (and
+        # so every tool child) with the state dir and SAC itself hidden
+        # (runtimes/_hermes_hidden_launch).
+        from .._sandbox._mask import isolated_module_argv
+
+        argv = ["/usr/bin/tini", "-s", "--"]
+        argv += isolated_module_argv(python, owner, owner_args)
         for path in control_plane_paths(config):
             argv += ["--hide", path]
     argv += [
@@ -347,7 +351,23 @@ def _opencode_tui_inner_argv(
     from ..runtimes._gateway_opencode import OPENCODE_GATEWAY
 
     del options
-    return OPENCODE_GATEWAY.owner_argv(config, Path(f"/state/{config.name}"))
+    argv = OPENCODE_GATEWAY.owner_argv(config, Path(f"/state/{config.name}"))
+    if getattr(config, "sandbox", None) is None:
+        return argv
+    # Sealed: the owner runs from the launching installation (the image's
+    # SAC may predate ``--hide``), never imports from the agent-writable
+    # cwd / PYTHONPATH, and starts serve + the TUI under the mask.
+    from .._sandbox._mask import control_plane_paths, isolated_module_argv
+    from ..runtimes._hermes_sac_runtime import sac_installation
+
+    module_at = argv.index("-m")
+    split = argv.index("--", module_at)
+    owner_args = argv[module_at + 2 : split]
+    for path in control_plane_paths(config):
+        owner_args += ["--hide", path]
+    python = sac_installation(config).python
+    owner = isolated_module_argv(python, argv[module_at + 1], owner_args)
+    return [*argv[: module_at - 1], *owner, *argv[split:]]
 
 
 def _opencode_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:

@@ -24,6 +24,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -270,6 +271,24 @@ def _pin_attach_session(command: list[str], session_id: str) -> list[str]:
     return command
 
 
+def _masked_spawner(hidden: list[str]):
+    """``Popen`` for ``command``; under the control-plane mask when sealed.
+
+    Without ``hidden`` this is the plain launch. With it, each child (serve,
+    the TUI) starts through :mod:`.._sandbox._hide` run by path under ``-I``
+    with this interpreter, so neither it nor any tool child serve spawns
+    sees ``hidden``; the launcher refuses (exit 125) when it cannot.
+    """
+    if not hidden:
+        return subprocess.Popen
+    from .._sandbox._hide import hide_argv
+
+    def spawn(command: list[str]) -> subprocess.Popen:
+        return subprocess.Popen(hide_argv(sys.executable, hidden, command))
+
+    return spawn
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the owned serve gateway, publish it, supervise the TUI."""
     parser = argparse.ArgumentParser(prog="sac-opencode-tui-owner")
@@ -302,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Mapped sessions older than this are recreated under "
         "--session-mode continue; empty means no cap.",
     )
+    # Sealed runs: paths (state dir, SAC installations) serve, the TUI and
+    # every tool child must not see; see _sandbox/_mask and _sandbox/_hide.
+    parser.add_argument("--hide", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = list(args.command)
@@ -326,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     if max_age_minutes is not None and max_age_minutes <= 0:
         parser.error("--session-max-age-minutes must be a positive integer")
 
-    serve = subprocess.Popen(
+    masked = _masked_spawner(list(args.hide))
+    serve = masked(
         ["opencode", "serve", "--port", str(port), "--hostname", "127.0.0.1"],
     )
     tui: subprocess.Popen | None = None
@@ -349,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             max_age_minutes=max_age_minutes,
         )
         _submit_startup_turns(url, state_dir, agent_name, session_id)
-        tui = subprocess.Popen(_pin_attach_session(command, session_id))
+        tui = masked(_pin_attach_session(command, session_id))
         return int(tui.wait())
     finally:
         serve_path.unlink(missing_ok=True)
