@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-11-19
+
 ### Fixed
 - Sealed runs stopped by `sac agents stop` are now attributed to SAC in
   `outcome.json` (`exit.stopped_by: "sac"`, request time) whatever exits
