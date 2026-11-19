@@ -8,7 +8,6 @@ is parsed elsewhere (loaders use it verbatim after this pass).
 
 from __future__ import annotations
 
-from .._mcp_inherit_env import inherit_mode
 from ._helpers import interpolate_metadata
 
 
@@ -21,7 +20,11 @@ def interpolate_mcp_servers(mcp_raw: dict, metadata: dict) -> dict[str, dict]:
     result: dict[str, dict] = {}
     for server_name, server_def in (mcp_raw or {}).items():
         entry = dict(server_def)
-        inherit_mode(str(server_name), entry)
+        if "inherit_env" in entry:
+            # Lazy: keeps `sac --help`'s import closure unchanged.
+            from .._mcp_inherit_env import inherit_mode
+
+            inherit_mode(str(server_name), entry)
         if "env" in entry and isinstance(entry["env"], dict):
             entry["env"] = {
                 k: interpolate_metadata(str(v), metadata)
