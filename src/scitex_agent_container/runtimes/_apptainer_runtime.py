@@ -304,6 +304,14 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         assert_private_python_runs(config, argv, env=launch_env)
 
+        # Per-agent caller credential (_listen.agent_tokens): the argv build
+        # only STAGED a token; activate it here, on the real start only — past
+        # the dry-run return, the already-running guard and every refusal
+        # above — so `explain` / `--dry-run` never rotate a live agent's token.
+        from .._listen.agent_tokens import commit_agent_token
+
+        commit_agent_token(config.name, state_dir=state_dir)
+
         if foreground:
             return subprocess.run(argv, env=launch_env).returncode == 0
 

@@ -6,6 +6,54 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-11-19
+
+### Fixed
+- Sealed runs stopped by `sac agents stop` are now attributed to SAC in
+  `outcome.json` (`exit.stopped_by: "sac"`, request time) whatever exits
+  first. The pane teardown signals every process group; a harness that
+  handles SIGTERM could exit 1 before the supervisor saw its own signal, so
+  the record showed a plain `code: 1`. SAC now writes a stop-request marker
+  before tearing the pane down.
+- A sealed Hermes run's `outcome.json` is finalized even when the pane
+  teardown check is slow or fails under load (previously a second
+  `sac agents stop` was needed). The record is closed with the stop
+  attribution; the run's layers are kept (`layers.deferred`) until a later
+  stop or start can verify the container is gone, then removed or archived.
+- Removing a sealed run's layers no longer raises `TypeError` on Python
+  3.11 (the 0.40.0 code used an `rmtree` keyword that exists only on 3.12+).
+
+### Security
+- `POST /v1/host_exec` authorization trusted a caller identity supplied in
+  the request instead of one bound to the authenticating credential (the
+  listen bearer is host-wide, so it does not identify an agent). sac now
+  mints a per-agent token at every real agent start (stored server-side as
+  a SHA-256 only, under `<runtime dir>/.agent-tokens/`), delivers it to the
+  container as `SAC_AGENT_TOKEN` through the existing 0600 secret env-file
+  (and the Hermes profile env), and the in-container client presents it in
+  the `X-SAC-Agent-Token` header. host_exec takes the caller from that
+  token; a body `caller` that disagrees is refused and audited. `sac agents
+  explain` / `--dry-run` never rotate a running agent's token.
+- Migration: agents started before this release receive their token at
+  their next normal start. Until then host_exec still accepts a bare body
+  `caller`, but logs each such call at WARNING and records it in
+  `host_exec.log` with `"identity": "name-claimed (legacy, unauthenticated)"`
+  (token calls record `"agent-token"`). Set
+  `SAC_HOST_EXEC_REQUIRE_AGENT_TOKEN=1` in the `sac listen` environment to
+  refuse name-claimed calls. The default will flip to refuse once the fleet
+  has restarted onto token-carrying launches (no `name-claimed` lines left in
+  `host_exec.log`).
+- Sealed runs (`spec.sandbox`): a sealed Hermes agent could see SAC's own
+  control-plane state and installation. The in-container owner now starts
+  the agent tree in a nested namespace that hides the per-agent state dir,
+  the launching SAC installation and the image's SAC, shows the agent only
+  its own processes, and hands the gateway its API key outside any
+  environment the agent can read. No SAC CLI is put on a sealed agent's
+  `PATH`, and a SAC MCP server is refused for a sealed agent
+  (docs/sandbox.md). Every process SAC starts on the agent's behalf runs
+  isolated from the working directory and `PYTHONPATH`, so nothing the
+  agent writes can be imported by a process that still sees those paths.
+
 ## [0.40.0] - 2026-11-19
 
 ### Added

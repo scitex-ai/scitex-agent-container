@@ -29,12 +29,11 @@ __all__ = [
 
 #: Non-secret launch wiring SAC emits for its harnesses (container-side
 #: paths and names only; no host path, no fleet identity, no credential).
+#: Nothing that points the agent at SAC itself (``PREPEND_PATH``,
+#: ``SAC_BIN``, ``SAC_BIN_IN_SIF``): a sealed agent never sees SAC.
 SAC_WIRING = frozenset(
     {
         "HERMES_HOME",
-        "PREPEND_PATH",
-        "SAC_BIN",
-        "SAC_BIN_IN_SIF",
         "SAC_ENGINE",
         "SAC_NAME",
         "SCITEX_AGENT_CONTAINER_MODEL",
@@ -124,7 +123,9 @@ def validate_sandbox_config(config: Any) -> None:
         )
 
 
-def seal_profile_env(config: Any, env: Mapping[str, str], *, auth_env: str) -> dict[str, str]:
+def seal_profile_env(
+    config: Any, env: Mapping[str, str], *, auth_env: str
+) -> dict[str, str]:
     """A harness profile's own env file (e.g. ``$HERMES_HOME/.env``), sealed.
 
     The harness reads that file itself, so the container-env seal cannot

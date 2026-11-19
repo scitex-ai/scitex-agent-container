@@ -14,6 +14,12 @@ logged, a direct (proxy-bypassing) connect is refused AND logged, only the
 allowed env names enter, a loopback listener inside is reachable from the
 host through the mirror, a second run sees none of the first run's files,
 and the outcome record is complete.
+
+The control-plane mask (``_sandbox._hide``) is run the same way: inside the
+real container, behind the gateway, a probe started through the launcher
+must see none of the state dir, the gateway API key, the secret env file or
+the launching SAC installation, nor any other process, and must not be able
+to undo the mask; the owner outside it must still see the state dir.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import json
 import os
 import shutil
 import socket
+import sys
 import threading
 import time
 import urllib.request
@@ -30,6 +37,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import scitex_agent_container
 from scitex_agent_container._sandbox import (
     begin_run,
     end_run,
@@ -79,7 +87,9 @@ def _config(root: Path):
             }
         }
     )
-    return SimpleNamespace(name="sealed-live", sandbox=sb, apptainer=None, hermes_failover=None)
+    return SimpleNamespace(
+        name="sealed-live", sandbox=sb, apptainer=None, hermes_failover=None
+    )
 
 
 def _one_run(cfg, state_dir: Path) -> dict:
@@ -97,7 +107,11 @@ def _one_run(cfg, state_dir: Path) -> dict:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             try:
-                mirror.append(urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2).status)
+                mirror.append(
+                    urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/", timeout=2
+                    ).status
+                )
                 return
             except OSError:
                 time.sleep(0.5)
@@ -230,7 +244,15 @@ def test_outcome_record_is_finalized(runs):
 def test_outcome_record_has_every_field(runs):
     # Arrange
     rec = runs[0]["rec"]
-    keys = ("started_at", "ended_at", "sac_version", "image", "egress", "files", "token_usage")
+    keys = (
+        "started_at",
+        "ended_at",
+        "sac_version",
+        "image",
+        "egress",
+        "files",
+        "token_usage",
+    )
     # Act
     missing = [k for k in keys if not rec.get(k)]
     # Assert
@@ -271,3 +293,226 @@ def test_size_peak_is_recorded(runs):
     peak = size["peak_bytes"]
     # Assert
     assert 0 < peak < size["limit_mb"] * 1024 * 1024
+
+
+# --------------------------------------------------------------------------
+# Control-plane mask (_sandbox._hide): the agent tree of a sealed run sees
+# neither its state dir nor SAC. The launching SAC (this test's interpreter
+# and source) is bound read-only at its own paths, as in production.
+# --------------------------------------------------------------------------
+SAC_PY = sys.executable
+SAC_PREFIX = Path(sys.prefix)
+SAC_SRC = Path(scitex_agent_container.__file__).resolve().parents[1]
+STATE = "/state/sealed-live"
+
+HIDDEN_PROBE = f"""
+exec > $HOME/hide-report.txt 2>&1
+echo "STATE_LS=[$(ls -A {STATE} 2>&1 | tr '\\n' ' ')]"
+echo "KEY_READ=$(cat {STATE}/hermes-api.key >/dev/null 2>&1 && echo yes || echo no)"
+echo "SECRET_READ=$(cat {STATE}/secret-env/env >/dev/null 2>&1 && echo yes || echo no)"
+echo "SAC_ON_PATH=[$(command -v sac)]"
+echo "SAC_RUN=$({SAC_PREFIX}/bin/sac --version >/dev/null 2>&1 && echo yes || echo no)"
+echo "SAC_CONTROL=$({SAC_PREFIX}/bin/sac agents list >/dev/null 2>&1 && echo yes || echo no)"
+echo "SAC_PKG_LS=[$(ls -A {SAC_SRC}/scitex_agent_container 2>&1 | head -3 | tr '\\n' ' ')]"
+echo "PIDS=$(ls /proc | grep -c '^[0-9]')"
+echo "UNMOUNT=$(umount {STATE} >/dev/null 2>&1 && echo yes || echo no)"
+echo "NESTED_UNMOUNT=$(unshare --user --map-root-user --mount sh -c 'umount {STATE} && ls -A {STATE}' >/dev/null 2>&1 && echo yes || echo no)"
+echo "CHMOD=$(chmod 700 {STATE} >/dev/null 2>&1 && echo yes || echo no)"
+echo "CAPS=$(awk '/^CapEff/{{print $2}}' /proc/self/status)"
+exit 7
+"""
+
+HIDE = f"{SAC_PY} -m scitex_agent_container._sandbox._hide"
+OWNER_SCRIPT = f"""
+{HIDE} --hide {STATE} --hide {SAC_PREFIX} --hide /opt/venv-sac -- bash $HOME/hide-probe.sh
+echo "HIDE_RC=$?" >> $HOME/hide-report.txt
+echo "OWNER_STATE_LS=[$(ls -A {STATE} | tr '\\n' ' ')]" >> $HOME/hide-report.txt
+PATH={SAC_PREFIX}/bin:$PATH {HIDE} --hide {STATE} -- touch $HOME/refused-but-ran
+echo "REFUSED_RC=$?" >> $HOME/hide-report.txt
+echo "REFUSED_RAN=$(test -e $HOME/refused-but-ran && echo yes || echo no)" >> $HOME/hide-report.txt
+"""
+
+
+def _hidden_run(root: Path) -> str:
+    sb = parse_sandbox(
+        {
+            "sandbox": {
+                "egress": {"allow": ["pypi.org:443"]},
+                "env": {"allow": ["PYTHONPATH"], "model_key": "MODEL_KEY_X"},
+                "run": {"root": str(root / "runs"), "size": "256M", "after": "archive"},
+            }
+        }
+    )
+    cfg = SimpleNamespace(
+        name="sealed-live", sandbox=sb, apptainer=None, hermes_failover=None
+    )
+    state_dir = root / "state" / "sealed-live"
+    (state_dir / "secret-env").mkdir(parents=True, exist_ok=True)
+    (state_dir / "hermes-api.key").write_text("not-a-real-key-0123456789\n")
+    (state_dir / "secret-env" / "env").write_text("MODEL_KEY_X=not-a-real-key\n")
+    run_dir = begin_run(cfg, state_dir)
+    (run_dir / "home" / "hide-probe.sh").write_text(HIDDEN_PROBE)
+    python_root = Path(sys.base_prefix).parent
+    argv = [
+        "apptainer", "exec", "--containall", "--cleanenv", "--home", "/home/agent",
+        "--bind", f"{state_dir}/home:/home/agent",
+        "--bind", f"{state_dir}:{STATE}",
+        "--bind", f"{SAC_PREFIX}:{SAC_PREFIX}:ro",
+        "--bind", f"{python_root}:{python_root}:ro",
+        "--bind", f"{SAC_SRC}:{SAC_SRC}:ro",
+        "--env", f"PYTHONPATH={SAC_SRC}",
+        *sandbox_flags(cfg, state_dir), SIF, *netgw_wrap(["bash", "-c", OWNER_SCRIPT]),
+    ]  # fmt: skip
+    full = supervised_argv(cfg, argv, state_dir=state_dir, image=SIF)
+    supervise(full[full.index("supervise") + 1 :])
+    end_run(cfg, state_dir)
+    return (run_dir / "home" / "hide-report.txt").read_text()
+
+
+@pytest.fixture(scope="module")
+def hidden():
+    return _hidden_run(Path(ROOT) / f"hide-{os.getpid()}")
+
+
+def test_agent_lists_nothing_in_its_state_dir(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "STATE_LS")
+    # Assert
+    assert line == f"STATE_LS=[ls: cannot open directory '{STATE}': Permission denied ]"
+
+
+def test_agent_cannot_read_the_gateway_api_key(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "KEY_READ")
+    # Assert
+    assert line == "KEY_READ=no"
+
+
+def test_agent_cannot_read_the_secret_env_file(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "SECRET_READ")
+    # Assert
+    assert line == "SECRET_READ=no"
+
+
+def test_agent_finds_no_sac_on_its_path(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "SAC_ON_PATH")
+    # Assert
+    assert line == "SAC_ON_PATH=[]"
+
+
+def test_agent_cannot_run_the_launching_sac(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "SAC_RUN")
+    # Assert
+    assert line == "SAC_RUN=no"
+
+
+def test_agent_cannot_invoke_a_sac_control_action(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "SAC_CONTROL")
+    # Assert
+    assert line == "SAC_CONTROL=no"
+
+
+def test_agent_cannot_list_the_sac_package_source(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "SAC_PKG_LS")
+    # Assert
+    assert "Permission denied" in line
+
+
+def test_agent_sees_only_its_own_processes(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    count = int(_line(report, "PIDS").split("=")[1])
+    # Assert
+    assert count < 8
+
+
+def test_agent_cannot_unmount_the_mask(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "UNMOUNT")
+    # Assert
+    assert line == "UNMOUNT=no"
+
+
+def test_nested_namespace_cannot_unmount_the_mask(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "NESTED_UNMOUNT")
+    # Assert
+    assert line == "NESTED_UNMOUNT=no"
+
+
+def test_agent_cannot_reopen_the_mask_by_chmod(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "CHMOD")
+    # Assert
+    assert line == "CHMOD=no"
+
+
+def test_agent_holds_no_capabilities(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "CAPS")
+    # Assert
+    assert line == "CAPS=0000000000000000"
+
+
+def test_agent_exit_status_reaches_the_owner(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "HIDE_RC")
+    # Assert
+    assert line == "HIDE_RC=7"
+
+
+def test_owner_still_sees_the_state_dir(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "OWNER_STATE_LS")
+    # Assert
+    assert "hermes-api.key" in line
+
+
+def test_launcher_refuses_while_sac_stays_runnable(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "REFUSED_RC")
+    # Assert
+    assert line == "REFUSED_RC=125"
+
+
+def test_refused_command_never_runs(hidden):
+    # Arrange
+    report = hidden
+    # Act
+    line = _line(report, "REFUSED_RAN")
+    # Assert
+    assert line == "REFUSED_RAN=no"

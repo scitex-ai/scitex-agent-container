@@ -5,7 +5,7 @@ A spec with a `sandbox:` block launches every run **sealed**:
 | concern | what SAC does |
 |---|---|
 | egress | the container gets `--net --network none`; the inner command runs under `netgw` (in-container, private user+net namespace) whose only way out is `127.0.0.1:3128` → unix socket → a host-side CONNECT proxy that tunnels **only** to `egress.allow`. Everything else is refused (403 / TCP RST / NXDOMAIN) and logged. No iptables, netns or sudo on the host. |
-| control plane | a sealed agent gets no builtin `sac` MCP server / `server:sac` channel (agent spawn, host exec and store tools are host authority). |
+| control plane | a sealed agent gets no builtin `sac` MCP server / `server:sac` channel (agent spawn, host exec and store tools are host authority). For Hermes, SAC's in-container owner keeps `/state/<name>` and the launching SAC installation but starts the agent tree (gateway, TUI, every tool child) through `_sandbox/_hide`: a nested user+mount+PID namespace in which `/state/<name>`, the launching SAC environment and the image's SAC are covered by empty read-only mounts, `/proc` shows only the agent's own processes, and the agent holds no capability to undo either. The gateway's API key reaches it over a pipe, never its exec-time environment. No `sac` is on the agent's `PATH`. |
 | env | the container environment is `env.allow` + the keys of `spec.apptainer.env` + **one** `env.model_key` + SAC's declared launch wiring (`_sandbox/_env_policy.SAC_WIRING`). Fleet-default env and binds (`~/.scitex/cards`, host `/tmp`, quota cache …), host `~/.claude` commands/skills and skills of packages installed next to the launching SAC never reach the agent. apptainer itself is started with a minimal process environment, never `os.environ`. |
 | per-run reset | each start creates `<run.root>/<agent>/<run_id>/`: a directory overlay (the writable rootfs), a fresh `$HOME`, `/tmp` + `/var/tmp` (`--workdir`) and `/uvwork`. `run.size` caps the WHOLE run dir: the supervisor measures it every 5 s and terminates the container on overflow (`exit.reason` says so). After the run, `run.after: remove` deletes every layer except `out/`; `archive` keeps them. |
 | outcome | `<run_dir>/out/outcome.json` (written atomically at every transition), `exit_code`, `egress_blocked.jsonl`, `egress_allowed.jsonl`, `egress_gateway.jsonl`. |
@@ -59,3 +59,10 @@ port on the host's `127.0.0.1` and relays each connection back in through the
   loaded host.)
 * A same-uid agent can reach the proxy socket and so could append forged log
   lines; it can neither delete logged lines nor reach a non-allowlisted host.
+* The control-plane mask covers Hermes (its owner process is the boundary).
+  The Claude, Codex and OpenCode TUI panes run the harness directly as the
+  container's inner command, so their agent can still list `/state/<name>`
+  (secret env files there are rewritten to allowed names by the seal).
+  `startup_commands` run before the owner and are not masked (they are
+  spec-authored, not agent-authored). Mount points stay visible by NAME in
+  `/proc/self/mountinfo`; their content does not.
