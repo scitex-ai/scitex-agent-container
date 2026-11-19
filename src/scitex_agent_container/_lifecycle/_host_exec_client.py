@@ -6,6 +6,14 @@ run arbitrary commands on the host through the ``sac listen`` daemon. Mirrors
 endpoint (``/v1/host_exec``) and payload shape (``argv`` + optional
 ``cwd``/``timeout_s``/``env``/``caller``) differ.
 
+Identity: the agent's per-agent token (``SAC_AGENT_TOKEN``, minted by sac at
+agent start and delivered through the 0600 secret env-file) is sent in the
+``X-SAC-Agent-Token`` header, so the server takes the caller from a
+credential rather than from the body ``caller`` claim. The claim is still
+sent: the server refuses a claim that disagrees with the token, and accepts
+a bare claim only on its logged legacy path for agents started before
+tokens existed.
+
 The ``opener`` parameter is a ``urllib.request.urlopen``-shaped callable seam;
 tests inject a hand-rolled fake so there is no monkeypatching of the transport.
 """
@@ -19,6 +27,8 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 
 import scitex_logging as slogging
+
+from .._listen.agent_tokens import AGENT_TOKEN_ENV, AGENT_TOKEN_HEADER
 
 from ._listen_client_resolve import (
     _parse_body,
@@ -124,6 +134,7 @@ def request_host_exec(
     caller: str | None = None,
     base_url: str | None = None,
     bearer: str | None = None,
+    agent_token: str | None = None,
     http_timeout_s: float | None = None,
     opener: Callable | None = None,
 ) -> dict[str, Any]:
@@ -179,6 +190,15 @@ def request_host_exec(
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
+    # Explicit argument wins; else the env var sac injects at agent start.
+    # Absent (an agent started by an older sac) -> no header, legacy path.
+    agent_tok = (
+        agent_token
+        if agent_token is not None
+        else os.environ.get(AGENT_TOKEN_ENV, "").strip()
+    )
+    if agent_tok:
+        headers[AGENT_TOKEN_HEADER] = agent_tok
 
     req = urlrequest.Request(url, data=payload, method="POST", headers=headers)
     opener_fn = opener if opener is not None else urlrequest.urlopen

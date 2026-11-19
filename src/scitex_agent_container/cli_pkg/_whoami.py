@@ -302,6 +302,7 @@ def _howto_lines(board_id: str | None) -> list[str]:
         "fleet: `sac agents list` (specs via $SCITEX_AGENT_CONTAINER_YAML_DIRS)",
         "emergency host access: curl -sS -X POST "
         '-H "Authorization: Bearer $SAC_LISTEN_BEARER" '
+        '-H "X-SAC-Agent-Token: $SAC_AGENT_TOKEN" '
         '"$SAC_LISTEN_BASE_URL/v1/host_exec" (env vars are pre-injected)',
         "skills: ~/.claude/skills/scitex/scitex-agent-container/",
     ]

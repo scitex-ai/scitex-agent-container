@@ -319,7 +319,15 @@ def _bind_mcp_runtime_env(
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
-    runtime_env = effective_env(config)
+    sealed = getattr(config, "sandbox", None) is not None
+    # A sealed run (spec.sandbox) gets no fleet-default env, in its MCP
+    # entries either: config.yaml is readable inside the container.
+    runtime_env = effective_env(config, defaults={}) if sealed else effective_env(config)
+    if sealed:
+        from .._sandbox import allowed_env_names
+
+        allowed = allowed_env_names(config)
+        runtime_env = {k: v for k, v in runtime_env.items() if k in allowed}
     apptainer = getattr(config, "apptainer", None)
     # raw_args are appended after curated --env flags in the production argv,
     # so they are the real last-wins launch environment.  apply_pg_identity()
@@ -368,7 +376,10 @@ def _bind_mcp_runtime_env(
 
 
 def _sac_profile_env(
-    config: AgentConfig, servers: dict[str, dict[str, Any]]
+    config: AgentConfig,
+    servers: dict[str, dict[str, Any]],
+    *,
+    state_dir: Path | None = None,
 ) -> dict[str, str]:
     has_sac = any(
         name in {"sac", "scitex-agent-container"}
@@ -387,11 +398,19 @@ def _sac_profile_env(
             "Hermes SAC MCP requires the host listen bearer, but token file "
             f"{_listen_token_path()} is absent or empty"
         )
-    return {
+    env = {
         "SAC_LISTEN_BASE_URL": listen_base_url(),
         "SAC_LISTEN_BEARER": bearer,
         "SAC_NAME": config.name,
     }
+    # Per-agent caller credential beside the host-wide bearer (see
+    # _listen.agent_tokens). STAGED only: the profile is also materialised by
+    # dry-run paths, so the real launch gate is what activates it.
+    if state_dir is not None:
+        from .._listen.agent_tokens import AGENT_TOKEN_ENV, stage_agent_token
+
+        env[AGENT_TOKEN_ENV] = stage_agent_token(state_dir)
+    return env
 
 
 def _cct_profile_env(home: Path) -> dict[str, str]:
@@ -613,7 +632,7 @@ def materialize_hermes_profile(
         "API_SERVER_PORT": str(api_port),
         "API_SERVER_KEY": api_key,
         env_name: provider_key,
-        **_sac_profile_env(config, servers),
+        **_sac_profile_env(config, servers, state_dir=state_dir),
         **cct_env,
         **operator_secret_env(
             full=scope_allows_full(getattr(config, "secret_scope", "full"))
@@ -622,6 +641,9 @@ def materialize_hermes_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    from .._sandbox import seal_profile_env
+
+    profile_env = seal_profile_env(config, profile_env, auth_env=plan.endpoint.auth_env)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)
@@ -692,7 +714,7 @@ def materialize_hermes_tui_profile(
     materialize_project_pgpass(config, home_backings=targets, servers=servers)
     profile_env = {
         plan.endpoint.auth_env: provider_key,
-        **_sac_profile_env(config, servers),
+        **_sac_profile_env(config, servers, state_dir=state_dir),
         **cct_env,
         # CCT rail: Hermes resolves tool-child env through the profile
         # secret scope, which is built from <HERMES_HOME>/.env — i.e. THIS
@@ -709,6 +731,9 @@ def materialize_hermes_tui_profile(
     }
     if credential_pools and plan.endpoint.auth_env not in failover_env:
         profile_env.pop(plan.endpoint.auth_env, None)
+    from .._sandbox import seal_profile_env
+
+    profile_env = seal_profile_env(config, profile_env, auth_env=plan.endpoint.auth_env)
     for target in targets:
         profile = target / ".hermes"
         profile.mkdir(parents=True, exist_ok=True)

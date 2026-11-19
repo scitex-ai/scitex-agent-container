@@ -13,8 +13,9 @@ the birth certificate — already is). The name stays the hinted label; the
 uuid is what rows and resolvers key on.
 
 FIRST-SEEN-STABLE. A spec without ``uuid`` gets one the first time sac
-touches it for real (``sac agents create`` writes it; the start path stamps
-it via :func:`ensure_spec_uuid`), and that value is then stable: this
+touches it for real (``sac agents create`` writes it into the spec; the
+start path keeps one in RUNTIME STATE via :func:`runtime_spec_uuid` and
+never edits the committed spec — issue #1777), and that value is then stable: this
 module never overwrites a present, valid uuid. Concurrent first-sights on
 two hosts stamp per-FILE values that the fleet sync then reconciles like
 any other spec edit — the file is the source of truth, not either host's
@@ -33,7 +34,18 @@ from pathlib import Path
 
 from ._yaml_line_edit import find_block, find_key, parse_key_line, split_ending
 
-__all__ = ["backfill_spec_uuids", "ensure_spec_uuid", "parse_spec_uuid"]
+__all__ = [
+    "RUNTIME_UUID_FILE",
+    "backfill_spec_uuids",
+    "ensure_spec_uuid",
+    "parse_spec_uuid",
+    "runtime_spec_uuid",
+]
+
+#: Where the START path keeps a minted identity for a spec without
+#: ``spec.uuid`` (issue #1777): the per-agent runtime state dir, never the
+#: committed spec file.
+RUNTIME_UUID_FILE = "spec_uuid"
 
 
 def parse_spec_uuid(value: object, *, path: str = "<spec>") -> str:
@@ -100,6 +112,37 @@ def ensure_spec_uuid(spec_path: str | Path) -> str:
     bodies.insert(insert_at, f"{block.child_indent}uuid: {stamped}")
     endings.insert(insert_at, "\n")
     path.write_text("".join(b + e for b, e in zip(bodies, endings)))
+    return stamped
+
+
+def runtime_spec_uuid(state_dir: str | Path) -> str:
+    """The uuid a START uses for a spec that declares none (issue #1777).
+
+    Minted once into ``<state_dir>/spec_uuid`` and reused by every later
+    start on this host. Starting an agent must never edit its committed
+    spec: the spec-authority gate refuses a dirty spec repo, so a stamp
+    written by start N refused start N+1. Authoring paths (``sac agents
+    create``, :func:`backfill_spec_uuids`) still write ``spec.uuid`` into
+    the spec, where the operator commits it.
+
+    A present-but-malformed state file refuses (same rule as the spec
+    value): silently re-minting would fork the identity rows key on.
+    """
+    import os
+
+    path = Path(state_dir).expanduser() / RUNTIME_UUID_FILE
+    if path.is_file():
+        return parse_spec_uuid(path.read_text(), path=str(path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamped = mint_spec_uuid()
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(stamped + "\n")
+    try:
+        os.link(tmp, path)  # first writer wins; a racing start reads its value
+    except FileExistsError:
+        return parse_spec_uuid(path.read_text(), path=str(path))
+    finally:
+        tmp.unlink(missing_ok=True)
     return stamped
 
 

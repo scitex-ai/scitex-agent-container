@@ -6,6 +6,76 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- `POST /v1/host_exec` authorization trusted a caller identity supplied in
+  the request instead of one bound to the authenticating credential (the
+  listen bearer is host-wide, so it does not identify an agent). sac now
+  mints a per-agent token at every real agent start (stored server-side as
+  a SHA-256 only, under `<runtime dir>/.agent-tokens/`), delivers it to the
+  container as `SAC_AGENT_TOKEN` through the existing 0600 secret env-file
+  (and the Hermes profile env), and the in-container client presents it in
+  the `X-SAC-Agent-Token` header. host_exec takes the caller from that
+  token; a body `caller` that disagrees is refused and audited. `sac agents
+  explain` / `--dry-run` never rotate a running agent's token.
+- Migration: agents started before this release receive their token at
+  their next normal start. Until then host_exec still accepts a bare body
+  `caller`, but logs each such call at WARNING and records it in
+  `host_exec.log` with `"identity": "name-claimed (legacy, unauthenticated)"`
+  (token calls record `"agent-token"`). Set
+  `SAC_HOST_EXEC_REQUIRE_AGENT_TOKEN=1` in the `sac listen` environment to
+  refuse name-claimed calls. The default will flip to refuse once the fleet
+  has restarted onto token-carrying launches (no `name-claimed` lines left in
+  `host_exec.log`).
+
+## [0.40.0] - 2026-11-19
+
+### Added
+- `spec.sandbox` — sealed runs (docs/sandbox.md). Egress allowlist
+  (`--network none` + an in-container user/net-namespace gateway whose only
+  way out is a host-side CONNECT proxy; blocked and allowed attempts logged
+  as jsonl, no host iptables/netns/sudo), an environment seal (explicit names
+  + ONE model key; fleet env, fleet binds, host `~/.claude` projection and
+  launching-venv skills never reach the agent; apptainer is started with a
+  minimal process env), a fresh per-run writable layer on durable disk
+  (directory overlay, `$HOME`, `/tmp`, `/uvwork`, the whole run dir capped by
+  a `run.size` watchdog; removed or archived afterwards) and an atomic per-run `outcome.json` (timestamps, exit status,
+  image sha256, SAC version, env names, egress summary, token usage, files
+  written, plus tool calls and files read from the harness transcript). A sealed
+  agent gets no builtin sac MCP / `server:sac` channel. Loopback listeners are mirrored to the host so host-side RPC
+  (Hermes' TUI gateway) keeps working.
+
+### Fixed
+- Starting an agent no longer edits its committed spec (#1777). The start
+  path stamped a missing `spec.uuid` into `spec.yaml`, which left the spec
+  authority dirty and made the NEXT start refuse; the start path now keeps
+  the uuid in the agent's runtime state dir (`<state>/spec_uuid`).
+  `sac agents create` still writes `spec.uuid`.
+- Sealed (sandboxed) solver agents no longer receive SAC's fleet-default
+  binds: the jail checked only spec binds, so `~/.scitex/cards` (rw) and host
+  `/tmp` reached every solver.
+
+## [0.39.7] - 2026-11-19
+
+### Fixed
+- Authoritative heartbeat leases are recorded again (#1775). Since 0.39.6
+  every renewal was dropped with
+  `KeyError: 'heartbeat_session_jsonl_delta_bytes'`: the writer mapped
+  `session_jsonl_delta_bytes`, `subagent_jsonl_delta_bytes`,
+  `nonce_challenge` and `nonce_echo` to columns that neither `instances`
+  schema declared. The heartbeat field set is now declared once, in
+  `_state/heartbeat_columns.py`; the writer map, optional-field set,
+  `ALLOWED_FIELDS`, `_store_plugin.INSTANCES`, `instances_schema()` and
+  `HEARTBEAT_LEASE_FIELDS` all derive from it. The byte deltas are REAL and
+  the nonces TEXT, all optional LAST_WRITER_WINS DATA columns.
+  `heartbeat_progress_seq` is now written, so the progress-sequence
+  regression check against the previous beat can run.
+
+### Deploy
+- On managed PostgreSQL, provision the four new nullable `instances` columns
+  before any host runs 0.39.7:
+  `provision_store_acl(host_store(pkg='scitex_agent_container', name='instances'), instances_schema())`
+  as a member of the owner role. Older versions ignore the extra columns.
+
 ## [0.39.6] - 2026-11-18
 
 ### Fixed
