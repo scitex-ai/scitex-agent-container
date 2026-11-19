@@ -13,6 +13,11 @@ versioning follows [SemVer](https://semver.org/).
   handles SIGTERM could exit 1 before the supervisor saw its own signal, so
   the record showed a plain `code: 1`. SAC now writes a stop-request marker
   before tearing the pane down.
+- A sealed Hermes run's `outcome.json` is finalized even when the pane
+  teardown check is slow or fails under load (previously a second
+  `sac agents stop` was needed). The record is closed with the stop
+  attribution; the run's layers are kept (`layers.deferred`) until a later
+  stop or start can verify the container is gone, then removed or archived.
 
 ## [0.40.0] - 2026-11-19
 

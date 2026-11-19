@@ -203,8 +203,30 @@ def stop_attribution(rp: RunPaths) -> dict | None:
     }
 
 
-def end_run(config: Any, state_dir: Path) -> dict | None:
-    """Finalize the current run (idempotent); returns the final record."""
+def _apply_after_policy(rec: dict, rp: RunPaths, state_dir: Path) -> None:
+    """``run.after`` + home link cleanup; only once the container is gone."""
+    after = (rec.get("policy") or {}).get("after", "remove")
+    if after == "remove":
+        rec["layers"] = {"after": "remove", "removed": _remove_layers(rp)}
+    else:
+        rec["layers"] = {"after": "archive", "kept": str(rp.root)}
+    home = state_dir / "home"
+    if home.is_symlink() and Path(os.readlink(home)) == rp.home:
+        home.unlink()
+
+
+def end_run(
+    config: Any, state_dir: Path, *, teardown_verified: bool = True
+) -> dict | None:
+    """Finalize the current run (idempotent); returns the final record.
+
+    ``teardown_verified=False`` (the pane/cgroup teardown check failed or
+    was too slow) still FINALIZES the record — exit, usage, files — but
+    keeps the run's layers and marks them ``deferred``: removing a layer a
+    still-running container uses would be wrong. A later call with a
+    verified teardown (the next stop, or the next start's begin_run)
+    completes the deferred ``run.after``.
+    """
     state_dir = Path(state_dir).expanduser()
     run_dir = current_run(state_dir)
     if run_dir is None:
@@ -212,6 +234,10 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
     rp = RunPaths(run_dir)
     rec = read_json(rp.outcome) or {"schema": SCHEMA, "run_dir": str(run_dir)}
     if rec.get("status") == "finalized":
+        if teardown_verified and (rec.get("layers") or {}).get("deferred"):
+            _apply_after_policy(rec, rp, state_dir)
+            rec["layers"]["completed_at"] = utc_now()
+            atomic_write_json(rp.outcome, rec)
         return rec
     status = rec.get("status")
     if status == "prepared":
@@ -248,14 +274,14 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
         "reason": "the harness left no usage record SAC can read",
     }
     shutil.rmtree(rp.secrets, ignore_errors=True)
-    after = (rec.get("policy") or {}).get("after", "remove")
-    if after == "remove":
-        rec["layers"] = {"after": "remove", "removed": _remove_layers(rp)}
+    if teardown_verified:
+        _apply_after_policy(rec, rp, state_dir)
     else:
-        rec["layers"] = {"after": "archive", "kept": str(run_dir)}
-    home = state_dir / "home"
-    if home.is_symlink() and Path(os.readlink(home)) == rp.home:
-        home.unlink()
+        rec["layers"] = {
+            "after": (rec.get("policy") or {}).get("after", "remove"),
+            "deferred": "pane teardown could not be verified; layers kept until "
+            "a later stop or start verifies the container is gone",
+        }
     rec["finalized_at"] = utc_now()
     rec["status"] = "finalized"
     atomic_write_json(rp.outcome, rec)
