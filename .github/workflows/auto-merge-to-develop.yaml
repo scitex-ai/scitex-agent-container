@@ -155,7 +155,23 @@ jobs:
   automerge:
     # schedule + workflow_dispatch always run (the heartbeat must leave a
     # record). check_suite still only acts on a successful suite.
-    if: ${{ github.event_name != 'check_suite' || github.event.check_suite.conclusion == 'success' }}
+    #
+    # *** OPT-IN: repository variable SAC_AUTOMERGE_ENABLED == 'true'. ***
+    # The sweep's server-side preconditions (merge step, "GATE") are:
+    #   1. secret SAC_BRANCH_PROTECTION_READ_TOKEN (Administration: read only);
+    #   2. develop's required-status protection is STRICT and covers every
+    #      required context;
+    #   3. main has push restrictions that exclude the github-actions App.
+    # As of 2026-11-19 NONE holds on this repository (no secret; develop
+    # strict=false; main "Push restrictions not enabled"), so every one of the
+    # 200+ ticks since 2026-10-08 failed closed at step 1 and merged nothing.
+    # A run that is red on every tick for six weeks is not a heartbeat anyone
+    # reads; it is noise that hides real failures. The fail-closed GATE is
+    # unchanged: an operator who provisions 1-3 sets the variable to 'true',
+    # and from then on a missing/unreadable precondition is red again, as it
+    # should be. Until then the job is skipped and merges nothing, which is
+    # exactly what it did before, without the false alarm.
+    if: ${{ vars.SAC_AUTOMERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || github.event.check_suite.conclusion == 'success') }}
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 15
     steps:

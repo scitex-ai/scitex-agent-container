@@ -51,6 +51,16 @@ def _invoke_owned_case(tmp_path, scenario):
     home.mkdir()
     state = tmp_path / "state"
     state.mkdir()
+    # The child gets a bare environment, so the conftest config floor
+    # ($SCITEX_AGENT_CONTAINER_CONFIG) does not reach it. Without a declared
+    # scratch root, scaffolding probes the host's real /scratch: on the
+    # self-hosted compute runners that left a uvwork dir on the operator's
+    # scratch volume, and on GitHub-hosted runners (no /scratch) the child died
+    # with ScratchRootError and printed nothing (the nightly JSONDecodeError).
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    host_config = tmp_path / "config.yaml"
+    host_config.write_text(f"scratch_root: {scratch}\n", encoding="utf-8")
     env = {
         "PATH": "/usr/bin:/bin",
         "HOME": str(home),
@@ -59,6 +69,7 @@ def _invoke_owned_case(tmp_path, scenario):
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "SCITEX_AGENT_CONTAINER_HOSTNAME": "owned-local-fixture",
+        "SCITEX_AGENT_CONTAINER_CONFIG": str(host_config),
         "SAC_BUILD_NO_NICE": "1",
         "PYTHONNOUSERSITE": "1",
         "GIT_CONFIG_NOSYSTEM": "1",
