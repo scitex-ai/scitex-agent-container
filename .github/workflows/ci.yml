@@ -63,6 +63,12 @@ jobs:
       runs_on: ${{ vars.CI_RUNS_ON || '["ubuntu-latest"]' }}
       # Operator 2026-11-18: 45-minute legs at CI_XDIST_WORKERS=2 (shared default 30).
       timeout_minutes: 45
+      # A throwaway postgres:16 service container per leg; the reusable exports
+      # SCITEX_STORE_DSN at it and tests/_store_isolation.py adopts that as the
+      # test database. Tests never reach the live fleet DB (2026-11-19: CI on
+      # the self-hosted runners was opening ~1,330 connections / 10 min to the
+      # live pooler scitex-primary:55432).
+      postgres: true
 
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

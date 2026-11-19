@@ -133,9 +133,11 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
         rp.out,
     ):
         d.mkdir(parents=True, mode=0o700, exist_ok=True)
-    src = Path(__file__).with_name("netgw.py")
-    shutil.copyfile(src, rp.bin / "netgw.py")
-    os.chmod(rp.bin / "netgw.py", 0o444)
+    # Stdlib-only launchers the image's ``python3 -I`` runs BY PATH: the
+    # egress gateway and the control-plane mask (``_mask.masked_argv``).
+    for src, dst in (("netgw.py", "netgw.py"), ("_hide.py", "hide.py")):
+        shutil.copyfile(Path(__file__).with_name(src), rp.bin / dst)
+        os.chmod(rp.bin / dst, 0o444)
     _home_aside(state_dir / "home")
     _symlink(rp.home, state_dir / "home")
     _symlink(run_dir, run_link(state_dir))

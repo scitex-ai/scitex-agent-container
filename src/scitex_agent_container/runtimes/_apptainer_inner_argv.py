@@ -225,6 +225,25 @@ def build_inner_argv(
             )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
+    if tui and getattr(config, "sandbox", None) is not None:
+        # Sealed pane: the control-plane mask is established BEFORE the
+        # first startup command and covers the harness and every tool
+        # child (see _sandbox/_mask). SAC's channel subscriber is SAC
+        # itself, which a sealed agent tree cannot reach.
+        if tui_channel_mcp:
+            raise ValueError(
+                f"{config.name}: spec.sandbox hides SAC from the agent; remove "
+                "server:sac from spec.comms.channels for the sealed agent"
+            )
+        from .._sandbox._mask import sealed_tui_inner_argv
+
+        return sealed_tui_inner_argv(
+            config,
+            alias_steps=_GIT_ENV_ALIAS_STEPS,
+            startup_steps=_format_shell_steps(startup_cmds),
+            runner_tail=runner_tail,
+            owner_masks_harness=harness_key in {HERMES_TUI, OPENCODE_TUI},
+        )
     # Alias step is unconditional (every agent gets it); startup_cmds steps
     # follow it when present. This means shell_steps is NEVER empty, so the
     # bash -lc wrap now ALWAYS happens — see docstring.

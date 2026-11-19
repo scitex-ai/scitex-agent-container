@@ -205,6 +205,42 @@ def test_sigterm_is_recorded_before_the_container_exits(tmp_path):
     assert rec["exit"]["signal"] == signal.SIGTERM and rec["status"] == "exited"
 
 
+def test_stop_during_container_launch_still_reaches_the_container(tmp_path):
+    # Arrange
+    # A stop can be handled while Popen is still starting the container
+    # (the signal mask is per-thread; helper threads can take it). Signal
+    # the supervisor the instant its record says "running", many times: the
+    # container must be stopped every time, never left running.
+    import json
+    import signal
+    import time
+
+    hung = 0
+    for attempt in range(15):
+        base = tmp_path / f"r{attempt}"
+        base.mkdir()
+        state, run, image = _prepared_run(base)
+        proc = _supervise(
+            state, image, [sys.executable, "-c", "import time; time.sleep(60)"]
+        )
+        outcome = run / "out" / "outcome.json"
+        deadline = time.monotonic() + 30
+        while json.loads(outcome.read_text())["status"] == "prepared":
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.001)
+        # Act
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            hung += 1
+            proc.kill()
+            proc.wait(timeout=20)
+    # Assert
+    assert hung == 0
+
+
 def test_env_file_in_a_readable_dir_is_scrubbed_in_place(tmp_path):
     # Arrange
     home = tmp_path / "home"

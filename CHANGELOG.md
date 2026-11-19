@@ -6,6 +6,64 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-19
+
+### Added
+- `spec.mcp_servers.<name>.inherit_env` — per-entry control of which agent
+  env an MCP server receives. `true` (default) keeps today's behaviour;
+  `false` gives the entry ONLY its own `env` (no `spec.env` bake into
+  `.mcp.json`, no Hermes launch-env refill, no SAC-generated `PGPASSFILE` /
+  pgpass materialization); a list of env names is an allowlist. The key is
+  validated at load and never reaches the harness's own MCP config. A sealed
+  spec whose `spec.env` carries `SCITEX_STORE_DSN` can now declare a
+  store-free MCP server: it no longer needs a host `.pgpass` row and passes
+  the Hermes credential check, which applies only to entries whose final env
+  holds a PostgreSQL DSN. `sac agents explain` lists each entry's mode and
+  the env NAMES it receives (never values).
+
+## [0.40.3] - 2026-11-19
+
+### Fixed
+- A sealed run's supervisor could record a stop that arrived while the
+  container was still being launched without forwarding it, leaving the
+  container running until the pane teardown killed it. The signal mask that
+  deferred such a stop is per-thread, and the supervisor's helper threads
+  could take the signal. A stop that lands before the container exists is
+  now delivered to it as soon as it starts.
+
+## [0.40.2] - 2026-11-19
+
+### Security
+- Sealed Claude Code, Codex and OpenCode TUI panes now start their agent
+  tree under the control-plane mask (`_sandbox/_hide`), as Hermes already
+  did: the agent can no longer list `/state/<name>`, read secret files
+  there, run or import SAC, or see outer processes. The list of hidden
+  paths is shared by every harness (`_sandbox/_mask`) and now also covers
+  the run's proxy/ingress socket directory.
+- Sealed `startup_commands` run under the mask too (previously before it):
+  inside the pane's mask for Claude Code / Codex, in their own masked shell
+  before the owner for Hermes / OpenCode. Behaviour change for sealed
+  Hermes / OpenCode runs: variables EXPORTED by `startup_commands` no longer
+  reach the harness (filesystem effects still do); pass values through
+  `env.allow` / `apptainer.env` instead.
+- Coverage: the mask on sealed Hermes runs is verified by a real
+  `sac agents start` end-to-end run; on Claude Code / Codex / OpenCode it is
+  verified by live in-container probe tests only, not by a real harness run.
+- SAC code started inside a sealed container (the Hermes and OpenCode
+  owners) no longer imports from the working directory or `PYTHONPATH`
+  (it starts isolated from the launching installation instead of with
+  `python -m`). Unsealed launches are unchanged.
+- A sealed Claude Code / Codex / OpenCode spec that declares the
+  `server:sac` channel is refused (SAC is hidden from a sealed agent).
+
+### Fixed
+- A sealed Claude Code / Codex / OpenCode run's `outcome.json` is finalized
+  with SAC stop attribution even when the pane teardown check is slow or
+  fails (layers deferred until a verified teardown), matching Hermes.
+- `spec.available_harnesses.hermes.yolo` is accepted by the spec validator
+  (the loader read it but the validator refused it); it must be a boolean
+  and is refused on non-Hermes harnesses.
+
 ## [0.40.1] - 2026-11-19
 
 ### Fixed
