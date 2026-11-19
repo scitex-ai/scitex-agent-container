@@ -400,7 +400,9 @@ def build_run_argv(
     # unconditional w.r.t. the relaxed escape hatch below.
     from ._apptainer_listen_env import listen_env_flags
 
-    argv += listen_env_flags(config, include_listener=harness_key != HERMES_TUI)
+    argv += listen_env_flags(
+        config, include_listener=harness_key != HERMES_TUI, state_dir=state_dir
+    )
 
     # TUI parity with the SDK's telegrammer wake (apply_channels →
     # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an

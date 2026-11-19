@@ -197,6 +197,9 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         line.split("=", 1)
         for line in (home / ".hermes" / ".env").read_text().splitlines()
     )
+    # The per-agent host_exec identity token is freshly minted per start, so
+    # compare its presence, not its value.
+    profile_env["SAC_AGENT_TOKEN"] = bool(profile_env.get("SAC_AGENT_TOKEN"))
     rendered_argv = " ".join(argv)
 
     # Assert
@@ -212,6 +215,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
             "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
             "SAC_LISTEN_BEARER": "test-listen-bearer",
             "SAC_NAME": "scholar",
+            "SAC_AGENT_TOKEN": True,
         }
         and set(profile["mcp_servers"]) == {"scitex-agent-container"}
         and config.claude.channels == ["server:sac"]
@@ -411,7 +415,8 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
     assert (
         isinstance(runtime, HermesTuiSessionRuntime)
         and cards_env["PGUSER"] == "operator__scitex-hub"
-        and cards_env["PGPASSFILE"] == "/home/agent/.scitex/agent-container/runtime/pgpass"
+        and cards_env["PGPASSFILE"]
+        == "/home/agent/.scitex/agent-container/runtime/pgpass"
         and cards_env["SCITEX_STORE_DSN"] == "postgresql://scitex-primary:55432/scitex"
         and generated_passfile.read_text(encoding="utf-8")
         == "scitex-primary:55432:scitex:operator__scitex-hub:correct\n"

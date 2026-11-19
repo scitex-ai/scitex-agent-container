@@ -12,6 +12,15 @@ on every fleet host — so the branch could only ever fall through to
 the 403 below. Table, primitives and branch removed together. Sender
 identity now comes from ``metadata.from_agent``, gated by
 :func:`_listen._acl.check_send_acl` on the name.
+
+**Per-agent identity**: a request that ALSO carries the
+:data:`.agent_tokens.AGENT_TOKEN_HEADER` header has that token resolved to
+the agent it was minted for (:mod:`.agent_tokens`). The result is exposed
+as ``request.state.authenticated_agent`` (the name, or ``None``) plus
+``request.state.agent_token_presented`` (whether a header was sent at
+all). An unrecognised agent token does NOT fail the request here — the
+host bearer still authenticated it — so each identity-sensitive handler
+decides what an unresolved identity means for it (see ``_host_exec``).
 """
 
 from __future__ import annotations
@@ -21,6 +30,8 @@ import hmac
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from .agent_tokens import AGENT_TOKEN_HEADER, resolve_agent_token
 
 
 def _extract_bearer(request: Request) -> str | None:
@@ -58,6 +69,13 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         # Public health stays public. Only verified host-bearer requests may
         # discover typed mutation capabilities through that same health route.
         request.state.host_bearer_authenticated = authenticated
+        # Per-agent identity is only ever derived on top of a verified host
+        # bearer; an unauthenticated request never gets a resolved agent.
+        agent_token = request.headers.get(AGENT_TOKEN_HEADER, "").strip()
+        request.state.agent_token_presented = bool(agent_token)
+        request.state.authenticated_agent = (
+            resolve_agent_token(agent_token) if authenticated and agent_token else None
+        )
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
         if got is None:

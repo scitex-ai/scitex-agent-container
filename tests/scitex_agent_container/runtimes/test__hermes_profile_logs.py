@@ -331,7 +331,7 @@ def materialized_home_backings(tmp_path, request):
         ),
         "_profile_primary_key": lambda *args: "synthetic",
         "_mcp_servers": lambda *args, **kwargs: ({}, []),
-        "_sac_profile_env": lambda *args: {},
+        "_sac_profile_env": lambda *args, **kwargs: {},
         "_cct_profile_env": lambda *args: {},
     }
     config = SimpleNamespace(

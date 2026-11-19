@@ -84,5 +84,13 @@ def run_launch_gate(config: Any, argv: list[str], *, state_dir: Path) -> None:
 
     assert_entry_point_runs(config.name, argv)
 
+    # LAST, once nothing above can refuse: activate the per-agent caller
+    # credential that argv/profile assembly only STAGED (_listen.agent_tokens).
+    # Past the dry-run return and the duplicate-session guard by construction
+    # of this module, so `explain` / `--dry-run` never rotate a live token.
+    from .._listen.agent_tokens import commit_agent_token
+
+    commit_agent_token(config.name, state_dir=state_dir)
+
 
 __all__ = ["run_launch_gate"]
