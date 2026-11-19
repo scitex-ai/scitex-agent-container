@@ -21,6 +21,27 @@ versioning follows [SemVer](https://semver.org/).
 - Removing a sealed run's layers no longer raises `TypeError` on Python
   3.11 (the 0.40.0 code used an `rmtree` keyword that exists only on 3.12+).
 
+### Security
+- `POST /v1/host_exec` authorization trusted a caller identity supplied in
+  the request instead of one bound to the authenticating credential (the
+  listen bearer is host-wide, so it does not identify an agent). sac now
+  mints a per-agent token at every real agent start (stored server-side as
+  a SHA-256 only, under `<runtime dir>/.agent-tokens/`), delivers it to the
+  container as `SAC_AGENT_TOKEN` through the existing 0600 secret env-file
+  (and the Hermes profile env), and the in-container client presents it in
+  the `X-SAC-Agent-Token` header. host_exec takes the caller from that
+  token; a body `caller` that disagrees is refused and audited. `sac agents
+  explain` / `--dry-run` never rotate a running agent's token.
+- Migration: agents started before this release receive their token at
+  their next normal start. Until then host_exec still accepts a bare body
+  `caller`, but logs each such call at WARNING and records it in
+  `host_exec.log` with `"identity": "name-claimed (legacy, unauthenticated)"`
+  (token calls record `"agent-token"`). Set
+  `SAC_HOST_EXEC_REQUIRE_AGENT_TOKEN=1` in the `sac listen` environment to
+  refuse name-claimed calls. The default will flip to refuse once the fleet
+  has restarted onto token-carrying launches (no `name-claimed` lines left in
+  `host_exec.log`).
+
 ## [0.40.0] - 2026-11-19
 
 ### Added
