@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sealed runs stopped by `sac agents stop` are now attributed to SAC in
+  `outcome.json` (`exit.stopped_by: "sac"`, request time) whatever exits
+  first. The pane teardown signals every process group; a harness that
+  handles SIGTERM could exit 1 before the supervisor saw its own signal, so
+  the record showed a plain `code: 1`. SAC now writes a stop-request marker
+  before tearing the pane down.
+- A sealed Hermes run's `outcome.json` is finalized even when the pane
+  teardown check is slow or fails under load (previously a second
+  `sac agents stop` was needed). The record is closed with the stop
+  attribution; the run's layers are kept (`layers.deferred`) until a later
+  stop or start can verify the container is gone, then removed or archived.
+- Removing a sealed run's layers no longer raises `TypeError` on Python
+  3.11 (the 0.40.0 code used an `rmtree` keyword that exists only on 3.12+).
+
 ### Security
 - `POST /v1/host_exec` authorization trusted a caller identity supplied in
   the request instead of one bound to the authenticating credential (the

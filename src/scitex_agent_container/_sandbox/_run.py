@@ -23,6 +23,7 @@ import os
 import secrets as _secrets
 import shutil
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -36,11 +37,19 @@ from ._outcome import (
     hermes_usage,
     manifest,
     manifest_diff,
-        read_json,
+    read_json,
     utc_now,
 )
 
-__all__ = ["SandboxRunError", "begin_run", "current_run", "end_run", "new_run_id"]
+__all__ = [
+    "SandboxRunError",
+    "begin_run",
+    "current_run",
+    "end_run",
+    "mark_stop_requested",
+    "new_run_id",
+    "stop_attribution",
+]
 
 
 class SandboxRunError(RuntimeError):
@@ -91,7 +100,6 @@ def _symlink(target: Path, link: Path) -> None:
     os.replace(tmp, link)
 
 
-
 def begin_run(config: Any, state_dir: Path) -> Path | None:
     """Prepare a fresh run for a sandboxed ``config``; ``None`` when not sandboxed."""
     sb = getattr(config, "sandbox", None)
@@ -105,7 +113,7 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     agent = str(getattr(config, "name", "agent"))
     root = Path(sb.run_root)
     root.mkdir(parents=True, exist_ok=True)
-    free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+    free_mb = shutil.disk_usage(root).free // (1 << 20)
     if free_mb < sb.run_size_mb:
         raise SandboxRunError(
             f"{root} has {free_mb} MB free; spec.sandbox.run.size needs {sb.run_size_mb} MB"
@@ -114,7 +122,16 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     run_dir = root / agent / run_id
     rp = RunPaths(run_dir)
     run_dir.mkdir(parents=True, mode=0o700)
-    for d in (rp.home, rp.overlay, rp.workdir, rp.uvwork, rp.bin, rp.sock, rp.secrets, rp.out):
+    for d in (
+        rp.home,
+        rp.overlay,
+        rp.workdir,
+        rp.uvwork,
+        rp.bin,
+        rp.sock,
+        rp.secrets,
+        rp.out,
+    ):
         d.mkdir(parents=True, mode=0o700, exist_ok=True)
     src = Path(__file__).with_name("netgw.py")
     shutil.copyfile(src, rp.bin / "netgw.py")
@@ -153,19 +170,80 @@ def _force_writable(func, path, _exc) -> None:
     func(path)
 
 
+def _rmtree_forcing(path: Path) -> None:
+    """``rmtree`` with the chmod retry; ``onexc`` exists only on Python >= 3.12."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_force_writable)
+    else:
+        shutil.rmtree(path, onerror=_force_writable)
+
+
 def _remove_layers(rp: RunPaths) -> list[str]:
     removed = []
     for p in (rp.home, rp.workdir, rp.uvwork, rp.root / "rt", rp.overlay):
         if p.is_dir() and not p.is_symlink():
-            shutil.rmtree(p, onexc=_force_writable)
+            _rmtree_forcing(p)
         elif p.exists() or p.is_symlink():
             p.unlink(missing_ok=True)
         removed.append(str(p))
     return removed
 
 
-def end_run(config: Any, state_dir: Path) -> dict | None:
-    """Finalize the current run (idempotent); returns the final record."""
+def mark_stop_requested(state_dir: Path, *, by: str = "sac agents stop") -> bool:
+    """Record that SAC asked this run to stop, BEFORE it tears the pane down.
+
+    The teardown signals every process group of the pane; whichever exits
+    first decides what the supervisor observes (a harness that handles
+    SIGTERM may exit 1 before the supervisor's own signal arrives). This
+    marker makes the outcome say the run was stopped by SAC either way.
+    """
+    run_dir = current_run(Path(state_dir).expanduser())
+    if run_dir is None:
+        return False
+    rp = RunPaths(run_dir)
+    rec = read_json(rp.outcome) or {}
+    if rec.get("status") == "finalized":
+        return False
+    atomic_write_json(rp.stop_requested, {"t": utc_now(), "by": by})
+    return True
+
+
+def stop_attribution(rp: RunPaths) -> dict | None:
+    """``{"stopped_by": "sac", ...}`` when SAC requested this run's stop."""
+    marker = read_json(rp.stop_requested)
+    if not marker:
+        return None
+    return {
+        "stopped_by": "sac",
+        "stop_requested_at": marker.get("t"),
+        "stop_requested_by": marker.get("by"),
+    }
+
+
+def _apply_after_policy(rec: dict, rp: RunPaths, state_dir: Path) -> None:
+    """``run.after`` + home link cleanup; only once the container is gone."""
+    after = (rec.get("policy") or {}).get("after", "remove")
+    if after == "remove":
+        rec["layers"] = {"after": "remove", "removed": _remove_layers(rp)}
+    else:
+        rec["layers"] = {"after": "archive", "kept": str(rp.root)}
+    home = state_dir / "home"
+    if home.is_symlink() and Path(os.readlink(home)) == rp.home:
+        home.unlink()
+
+
+def end_run(
+    config: Any, state_dir: Path, *, teardown_verified: bool = True
+) -> dict | None:
+    """Finalize the current run (idempotent); returns the final record.
+
+    ``teardown_verified=False`` (the pane/cgroup teardown check failed or
+    was too slow) still FINALIZES the record — exit, usage, files — but
+    keeps the run's layers and marks them ``deferred``: removing a layer a
+    still-running container uses would be wrong. A later call with a
+    verified teardown (the next stop, or the next start's begin_run)
+    completes the deferred ``run.after``.
+    """
     state_dir = Path(state_dir).expanduser()
     run_dir = current_run(state_dir)
     if run_dir is None:
@@ -173,6 +251,10 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
     rp = RunPaths(run_dir)
     rec = read_json(rp.outcome) or {"schema": SCHEMA, "run_dir": str(run_dir)}
     if rec.get("status") == "finalized":
+        if teardown_verified and (rec.get("layers") or {}).get("deferred"):
+            _apply_after_policy(rec, rp, state_dir)
+            rec["layers"]["completed_at"] = utc_now()
+            atomic_write_json(rp.outcome, rec)
         return rec
     status = rec.get("status")
     if status == "prepared":
@@ -188,11 +270,16 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
             "(killed with its pane); see egress logs and harness logs",
         }
     before = read_json(rp.out / "home_manifest_start.json") or {}
-    transcript = hermes_transcript(rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp")
+    transcript = hermes_transcript(
+        rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp"
+    )
     rec["tool_calls"] = transcript or {
         "available": False,
         "reason": "the harness left no transcript SAC can read",
     }
+    attribution = stop_attribution(rp)
+    if attribution and isinstance(rec.get("exit"), dict):
+        rec["exit"].update(attribution)
     rec["files"] = {
         "read": (transcript or {}).get("files_read"),
         "read_source": (transcript or {}).get(
@@ -206,14 +293,14 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
         "reason": "the harness left no usage record SAC can read",
     }
     shutil.rmtree(rp.secrets, ignore_errors=True)
-    after = (rec.get("policy") or {}).get("after", "remove")
-    if after == "remove":
-        rec["layers"] = {"after": "remove", "removed": _remove_layers(rp)}
+    if teardown_verified:
+        _apply_after_policy(rec, rp, state_dir)
     else:
-        rec["layers"] = {"after": "archive", "kept": str(run_dir)}
-    home = state_dir / "home"
-    if home.is_symlink() and Path(os.readlink(home)) == rp.home:
-        home.unlink()
+        rec["layers"] = {
+            "after": (rec.get("policy") or {}).get("after", "remove"),
+            "deferred": "pane teardown could not be verified; layers kept until "
+            "a later stop or start verifies the container is gone",
+        }
     rec["finalized_at"] = utc_now()
     rec["status"] = "finalized"
     atomic_write_json(rp.outcome, rec)

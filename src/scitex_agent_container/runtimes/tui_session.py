@@ -645,6 +645,14 @@ class TuiSessionRuntime(
         (no-op on absent sessions, so the supervisor's ``stop()->start()``
         cycle stays idempotent).
         """
+        # Sealed run: record that SAC asked for this stop BEFORE the pane
+        # teardown, so the outcome attributes it whatever exits first.
+        from .._sandbox import is_sandboxed
+
+        if is_sandboxed(config):
+            from .._sandbox._run import mark_stop_requested
+
+            mark_stop_requested(state_dir_for_config(config))
         # Stop inbound owners before the A2A sink and pane disappear.
         if self._owns_external_cct_poller(config):
             self._stop_cct_poller(config)
