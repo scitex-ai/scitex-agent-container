@@ -223,6 +223,10 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     census and the ownership ledger read the SAME derivation this writes,
     and a second one cannot drift into existence beside it.
     """
+    from ..config._grants import granted
+
+    if not granted(config, "secrets", "cct_token"):
+        return  # explicit spec.grants without secrets: [cct_token]
     # Imported inside the function on purpose: _cct_token_resolution imports
     # this module's private helpers at module scope, and this call is the one
     # edge that would close the cycle. The derivation module is the lower

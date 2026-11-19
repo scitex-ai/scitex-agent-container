@@ -134,6 +134,10 @@ def build_run_argv(
 
     sealed = is_sandboxed(config)
     validate_sandbox_config(config)
+    from ..config._grants import GrantRefused, granted, network_refusal
+
+    if network_refusal(config):  # explicit spec.grants without host_network
+        raise GrantRefused(network_refusal(config))
 
     argv: list[str] = ["apptainer", "exec"]
     argv += compute_iso_prepend(config)
@@ -215,7 +219,7 @@ def build_run_argv(
     # path to the telegrammer bridge so its default-path lookup hits
     # the bind without any per-agent spec change.
     quota_src = _resolve_quota_cache_host_path()
-    if quota_src.is_file() and not sealed:
+    if quota_src.is_file() and not sealed and granted(config, "host_binds", "quota_cache"):
         argv += [
             "--bind",
             f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
@@ -273,11 +277,10 @@ def build_run_argv(
         # Setting it where that bind is ABSENT costs nothing: the reader then
         # finds no file and returns None, which is what it returns today. This
         # can make the answer better and cannot make it worse.
-        "--env",
-        f"SCITEX_AGENT_CONTAINER_RUNTIME_DIR={runtime_base_dir()}",
-        "--pwd",
-        str(Path(config.workdir).expanduser()),
     ]
+    if granted(config, "fleet_env"):
+        argv += ["--env", f"SCITEX_AGENT_CONTAINER_RUNTIME_DIR={runtime_base_dir()}"]
+    argv += ["--pwd", str(Path(config.workdir).expanduser())]
 
     # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`
     # entries get translated into one `--bind` flag each. Use case:
@@ -314,7 +317,7 @@ def build_run_argv(
     from ._p3a_default_binds import apply_default_binds
 
     checked_binds = spec_binds_checked(config)
-    for bs in checked_binds if sealed else apply_default_binds(checked_binds):
+    for bs in checked_binds if sealed else apply_default_binds(checked_binds, config=config):
         if ":" in bs:
             _, _, rest = bs.partition(":")
             dst = rest.split(":", 1)[0]

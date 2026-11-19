@@ -1,21 +1,27 @@
 """Project enabled installed-package skills into each isolated Hermes home."""
 
-from pathlib import Path
 import shutil
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 
 def installed_skill_records(config, *, packages=None, list_pages=None):
     """Use scitex-dev discovery and central opt-outs; SAC exclusions win too."""
-    from scitex_dev._core.config import load_config, _load_knob_state
+    from scitex_dev._core.config import _load_knob_state, load_config
     from scitex_dev._core.discovery import discover_packages
     from scitex_dev._ecosystem._skills.skills import list_skills
     from scitex_dev.skill_registry import SkillRecord, hash_skill_tree
 
-    if getattr(config, "sandbox", None) is not None and packages is None:
-        # Sealed run: only the spec's own to_home reaches the agent; skills
-        # of packages installed next to the LAUNCHING SAC are host state.
+    from ..config._grants import granted
+
+    if packages is None and (
+        getattr(config, "sandbox", None) is not None
+        or not granted(config, "host_claude", "skills")
+    ):
+        # Sealed run, or explicit spec.grants without host_claude: [skills]:
+        # only the spec's own to_home reaches the agent; skills of packages
+        # installed next to the LAUNCHING SAC are host state.
         return ()
     if packages is None:
         enabled = {item.name: item.skills_enabled for item in load_config().packages}
@@ -47,7 +53,10 @@ def installed_skill_records(config, *, packages=None, list_pages=None):
 def materialize_installed_skills(config, profiles, *, records=None):
     """Copy canonical sources, record hashes, and audit before exposing them."""
     from scitex_dev.skill_registry import (
-        MANIFEST_NAME, RegistryReport, audit_projection, write_projection_manifest,
+        MANIFEST_NAME,
+        RegistryReport,
+        audit_projection,
+        write_projection_manifest,
     )
 
     records = installed_skill_records(config) if records is None else tuple(records)

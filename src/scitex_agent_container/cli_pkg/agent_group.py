@@ -13,6 +13,7 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
+from ._agents_grants import grants_group as _grants_group_impl
 from ._agents_restore_worktree import register as _register_restore_worktree
 from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
@@ -91,6 +92,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "tail",
                 "recall",
                 "explain",
+                "grants",
                 "state",
                 "validate-auth-verdicts",
                 "validate-telegram",
@@ -315,6 +317,9 @@ agent_group.add_command(_rebind(_attach_impl, "attach"))
 # skills, prompts) WITHOUT launching, so the caller sees exactly what
 # `start` will do (No-Surprise). Already named; no _rebind needed.
 agent_group.add_command(_explain_impl)
+# `grants` — infer / check explicit spec.grants blocks (deny-by-default
+# migration: infer → paste → check). See docs/grants.md.
+agent_group.add_command(_grants_group_impl)
 # F-CS8 prune — dry-run-by-default purge of the two known workdir
 # bloat sources (.pending/ records + merged-only worktrees/agent-*).
 agent_group.add_command(_rebind(_prune_claude_impl, "prune-claude"))

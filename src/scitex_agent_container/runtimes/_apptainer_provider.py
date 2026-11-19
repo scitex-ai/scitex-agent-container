@@ -441,6 +441,14 @@ def openai_env_flags(config: AgentConfig) -> list[str]:
     if not openai_harness_active(config):
         return []
 
+    from ..config._grants import granted
+
+    if not granted(config, "host_model_auth"):
+        raise ProviderEnvError(
+            "spec.harness: openai authenticates only with a host-held API key, "
+            "and spec.grants does not grant host_model_auth. Grant it "
+            "(grants.host_model_auth: true) or remove the grants block."
+        )
     if provider_active(config):
         raise ProviderEnvError(
             "spec.harness: openai cannot compose with an active "

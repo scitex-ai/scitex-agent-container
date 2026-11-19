@@ -148,3 +148,20 @@ def test_preflight_fixture_preserves_an_inherited_external_auth_file(
     )
     # Assert
     assert external_auth.read_bytes() == sentinel
+
+
+def test_explicit_grants_ignore_host_codex_home_override(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange: the host exports CODEX_HOME, the spec's grants withhold
+    # host_model_auth, so the agent's own <state>/codex-home is bound.
+    from scitex_agent_container.config._grants import Grants
+    from scitex_agent_container.runtimes._apptainer_codex_env import codex_env_flags
+
+    env_save_restore.set("CODEX_HOME", str(tmp_path / "host-codex"))
+    config = AgentConfig(name="native", harness="codex", workdir=str(tmp_path))
+    config.grants = Grants(host_network=True)
+    # Act
+    argv = codex_env_flags(config, tmp_path / "state")
+    # Assert
+    assert argv[1].startswith(str(tmp_path / "state" / "codex-home") + ":")

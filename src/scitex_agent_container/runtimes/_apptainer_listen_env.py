@@ -90,9 +90,14 @@ def listen_env_flags(
     from pathlib import Path
 
     from .._listen._config import listen_base_url
+    from ..config._grants import granted
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
     from ._mcp_reliability import mcp_timeout_env_flags
 
+    # Explicit spec.grants: the listen URL/bearer/token are sac_control; the
+    # direnv, genai-tunnel and spec-search-path wiring is fleet_env.
+    include_listener = include_listener and granted(config, "sac_control")
+    fleet = granted(config, "fleet_env")
     flags: list[str] = []
     if include_listener:
         flags += ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
@@ -120,7 +125,8 @@ def listen_env_flags(
     # apply. Note: this is a generic, language-agnostic direnv-tooling knob (NOT
     # coupled to any scitex-* package), so it does not violate the
     # sac/other-package standalone boundary.
-    flags += ["--env", "DIRENV_CONFIG=/etc/direnv"]
+    if fleet:
+        flags += ["--env", "DIRENV_CONFIG=/etc/direnv"]
 
     # UV DEFAULT VENV — force ``uv``'s project venv to the container-only
     # boot-built path ``/uvwork/venv-agent`` so any ad-hoc ``uv run`` /
@@ -157,10 +163,8 @@ def listen_env_flags(
     # separate operator security decision and is intentionally NOT set.
     # UNCONDITIONAL (same as the base URL above): a base
     # URL with no key is harmless to agents that never hit the fallback.
-    flags += [
-        "--env",
-        "SCITEX_GENAI_BASE_URL=http://127.0.0.1:4000/v1",
-    ]
+    if fleet:
+        flags += ["--env", "SCITEX_GENAI_BASE_URL=http://127.0.0.1:4000/v1"]
 
     # MCP STARTUP CONNECT TIMEOUT — raise Claude Code's per-server MCP startup
     # timeout (fleet incident 2026-07-06). The ``sac`` + ``scitex-todo`` stdio
@@ -208,10 +212,8 @@ def listen_env_flags(
     spec_dirs: list[str] = [p for p in spec_dirs_raw.split(":") if p.strip()]
     if host_default not in spec_dirs:
         spec_dirs.append(host_default)
-    flags += [
-        "--env",
-        f"SCITEX_AGENT_CONTAINER_YAML_DIRS={':'.join(spec_dirs)}",
-    ]
+    if fleet:
+        flags += ["--env", f"SCITEX_AGENT_CONTAINER_YAML_DIRS={':'.join(spec_dirs)}"]
 
     claude_spec = getattr(config, "claude", None)
     channels = list(getattr(claude_spec, "channels", None) or [])

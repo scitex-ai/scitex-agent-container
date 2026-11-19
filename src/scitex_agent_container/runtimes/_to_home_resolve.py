@@ -218,6 +218,7 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
         ]
     )
 
+    resolved = _withhold_shared_layers(config, resolved)
     declared = getattr(config, "to_home_layers", None)
     if declared is None:
         return resolved
@@ -246,12 +247,30 @@ def materialization_layer_dirs(
     """
     if getattr(config, "to_home_layers", None) is not None:
         return settings_layer_dirs(config)
-    return _collapse_duplicate_paths(
-        [
-            ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
-            ("per-agent", resolve_to_home_dir(config)),
-        ]
+    return _withhold_shared_layers(
+        config,
+        _collapse_duplicate_paths(
+            [
+                ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
+                ("per-agent", resolve_to_home_dir(config)),
+            ]
+        ),
     )
+
+
+def _withhold_shared_layers(
+    config: AgentConfig, layers: "list[tuple[str, Path | None]]"
+) -> "list[tuple[str, Path | None]]":
+    """Drop the shared baseline layers unless ``host_claude: [baseline]``.
+
+    Legacy configs (no ``spec.grants``) keep every layer unchanged; an
+    explicit grants block without ``baseline`` keeps only ``per-agent``.
+    """
+    from ..config._grants import granted
+
+    if granted(config, "host_claude", "baseline"):
+        return layers
+    return [(name, path if name == "per-agent" else None) for name, path in layers]
 
 
 def _spec_dir(config: AgentConfig) -> Path | None:

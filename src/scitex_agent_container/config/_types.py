@@ -334,6 +334,10 @@ class AgentConfig:
     # Sealed run (spec.sandbox): egress allowlist, env seal, per-run reset,
     # outcome record. None = not sandboxed. See scitex_agent_container._sandbox.
     sandbox: Any = None
+    # Explicit host-authority grants (spec.grants). None = legacy: every
+    # implicit authority applies unchanged. A Grants block = deny-by-default.
+    # See config._grants.
+    grants: Any = None
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

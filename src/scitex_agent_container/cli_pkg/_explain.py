@@ -419,6 +419,12 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
 
 def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Return the human-readable effective launch plan for ``config``."""
+    from ..config._grants import network_refusal
+    from ._explain_grants import grants_lines
+
+    if network_refusal(config):  # no argv to show: start refuses before it
+        head = _identity_lines(config, spec_path=spec_path, sif="-", claude=None)
+        return "\n".join(head + grants_lines(config))
     policy_lines = _worktree_policy_lines(config)
     argv = _argv_for(config)
     binds = _binds(argv)
@@ -427,6 +433,8 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     claude = getattr(config, "claude", None)
 
     lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
+    # Grants first: host exec must be the loudest line of the plan.
+    lines += grants_lines(config)
 
     # WHICH ENGINE, AND WHO DECIDED — the only defence against a fleet
     # engine library that has diverged between hosts. See _explain_engine.
@@ -561,14 +569,17 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
 
     from ..runtimes._host_merge import (
         apply_host_merge,
-        is_full_developer,
+        host_merge_enabled,
         verify_host_merge,
     )
     from ..runtimes._to_home import deploy_to_home
 
     out: list[str] = ["", "Host deep-merge (~/.claude → $HOME/.claude):"]
-    if not is_full_developer(config):
-        out.append("  off (not a full-developer agent — agent layers only)")
+    if not host_merge_enabled(config):
+        out.append(
+            "  off (not a full-developer agent, or host_claude: [merge] not "
+            "granted — agent layers only)"
+        )
         return out
     tmp = tempfile.mkdtemp(prefix="sac-hostmerge-")
     try:

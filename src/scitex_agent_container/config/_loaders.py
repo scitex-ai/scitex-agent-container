@@ -62,9 +62,9 @@ from ._parsers import (
 from ._python_venv import resolve_python_venv as _resolve_python_venv
 from ._residency_types import resolve_spec_residency
 from ._secret_scope_types import resolve_spec_secret_scope
-from ._worktree import parse_spec_worktree
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
+from ._worktree import parse_spec_worktree
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -357,11 +357,12 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # (SDK) / tui_channel_config (TUI) for the channel; the .mcp.json / options
     # merge for the tools server.
     _sac_optout = str(labels.get("sac-builtin", "")).strip().lower()
-    # A SEALED spec (spec.sandbox) gets no builtin control plane: the sac MCP
-    # tools (agent spawn/restart, host exec, store) are host authority, which
-    # a sealed run holds only by explicit grant (none exist yet in 0.40.0).
+    # The sac MCP tools (spawn/restart, host exec, store) are host authority: a
+    # SEALED spec never gets them, an explicit spec.grants only with sac_control.
     _sealed = spec.get("sandbox") is not None
-    if not _sealed and _sac_optout not in ("off", "false", "0", "no"):
+    from ._grants import parse_grants  # lazy: off the `sac --help` closure
+    _grants = parse_grants(spec)
+    if (_grants is None or _grants.sac_control) and not _sealed and _sac_optout not in ("off", "false", "0", "no"):
         if "server:sac" not in {c.strip() for c in comms_spec.channels}:
             comms_spec.channels.append("server:sac")
         if "scitex-agent-container" not in mcp_servers:
@@ -403,6 +404,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         secret_scope=resolve_spec_secret_scope(spec),
         # SEALED RUN — spec.sandbox (optional block; see _sandbox._spec).
         sandbox=_parse_sandbox(spec),
+        grants=_grants,
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.

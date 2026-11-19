@@ -989,3 +989,51 @@ def test_load_config_does_not_duplicate_authored_direnv_allow(
     cfg = load_config(p)
     # Assert — exactly one direnv-allow, no sac-appended duplicate.
     assert sum("direnv allow" in c.command for c in cfg.startup_commands) == 1
+
+
+# ---------------------------------------------------------------------------
+# spec.grants advisories (sac agents check; config._grants).
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_warns_spec_relies_on_legacy_grants(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange — a spec with no grants block.
+    p = _v3_yaml(tmp_path, "legacy", {})
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p, advise=True)
+    # Assert
+    assert "no spec.grants block" in caplog.text
+
+
+def test_load_config_flags_explicit_host_exec_grant(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange
+    grants = {"sac_control": True, "host_exec": True, "host_network": True}
+    p = _v3_yaml(tmp_path, "hx", {"grants": grants})
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p, advise=True)
+    # Assert
+    assert "HOST EXEC" in caplog.text
+
+
+def test_load_config_parses_explicit_grants_block(tmp_path: Path):
+    # Arrange
+    p = _v3_yaml(tmp_path, "explicit", {"grants": {"host_binds": ["cards"]}})
+    # Act
+    config = load_config(p)
+    # Assert
+    assert config.grants.host_binds == frozenset({"cards"})
+
+
+def test_load_config_without_sac_control_skips_builtin_mcp(tmp_path: Path):
+    # Arrange
+    p = _v3_yaml(tmp_path, "nocontrol", {"grants": {"host_network": True}})
+    # Act
+    config = load_config(p)
+    # Assert
+    assert "scitex-agent-container" not in (config.mcp_servers or {})

@@ -119,6 +119,10 @@ _KNOWN_SPEC_KEYS = frozenset(
         # start. OPTIONAL, documentation-first: a spec that omits it still
         # loads. Values must never appear here — only names.
         "secrets",
+        # Explicit host-authority grants. OPTIONAL by design: absent = the
+        # legacy implicit authorities apply byte-identically; present =
+        # deny-by-default (only what the block grants). See config._grants.
+        "grants",
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),

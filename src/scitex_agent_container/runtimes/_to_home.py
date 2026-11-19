@@ -63,6 +63,7 @@ from pathlib import Path
 import scitex_logging as slogging
 
 from ..config import AgentConfig
+from ..config._grants import granted
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._github_token import ensure_github_token
@@ -272,9 +273,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
             _stale.unlink()
     if getattr(config, "sandbox", None) is None:
         # Host ~/.claude commands/skills are host state: a sealed run
-        # (spec.sandbox) gets only what its own to_home layers declare.
-        deploy_host_claude_commands(dest)
-        deploy_host_skills(dest)
+        # (spec.sandbox) gets only what its own to_home layers declare, an
+        # explicit spec.grants only the host_claude parts it names.
+        if granted(config, "host_claude", "commands"):
+            deploy_host_claude_commands(dest)
+        if granted(config, "host_claude", "skills"):
+            deploy_host_skills(dest)
     # Run-scoped and SHARED across both layers — see materialize_to_home.
     composed_dsts: set[Path] = set()
     for _, layer_root in contributing_layers:
@@ -296,9 +300,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # no layer ships a .envrc.
     workdir = (getattr(config, "workdir", "") or "").strip()
     workdir_dir = Path(workdir).expanduser() if workdir else None
-    if getattr(config, "to_home_layers", None) is None:
-        baseline = resolve_baseline_to_home_dir(Path(config.config_path).parent)
-        user_shared = _user_baseline_to_home_dir()
+    if not granted(config, "secrets", "envrc"):
+        envrc_cascade = []  # explicit spec.grants without secrets: [envrc]
+    elif getattr(config, "to_home_layers", None) is None:
+        shared = granted(config, "host_claude", "baseline")
+        baseline = resolve_baseline_to_home_dir(Path(config.config_path).parent) if shared else None
+        user_shared = _user_baseline_to_home_dir() if shared else None
         envrc_cascade = [
             (user_shared / ".envrc") if user_shared is not None else None,
             (baseline / ".envrc") if baseline is not None else None,
@@ -319,7 +326,8 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
             if layer_map.get("per-agent") is not None
             else None,
         ]
-    fold_envrc_cascade_into_env(dest, envrc_cascade)
+    if envrc_cascade:
+        fold_envrc_cascade_into_env(dest, envrc_cascade)
     # DETERMINISTIC CCT BOT-TOKEN INJECTION (card sac-fleet-ux-misc-2026-06-24,
     # last item): when the spec requests server:claude-code-telegrammer and the
     # cascade above did NOT provide CCT_BOT_TOKEN (no per-project .envrc), sac

@@ -238,6 +238,14 @@ def _iter_host_files(host_subdir: Path, *, is_hooks: bool):
                 yield rel, src
 
 
+def host_merge_enabled(config: AgentConfig) -> bool:
+    """The deep-merge gate: a full developer, and (under an explicit
+    ``spec.grants``) ``host_claude: [merge]``."""
+    from ..config._grants import granted
+
+    return is_full_developer(config) and granted(config, "host_claude", "merge")
+
+
 def plan_host_merge(config: AgentConfig, home_dir: str | Path) -> "dict[Path, Path]":
     """Compute the EXPECTED host-merge symlinks for ``config`` at ``home_dir``.
 
@@ -256,7 +264,7 @@ def plan_host_merge(config: AgentConfig, home_dir: str | Path) -> "dict[Path, Pa
     from materialization.
     """
     plan: dict[Path, Path] = {}
-    if not is_full_developer(config):
+    if not host_merge_enabled(config):
         return plan
     host_root = host_claude_dir()
     if host_root is None:
@@ -473,6 +481,7 @@ __all__ = [
     "apply_host_merge",
     "assert_no_host_merge_drift",
     "host_claude_dir",
+    "host_merge_enabled",
     "is_full_developer",
     "plan_host_merge",
     "verify_host_merge",

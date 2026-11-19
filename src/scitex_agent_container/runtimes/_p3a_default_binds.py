@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Iterable
 
 __all__ = [
+    "BIND_GRANT_NAMES",
     "apply_default_binds",
     "default_binds_for_host",
 ]
@@ -231,6 +232,16 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
 )
 
 
+# Grant name (config._grants.HOST_BIND_NAMES) of each fleet default above, by
+# container destination — what an explicit ``spec.grants.host_binds`` names.
+BIND_GRANT_NAMES: dict[str, str] = {
+    "/home/agent/.scitex/cards": "cards",
+    "/home/agent/.scitex/claude-code-telegrammer": "cct_store",
+    "/tmp/emacs-claude-code": "emacs_handoff",
+    "/tmp/host": "host_tmp",
+}
+
+
 def _bind_destination(bind_str: str) -> str:
     """Return the container-side destination path of a bind string.
 
@@ -277,7 +288,7 @@ def default_binds_for_host() -> tuple[str, ...]:
     return tuple(out)
 
 
-def apply_default_binds(spec_binds: Iterable[str]) -> list[str]:
+def apply_default_binds(spec_binds: Iterable[str], *, config=None) -> list[str]:
     """Merge fleet-default binds with the spec's explicit binds.
 
     Returns a list of bind strings (apptainer ``--bind`` ready) with
@@ -292,9 +303,12 @@ def apply_default_binds(spec_binds: Iterable[str]) -> list[str]:
     """
     spec_binds_list = list(spec_binds)
     spec_destinations = {_bind_destination(b) for b in spec_binds_list}
+    from ..config._grants import granted
+
     defaults_that_apply = [
         b
         for b in default_binds_for_host()
         if _bind_destination(b) not in spec_destinations
+        and granted(config, "host_binds", BIND_GRANT_NAMES[_bind_destination(b)])
     ]
     return defaults_that_apply + spec_binds_list

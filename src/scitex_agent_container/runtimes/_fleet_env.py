@@ -362,9 +362,15 @@ def effective_env(
     :class:`._board_identity_env.UnexpandedEnvValueError` here rather than
     being stored three layers downstream in someone else's database.
     """
+    from ..config._grants import granted
     from ._board_identity_env import apply_board_identity_alias
     from ._pg_identity_env import apply_pg_identity
 
+    # Explicit spec.grants without fleet_env: no fleet defaults and no
+    # name-derived board/PG identity — only what spec.env itself declares.
+    fleet = granted(config, "fleet_env")
+    if not fleet:
+        defaults = {}
     merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
     apptainer = getattr(config, "apptainer", None)
     raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
@@ -373,7 +379,7 @@ def effective_env(
     # ``apply_board_identity_alias`` for why the name is the right answer and
     # why it cannot override a deliberate alias.
     aliased = apply_board_identity_alias(
-        merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
+        merged, raw_args=raw_args, agent_name=getattr(config, "name", None) if fleet else None
     )
     # Same shape for the PostgreSQL login.  The project label names the
     # provisioned principal shared by variant workers (for example a GUI or
@@ -384,8 +390,8 @@ def effective_env(
     return apply_pg_identity(
         aliased,
         raw_args=raw_args,
-        agent_name=getattr(config, "name", None),
-        project_name=project_name,
+        agent_name=getattr(config, "name", None) if fleet else None,
+        project_name=project_name if fleet else None,
     )
 
 

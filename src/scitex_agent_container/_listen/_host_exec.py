@@ -110,6 +110,7 @@ from starlette.responses import JSONResponse
 from .._lifecycle._off_loop import run_blocking
 from .._state.state_store_acl_policy_store import POLICY_STORE
 from .._state.state_store_nodes import comms_policy_row_exists, resolve_group_names
+from ..config._grants import HOST_EXEC_GROUPS
 from ..config._group_resolver import groups_intersect
 from ._acl import deny_response
 from ._host_exec_audit import _AUDIT_LOG_PATH, _append_audit, _audit_log_path
@@ -119,6 +120,7 @@ from ._host_exec_child import (
     ChildOutcome,
     _run_child,
 )
+from ._host_exec_grant import host_exec_grant
 from ._host_exec_identity import (
     refusal_audit_entry,
     require_agent_token_from_env,
@@ -144,7 +146,9 @@ from ._plane_targeting_argv import targets_listen_plane
 # broker arbitrary commands as the operator's uid on the host. The
 # ``privileged`` group (grant / dotfiles / claude-code-telegrammer) was added
 # so those agents can run host ops and manage the fleet flexibly.
-ELIGIBLE_GROUPS: frozenset[str] = frozenset({"developer", "researcher", "privileged"})
+# The set itself lives in config._grants (HOST_EXEC_GROUPS) so the explain /
+# lint / grants-infer surfaces read the same one without importing this server.
+ELIGIBLE_GROUPS: frozenset[str] = HOST_EXEC_GROUPS
 
 # Guardrails
 _MAX_TIMEOUT_S: float = 3600.0  # 1h — image builds can take a while
@@ -170,6 +174,7 @@ async def host_exec(
     group_resolver=resolve_group_names,
     registration_probe=comms_policy_row_exists,
     audit_writer=_append_audit,
+    grant_reader=host_exec_grant,
     require_agent_token: bool | None = None,
 ) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
@@ -312,6 +317,12 @@ async def host_exec(
                 f"{cause}. Store consulted: {store.locator}"
             )
         )
+
+    # An explicit spec.grants block must also grant host_exec (legacy specs:
+    # the group gate above decides alone). See _host_exec_grant.
+    grant = grant_reader(caller)
+    if not grant.allowed:
+        return deny_response(reason=f"host_exec not granted: {grant.reason}")
 
     # ---- 3. Execute --------------------------------------------------------
     merged_env: dict[str, str] | None

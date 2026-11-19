@@ -120,3 +120,19 @@ def operator_secret_env(
         len(wanted),
     )
     return out
+
+
+def profile_operator_secrets(config) -> dict[str, str]:
+    """The operator pool slice an agent profile receives (H1).
+
+    ``spec.secret_scope`` picks the tier (full | capsule). An explicit
+    ``spec.grants`` block delivers the pool only with
+    ``secrets: [operator_pool]``; a legacy spec (no block) is unchanged.
+    """
+    from ..config._grants import granted
+
+    if not granted(config, "secrets", "operator_pool"):
+        return {}
+    return operator_secret_env(
+        full=scope_allows_full(getattr(config, "secret_scope", "full"))
+    )

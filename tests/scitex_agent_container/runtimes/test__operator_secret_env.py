@@ -151,3 +151,41 @@ def test_default_optional_slots_are_not_missing_credential_warnings(
         r.levelno == logging.DEBUG and "missing from the pool" in r.getMessage()
         for r in caplog.records
     ) and not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_profile_secrets_withheld_without_operator_pool_grant(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange: a pool that WOULD deliver, and an explicit grants block
+    # that does not name operator_pool.
+    from types import SimpleNamespace
+
+    from scitex_agent_container.config._grants import Grants
+    from scitex_agent_container.runtimes._operator_secret_env import (
+        profile_operator_secrets,
+    )
+
+    _real_pool_file(tmp_path, "export OPENAI_API_KEY=not-a-real-key\n")
+    config = SimpleNamespace(secret_scope="full", grants=Grants())
+    # Act
+    out = profile_operator_secrets(config)
+    # Assert
+    assert out == {}
+
+
+def test_profile_secrets_delivered_for_legacy_spec(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange: positive control — no grants block, the same pool.
+    from types import SimpleNamespace
+
+    from scitex_agent_container.runtimes._operator_secret_env import (
+        profile_operator_secrets,
+    )
+
+    _real_pool_file(tmp_path, "export OPENAI_API_KEY=not-a-real-key\n")
+    config = SimpleNamespace(secret_scope="capsule", grants=None)
+    # Act
+    out = profile_operator_secrets(config)
+    # Assert
+    assert "OPENAI_API_KEY" in out

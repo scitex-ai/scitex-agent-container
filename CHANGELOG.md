@@ -6,6 +6,30 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `spec.grants` — explicit host-authority grants. A spec WITHOUT the key is
+  unchanged: every implicit authority applies exactly as before (argv, env and
+  materialised home are byte-identical). A spec WITH the key is
+  deny-by-default and receives only what it grants: `host_exec`,
+  `sac_control`, `host_network`, `fleet_env`, `host_model_auth` (bool) and
+  `host_binds`, `host_claude`, `secrets` (lists of named parts). An explicit
+  block without `host_network` refuses a non-sealed launch rather than
+  starting an agent with no reachable model endpoint. Contradictions
+  (`host_exec` without `sac_control`, a hand-declared `server:sac` without
+  `sac_control`, `host_network` with `spec.sandbox`, shared `to_home_layers`
+  without `host_claude: [baseline]`) fail validation. The listen server's
+  host-exec gate additionally requires `grants.host_exec` for a caller whose
+  fleet-scope spec carries a grants block. See `docs/grants.md` for the
+  inventory-to-grant mapping and the rollout.
+- `sac agents grants infer NAME` prints the grants block that reproduces an
+  agent's current (legacy) authority; `sac agents grants check NAME...`
+  proves it by diffing the legacy launch surface against the spec plus the
+  inferred block (redacted argv, env names, home file list), rendering into
+  a throwaway directory without launching anything.
+- `sac agents explain` shows a `HOST EXEC` banner and every grant with its
+  source (explicit, or implicit legacy default); `sac agents check` warns on
+  host exec and on specs that rely on the legacy default.
+
 ## [0.41.0] - 2026-11-19
 
 ### Added

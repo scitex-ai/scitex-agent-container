@@ -282,6 +282,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # _secret_scope_types.
         errors.extend(secret_scope_value_error(spec))
 
+        # spec.grants — explicit host authorities (absent = legacy).
+        from ._grants import grants_value_errors
+
+        errors.extend(grants_value_errors(spec))
+
         # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
         # The knob silently injected a whole-home bind, a ``/work`` alias and
         # a ``--pwd`` rewrite, so a reader of the spec could not tell what

@@ -24,6 +24,7 @@ from scitex_agent_container.runtimes._host_merge import (
     HostMergeDriftError,
     apply_host_merge,
     assert_no_host_merge_drift,
+    host_merge_enabled,
     is_full_developer,
     plan_host_merge,
     verify_host_merge,
@@ -447,3 +448,41 @@ class TestPlanPurity:
         plan_host_merge(_dev_config(), home)
         # Assert — planning created nothing under the home.
         assert not (home / ".claude").exists()
+
+
+# ---------------------------------------------------------------------------
+# spec.grants — host_claude: [merge] gates the deep-merge (config._grants).
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_developer_keeps_host_merge_enabled() -> None:
+    # Arrange
+    cfg = _dev_config()
+    # Act
+    enabled = host_merge_enabled(cfg)
+    # Assert
+    assert enabled is True
+
+
+def test_explicit_grants_without_merge_disable_host_merge() -> None:
+    # Arrange
+    from scitex_agent_container.config._grants import Grants
+
+    cfg = _dev_config()
+    cfg.grants = Grants(host_claude=frozenset({"commands", "skills"}))
+    # Act
+    enabled = host_merge_enabled(cfg)
+    # Assert
+    assert enabled is False
+
+
+def test_explicit_merge_grant_keeps_developer_merge() -> None:
+    # Arrange
+    from scitex_agent_container.config._grants import Grants
+
+    cfg = _dev_config()
+    cfg.grants = Grants(host_claude=frozenset({"merge"}))
+    # Act
+    enabled = host_merge_enabled(cfg)
+    # Assert
+    assert enabled is True

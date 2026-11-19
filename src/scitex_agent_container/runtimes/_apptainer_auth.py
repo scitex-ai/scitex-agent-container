@@ -76,6 +76,19 @@ def _transcript_home(config: AgentConfig) -> Path | None:
     return Path(homes[0]) if homes else None
 
 
+def _host_model_auth(config: AgentConfig) -> bool:
+    from ..config._grants import granted
+
+    return granted(config, "host_model_auth")
+
+
+def _host_key_envs(config: AgentConfig) -> tuple[str, ...]:
+    """Host-env Anthropic key names forwarded on the OAuth path (D1)."""
+    if not _host_model_auth(config):
+        return ()
+    return ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY")
+
+
 def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     """Render the backend-auth ``--env`` / ``--bind`` flags for ``config``.
 
@@ -156,7 +169,7 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     claude_spec = getattr(config, "claude", None)
     designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()
     if designated:
-        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
+        for auth_env in _host_key_envs(config):
             val = os.environ.get(auth_env)
             if val:
                 argv += ["--env", f"{auth_env}={val}"]
@@ -169,7 +182,7 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # env shadows it (Anthropic rejects sk-ant-oat* OAuth tokens as
     # bare env). So we only pass *pay-per-token* env values; the
     # credentials.json is bind-mounted below.
-    for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
+    for auth_env in _host_key_envs(config):
         val = os.environ.get(auth_env)
         if val:
             argv += ["--env", f"{auth_env}={val}"]
@@ -265,6 +278,11 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # store so a pinned agent tracks the active login automatically.
     from ._apptainer_creds import resolve_cred_file
 
+    # Unpinned = the operator's live ~/.claude, a host-held login: an explicit
+    # spec.grants holds it only with host_model_auth. A pinned account is the
+    # spec's own declaration and stays.
+    if not _host_model_auth(config) and not getattr(claude_spec, "account", ""):
+        return argv
     cred_file = resolve_cred_file(config, state_dir)
     if cred_file is None or not cred_file.is_file():
         return argv

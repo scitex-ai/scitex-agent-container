@@ -72,8 +72,13 @@ def ensure_github_token(config, dest: Path) -> None:
     each spec to opt in would reproduce the failure this fixes: the agent finds
     out it cannot deliver only at the moment it tries.
 
-    Never raises. Never logs the token value.
+    Never raises. Never logs the token value. An explicit ``spec.grants``
+    block delivers it only with ``secrets: [github_token]``.
     """
+    from ..config._grants import granted
+
+    if not granted(config, "secrets", "github_token"):
+        return
     from ._secret_pool import (  # the shared pool toolkit, one source
         _pool_env,
         _pool_source_label,

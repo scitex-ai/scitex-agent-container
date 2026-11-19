@@ -167,7 +167,9 @@ def codex_harness_active(config: AgentConfig) -> bool:
     return resolve_agent_harness(config) == "codex"
 
 
-def resolve_codex_home(state_dir: Path | None = None) -> Path:
+def resolve_codex_home(
+    state_dir: Path | None = None, *, host_override: bool = True
+) -> Path:
     """The HOST directory holding codex's config, auth and session rollouts.
 
     ``$CODEX_HOME`` when exported (the binary's own override — honoured
@@ -176,7 +178,7 @@ def resolve_codex_home(state_dir: Path | None = None) -> Path:
     per agent, like the provider config dir, so sessions never mix), else
     ``~/.codex`` when no state dir is known.
     """
-    override = os.environ.get(CODEX_HOME_ENV, "").strip()
+    override = os.environ.get(CODEX_HOME_ENV, "").strip() if host_override else ""
     if override:
         return Path(override).expanduser()
     if state_dir is not None:
@@ -259,7 +261,10 @@ def preflight_subscription(
         if launch_flags[index + 1].partition("=")[0] in admission_keys
         for item in launch_flags[index:index + 2]
     ]
-    codex_home = resolve_codex_home(state_dir)
+    from ..config._grants import granted
+
+    host_auth = granted(config, "host_model_auth")
+    codex_home = resolve_codex_home(state_dir, host_override=host_auth)
     codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
     sync_subscription_auth(config, codex_home)
     env = os.environ.copy()
@@ -338,7 +343,12 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
             "about who runs the loop. Remove one of the two declarations."
         )
 
-    codex_home = resolve_codex_home(state_dir)
+    from ..config._grants import granted
+
+    # The host CODEX_HOME override, host-env keys and routing env are
+    # host-held auth: an explicit spec.grants needs host_model_auth.
+    host_auth = granted(config, "host_model_auth")
+    codex_home = resolve_codex_home(state_dir, host_override=host_auth)
     # The bind SOURCE must exist or apptainer refuses the whole container
     # ("mount source ... no such file or directory", measured on the first
     # live codex start, handyman-01, 2026-09-05 08:57 UTC: the host had never
@@ -355,7 +365,7 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
         f"{CODEX_HOME_ENV}={inside}",
     ]
 
-    for env_name in _KEY_ENVS:
+    for env_name in _KEY_ENVS if host_auth else ():
         value = os.environ.get(env_name, "").strip()
         if value:
             # Passed under the binary's OWN name regardless of which
@@ -363,7 +373,7 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
             argv += ["--env", f"CODEX_API_KEY={value}"]
             break
 
-    for env_name in _ROUTING_ENVS:
+    for env_name in _ROUTING_ENVS if host_auth else ():
         value = os.environ.get(env_name, "").strip()
         if value:
             argv += ["--env", f"{env_name}={value}"]

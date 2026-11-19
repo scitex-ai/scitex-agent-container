@@ -421,3 +421,25 @@ def test_engine_without_a_declared_window_sets_no_claude_code_knob(env_save_rest
 
     # Assert -- argv unchanged for every spec that declares nothing.
     assert CLAUDE_CODE_MAX_CONTEXT_ENV not in env
+
+
+def test_openai_harness_refused_without_host_model_auth_grant() -> None:
+    # Arrange: the openai harness has only a host-held key; an explicit
+    # grants block that withholds host_model_auth must refuse, loudly.
+    from scitex_agent_container.config import AgentConfig
+    from scitex_agent_container.config._grants import Grants
+    from scitex_agent_container.runtimes._apptainer_provider import (
+        ProviderEnvError,
+        openai_env_flags,
+    )
+
+    config = AgentConfig(name="oai", runtime="apptainer", harness="openai", workdir="/tmp/oai")
+    config.grants = Grants(host_network=True)
+    # Act
+    try:
+        openai_env_flags(config)
+        message = ""
+    except ProviderEnvError as exc:
+        message = str(exc)
+    # Assert
+    assert "host_model_auth" in message

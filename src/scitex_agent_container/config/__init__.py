@@ -36,7 +36,6 @@ from ._loaders import compose_effective_name, load_v3
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
-from ._worktree import WorktreeSpec
 from ._types import (
     AgentConfig,
     ClaudeSpec,
@@ -52,6 +51,7 @@ from ._types import (
     WatchdogSpec,
 )
 from ._validation import validate_config, validate_raw
+from ._worktree import WorktreeSpec
 
 __all__ = [
     "AgentConfig",
@@ -132,6 +132,7 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
     if advise:
         _warn_if_assigned_account_missing(config)
         _warn_if_startup_prompt_long(config)
+        _warn_grants(config)
     return config
 
 
@@ -225,3 +226,33 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
             )
     except Exception:  # stx-allow: fallback (reason: advisory only; never break load)
         pass
+
+
+def _warn_grants(config: AgentConfig) -> None:
+    """Authoring lint for ``spec.grants`` (``sac agents check`` only).
+
+    Two findings, both WARN (never fail):
+
+    * HOST EXEC — an agent that can run arbitrary host commands as the
+      operator, whether granted explicitly or held implicitly through its
+      groups, is named loudly every time its spec is checked.
+    * LEGACY DEFAULT — a spec with no ``grants:`` block relies on implicit
+      authorities that a later release denies by default; the migration is
+      ``sac agents grants infer`` → paste → ``sac agents grants check``.
+    """
+    from ._grants import host_exec_state, is_explicit
+
+    name = getattr(config, "name", "?")
+    held, why = host_exec_state(config)
+    if held:
+        _config_logger().warning(
+            f"HOST EXEC: agent '{name}' can run arbitrary commands on the host "
+            f"as the operator — {why}."
+        )
+    if not is_explicit(config):
+        _config_logger().warning(
+            f"agent '{name}' has no spec.grants block and relies on the legacy "
+            "implicit-authority default, which a future release flips to deny. "
+            f"Migrate: `sac agents grants infer {name}`, paste the block under "
+            f"spec:, then `sac agents grants check {name}`."
+        )
