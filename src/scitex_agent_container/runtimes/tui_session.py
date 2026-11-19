@@ -21,7 +21,6 @@ for hang-detection (see :mod:`_tui_liveness`).
 
 from __future__ import annotations
 
-import shlex
 import time
 from pathlib import Path
 from typing import Any
@@ -29,12 +28,6 @@ from typing import Any
 from .._runners._tmux.tmux import (
     TmuxManager,
     TuiInputNotReadyError,
-)
-from ._tui_session_names import (
-    candidate_session_names,
-    canonical_session_name,
-    legacy_session_name,
-    resolve_live_session,
 )
 from ..config import AgentConfig
 from . import _tui_delivery
@@ -53,6 +46,18 @@ from ._tui_liveness import (
     is_responsive_from_activity,
     pane_pid_of,
     pane_process_alive,
+)
+from ._tui_session_start import TuiSessionStartMixin
+from ._tui_session_support import (
+    _CLAUDE_BIN_DEFAULT,
+    _DEFAULT_MAX_IDLE_S,
+    TuiStopVerificationError,
+    candidate_session_names_for,
+    legacy_session_name_for,
+    resolve_live_session_for,
+    session_name_for,
+    start_succeeded,
+    state_dir_for_config,
 )
 from ._tui_workspace import materialize_workspace as _materialize_workspace
 from .base import RuntimeBase
@@ -75,140 +80,8 @@ __all__ = [
 ]
 
 
-class TuiStopVerificationError(RuntimeError):
-    """The owned tmux session or process cgroup survived teardown."""
-
-
-_CLAUDE_BIN_DEFAULT = "claude"
-
-# Default max-idle window for the RESPONSIVENESS probe
-# (``TuiSessionRuntime.is_responsive``; liveness/``is_running`` no longer
-# uses it). 300s mirrors the SDK ``health.interval`` default so a
-# quiet-but-healthy TUI has grace. Overridable per-call via ``max_idle_s``.
-_DEFAULT_MAX_IDLE_S = 300.0
-
-# Boot-drain window when ``spec.startup_commands`` delay ``exec claude``
-# (e.g. an in-container ``uv pip install`` that runs for minutes before
-# the TUI launches). The drain polls through the bootstrap and dismisses
-# claude's first-run modals (bypass-permissions / trust / theme) the
-# moment they appear; it returns as soon as claude is up, so this is a
-# CAP, not a fixed block. 240s comfortably covers a cold uv resolve.
-_STARTUP_BOOT_DRAIN_S = 240.0
-
-
-def start_succeeded(
-    *,
-    session_alive: bool,
-    reached_ready: bool | None,
-    is_running: bool,
-) -> bool:
-    """Pure decision: did the TUI start actually succeed? (BUG 3 — no false success.)
-
-    ``tmux new-session`` succeeding is NOT success — the inner claude can die
-    mid-boot (e.g. an Escape cancelled the dev-channels modal) or hang before
-    binding its input. This function encodes the fail-loud contract so it is
-    unit-testable without a live TUI:
-
-      * ``session_alive`` False → FAILURE. A dead tmux session can never be a
-        running agent, whatever the drain thought.
-      * ``session_alive`` True and ``reached_ready`` True → SUCCESS. The
-        boot-drain observed the input-ready / ``bypass permissions`` marker.
-      * ``session_alive`` True and ``reached_ready`` False → FAILURE. The drain
-        RAN and did NOT reach ready within its window (the modal never cleared /
-        claude never bound input) — loud failure, not a claimed success.
-      * ``session_alive`` True and ``reached_ready`` None (drain disabled this
-        boot) → defer to ``is_running`` (the liveness probe): alive+responsive
-        counts as success, otherwise failure.
-    """
-    if not session_alive:
-        return False
-    if reached_ready is True:
-        return True
-    if reached_ready is False:
-        return False
-    return is_running
-
-
-def session_name_for(config: AgentConfig) -> str:
-    """Return the tmux session name sac mints for this agent: the bare name.
-
-    New sessions carry NO prefix — the session name IS the agent name.
-    Sessions minted before the cutover are named ``tui-<name>`` and are still
-    recognised: use :func:`candidate_session_names_for` / :func:`resolve_live_session_for`
-    for any read path, and :func:`legacy_session_name_for` only to name the
-    legacy form explicitly. ``TmuxManager.exists`` keys off the same string,
-    so the runtime probes its own session deterministically.
-    """
-    return canonical_session_name(config.name)
-
-
-def legacy_session_name_for(config: AgentConfig) -> str:
-    """The pre-cutover ``tui-<name>`` session name. Recognised, never minted."""
-    return legacy_session_name(config.name)
-
-
-def candidate_session_names_for(config: AgentConfig) -> tuple[str, str]:
-    """Every session name this agent could be running under, preferred first.
-
-    Canonical bare first, legacy ``tui-`` second — the same order
-    :func:`._tui_session_names.candidate_session_names` defines.
-    """
-    return candidate_session_names(config.name)
-
-
-def resolve_live_session_for(
-    config: AgentConfig, sessions: Any | None = None
-) -> str:
-    """The live session for this agent: bare when present, else legacy.
-
-    ``sessions`` is a tmux session listing, or — the common runtime case — a
-    ``TmuxManager``-shaped multiplexer exposing ``exists`` / ``list_sessions``.
-    ``None`` resolves to the canonical bare name (the minting default).
-    """
-    if sessions is None:
-        return canonical_session_name(config.name)
-    if hasattr(sessions, "list_sessions"):
-        try:
-            return resolve_live_session(config.name, sessions.list_sessions())
-        except Exception:  # stx-allow: fallback (an unreadable listing resolves to the canonical name — callers treat probe failure as unknown, never as absence)
-            return canonical_session_name(config.name)
-    if hasattr(sessions, "exists"):
-        for candidate in candidate_session_names(config.name):
-            try:
-                if sessions.exists(candidate):
-                    return candidate
-            except Exception:  # stx-allow: fallback (a failed exists-probe is blindness on that candidate, not absence — keep trying the next one)
-                continue
-        return canonical_session_name(config.name)
-    return resolve_live_session(config.name, sessions)
-
-
-def state_dir_for_config(config: AgentConfig) -> Path:
-    """Per-agent state dir on the host: project-local if the agent's spec lives
-    under a project-scope ``.scitex/agent-container/`` tree, else
-    ``~/.scitex/agent-container/runtime/<name>/``. Mirrors
-    ``ClaudeSessionRuntime._state_dir`` so both runtimes land per-agent files in
-    the same place.
-    """
-    from .._runners import claude_session as _runner
-
-    src = getattr(config, "config_path", "") or ""
-    root: Path | None = None
-    if src:
-        try:
-            from scitex_config._ecosystem import local_state
-
-            scope = local_state.find_project_scope(
-                "agent-container", start=Path(src).parent
-            )
-            if scope is not None:
-                root = scope / "runtime"
-        except Exception:  # stx-allow: fallback (reason: scitex-config optional; degrade to home-scope state — the same fallback the SDK runtime uses, see runtimes/claude_session.py::_project_runtime_root)
-            root = None
-    return _runner.state_dir_for(config.name, root=root)
-
-
 class TuiSessionRuntime(
+    TuiSessionStartMixin,
     StartupPromptInjectorMixin,
     TurnBridgeSeamMixin,
     TuiBootDrainMixin,
@@ -392,250 +265,6 @@ class TuiSessionRuntime(
             )
         return home
 
-    def start(
-        self,
-        config: AgentConfig,
-        no_preflight: bool = False,
-        force: bool = False,
-        dry_run: bool = False,
-        foreground: bool = False,
-        one_shot: bool = False,
-        drain_pickers_at_boot: bool = True,
-        inject_startup_prompts: bool = True,
-        boot_drain_timeout_s: float = 30.0,
-    ) -> bool:
-        """Launch the interactive ``claude`` TUI **inside apptainer**, held open
-        by a detached tmux session sac owns.
-
-        Parity with ``ClaudeSessionRuntime``: same SIF isolation / binds /
-        overlay / auth / to_home — assembled by ``build_run_argv(tui=True)``.
-        tmux wraps ``apptainer exec`` only to give the TUI a PTY and survive
-        detach; it never runs ``claude`` on the host. ``force=True`` stops an
-        existing session first; ``dry_run=True`` materialises the workspace +
-        writes the argv to ``<state>/apptainer_run.argv.txt`` but skips
-        ``tmux new-session``. ``foreground`` / ``no_preflight`` / ``one_shot``
-        are accepted for RuntimeBase parity (no-ops for a detached session).
-
-        Returns ``True`` only when the session is alive AND the boot-drain
-        reached ready (BUG 3 — no false success); otherwise logs LOUD and
-        returns ``False`` so ``agent_start`` surfaces the real boot failure.
-        """
-        del no_preflight, foreground, one_shot
-        name = session_name_for(config)
-        live_now = [c for c in candidate_session_names_for(config) if self._mux.exists(c)]
-        # Duplicate-session guard: no-op idempotently (outside --force/--dry-run)
-        # instead of relaunching over a live session, and say so LOUDLY.
-        # BOTH names are checked: a legacy ``tui-<name>`` session from before
-        # the cutover is just as much "already running" as a bare one, and
-        # launching a bare session over it would leave two live TUIs for one
-        # agent with the router talking to only one of them.
-        if live_now and not force:
-            from ..cli_pkg._helpers._console import system_msg
-
-            system_msg(
-                f"duplicate session '{live_now[0]}' — agent already running. "
-                f"Attach: `sac agents attach {config.name}` "
-                f"(or `tmux attach -t {live_now[0]}`). "
-                # NOT `sac agents restart` — when this guard fires DURING a
-                # restart (the old session survived SIGTERM), that is the very
-                # command that just failed, so recommending it loops the
-                # operator back into the failure. Give the remedy that
-                # actually works: kill the stale session, then start fresh.
-                f"Force-relaunch: `tmux kill-session -t {live_now[0]}` then "
-                f"`sac agents start {config.name} -y --fresh`.",
-                style="red",
-            )
-            if not dry_run:
-                return True
-        if not dry_run:
-            from ._native_tui_admission import preflight_native_tui
-
-            preflight_native_tui(
-                config, production=self._production_command_builder
-            )
-        if force:
-            for stale in live_now:
-                self._mux.stop(stale)
-        if not dry_run:
-            # Sealed run (spec.sandbox): a FRESH run dir + $HOME before the
-            # workspace materialises into it (no-op when not sandboxed).
-            from .._sandbox import begin_run
-
-            begin_run(config, state_dir_for_config(config))
-        self.materialize_workspace(config)
-
-        from .._lifecycle._runtime_select import (
-            warn_if_legacy_apptainer_runtime,
-            warn_if_legacy_harness_key,
-        )
-
-        warn_if_legacy_apptainer_runtime(config)
-        warn_if_legacy_harness_key(config)
-
-        # Render the ``apptainer exec ... claude`` argv via the injection
-        # seam (default :meth:`_default_argv` resolves the SIF + calls
-        # build_run_argv(tui=True); tests inject a deterministic fake).
-        argv = self._command_builder(config)
-        if argv is None:
-            import shutil as _shutil
-
-            if _shutil.which("apptainer") is None and not dry_run:
-                raise TuiAuthStageError(
-                    "apptainer binary not found on $PATH — the TUI runtime "
-                    "runs claude INSIDE apptainer (parity with the SDK "
-                    "runtime). Install apptainer, or run on a host that has "
-                    "it. (Legacy host-tmux TUI is retired.)"
-                )
-            return False
-
-        if dry_run:
-            from ._apptainer_argv_record import write_redacted_argv
-
-            state_dir = state_dir_for_config(config)
-            state_dir.mkdir(parents=True, exist_ok=True)
-            write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
-            return True
-
-        # LAUNCH GATE — the /uvwork scratch bind (ADR-0024), the overlay-venv
-        # reconcile and the entry-point probe. All three are launch-time acts
-        # that write to the host or refuse to start, so all three live past the
-        # dry-run return and past the duplicate-session guard above, never
-        # inside ``build_run_argv`` (which ``sac agents explain`` also calls).
-        # Order and derivation rationale: :mod:`._tui_launch_gate`.
-        from ._tui_launch_gate import run_launch_gate
-
-        run_launch_gate(config, argv, state_dir=state_dir_for_config(config))
-        from ._launch_storage import launch_storage_identity
-
-        self._resolved_launch_storage = launch_storage_identity(argv)
-
-        # The host workdir is only the tmux launch cwd — the agent's real cwd is
-        # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).
-        workdir = (
-            getattr(config, "expanded_workdir", "")
-            or getattr(config, "workdir", "")
-            or "/tmp"
-        )
-        # Redirect the inner ``apptainer exec … claude`` STDERR (apptainer FATAL
-        # mount errors / an immediate claude exit) to a DURABLE per-agent log so
-        # ``agent_start`` surfaces the real boot failure instead of a cause-less
-        # ``<empty>`` pane tail. Host-side truncation occurs before tmux starts;
-        # TmuxManager installs the stderr redirect before its first shell step,
-        # so even a failed ``cd`` or venv activation survives the pane's exit.
-        boot_stderr_log = state_dir_for_config(config) / "boot.stderr.log"
-        boot_stderr_log.parent.mkdir(parents=True, exist_ok=True)
-        boot_stderr_log.write_text("")
-        boot_stderr_log.chmod(0o600)
-        launch_argv = argv
-        from .._sandbox import is_sandboxed, supervised_argv
-
-        if is_sandboxed(config):
-            image = getattr(self, "_resolved_sif_path", None)
-            if image is None:
-                raise TuiAuthStageError(
-                    f"sealed run {config.name!r}: no resolved SIF to record"
-                )
-            launch_argv = supervised_argv(
-                config, argv, state_dir=state_dir_for_config(config), image=str(image)
-            )
-        command = " ".join(shlex.quote(a) for a in launch_argv)
-        started = bool(
-            self._mux.start(
-                session_name=name,
-                command=command,
-                workdir=str(workdir),
-                session_env={
-                    "CLAUDE_DISABLE_AUTO_UPDATE": "1",
-                    "SAC_TMUX_BOOT_STDERR_PATH": str(boot_stderr_log),
-                    "SAC_TMUX_START_DIAGNOSTICS_PATH": str(
-                        state_dir_for_config(config) / "tmux.start.json"
-                    ),
-                },
-            )
-        )
-        # BUG 3 (false success): whether the boot-drain observed a ready
-        # signal. Only meaningful when the drain ran; ``None`` means "not
-        # verified this boot" (drain disabled) → we fall back to a liveness
-        # check at the end rather than blindly claiming success.
-        reached_ready: bool | None = None
-        if started and drain_pickers_at_boot:
-            # Drain the picker registry AT BOOT so the supervisor + downstream
-            # send paths land on a TUI already at the input field (the
-            # supervisor never calls send_turn during boot). Adaptive window:
-            # ``startup_commands`` can delay ``exec claude`` by minutes, so
-            # stretch the drain to cover the bootstrap (it returns as soon as
-            # claude is up — see ``_drain_at_boot``).
-            effective_timeout = boot_drain_timeout_s
-            if list(getattr(config, "startup_commands", []) or []):
-                effective_timeout = max(boot_drain_timeout_s, _STARTUP_BOOT_DRAIN_S)
-            reached_ready = self._drain_at_boot(config, timeout_s=effective_timeout)
-        if started and inject_startup_prompts:
-            # Boot-mission injection — parity with the SDK runtime: feed
-            # spec.startup_prompts as the first turn(s). Best-effort.
-            self._inject_startup_prompts(config)
-        if started:
-            # A2A wake-on-push parity: give the TUI the same ``/v1/turn``
-            # endpoint the SDK runner serves. Best-effort — a failed bridge
-            # must not fail the start.
-            self._maybe_start_turn_bridge(config)
-            # One host daemon owns the durable SAC/Cards subscriptions for
-            # every TUI harness.  It hands neutral envelopes to /v1/turn;
-            # that endpoint's runtime adapter decides Claude Code, Hermes, or
-            # Codex delivery.  Starting it after the turn bridge prevents an
-            # inbox consumer from acknowledging work before a sink exists.
-            if str(getattr(config, "harness", "") or "").lower() != "hermes":
-                self._start_inbox(config)
-        # BUG 3 (false success — constitution §2 "no surprises / fail loud"):
-        # up to here ``started`` only proves ``tmux new-session`` succeeded, NOT
-        # that the inner claude survived boot and reached its input-ready state.
-        # A continue-mode agent whose session DIED (e.g. an Escape cancelled the
-        # dev-channels modal) still had ``started=True`` — so agent_start printed
-        # "restarted" over a corpse. Now verify: session alive AND (drain saw
-        # ready, or — when the drain was disabled — a liveness probe agrees). On
-        # failure return False so ``agent_start`` raises its LOUD diagnostic
-        # (pane tail + boot.stderr + `tmux attach` hint) and no success line is
-        # printed.
-        if started and not dry_run:
-            alive = self._mux.exists(name)
-            ok = start_succeeded(
-                session_alive=alive,
-                reached_ready=reached_ready,
-                is_running=self.is_running(config) if alive else False,
-            )
-            if not ok:
-                import scitex_logging as slogging
-
-                slogging.getLogger(__name__).error(
-                    "TuiSessionRuntime: start FAILED for %s — tmux session "
-                    "%s (session_alive=%s, reached_ready=%s). The inner claude "
-                    "did not survive boot and reach its input field. Reproduce "
-                    "live: `tmux attach -t %s`. (See the boot-drain errors above "
-                    "and <state>/boot.stderr.log for the cause.)",
-                    getattr(config, "name", "?"),
-                    "is GONE" if not alive else "is alive but never signalled ready",
-                    alive,
-                    reached_ready,
-                    name,
-                )
-                return False
-            if self._owns_external_cct_poller(config):
-                try:
-                    self._start_cct_poller(config)
-                except Exception:
-                    # CCT is part of the requested managed session contract.
-                    # Never leave a TUI advertised as live after its sole
-                    # inbound owner failed to start, and never fall back to an
-                    # MCP-owned second poller.
-                    self._stop_cct_poller(config)
-                    self._stop_inbox(config)
-                    self._maybe_stop_turn_bridge(config)
-                    self._mux.stop(name)
-                    raise
-            # Hermes autonomy is armed by its detached monitor after that
-            # monitor positively observes an idle footer and empty composer.
-            # Never stage SAC control text over the initial model turn here.
-        return started
-
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session(s) sac owns for this agent.
 
@@ -645,6 +274,14 @@ class TuiSessionRuntime(
         (no-op on absent sessions, so the supervisor's ``stop()->start()``
         cycle stays idempotent).
         """
+        # Sealed run: record that SAC asked for this stop BEFORE the pane
+        # teardown, so the outcome attributes it whatever exits first.
+        from .._sandbox import is_sandboxed
+
+        if is_sandboxed(config):
+            from .._sandbox._run import mark_stop_requested
+
+            mark_stop_requested(state_dir_for_config(config))
         # Stop inbound owners before the A2A sink and pane disappear.
         if self._owns_external_cct_poller(config):
             self._stop_cct_poller(config)

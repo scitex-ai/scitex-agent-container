@@ -331,6 +331,9 @@ def main(argv: list[str] | None = None) -> int:
                     "egress": proxy.summary(),
                 }
             )
+            from ._run import stop_attribution
+
+            rec["exit"].update(stop_attribution(rp) or {})
             if live["watchdog"] is not None:
                 rec["size"] = {
                     "limit_mb": a.size_mb,
@@ -390,6 +393,15 @@ def main(argv: list[str] | None = None) -> int:
     for p in rp.secrets.glob("env-*"):
         p.unlink(missing_ok=True)
     exit_doc = {"code": rc} if rc >= 0 else {"code": None, "signal": -rc}
+    from ._run import stop_attribution
+
+    attribution = stop_attribution(rp)
+    if attribution:
+        exit_doc.update(attribution)
+        exit_doc.setdefault(
+            "reason",
+            "stopped by SAC (sac agents stop); the container's own exit status is code/signal",
+        )
     if watchdog is not None:
         watchdog.stop_evt.set()
         rec["size"] = {"limit_mb": a.size_mb, "peak_bytes": watchdog.peak}

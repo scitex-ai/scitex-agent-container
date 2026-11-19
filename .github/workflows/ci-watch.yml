@@ -1,5 +1,16 @@
-# Draft only — land in scitex-agent-container/.github/workflows/ci-watch.yml
-# after _ci_watcher merges to develop. Runs GitHub-hosted, never self-hosted.
+# Agent-independent CI watcher (see src/scitex_agent_container/_lifecycle/_ci_watcher.py).
+# The poll leg runs GitHub-hosted, never self-hosted.
+#
+# Two defects kept every scheduled run red from the day this landed:
+#   1. `actions/checkout` of `ref: ci-watch-ledger` fails when that branch does
+#      not exist, and nothing ever created it. The ledger is now opened by
+#      `.github/ci/open_ci_watch_ledger.sh`, which fetches the branch or, on
+#      the first run, starts it as an orphan so the push below creates it.
+#   2. On `schedule` there are no inputs, so the poll ran with an empty
+#      RUN_ID. A scheduled tick now watches the newest `ci` run on develop;
+#      `workflow_dispatch` can still name any repo/run explicitly.
+# The poll also imported the package without installing it; the watcher
+# module is stdlib-only, so it is loaded by path instead.
 name: ci-watch
 on:
   schedule:
@@ -11,10 +22,15 @@ on:
         default: "scitex-ai/scitex-agent-container"
         required: true
       run_id:
-        description: "workflow run id to poll"
-        required: true
+        description: "workflow run id to poll (empty = newest ci run on develop)"
+        required: false
 permissions:
   contents: write # to append the ledger branch
+  actions: read # to resolve and read the watched run
+concurrency:
+  # Two ticks appending to the same ledger branch only fight over the push.
+  group: ci-watch-ledger
+  cancel-in-progress: false
 jobs:
   poll:
     runs-on: ubuntu-latest # GitHub-hosted: independent of self-hosted runners AND agents
@@ -22,30 +38,51 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: develop
-      - uses: actions/checkout@v4
-        with:
-          ref: ci-watch-ledger
-          path: ledger
+      - name: Open the ledger branch
+        run: bash .github/ci/open_ci_watch_ledger.sh ledger
+      - name: Resolve the run to watch
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ inputs.repo || github.repository }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list -R "$REPO" --workflow ci --branch develop \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::no ci run on develop to watch in $REPO"
+            exit 1
+          fi
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
       - name: Poll target run and append ledger row
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ inputs.repo }}
-          RUN_ID: ${{ inputs.run_id }}
+          REPO: ${{ steps.target.outputs.repo }}
+          RUN_ID: ${{ steps.target.outputs.run_id }}
         run: |
-          python3 -c "
-          from scitex_agent_container._lifecycle import _ci_watcher as w
+          python3 - <<'PY'
+          import importlib.util
           import os
-          row = w.poll_once('ledger/ci-watch.jsonl', repo=os.environ['REPO'], run_id=os.environ['RUN_ID'])
-          print('recorded:', row['run_id'], row['status'], row['recorded_at'])
-          print('health:', w.health('ledger/ci-watch.jsonl', repo=os.environ['REPO'], run_id=os.environ['RUN_ID']))
-          "
+
+          spec = importlib.util.spec_from_file_location(
+              "_ci_watcher", "src/scitex_agent_container/_lifecycle/_ci_watcher.py"
+          )
+          w = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(w)
+          repo, run_id = os.environ["REPO"], os.environ["RUN_ID"]
+          row = w.poll_once("ledger/ci-watch.jsonl", repo=repo, run_id=run_id)
+          print("recorded:", row["run_id"], row["status"], row["recorded_at"])
+          print("health:", w.health("ledger/ci-watch.jsonl", repo=repo, run_id=run_id))
+          PY
       - name: Push ledger row
+        env:
+          RUN_ID: ${{ steps.target.outputs.run_id }}
         run: |
-          cd ledger
-          git config user.name "ci-watch" && git config user.email "ci-watch@scitex.ai"
-          git add ci-watch.jsonl
-          git commit -m "ci-watch: poll ${{ inputs.run_id }}" || exit 0
-          for i in 1 2 3; do git pull --rebase origin ci-watch-ledger && git push origin HEAD:ci-watch-ledger && break || sleep 15; done
+          bash .github/ci/push_ci_watch_ledger.sh ledger ci-watch.jsonl "ci-watch: poll $RUN_ID"
   host-load:
     # LAN-bound observer: ssh to scitex-compute-02/03/04 is unreachable from
     # GitHub-hosted runners, so this leg MUST run self-hosted. It never gates
@@ -57,34 +94,35 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: develop
-      - uses: actions/checkout@v4
-        with:
-          ref: ci-watch-ledger
-          path: ledger
+      - name: Open the ledger branch
+        run: bash .github/ci/open_ci_watch_ledger.sh ledger
       - name: Probe compute-host load and append ledger row
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ inputs.repo }}
-          PYTHONPATH: src
+          REPO: ${{ inputs.repo || github.repository }}
         run: |
-          repo="${REPO:-scitex-ai/scitex-agent-container}"
+          repo="$REPO"
           queued=false
           for st in queued in_progress; do
             n=$(gh api "repos/$repo/actions/runs?per_page=1&status=$st" --jq '.total_count' 2>/dev/null)
             [ "${n:-0}" -gt 0 ] && queued=true
           done
           export QUEUED="$queued"
-          python3 -c "
-          from scitex_agent_container._lifecycle import _ci_watcher as w
+          python3 - <<'PY'
+          import importlib.util
           import os
-          row = w.poll_host_loads_once('ledger/ci-watch-host-load.jsonl', queued=os.environ['QUEUED'] == 'true')
-          print('hosts:', {h: (s.get('idle', 'error') if isinstance(s, dict) else 'error') for h, s in row['hosts'].items()})
-          print('idle_while_queued:', row['idle_while_queued'], row['recorded_at'])
-          "
+
+          spec = importlib.util.spec_from_file_location(
+              "_ci_watcher", "src/scitex_agent_container/_lifecycle/_ci_watcher.py"
+          )
+          w = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(w)
+          row = w.poll_host_loads_once(
+              "ledger/ci-watch-host-load.jsonl", queued=os.environ["QUEUED"] == "true"
+          )
+          print("hosts:", {h: (s.get("idle", "error") if isinstance(s, dict) else "error") for h, s in row["hosts"].items()})
+          print("idle_while_queued:", row["idle_while_queued"], row["recorded_at"])
+          PY
       - name: Push host-load row
         run: |
-          cd ledger
-          git config user.name "ci-watch" && git config user.email "ci-watch@scitex.ai"
-          git add ci-watch-host-load.jsonl
-          git commit -m "ci-watch: host-load" || exit 0
-          for i in 1 2 3; do git pull --rebase origin ci-watch-ledger && git push origin HEAD:ci-watch-ledger && break || sleep 15; done
+          bash .github/ci/push_ci_watch_ledger.sh ledger ci-watch-host-load.jsonl "ci-watch: host-load"
