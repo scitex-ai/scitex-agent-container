@@ -27,6 +27,8 @@ versioning follows [SemVer](https://semver.org/).
   has restarted onto token-carrying launches (no `name-claimed` lines left in
   `host_exec.log`).
 
+## [0.40.0] - 2026-11-19
+
 ### Added
 - `spec.sandbox` — sealed runs (docs/sandbox.md). Egress allowlist
   (`--network none` + an in-container user/net-namespace gateway whose only
@@ -43,6 +45,11 @@ versioning follows [SemVer](https://semver.org/).
   (Hermes' TUI gateway) keeps working.
 
 ### Fixed
+- Starting an agent no longer edits its committed spec (#1777). The start
+  path stamped a missing `spec.uuid` into `spec.yaml`, which left the spec
+  authority dirty and made the NEXT start refuse; the start path now keeps
+  the uuid in the agent's runtime state dir (`<state>/spec_uuid`).
+  `sac agents create` still writes `spec.uuid`.
 - Sealed (sandboxed) solver agents no longer receive SAC's fleet-default
   binds: the jail checked only spec binds, so `~/.scitex/cards` (rw) and host
   `/tmp` reached every solver.
