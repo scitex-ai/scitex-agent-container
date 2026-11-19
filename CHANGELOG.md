@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-19
+
 ### Added
 - `spec.mcp_servers.<name>.inherit_env` — per-entry control of which agent
   env an MCP server receives. `true` (default) keeps today's behaviour;
