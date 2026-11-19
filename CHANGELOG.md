@@ -6,6 +6,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.40.3] - 2026-11-19
+
+### Fixed
+- A sealed run's supervisor could record a stop that arrived while the
+  container was still being launched without forwarding it, leaving the
+  container running until the pane teardown killed it. The signal mask that
+  deferred such a stop is per-thread, and the supervisor's helper threads
+  could take the signal. A stop that lands before the container exists is
+  now delivered to it as soon as it starts.
+
 ## [0.40.2] - 2026-11-19
 
 ### Security

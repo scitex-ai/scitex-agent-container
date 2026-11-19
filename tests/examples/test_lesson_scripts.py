@@ -77,6 +77,11 @@ def _probe_runs_readonly(script: Path, tmp_path: Path) -> subprocess.CompletedPr
         "PATH": os.environ.get("PATH", ""),
         # Preserve TERM so coloured-output libs don't crash on missing tty.
         "TERM": os.environ.get("TERM", "dumb"),
+        # Carry the suite's unreachable store DSN across the scrubbed env.
+        # Without it the lesson scripts' `sac agents list` / `sac agents tail`
+        # fell through to sac's fleet default and dialled the LIVE pooler
+        # scitex-primary:55432 as <user>__cli (measured 2026-11-19).
+        "SCITEX_STORE_DSN": os.environ["SCITEX_STORE_DSN"],
     }
     return subprocess.run(
         ["bash", str(script)],

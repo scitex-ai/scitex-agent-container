@@ -346,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
                 live["child"].send_signal(signum)
             except ProcessLookupError:
                 pass
+        else:
+            # No container yet (the handler can run inside Popen): deliver
+            # this stop to the child as soon as it exists, below.
+            live["pending"] = signum
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, _forward)
@@ -365,8 +369,12 @@ def main(argv: list[str] | None = None) -> int:
         target=_shred_when_up, name="sac-secret-shred", daemon=True
     ).start()
 
-    # Block the stop signals across check-and-launch: a stop that lands while
-    # Popen runs is delivered on unblock, when live["child"] is set.
+    # Block the stop signals across check-and-launch so a stop aimed at THIS
+    # thread waits for live["child"]. That alone is not enough: the mask is
+    # per-thread, and the proxy / shred threads above can take a
+    # process-directed SIGTERM, after which CPython runs the handler in this
+    # thread at its next bytecode -- possibly inside Popen, before the child
+    # exists. Such a stop is parked in live["pending"] and forwarded below.
     stop_signals = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
     signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
     if rec.get("status") != "running":  # stopped before the container started
@@ -381,6 +389,12 @@ def main(argv: list[str] | None = None) -> int:
         preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals),
     )
     live["child"] = child
+    pending = live.pop("pending", None)
+    if pending is not None:  # a stop arrived while the container was starting
+        try:
+            child.send_signal(pending)
+        except ProcessLookupError:
+            pass
     signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
     watchdog = None
     if a.size_mb > 0:
