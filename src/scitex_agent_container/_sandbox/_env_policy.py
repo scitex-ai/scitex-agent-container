@@ -57,7 +57,9 @@ def allowed_env_names(config: Any) -> frozenset[str]:
         return frozenset()
     ap = getattr(config, "apptainer", None)
     spec_env = set((getattr(ap, "env", None) or {}).keys()) if ap is not None else set()
-    explicit = set(sb.env_allow) | spec_env | {sb.model_key}
+    explicit = (
+        set(sb.env_allow) | spec_env | ({sb.model_key} if sb.model_key else set())
+    )
     wiring = {n for n in SAC_WIRING if not _is_secret(n)}
     return frozenset(explicit | wiring)
 

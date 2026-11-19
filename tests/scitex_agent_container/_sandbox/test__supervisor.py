@@ -248,7 +248,9 @@ def test_env_file_in_a_readable_dir_is_scrubbed_in_place(tmp_path):
     src = home / ".env"
     src.write_text("MODEL_KEY=v\nGITHUB_TOKEN=g\n")
     # Act
-    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(home,))
+    seal_env_flags(
+        ["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(home,)
+    )
     # Assert
     assert src.read_text() == "MODEL_KEY=v\n"
 
@@ -260,7 +262,9 @@ def test_env_file_with_nothing_allowed_is_removed(tmp_path):
     src = state / "secret-env" / "apptainer.env"
     src.write_text("SAC_LISTEN_BEARER=b\n")
     # Act
-    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(state,))
+    seal_env_flags(
+        ["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(state,)
+    )
     # Assert
     assert not src.exists()
 
@@ -270,7 +274,12 @@ def test_env_file_outside_readable_dirs_is_left_alone(tmp_path):
     src = tmp_path / "elsewhere.env"
     src.write_text("GITHUB_TOKEN=g\n")
     # Act
-    seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(tmp_path / "home",))
+    seal_env_flags(
+        ["--env-file", str(src)],
+        ALLOWED,
+        tmp_path / "s",
+        scrub_roots=(tmp_path / "home",),
+    )
     # Assert
     assert src.read_text() == "GITHUB_TOKEN=g\n"
 
@@ -280,7 +289,9 @@ def test_exit_after_a_sac_stop_request_is_attributed_to_sac(tmp_path):
     import json
 
     state, run, image = _prepared_run(tmp_path)
-    (run / "out" / "stop_requested.json").write_text(json.dumps({"t": "x", "by": "sac agents stop"}))
+    (run / "out" / "stop_requested.json").write_text(
+        json.dumps({"t": "x", "by": "sac agents stop"})
+    )
     proc = _supervise(state, image, [sys.executable, "-c", "raise SystemExit(1)"])
     # Act
     proc.wait(timeout=60)
@@ -300,3 +311,108 @@ def test_exit_without_a_stop_request_is_not_attributed(tmp_path):
     rec = json.loads((run / "out" / "outcome.json").read_text())
     # Assert
     assert rec["exit"] == {"code": 3}
+
+
+# ---------------------------------------------------------------------------
+# supervise() options used by the plain-command run (sac sandbox exec):
+# deadline, stdout/stderr tee and caller-stop attribution.
+# ---------------------------------------------------------------------------
+_SUPERVISE_PY = """
+import json, sys
+from pathlib import Path
+from scitex_agent_container._sandbox._supervisor import SuperviseOptions, supervise
+a = json.loads(sys.argv[1])
+opts = SuperviseOptions(image=a["image"], timeout_s=a["timeout"], tee=True, stop_by="caller")
+sys.exit(supervise(Path(a["run"]), a["cmd"], opts))
+"""
+SLEEP_60 = [sys.executable, "-c", "import time; time.sleep(60)"]
+
+
+def _supervise_direct(run, image, cmd, timeout=0.0):
+    import json
+
+    arg = json.dumps(
+        {"run": str(run), "image": str(image), "cmd": cmd, "timeout": timeout}
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", _SUPERVISE_PY, arg],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _outcome(run):
+    import json
+
+    return json.loads((run / "out" / "outcome.json").read_text())
+
+
+def test_deadline_ends_the_run_with_the_timeout_status(tmp_path):
+    # Arrange
+    _, run, image = _prepared_run(tmp_path)
+    proc = _supervise_direct(run, image, SLEEP_60, 0.5)
+    # Act
+    proc.communicate(timeout=60)
+    # Assert
+    assert proc.returncode == 124
+
+
+def test_deadline_is_recorded_as_a_timeout(tmp_path):
+    # Arrange
+    _, run, image = _prepared_run(tmp_path)
+    proc = _supervise_direct(run, image, SLEEP_60, 0.5)
+    # Act
+    proc.communicate(timeout=60)
+    # Assert
+    assert _outcome(run)["exit"]["timed_out"] is True
+
+
+def test_command_status_passes_through_without_a_deadline_hit(tmp_path):
+    # Arrange
+    _, run, image = _prepared_run(tmp_path)
+    proc = _supervise_direct(
+        run, image, [sys.executable, "-c", "raise SystemExit(7)"], 30
+    )
+    # Act
+    proc.communicate(timeout=60)
+    # Assert
+    assert (proc.returncode, _outcome(run)["exit"]) == (7, {"code": 7})
+
+
+def test_teed_output_reaches_the_caller(tmp_path):
+    # Arrange
+    _, run, image = _prepared_run(tmp_path)
+    proc = _supervise_direct(run, image, [sys.executable, "-c", "print('out-line')"])
+    # Act
+    stdout, _ = proc.communicate(timeout=60)
+    # Assert
+    assert stdout == b"out-line\n"
+
+
+def test_teed_stderr_is_kept_in_the_run(tmp_path):
+    # Arrange
+    _, run, image = _prepared_run(tmp_path)
+    cmd = [sys.executable, "-c", "import sys; sys.stderr.write('err-line\\n')"]
+    proc = _supervise_direct(run, image, cmd)
+    # Act
+    proc.communicate(timeout=60)
+    # Assert
+    assert (run / "out" / "stderr.log").read_text() == "err-line\n"
+
+
+def test_caller_stop_is_attributed_to_the_caller(tmp_path):
+    # Arrange
+    import signal
+    import time
+
+    _, run, image = _prepared_run(tmp_path)
+    proc = _supervise_direct(run, image, SLEEP_60)
+    deadline = time.monotonic() + 30
+    while _outcome(run)["status"] != "running" and time.monotonic() < deadline:
+        time.sleep(0.1)
+    time.sleep(0.5)
+    # Act
+    proc.send_signal(signal.SIGTERM)
+    proc.communicate(timeout=60)
+    # Assert
+    assert _outcome(run)["exit"]["stopped_by"] == "caller"
