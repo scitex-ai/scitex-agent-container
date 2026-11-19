@@ -604,7 +604,7 @@ def test_leaf_workflow_calls_the_central_sif_matrix(gate_workflow) -> None:
     # Act: four caller jobs, each a bare `uses:` at the pinned org SHA.
     # A caller-local `runs-on` or `steps` would fork execution policy back
     # into this repo, which is exactly what ci.yml exists to end.
-    pin = "@cd4e545a20a1e35385ffe88f4a963ae3c500819b"
+    pin = "@3015806d742fba23cae7f782b169fe0732756ab3"
     central = "scitex-ai/.github/.github/workflows/"
     expected_uses = {
         "pytest-matrix": f"{central}pytest-matrix.yml{pin}",

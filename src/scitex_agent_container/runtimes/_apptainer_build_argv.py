@@ -126,6 +126,15 @@ def build_run_argv(
     ap_iso = getattr(config, "apptainer", None)
     relaxed = bool(getattr(ap_iso, "relaxed", False)) if ap_iso else False
 
+    # Sealed run (spec.sandbox): validated up-front so `explain` shows the
+    # refusal too. A sealed agent gets NO fleet-default binds / env, no
+    # host quota-cache bind, a private network and a per-run writable layer
+    # (see scitex_agent_container._sandbox).
+    from .._sandbox import is_sandboxed, validate_sandbox_config
+
+    sealed = is_sandboxed(config)
+    validate_sandbox_config(config)
+
     argv: list[str] = ["apptainer", "exec"]
     argv += compute_iso_prepend(config)
     # ADR-0003 D6: runtime/<name>/home/ → /home/agent. to_home/
@@ -206,7 +215,7 @@ def build_run_argv(
     # path to the telegrammer bridge so its default-path lookup hits
     # the bind without any per-agent spec change.
     quota_src = _resolve_quota_cache_host_path()
-    if quota_src.is_file():
+    if quota_src.is_file() and not sealed:
         argv += [
             "--bind",
             f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
@@ -304,7 +313,8 @@ def build_run_argv(
     from ._apptainer_bind_guard import spec_binds_checked
     from ._p3a_default_binds import apply_default_binds
 
-    for bs in apply_default_binds(spec_binds_checked(config)):
+    checked_binds = spec_binds_checked(config)
+    for bs in checked_binds if sealed else apply_default_binds(checked_binds):
         if ":" in bs:
             _, _, rest = bs.partition(":")
             dst = rest.split(":", 1)[0]
@@ -318,6 +328,11 @@ def build_run_argv(
     # Opt-in only: most agent workloads don't need the GPU and
     # binding it adds startup overhead + a hard dependency on the
     # host driver matching the container's CUDA toolkit.
+    if sealed:
+        from .._sandbox import sandbox_flags
+
+        argv += sandbox_flags(config, state_dir)
+
     ap = getattr(config, "apptainer", None)
     if ap is not None:
         if getattr(ap, "nv", False):
@@ -346,7 +361,8 @@ def build_run_argv(
     # --workdir still wins via the helper's raw_args skip.
     from ._apptainer_tmpfs import tmpfs_workdir_flags
 
-    argv += tmpfs_workdir_flags(config, state_dir)
+    if not sealed:  # a sealed run's --workdir is per-run (sandbox_flags)
+        argv += tmpfs_workdir_flags(config, state_dir)
 
     # Nested apptainer build/pull (spec.apptainer.nested_build) — lets the
     # SOLVER reproduce a capsule's pinned env from inside its own SAC
@@ -372,7 +388,7 @@ def build_run_argv(
     # WINS). See _fleet_env for the precedence rule and why it never raises.
     from ._fleet_env import effective_env
 
-    for env_key, val in effective_env(config).items():
+    for env_key, val in effective_env(config, defaults={} if sealed else None).items():
         argv += ["--env", f"{env_key}={val}"]
 
     # Layer-5 of auto-port-allocation + bus auth — harnesses that own the
@@ -538,7 +554,16 @@ def build_run_argv(
         from ._apptainer_preflight import PREFLIGHT_SCRIPT
 
         inner_str = " ".join(shlex.quote(a) for a in inner_argv)
-        argv += ["bash", "-c", f"{PREFLIGHT_SCRIPT}\nexec {inner_str}"]
+        preflighted = ["bash", "-c", f"{PREFLIGHT_SCRIPT}\nexec {inner_str}"]
+        if sealed:
+            # The whole inner tree (preflight, startup commands, harness)
+            # runs behind the egress gateway; --overlay replaces
+            # --writable-tmpfs (apptainer refuses both).
+            from .._sandbox import drop_writable_tmpfs, netgw_wrap
+
+            argv = drop_writable_tmpfs(argv) + netgw_wrap(preflighted)
+        else:
+            argv += preflighted
     # Jailed-capsule mount boundary (non-bypassable, fail-loud): forces
     # --containall + rejects shared-FS binds/--pwd. See _apptainer_jail.
     from ._apptainer_jail import enforce_jail

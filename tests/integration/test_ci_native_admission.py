@@ -153,7 +153,7 @@ def test_leaf_ci_is_only_a_central_reusable_workflow_call(workflow_doc):
     jobs = workflow_doc["jobs"]
     # Act: four caller jobs, each a bare `uses:` at the pinned org SHA with
     # no caller-local `runs-on` or `steps`.
-    pin = "@cd4e545a20a1e35385ffe88f4a963ae3c500819b"
+    pin = "@3015806d742fba23cae7f782b169fe0732756ab3"
     central = "scitex-ai/.github/.github/workflows/"
     expected_uses = {
         "pytest-matrix": f"{central}pytest-matrix.yml{pin}",

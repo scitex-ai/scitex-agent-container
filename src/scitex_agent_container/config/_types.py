@@ -331,6 +331,9 @@ class AgentConfig:
     # values in specs (values resolve from the trusted pool at launch).
     # See config._secret_scope_types.
     secret_scope: AgentSecretScope = DEFAULT_AGENT_SECRET_SCOPE
+    # Sealed run (spec.sandbox): egress allowlist, env seal, per-run reset,
+    # outcome record. None = not sandboxed. See scitex_agent_container._sandbox.
+    sandbox: Any = None
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

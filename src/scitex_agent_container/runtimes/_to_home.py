@@ -270,8 +270,11 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _stale = dest / _merge_name
         if _stale.is_file():
             _stale.unlink()
-    deploy_host_claude_commands(dest)
-    deploy_host_skills(dest)
+    if getattr(config, "sandbox", None) is None:
+        # Host ~/.claude commands/skills are host state: a sealed run
+        # (spec.sandbox) gets only what its own to_home layers declare.
+        deploy_host_claude_commands(dest)
+        deploy_host_skills(dest)
     # Run-scoped and SHARED across both layers — see materialize_to_home.
     composed_dsts: set[Path] = set()
     for _, layer_root in contributing_layers:
