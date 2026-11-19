@@ -15,7 +15,13 @@ versioning follows [SemVer](https://semver.org/).
   the run's proxy/ingress socket directory.
 - Sealed `startup_commands` run under the mask too (previously before it):
   inside the pane's mask for Claude Code / Codex, in their own masked shell
-  before the owner for Hermes / OpenCode.
+  before the owner for Hermes / OpenCode. Behaviour change for sealed
+  Hermes / OpenCode runs: variables EXPORTED by `startup_commands` no longer
+  reach the harness (filesystem effects still do); pass values through
+  `env.allow` / `apptainer.env` instead.
+- Coverage: the mask on sealed Hermes runs is verified by a real
+  `sac agents start` end-to-end run; on Claude Code / Codex / OpenCode it is
+  verified by live in-container probe tests only, not by a real harness run.
 - SAC code started inside a sealed container (the Hermes and OpenCode
   owners) no longer imports from the working directory or `PYTHONPATH`
   (it starts isolated from the launching installation instead of with
