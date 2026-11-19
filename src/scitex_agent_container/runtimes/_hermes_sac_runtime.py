@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 HERMES_BINARY = "/opt/hermes-agent/.venv/bin/hermes"
+#: SAC's source tree some images carry (importable with a PYTHONPATH).
+IMAGE_SAC_SOURCE = "/opt/scitex-agent-container-src"
 
 
 class HermesSacRuntimeError(RuntimeError):
@@ -125,8 +127,48 @@ def sac_installation(config: Any) -> SacInstallation:
     return installation
 
 
+def _sealed(config: Any) -> bool:
+    return getattr(config, "sandbox", None) is not None
+
+
+def control_plane_paths(config: Any) -> list[str]:
+    """What a sealed agent must not see: its state dir and SAC itself.
+
+    The owner keeps all of them and starts the agent tree with each one
+    covered (``_hermes_tui_owner --hide``): ``/state/<name>`` (gateway key,
+    secret env, logs), the launching installation (its whole environment
+    when it is a venv, else its ``sac`` script and package), SAC's own
+    in-image venv as a whole, and every other in-image SAC location the TUI
+    channel resolver knows (shared venvs: their SAC scripts and package).
+    """
+    from ._apptainer_inner_argv_tui import (
+        _SAC_BIN_IN_SIF_CANDIDATES,
+        _SAC_BIN_IN_SIF_DEFAULT,
+    )
+
+    installation = sac_installation(config)
+    paths = [f"/state/{config.name}"]
+    if installation.prefix != installation.base_prefix:
+        paths.append(str(installation.prefix))
+    else:
+        paths.append(str(Path(__file__).resolve().parents[1]))
+    if not installation.binary.is_relative_to(installation.prefix):
+        paths.append(str(installation.binary))
+    paths.append(str(Path(_SAC_BIN_IN_SIF_DEFAULT).parents[1]))
+    for candidate in _SAC_BIN_IN_SIF_CANDIDATES:
+        paths += [candidate, str(Path(candidate).with_name("scitex-agent-container"))]
+    paths.append(IMAGE_SAC_SOURCE)
+    return list(dict.fromkeys(paths))
+
+
 def sac_runtime_env_flags(config: Any) -> list[str]:
-    """Prepend the standard scripts directory without replacing image tools."""
+    """Prepend the standard scripts directory without replacing image tools.
+
+    A sealed run gets none of it: its agent must not find SAC on ``PATH``
+    (the owner is started by absolute interpreter path and needs no PATH).
+    """
+    if _sealed(config):
+        return []
     binary = sac_installation(config).binary
     return [
         "--env",
@@ -139,13 +181,22 @@ def sac_runtime_env_flags(config: Any) -> list[str]:
 
 
 def bind_sac_mcp_command(config: Any, servers: dict[str, dict[str, Any]]) -> None:
-    """Use the same installed CLI for builtin SAC stdio MCP servers."""
+    """Use the same installed CLI for builtin SAC stdio MCP servers.
+
+    A sealed run refuses them: its agent tree cannot reach SAC (hidden), and
+    SAC's control actions are exactly what minimal authority withholds.
+    """
     binary = str(sac_installation(config).binary)
     for name, server in servers.items():
         if (
             name in {"sac", "scitex-agent-container"}
             or Path(str(server.get("command", ""))).name == "sac"
         ):
+            if _sealed(config):
+                raise HermesSacRuntimeError(
+                    "spec.sandbox hides SAC from the agent; remove the SAC MCP "
+                    f"server {name!r} from the sealed agent's MCP config"
+                )
             server["command"] = binary
 
 
@@ -164,6 +215,20 @@ def _bind_sources(argv: Sequence[str]) -> dict[Path, Path]:
             # Apptainer's first bind to an exact destination wins.
             sources.setdefault(destination, source)
     return sources
+
+
+def _refuse_exposed_sac(installation: SacInstallation, declared: dict) -> None:
+    """A sealed agent's environment must not point it at SAC."""
+    exposed = [key for key in ("SAC_BIN", "SAC_BIN_IN_SIF") if declared.get(key)]
+    prepend = declared.get("PREPEND_PATH", "").split(":")
+    if str(installation.binary.parent) in prepend:
+        exposed.append("PREPEND_PATH")
+    if exposed:
+        raise HermesSacRuntimeError(
+            "spec.sandbox hides SAC from the agent, but the finalized "
+            f"environment points it at SAC via {', '.join(exposed)}; remove "
+            "those declarations"
+        )
 
 
 def validate_sac_runtime(config: Any, *, launch_argv: Sequence[str]) -> None:
@@ -199,6 +264,9 @@ def validate_sac_runtime(config: Any, *, launch_argv: Sequence[str]) -> None:
             if separator:
                 declared[key] = content
     binary = str(installation.binary)
+    if _sealed(config):
+        _refuse_exposed_sac(installation, declared)
+        return
     if declared.get("PREPEND_PATH", "").split(":")[0] != str(
         installation.binary.parent
     ) or any(declared.get(key) != binary for key in ("SAC_BIN", "SAC_BIN_IN_SIF")):

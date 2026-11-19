@@ -41,6 +41,16 @@ versioning follows [SemVer](https://semver.org/).
   refuse name-claimed calls. The default will flip to refuse once the fleet
   has restarted onto token-carrying launches (no `name-claimed` lines left in
   `host_exec.log`).
+- Sealed runs (`spec.sandbox`): a sealed Hermes agent could see SAC's own
+  control-plane state and installation. The in-container owner now starts
+  the agent tree in a nested namespace that hides the per-agent state dir,
+  the launching SAC installation and the image's SAC, shows the agent only
+  its own processes, and hands the gateway its API key outside any
+  environment the agent can read. No SAC CLI is put on a sealed agent's
+  `PATH`, and a SAC MCP server is refused for a sealed agent
+  (docs/sandbox.md). Every process SAC starts on the agent's behalf runs
+  isolated from the working directory and `PYTHONPATH`, so nothing the
+  agent writes can be imported by a process that still sees those paths.
 
 ## [0.40.0] - 2026-11-19
 

@@ -177,7 +177,11 @@ def _hermes_tui_inner_argv(
     """
     del options
     from ..runtimes._hermes_context_gc import DEFAULT_MAX_SESSION_AGE_MINUTES
-    from ..runtimes._hermes_sac_runtime import HERMES_BINARY, sac_installation
+    from ..runtimes._hermes_sac_runtime import (
+        HERMES_BINARY,
+        control_plane_paths,
+        sac_installation,
+    )
 
     configured_max_age = config.claude.continue_max_age_minutes
     max_age = min(
@@ -195,6 +199,13 @@ def _hermes_tui_inner_argv(
         f"/state/{config.name}",
         "--max-session-age-minutes",
         str(max_age),
+    ]
+    if getattr(config, "sandbox", None) is not None:
+        # Sealed: the owner starts Hermes (and so every tool child) with
+        # the state dir and SAC itself hidden (runtimes/_hermes_hidden_launch).
+        for path in control_plane_paths(config):
+            argv += ["--hide", path]
+    argv += [
         "--",
         HERMES_BINARY,
         "chat",
