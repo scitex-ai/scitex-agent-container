@@ -63,6 +63,7 @@ def _print_version(ctx: click.Context, param, value) -> None:
 # ---------------------------------------------------------------------------
 COMMAND_CATEGORIES = [
     ("Agent", ["agents", "subagent", "config"]),
+    ("Sealed runs", ["sandbox"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
     ("Account", ["accounts"]),
     (
@@ -123,6 +124,7 @@ class _MainGroup(LazyGroup):
         # (incident-worktree-sprawl-permanent-gc-20260710 — one repo hit
         # 105 worktrees and helped trigger a host load-spike).
         "worktree": f"{_PKG}.worktree_group:worktree_group",
+        "sandbox": f"{_PKG}.sandbox_group:sandbox_group",
         # `accounts` is a top-level noun — the credential store is fleet-wide,
         # not agent-scoped. Reuses the underlying `account` click group;
         # `accounts` is just the plural surface name.
@@ -279,6 +281,7 @@ class _MainGroup(LazyGroup):
         "list-auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
+        "sandbox": "Sealed runs of plain commands (no agent harness, no model key).",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }

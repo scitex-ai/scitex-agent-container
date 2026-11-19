@@ -30,6 +30,7 @@ __all__ = [
     "AFTER_MODES",
     "SandboxSpec",
     "parse_allow_entry",
+    "parse_run_root",
     "parse_sandbox",
     "parse_size_mb",
 ]
@@ -49,11 +50,16 @@ _FORBIDDEN_ROOTS = ("/tmp", "/var/tmp", "/dev/shm", "/run")
 
 @dataclass(frozen=True)
 class SandboxSpec:
-    """Parsed ``spec.sandbox`` (immutable)."""
+    """Parsed ``spec.sandbox`` (immutable).
+
+    ``model_key`` is ``None`` only for a plain-command run (``sac sandbox
+    exec``, :mod:`._exec`): no harness, so no model key. ``parse_sandbox``
+    (an agent spec) always requires it.
+    """
 
     egress_allow: tuple[tuple[str, int], ...]
     env_allow: tuple[str, ...]
-    model_key: str
+    model_key: str | None
     run_root: str
     run_size_mb: int
     run_after: str
@@ -124,7 +130,8 @@ def _names(raw, path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
-def _run_root(raw) -> str:
+def parse_run_root(raw) -> str:
+    """An absolute run root on durable disk; tmp/RAM mounts are refused."""
     if not isinstance(raw, str) or not raw.strip():
         raise _fail("run.root", "must be an absolute path string")
     root = os.path.expanduser(os.path.expandvars(raw.strip()))
@@ -173,7 +180,7 @@ def parse_sandbox(spec: dict) -> SandboxSpec | None:
         egress_allow=allow,
         env_allow=_names(env["allow"], "env.allow"),
         model_key=model_key,
-        run_root=_run_root(run["root"]),
+        run_root=parse_run_root(run["root"]),
         run_size_mb=parse_size_mb(run["size"]),
         run_after=after,
     )

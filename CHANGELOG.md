@@ -29,6 +29,26 @@ versioning follows [SemVer](https://semver.org/).
 - `sac agents explain` shows a `HOST EXEC` banner and every grant with its
   source (explicit, or implicit legacy default); `sac agents check` warns on
   host exec and on specs that rely on the legacy default.
+- `sac sandbox exec` — a sealed run of a PLAIN COMMAND (no agent harness,
+  no model key): `--image SIF --run-root DIR --timeout S [--egress-allow
+  H:P ...] [--bind SRC:DST[:ro|rw] ...] [--env-allow NAME ...] [--size-mb N]
+  [--after archive|remove] [--name N] [--pwd DIR] [--dry-run] -- argv...`.
+  Same guarantees as a sealed agent (`spec.sandbox`): `--network none` +
+  the allowlisting egress proxy (empty allowlist by default: no egress at
+  all; allowed/blocked logged), env seal (only `--env-allow` names from the
+  caller's env plus `LANG`/`TERM`; dropped NAMES recorded), a fresh writable
+  layer per run on durable disk (`/tmp` roots refused), and
+  `out/outcome.json` (timestamps, exit, image sha256, SAC version, env
+  names, egress summary, files written; `kind: "command"`). Nothing of SAC
+  is mounted. stdout/stderr stream to the caller and are kept in
+  `out/stdout.log` / `out/stderr.log`; sac exits with the command's status
+  (124 on `--timeout`, recorded as `exit.timed_out`); a SIGINT/SIGTERM to
+  sac is forwarded and recorded as `exit.stopped_by: "caller"`. Reuses the
+  sealed-run machinery: `_run.prepare_run_dir` / `finalize_run` (split out
+  of `begin_run` / `end_run`), `_argv.run_flags` (split out of
+  `sandbox_flags`) and `_supervisor.supervise` (split out of the supervisor
+  entry point, with a deadline, a stdout/stderr tee and caller-stop
+  attribution; watchers moved to `_sandbox/_watch.py`). Closes #1793.
 
 ## [0.41.0] - 2026-11-19
 
