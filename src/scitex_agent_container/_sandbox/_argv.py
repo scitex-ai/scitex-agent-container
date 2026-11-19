@@ -22,6 +22,7 @@ __all__ = [
     "drop_writable_tmpfs",
     "is_sandboxed",
     "netgw_wrap",
+    "run_flags",
     "sandbox_flags",
     "supervised_argv",
 ]
@@ -36,7 +37,15 @@ def is_sandboxed(config: Any) -> bool:
 
 def sandbox_flags(config: Any, state_dir: Path) -> list[str]:
     """Network seal + the run-scoped writable layer, via the stable run link."""
-    rp = RunPaths(run_link(state_dir))
+    return run_flags(RunPaths(run_link(state_dir)))
+
+
+def run_flags(rp: RunPaths) -> list[str]:
+    """Network seal + the writable layer of the run rooted at ``rp``.
+
+    Shared by the agent launch (through the stable run link) and the
+    plain-command run (``sac sandbox exec``, the real run dir).
+    """
     return [
         "--net",
         "--network",

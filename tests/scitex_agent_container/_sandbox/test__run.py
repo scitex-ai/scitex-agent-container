@@ -17,7 +17,13 @@ import pytest
 
 from scitex_agent_container._sandbox._layout import RunPaths
 from scitex_agent_container._sandbox._outcome import atomic_write_json, read_json
-from scitex_agent_container._sandbox._run import begin_run, current_run, end_run
+from scitex_agent_container._sandbox._run import (
+    begin_run,
+    current_run,
+    end_run,
+    finalize_run,
+    prepare_run_dir,
+)
 from scitex_agent_container._sandbox._spec import parse_sandbox
 
 ROOT = os.environ.get("SAC_SANDBOX_TEST_ROOT", "")
@@ -130,3 +136,33 @@ def test_current_run_follows_the_link(cfg_and_state):
     # Assert
     assert got == run_dir
 
+
+# Plain-command runs (sac sandbox exec): a run dir with no state-dir links.
+
+
+def test_prepared_command_run_touches_no_state_dir(cfg_and_state):
+    # Arrange
+    cfg, state = cfg_and_state
+    # Act
+    prepare_run_dir(cfg.sandbox, "exec", record={"kind": "command"})
+    # Assert
+    assert not state.exists()
+
+
+def test_prepared_command_run_records_its_kind(cfg_and_state):
+    # Arrange
+    cfg, _ = cfg_and_state
+    # Act
+    run_dir = prepare_run_dir(cfg.sandbox, "exec", record={"kind": "command"})
+    # Assert
+    assert read_json(RunPaths(run_dir).outcome)["kind"] == "command"
+
+
+def test_finalized_command_run_claims_no_harness_usage(cfg_and_state):
+    # Arrange
+    cfg, _ = cfg_and_state
+    rp = RunPaths(prepare_run_dir(cfg.sandbox, "exec", record={"kind": "command"}))
+    # Act
+    rec = finalize_run(rp)
+    # Assert
+    assert "token_usage" not in rec and "tool_calls" not in rec

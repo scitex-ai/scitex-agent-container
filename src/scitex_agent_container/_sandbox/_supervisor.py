@@ -17,6 +17,11 @@ When the container exits it writes the exit status (``exit_code`` file and
 ``outcome.json``, both atomically) and the egress summary, and exits with
 the container's status. Teardown that may be slow (file listings, removal)
 is ``end_run``'s, in ``sac agents stop``.
+
+:func:`main` is the agent pane's entry (resolves the run through the state
+dir's run link); :func:`supervise` is the run itself, also called in the
+foreground by ``sac sandbox exec`` (:mod:`._exec`) with a deadline, a
+stdout/stderr tee and caller-stop attribution (:class:`SuperviseOptions`).
 """
 
 from __future__ import annotations
@@ -30,82 +35,29 @@ import signal
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from ._layout import RunPaths, run_link
 from ._outcome import atomic_write_json, atomic_write_text, manifest, read_json, utc_now
 from ._proxy import EgressProxy
+from ._watch import Deadline, SizeWatchdog, run_dir_bytes, start_tee
 
 __all__ = [
     "SizeWatchdog",
+    "SuperviseOptions",
     "main",
     "minimal_process_env",
     "rewrite_run_paths",
     "run_dir_bytes",
     "seal_env_flags",
+    "supervise",
 ]
 
 #: Exit status when the run cannot even be set up (no container started).
 EXIT_SETUP = 96
-#: How often the run.size watchdog measures the run dir, and the grace
-#: between its SIGTERM and SIGKILL.
-SIZE_POLL_S = 5.0
-SIZE_KILL_GRACE_S = 10.0
-
-
-def run_dir_bytes(run_dir: Path, exclude: tuple[str, ...] = ("out", "secrets")) -> int:
-    """Allocated bytes under ``run_dir`` (overlay, $HOME, /tmp, /uvwork, ...)."""
-    total = 0
-    for entry in os.scandir(run_dir):
-        if entry.name in exclude:
-            continue
-        if not entry.is_dir(follow_symlinks=False):
-            total += entry.stat(follow_symlinks=False).st_blocks * 512
-            continue
-        for dirpath, _dirs, files in os.walk(entry.path):
-            for fn in files:
-                try:
-                    total += os.lstat(os.path.join(dirpath, fn)).st_blocks * 512
-                except OSError:
-                    continue
-    return total
-
-
-class SizeWatchdog(threading.Thread):
-    """Enforces ``run.size`` over the WHOLE writable run dir.
-
-    A FUSE ext3 overlay image would cap only the rootfs layer and is slow
-    on loaded hosts; measuring the run dir caps $HOME, /tmp and /uvwork too.
-    On overflow the container is terminated and the reason recorded.
-    """
-
-    def __init__(
-        self, run_dir: Path, limit_bytes: int, child, *, poll_s: float = SIZE_POLL_S
-    ):
-        super().__init__(name="sac-size-watchdog", daemon=True)
-        self.run_dir, self.limit, self.child, self.poll_s = (
-            run_dir,
-            limit_bytes,
-            child,
-            poll_s,
-        )
-        self.exceeded_at_bytes: int | None = None
-        self.peak = 0
-        self.stop_evt = threading.Event()
-
-    def run(self) -> None:
-        while not self.stop_evt.wait(self.poll_s):
-            used = run_dir_bytes(self.run_dir)
-            self.peak = max(self.peak, used)
-            if used > self.limit:
-                self.exceeded_at_bytes = used
-                self.child.terminate()
-                if (
-                    self.stop_evt.wait(SIZE_KILL_GRACE_S) is False
-                    and self.child.poll() is None
-                ):
-                    self.child.kill()
-                return
+#: Exit status of a run its ``timeout`` ended (as coreutils ``timeout``).
+EXIT_TIMEOUT = 124
 
 
 def minimal_process_env(parent: dict | None = None) -> dict[str, str]:
@@ -241,6 +193,26 @@ def _fail_setup(msg: str) -> int:
     return EXIT_SETUP
 
 
+@dataclass(frozen=True)
+class SuperviseOptions:
+    """How :func:`supervise` runs one prepared run.
+
+    ``stop_by`` names who a stop signal came from when it is not ``sac
+    agents stop`` (the plain-command run: ``"caller"``); ``timeout_s`` > 0
+    ends the run after that many seconds; ``tee`` copies the container's
+    stdout/stderr to the caller and to ``out/stdout.log`` / ``out/stderr.log``.
+    """
+
+    image: str
+    egress_allow: tuple[tuple[str, int], ...] = ()
+    allow_env: frozenset[str] = frozenset()
+    size_mb: int = 0
+    scrub_roots: tuple[Path, ...] = ()
+    timeout_s: float = 0.0
+    tee: bool = False
+    stop_by: str | None = None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="sac-sandbox supervise")
     ap.add_argument("--state-dir", required=True)
@@ -262,39 +234,61 @@ def main(argv: list[str] | None = None) -> int:
         )
     run_dir = link.resolve()
     rp = RunPaths(run_dir)
-    rec = read_json(rp.outcome)
-    if rec is None or rec.get("status") != "prepared":
-        return _fail_setup(
-            f"run {run_dir} is not in state 'prepared' (got {rec and rec.get('status')})"
-        )
-
     cmd = rewrite_run_paths(
         cmd, {str(link): str(run_dir), str(state_dir / "home"): str(rp.home)}
-    )
-    cmd, env_names = seal_env_flags(
-        cmd,
-        frozenset(a.allow_env),
-        rp.secrets,
-        scrub_roots=(state_dir.resolve(), rp.home.resolve()),
     )
     allow = []
     for entry in a.egress_allow:
         host, _, port = entry.rpartition(":")
         allow.append((host, int(port)))
+    opts = SuperviseOptions(
+        image=a.image,
+        egress_allow=tuple(allow),
+        allow_env=frozenset(a.allow_env),
+        size_mb=a.size_mb,
+        scrub_roots=(state_dir.resolve(), rp.home.resolve()),
+    )
+    return supervise(run_dir, cmd, opts)
+
+
+def _stop_reason(signum: int, stop_by: str | None) -> str:
+    name = signal.Signals(signum).name
+    if stop_by:
+        return f"terminated by {name} from the {stop_by}; forwarded to the container"
+    return f"terminated by {name} (e.g. `sac agents stop`); forwarded to the container"
+
+
+def supervise(run_dir: Path, cmd: list[str], opts: SuperviseOptions) -> int:
+    """Run ``cmd`` (``apptainer exec ...``) as the prepared run at ``run_dir``.
+
+    Returns the container's exit status (``EXIT_TIMEOUT`` when the deadline
+    ended it, ``EXIT_SETUP`` when the run could not start).
+    """
+    rp = RunPaths(Path(run_dir))
+    rec = read_json(rp.outcome)
+    if rec is None or rec.get("status") != "prepared":
+        return _fail_setup(
+            f"run {run_dir} is not in state 'prepared' (got {rec and rec.get('status')})"
+        )
+    cmd, env_names = seal_env_flags(
+        cmd, opts.allow_env, rp.secrets, scrub_roots=opts.scrub_roots
+    )
     atomic_write_json(rp.out / "home_manifest_start.json", manifest(rp.home))
     rec.update(
         {
             "status": "running",
             "started_at": utc_now(),
             "image": {
-                "path": str(Path(a.image).resolve()),
-                "sha256": _sha256(Path(a.image)),
+                "path": str(Path(opts.image).resolve()),
+                "sha256": _sha256(Path(opts.image)),
             },
             "env": env_names,
             "supervisor_pid": os.getpid(),
         }
     )
-    proxy = EgressProxy(rp.proxy_sock, rp.out, allow, ingress_path=rp.ingress_sock)
+    proxy = EgressProxy(
+        rp.proxy_sock, rp.out, list(opts.egress_allow), ingress_path=rp.ingress_sock
+    )
     try:
         proxy.start()
     except (OSError, RuntimeError, ValueError) as exc:
@@ -314,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     live: dict = {"child": None, "watchdog": None}
 
     def _forward(signum, _frame):
+        live.setdefault("signal", signum)
         # Record the termination FIRST: a pane teardown follows SIGTERM with
         # SIGKILL within seconds, often before apptainer's runtime parent has
         # finished unmounting, so the post-wait write below may never run.
@@ -325,8 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                     "exit": {
                         "code": None,
                         "signal": signum,
-                        "reason": f"terminated by {signal.Signals(signum).name} "
-                        "(e.g. `sac agents stop`); forwarded to the container",
+                        "reason": _stop_reason(signum, opts.stop_by),
                     },
                     "egress": proxy.summary(),
                 }
@@ -334,9 +328,11 @@ def main(argv: list[str] | None = None) -> int:
             from ._run import stop_attribution
 
             rec["exit"].update(stop_attribution(rp) or {})
+            if opts.stop_by:
+                rec["exit"]["stopped_by"] = opts.stop_by
             if live["watchdog"] is not None:
                 rec["size"] = {
-                    "limit_mb": a.size_mb,
+                    "limit_mb": opts.size_mb,
                     "peak_bytes": live["watchdog"].peak,
                 }
             atomic_write_text(rp.exit_code, f"{128 + signum}\n", mode=0o644)
@@ -382,9 +378,12 @@ def main(argv: list[str] | None = None) -> int:
         stop_evt.set()
         proxy.stop()
         return 128 + int((rec.get("exit") or {}).get("signal") or 0)
+    pipe = subprocess.PIPE if opts.tee else None
     child = subprocess.Popen(
         cmd,
         env=minimal_process_env(dict(os.environ)),
+        stdout=pipe,
+        stderr=pipe,
         # the child must not inherit the blocked mask
         preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals),
     )
@@ -396,12 +395,23 @@ def main(argv: list[str] | None = None) -> int:
         except ProcessLookupError:
             pass
     signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
-    watchdog = None
-    if a.size_mb > 0:
-        watchdog = SizeWatchdog(run_dir, a.size_mb * 1024 * 1024, child)
+    tees = []
+    if opts.tee:
+        tees = [
+            start_tee(child.stdout, sys.stdout.buffer, rp.out / "stdout.log"),
+            start_tee(child.stderr, sys.stderr.buffer, rp.out / "stderr.log"),
+        ]
+    watchdog = deadline = None
+    if opts.size_mb > 0:
+        watchdog = SizeWatchdog(run_dir, opts.size_mb * 1024 * 1024, child)
         live["watchdog"] = watchdog
         watchdog.start()
+    if opts.timeout_s > 0:
+        deadline = Deadline(opts.timeout_s, child)
+        deadline.start()
     rc = child.wait()
+    for t in tees:
+        t.join(timeout=10)
     stop_evt.set()
     summary = proxy.stop()
     for p in rp.secrets.glob("env-*"):
@@ -416,17 +426,38 @@ def main(argv: list[str] | None = None) -> int:
             "reason",
             "stopped by SAC (sac agents stop); the container's own exit status is code/signal",
         )
+    if opts.stop_by and live.get("signal"):
+        exit_doc.update(
+            {
+                "stopped_by": opts.stop_by,
+                "stop_signal": live["signal"],
+                "reason": _stop_reason(live["signal"], opts.stop_by),
+            }
+        )
     if watchdog is not None:
         watchdog.stop_evt.set()
-        rec["size"] = {"limit_mb": a.size_mb, "peak_bytes": watchdog.peak}
+        rec["size"] = {"limit_mb": opts.size_mb, "peak_bytes": watchdog.peak}
         if watchdog.exceeded_at_bytes is not None:
             exit_doc["reason"] = (
-                f"run.size exceeded: {watchdog.exceeded_at_bytes} bytes > {a.size_mb} MB; "
-                "container terminated by SAC"
+                f"run.size exceeded: {watchdog.exceeded_at_bytes} bytes > "
+                f"{opts.size_mb} MB; container terminated by SAC"
             )
+    status = rc if rc >= 0 else 128 - rc
+    if deadline is not None:
+        deadline.stop_evt.set()
+        if deadline.fired:
+            exit_doc.update(
+                {
+                    "timed_out": True,
+                    "timeout_s": opts.timeout_s,
+                    "reason": f"timeout: still running after {opts.timeout_s:g} s; "
+                    "container terminated by SAC (code/signal are its own status)",
+                }
+            )
+            status = EXIT_TIMEOUT
     rec.update(
         {"status": "exited", "ended_at": utc_now(), "exit": exit_doc, "egress": summary}
     )
-    atomic_write_text(rp.exit_code, f"{rc if rc >= 0 else 128 - rc}\n", mode=0o644)
+    atomic_write_text(rp.exit_code, f"{status}\n", mode=0o644)
     atomic_write_json(rp.outcome, rec)
-    return rc if rc >= 0 else 128 - rc
+    return status
