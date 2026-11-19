@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import tempfile
 from typing import Iterator
 
 import pytest
@@ -35,27 +36,61 @@ import pytest
 # PostgreSQL isolation, introduced with the storage migration (2026-08-19)
 # ----------------------------------------------------------------------
 
-#: The per-host store. Loopback only — every fleet PostgreSQL refuses
-#: non-local connections at pg_hba, measured 2026-08-19.
-#:
-#: NO USERINFO IN THE DSN (2026-08-24). This used to read
-#: ``postgresql://scitex_cards@...``. That role was the fleet's single shared
-#: superuser and it has been demoted to NOLOGIN, so a DSN naming it now fails
-#: to authenticate everywhere at once. Identity travels in ``PGUSER`` instead
-#: (the same convention every agent launches with — see
-#: ``runtimes/_pg_identity_env``), and the password stays in ``~/.pgpass``
-#: where libpq finds it without any credential entering this file.
-PG_BASE_DSN = os.environ.get("SAC_TEST_PG_DSN", "postgresql://127.0.0.1:55432/scitex")
+# The fleet's database endpoints, and the refusal that keeps every test off
+# them, live in tests/_fleet_db_guard.py (measurement and rationale there).
+from tests._fleet_db_guard import (  # noqa: E402
+    fleet_endpoint_named_by,
+    fleet_env_leaks,
+    refuse_fleet_dsn,
+)
 
-#: Was the target DECLARED, or did we fall back to the default?
+#: What ``SCITEX_STORE_DSN`` was when pytest started, captured BEFORE the
+#: module-level assignment below replaces it.
+_STORE_DSN_AT_START = os.environ.get("SCITEX_STORE_DSN", "")
+
+#: Where the throwaway test database comes from, in precedence order:
 #:
-#: The distinction decides skip-vs-fail, and it is the whole point. "This
-#: laptop has no cluster" is a fact about a machine and may be skipped. "The
-#: target somebody explicitly configured does not work" is a
-#: MISCONFIGURATION, and a misconfiguration that skips is indistinguishable
-#: from a pass — which is exactly how this suite came to report green while
-#: executing zero PostgreSQL coverage.
-PG_DSN_WAS_DECLARED = "SAC_TEST_PG_DSN" in os.environ
+#: 1. ``SAC_TEST_PG_DSN`` — declared explicitly. A fleet endpoint here is a
+#:    hard error at startup, not a skip.
+#: 2. ``SCITEX_STORE_DSN`` as the run was started — but ONLY when it is not a
+#:    fleet endpoint. This is how CI hands over its database: the shared
+#:    ``pytest-matrix`` reusable, called with ``postgres: true``, starts a
+#:    ``postgres:16`` service container and exports exactly this variable. On
+#:    an operator's shell the same variable names the fleet, and is ignored.
+#: 3. Nothing. There is NO default any more. It used to be
+#:    ``postgresql://127.0.0.1:55432/scitex`` — the fleet's own port, which on
+#:    scitex-nas-03 is the live pooler. "No test database" now means the
+#:    PostgreSQL tests skip (or fail under ``SAC_TEST_PG_REQUIRED=1``) without
+#:    opening a socket.
+#:
+#: NO USERINFO IS ADDED (2026-08-24): identity travels in ``PGUSER`` or in the
+#: declared DSN itself; ``scitex_cards`` was demoted to NOLOGIN.
+if os.environ.get("SAC_TEST_PG_DSN"):
+    refuse_fleet_dsn(os.environ["SAC_TEST_PG_DSN"], source="SAC_TEST_PG_DSN")
+    PG_TEST_DSN_SOURCE = "SAC_TEST_PG_DSN"
+    _declared_dsn = os.environ["SAC_TEST_PG_DSN"]
+elif (
+    _STORE_DSN_AT_START
+    and not fleet_endpoint_named_by(_STORE_DSN_AT_START)
+    # A nested pytest inherits this module's own unreachable sentinel.
+    and "tests_must_not_write_to_the_fleet_store" not in _STORE_DSN_AT_START
+):
+    PG_TEST_DSN_SOURCE = "SCITEX_STORE_DSN"
+    _declared_dsn = _STORE_DSN_AT_START
+else:
+    PG_TEST_DSN_SOURCE = ""
+    _declared_dsn = ""
+
+#: Exported for the handful of modules that open their own base connection.
+#: With no test database it is a DSN that cannot connect (port 1), never a
+#: fleet default, so a stray use fails instantly and harmlessly.
+PG_BASE_DSN = _declared_dsn or "postgresql://127.0.0.1:1/no_test_database_configured"
+
+#: Was the target DECLARED? Decides skip-vs-fail when it is unusable: "this
+#: machine has no test database" may skip; "the database somebody configured
+#: does not work" is a misconfiguration, and a misconfiguration that skips is
+#: indistinguishable from a pass.
+PG_DSN_WAS_DECLARED = bool(PG_TEST_DSN_SOURCE)
 
 #: Set to "1" to make an unusable target a hard FAILURE rather than a skip.
 #:
@@ -79,7 +114,9 @@ PG_REQUIRED = os.environ.get("SAC_TEST_PG_REQUIRED") == "1"
 #: real cluster by accident. The cluster lost a primary-key index to a libc
 #: mismatch on 2026-08-25; it does not need CI creating and dropping schemas
 #: in it as well.
-FLEET_SYSTEM_ID = os.environ.get("SAC_TEST_PG_FORBIDDEN_SYSTEM_ID", "7672112238472680366")
+FLEET_SYSTEM_ID = os.environ.get(
+    "SAC_TEST_PG_FORBIDDEN_SYSTEM_ID", "7672112238472680366"
+)
 
 
 def pg_endpoint_port() -> str:
@@ -165,6 +202,22 @@ _UNREACHABLE_DSN = (
 # the variable cannot leak the change into its neighbours.
 os.environ["SCITEX_STORE_DSN"] = _UNREACHABLE_DSN
 
+# NO CREDENTIALS EITHER (2026-11-19). The DSN above only covers code that reads
+# SCITEX_STORE_DSN. A `sac` child whose env lost that variable falls through to
+# the fleet default (runtimes/_fleet_env.py) and, on a self-hosted runner whose
+# HOME is the real one, finds a password for it in ~/.pgpass — measured: the
+# lesson-script tests ran `sac agents list` against scitex-primary:55432. So
+# every process this suite starts inherits an identity that cannot log in
+# anywhere: a role that does not exist, and an empty password file. pg_schema
+# swaps the real identity back in for exactly its own window (PG_TEST_USER and
+# _PGPASS_AT_IMPORT were captured above, before this line).
+_EMPTY_PGPASS = os.path.join(tempfile.mkdtemp(prefix="sac-tests-no-pgpass-"), "pgpass")
+with open(_EMPTY_PGPASS, "w", encoding="utf-8"):
+    pass
+os.chmod(_EMPTY_PGPASS, 0o600)
+os.environ["PGPASSFILE"] = _EMPTY_PGPASS
+os.environ["PGUSER"] = "sac_tests_have_no_fleet_identity"
+
 
 @pytest.fixture(autouse=True)
 def _no_accidental_fleet_store_writes() -> Iterator[None]:
@@ -197,6 +250,11 @@ def _no_accidental_fleet_store_writes() -> Iterator[None]:
     Tests that need a REAL store take ``pg_schema``, which depends on this
     fixture and overwrites the variable afterwards, so the ordering is
     guaranteed by the dependency rather than by pytest's autouse rules.
+
+    FAILS LOUDLY when a test leaves the process pointed at the fleet (added
+    2026-11-19): at teardown, before anything is restored, the store DSN and
+    libpq's own ``PGHOST``/``PGPORT`` are checked. A test that repoints the
+    store at the fleet, by any route, errors instead of passing.
     """
     key = "SCITEX_STORE_DSN"
     saved = os.environ.get(key)
@@ -204,10 +262,18 @@ def _no_accidental_fleet_store_writes() -> Iterator[None]:
     try:
         yield
     finally:
+        leaked = fleet_env_leaks(os.environ)
         if saved is None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
+        if leaked:
+            pytest.fail(
+                "This test pointed the process at the LIVE fleet database: "
+                + "; ".join(leaked)
+                + ". Use pg_schema (a throwaway database) or an unreachable DSN.",
+                pytrace=False,
+            )
 
 
 @pytest.fixture()
@@ -301,6 +367,17 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
             pytest.fail(message, pytrace=False)
         pytest.skip(message)
 
+    # No throwaway database declared -> never open a socket. There is no
+    # default target any more (the old one, 127.0.0.1:55432, is the fleet's
+    # own port); see PG_TEST_DSN_SOURCE.
+    if not PG_TEST_DSN_SOURCE:
+        _unusable(
+            "no throwaway test database configured (set SAC_TEST_PG_DSN, or run "
+            "under the CI postgres service)",
+            hard=PG_REQUIRED,
+        )
+    refuse_fleet_dsn(PG_BASE_DSN, source=PG_TEST_DSN_SOURCE)
+
     try:
         with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
             # Refuse the production cluster BEFORE issuing any DDL. On a
@@ -346,7 +423,10 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         # fleet is one primary plus read-only replicas, so loopback on a
         # runner is a replica BY DESIGN and this is now the expected shape
         # until CI provisions its own database.
-        _unusable(f"the server is a read-only replica ({exc})", hard=PG_REQUIRED or PG_DSN_WAS_DECLARED)
+        _unusable(
+            f"the server is a read-only replica ({exc})",
+            hard=PG_REQUIRED or PG_DSN_WAS_DECLARED,
+        )
     except psycopg.OperationalError as exc:
         # SKIP, not fail: not every machine that runs this suite still has a
         # local cluster. The fleet's stores were consolidated onto the primary
@@ -367,7 +447,9 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         # unconditional: if somebody DECLARED SAC_TEST_PG_DSN, an unreachable
         # target is their configuration being wrong, not this machine lacking
         # a cluster, and it fails.
-        _unusable(f"no reachable PostgreSQL ({exc})", hard=PG_REQUIRED or PG_DSN_WAS_DECLARED)
+        _unusable(
+            f"no reachable PostgreSQL ({exc})", hard=PG_REQUIRED or PG_DSN_WAS_DECLARED
+        )
 
     key = "SCITEX_STORE_DSN"
     saved = os.environ.get(key)
@@ -381,7 +463,9 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
     options = psycopg.conninfo.conninfo_to_dict(PG_BASE_DSN).get("options", "")
     query = [part for part in query if unquote(part.partition("=")[0]) != "options"]
     options = quote(f"{options} -csearch_path={schema}".strip(), safe="")
-    os.environ[key] = urlunsplit(parts._replace(query="&".join([*query, f"options={options}"])))
+    os.environ[key] = urlunsplit(
+        parts._replace(query="&".join([*query, f"options={options}"]))
+    )
     try:
         yield schema
     finally:
