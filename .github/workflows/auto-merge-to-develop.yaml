@@ -169,13 +169,34 @@ jobs:
     # reads; it is noise that hides real failures. The fail-closed GATE is
     # unchanged: an operator who provisions 1-3 sets the variable to 'true',
     # and from then on a missing/unreadable precondition is red again, as it
-    # should be. Until then the job is skipped and merges nothing, which is
-    # exactly what it did before, without the false alarm.
-    if: ${{ vars.SAC_AUTOMERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || github.event.check_suite.conclusion == 'success') }}
+    # should be. Until then the merge steps are skipped and nothing merges,
+    # exactly as before, without the false alarm.
+    #
+    # The gate is a STEP, not a job-level `if:`: THE RUN HISTORY IS THE
+    # HEARTBEAT (header). Every tick still runs this job and leaves a green
+    # record whose first step names the disabled state, so a scheduler that
+    # stops firing is still a visible gap.
+    if: ${{ github.event_name != 'check_suite' || github.event.check_suite.conclusion == 'success' }}
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 15
     steps:
+      - name: Opt-in gate (SAC_AUTOMERGE_ENABLED)
+        id: optin
+        env:
+          ENABLED: ${{ vars.SAC_AUTOMERGE_ENABLED }}
+        run: |
+          if [ "$ENABLED" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "auto-merge drain ENABLED — the fail-closed protection GATE applies"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            msg="auto-merge drain DISABLED: repository variable SAC_AUTOMERGE_ENABLED is not 'true'. Nothing will merge. To enable, provision SAC_BRANCH_PROTECTION_READ_TOKEN, make develop protection strict, restrict main pushes (excluding github-actions), then set the variable."
+            echo "::notice::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Ensure the gh CLI exists (the bare Spartan node has none)
+        if: steps.optin.outputs.enabled == 'true'
         # $GITHUB_PATH only affects SUBSEQUENT steps, so this must be its own
         # step. No sudo / no apt on an HPC compute node — unpack the official
         # tarball into the job-scoped RUNNER_TEMP, which is discarded with the
@@ -199,11 +220,13 @@ jobs:
           echo "$bindir" >> "$GITHUB_PATH"
 
       - name: Check out the repository-owned integration policy
+        if: steps.optin.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
           ref: main
 
       - name: merge green PRs targeting develop
+        if: steps.optin.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           # github.token cannot read branch-protection configuration. This
