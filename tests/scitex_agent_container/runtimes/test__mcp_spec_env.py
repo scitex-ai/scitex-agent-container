@@ -216,6 +216,25 @@ def test_bake_leaves_http_entries_untouched() -> None:
     assert "env" not in servers["remote"]
 
 
+def test_bake_skips_an_entry_whose_inherit_env_is_false() -> None:
+    # Arrange: a store-free server (spec.mcp_servers.<name>.inherit_env: false).
+    servers = {"review": {"command": "scitex-live-paper", "env": {"R": "1"}}}
+    # Act
+    bake_spec_env_values(servers, {"STORE_VAR": "x"}, {"review": False})
+    # Assert
+    assert servers["review"]["env"] == {"R": "1"}
+
+
+def test_bake_adds_only_allowlisted_names_for_a_list_mode() -> None:
+    # Arrange
+    servers = {"review": {"command": "scitex-live-paper"}}
+    spec_env = {"STORE_VAR": "x", "PGUSER": "u"}
+    # Act
+    bake_spec_env_values(servers, spec_env, {"review": frozenset({"PGUSER"})})
+    # Assert
+    assert servers["review"]["env"] == {"PGUSER": "u"}
+
+
 # ---------------------------------------------------------------------------
 # THE MUTATION PROOF — the respawn simulation
 # ---------------------------------------------------------------------------

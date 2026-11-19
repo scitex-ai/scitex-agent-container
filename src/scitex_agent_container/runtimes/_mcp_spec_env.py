@@ -61,6 +61,7 @@ from typing import Any, Mapping
 
 import scitex_logging as slogging
 
+from ..config._mcp_inherit_env import InheritMode, select_inherited
 from ._board_identity_env import assert_expanded
 
 logger = slogging.getLogger(__name__)
@@ -154,6 +155,7 @@ def resolve_spec_env(environ: Mapping[str, str]) -> dict[str, str]:
 def bake_spec_env_values(
     servers: Mapping[str, Any] | None,
     spec_env: Mapping[str, str] | None,
+    modes: Mapping[str, InheritMode] | None = None,
 ) -> None:
     """Bake ``spec_env`` literals into every stdio entry's ``env`` block.
 
@@ -165,6 +167,11 @@ def bake_spec_env_values(
     matching the spawn-time ``{...inherited, ...entry.env}`` order where the
     declared block overrides inheritance. Non-dict entries and non-stdio
     transports (http/sse — no child process to env) are left untouched.
+
+    ``modes`` carries each entry's ``inherit_env`` (see
+    :mod:`..config._mcp_inherit_env`): ``False`` bakes nothing into that
+    entry, a name list bakes only those names. Entries absent from ``modes``
+    inherit everything (the default, unchanged behaviour).
     """
     if not servers or not spec_env:
         return
@@ -178,9 +185,10 @@ def bake_spec_env_values(
         if not isinstance(env_block, dict):
             env_block = {}
             entry["env"] = env_block
-        added = [k for k in spec_env if k not in env_block]
+        inherited = select_inherited((modes or {}).get(name, True), spec_env)
+        added = [k for k in inherited if k not in env_block]
         for key in added:
-            env_block[key] = spec_env[key]
+            env_block[key] = inherited[key]
         if added:
             logger.debug(
                 "mcp spec-env bake: server '%s' env += %s (declared keys win)",

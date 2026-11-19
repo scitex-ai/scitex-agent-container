@@ -43,7 +43,8 @@ def _setup_mcp_from_servers(
     """Write mcp_servers entries directly to .mcp.json (v2 path).
 
     ``spec_env`` (the agent's ``spec.env``) is baked into each stdio
-    entry's ``env`` block as literal values — entry-declared keys win. The
+    entry's ``env`` block as literal values — entry-declared keys win, and an
+    entry's ``inherit_env`` (false / a name allowlist) limits what it gets. The
     first spawn receives spec env by process inheritance (the tmux launch
     exports it), but a mid-session MCP reconnect RESPAWN through the
     sanitized stdio transport env only receives the entry's own ``env``
@@ -66,6 +67,11 @@ def _setup_mcp_from_servers(
         existing = {}
 
     mcp_servers = existing.setdefault("mcpServers", {})
+    # Per-entry ``inherit_env`` (SAC-only; validated here, stripped below so
+    # it never reaches the harness's own MCP config).
+    from ..config._mcp_inherit_env import server_modes, without_sac_keys
+
+    modes = server_modes(servers)
     # A baseline-only CCT entry needs the same durable identity as an
     # explicitly declared entry. Other baseline-only profiles stay untouched.
     if not servers and "claude-code-telegrammer" not in mcp_servers:
@@ -73,7 +79,7 @@ def _setup_mcp_from_servers(
 
     for name, entry in servers.items():
         # Resolve ${VAR} env references from os.environ at write time
-        resolved = dict(entry)
+        resolved = without_sac_keys(entry)
         if "env" in resolved and isinstance(resolved["env"], dict):
             resolved["env"] = {
                 k: _resolve_env_refs(str(v)) for k, v in resolved["env"].items()
@@ -100,7 +106,7 @@ def _setup_mcp_from_servers(
             sval = _resolve_env_refs(str(val))
             assert_expanded(str(key), sval)
             resolved_spec_env[str(key)] = sval
-        bake_spec_env_values(mcp_servers, resolved_spec_env)
+        bake_spec_env_values(mcp_servers, resolved_spec_env, modes)
 
     # SAC's owned poller pins this same full agent name. The login shell can
     # reload a project's .envrc after the generated .env was injected, so a

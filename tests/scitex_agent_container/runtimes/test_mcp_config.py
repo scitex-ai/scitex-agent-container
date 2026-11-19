@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import reduce
 from pathlib import Path
@@ -419,3 +420,93 @@ def test_setup_mcp_from_servers_direct_empty_is_noop(tmp_path: Path) -> None:
     _setup_mcp_from_servers(servers, str(tmp_path), "an-agent")
     # Assert
     assert not (tmp_path / ".mcp.json").exists()
+
+
+# --- per-entry inherit_env (spec.mcp_servers.<name>.inherit_env) -----------
+
+_DSN = "postgresql://fixture.invalid:65432/fixture_db"
+_INHERIT_ENV = {"SCITEX_STORE_DSN": _DSN, "PGUSER": "fixture__x", "FOO": "bar"}
+#: sha256 of the ``.mcp.json`` origin/develop (before ``inherit_env``) wrote
+#: for ``_inherit_fixture()`` — the default must stay byte-identical to it.
+_DEVELOP_SHA256 = "d2ba83b5a3b1c0f65a836c4eea1961be844a5c54bbfb6988bafa4090ca5fb659"
+
+
+def _inherit_fixture(**browser_extra) -> AgentConfig:
+    cards = {"command": "scitex-cards", "args": ["mcp", "start"], "alwaysLoad": True}
+    browser = {"command": "browser-mcp", "env": {"X": "1"}, "alwaysLoad": True}
+    remote = {"type": "http", "url": "http://example.invalid/mcp"}
+    servers = {"scitex-cards": cards, "browser": {**browser, **browser_extra}}
+    return AgentConfig(
+        name="fixture-agent",
+        env=dict(_INHERIT_ENV),
+        mcp_servers={**servers, "remote": remote},
+    )
+
+
+def _written(tmp_path: Path, **browser_extra) -> str:
+    setup_mcp_config(_inherit_fixture(**browser_extra), str(tmp_path))
+    return (tmp_path / ".mcp.json").read_text()
+
+
+def test_default_mcp_json_is_byte_identical_to_develop(tmp_path: Path) -> None:
+    # Arrange
+    extra: dict = {}
+    # Act
+    text = _written(tmp_path, **extra)
+    # Assert
+    assert hashlib.sha256(text.encode()).hexdigest() == _DEVELOP_SHA256
+
+
+def test_explicit_inherit_env_true_matches_develop_bytes(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": True}
+    # Act
+    text = _written(tmp_path, **extra)
+    # Assert
+    assert hashlib.sha256(text.encode()).hexdigest() == _DEVELOP_SHA256
+
+
+def test_inherit_env_false_entry_gets_only_declared_env(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": False}
+    # Act
+    data = json.loads(_written(tmp_path, **extra))
+    # Assert
+    assert data["mcpServers"]["browser"]["env"] == {"X": "1"}
+
+
+def test_inherit_env_list_entry_gets_only_listed_names(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": ["FOO"]}
+    # Act
+    data = json.loads(_written(tmp_path, **extra))
+    # Assert
+    assert data["mcpServers"]["browser"]["env"] == {"X": "1", "FOO": "bar"}
+
+
+def test_inherit_env_false_leaves_other_entries_inheriting(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": False}
+    # Act
+    data = json.loads(_written(tmp_path, **extra))
+    # Assert
+    assert data["mcpServers"]["scitex-cards"]["env"] == _INHERIT_ENV
+
+
+def test_inherit_env_key_is_not_written_to_mcp_json(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": ["FOO"]}
+    # Act
+    text = _written(tmp_path, **extra)
+    # Assert
+    assert "inherit_env" not in text
+
+
+def test_malformed_inherit_env_refuses_to_write(tmp_path: Path) -> None:
+    # Arrange
+    extra = {"inherit_env": "no"}
+    # Act
+    ctx = pytest.raises(ValueError, match="inherit_env")
+    # Assert
+    with ctx:
+        _written(tmp_path, **extra)
