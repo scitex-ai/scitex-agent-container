@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sealed runs stopped by `sac agents stop` are now attributed to SAC in
+  `outcome.json` (`exit.stopped_by: "sac"`, request time) whatever exits
+  first. The pane teardown signals every process group; a harness that
+  handles SIGTERM could exit 1 before the supervisor saw its own signal, so
+  the record showed a plain `code: 1`. SAC now writes a stop-request marker
+  before tearing the pane down.
+
 ## [0.40.0] - 2026-11-19
 
 ### Added
