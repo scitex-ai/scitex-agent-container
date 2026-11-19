@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `spec.mcp_servers.<name>.inherit_env` — per-entry control of which agent
+  env an MCP server receives. `true` (default) keeps today's behaviour;
+  `false` gives the entry ONLY its own `env` (no `spec.env` bake into
+  `.mcp.json`, no Hermes launch-env refill, no SAC-generated `PGPASSFILE` /
+  pgpass materialization); a list of env names is an allowlist. The key is
+  validated at load and never reaches the harness's own MCP config. A sealed
+  spec whose `spec.env` carries `SCITEX_STORE_DSN` can now declare a
+  store-free MCP server: it no longer needs a host `.pgpass` row and passes
+  the Hermes credential check, which applies only to entries whose final env
+  holds a PostgreSQL DSN. `sac agents explain` lists each entry's mode and
+  the env NAMES it receives (never values).
+
 ## [0.40.3] - 2026-11-19
 
 ### Fixed

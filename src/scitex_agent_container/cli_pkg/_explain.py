@@ -469,6 +469,9 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     channel_resolution = _channel_lines(config, channels)
     if channel_resolution:
         lines += channel_resolution
+    from ._explain_mcp import mcp_env_lines
+
+    lines += mcp_env_lines(config)
 
     try:
         from ..runtimes.claude_md import build_skills_lines
