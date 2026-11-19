@@ -40,7 +40,15 @@ from ._outcome import (
     utc_now,
 )
 
-__all__ = ["SandboxRunError", "begin_run", "current_run", "end_run", "new_run_id"]
+__all__ = [
+    "SandboxRunError",
+    "begin_run",
+    "current_run",
+    "end_run",
+    "mark_stop_requested",
+    "new_run_id",
+    "stop_attribution",
+]
 
 
 class SandboxRunError(RuntimeError):
@@ -164,6 +172,37 @@ def _remove_layers(rp: RunPaths) -> list[str]:
     return removed
 
 
+def mark_stop_requested(state_dir: Path, *, by: str = "sac agents stop") -> bool:
+    """Record that SAC asked this run to stop, BEFORE it tears the pane down.
+
+    The teardown signals every process group of the pane; whichever exits
+    first decides what the supervisor observes (a harness that handles
+    SIGTERM may exit 1 before the supervisor's own signal arrives). This
+    marker makes the outcome say the run was stopped by SAC either way.
+    """
+    run_dir = current_run(Path(state_dir).expanduser())
+    if run_dir is None:
+        return False
+    rp = RunPaths(run_dir)
+    rec = read_json(rp.outcome) or {}
+    if rec.get("status") == "finalized":
+        return False
+    atomic_write_json(rp.stop_requested, {"t": utc_now(), "by": by})
+    return True
+
+
+def stop_attribution(rp: RunPaths) -> dict | None:
+    """``{"stopped_by": "sac", ...}`` when SAC requested this run's stop."""
+    marker = read_json(rp.stop_requested)
+    if not marker:
+        return None
+    return {
+        "stopped_by": "sac",
+        "stop_requested_at": marker.get("t"),
+        "stop_requested_by": marker.get("by"),
+    }
+
+
 def end_run(config: Any, state_dir: Path) -> dict | None:
     """Finalize the current run (idempotent); returns the final record."""
     state_dir = Path(state_dir).expanduser()
@@ -193,6 +232,9 @@ def end_run(config: Any, state_dir: Path) -> dict | None:
         "available": False,
         "reason": "the harness left no transcript SAC can read",
     }
+    attribution = stop_attribution(rp)
+    if attribution and isinstance(rec.get("exit"), dict):
+        rec["exit"].update(attribution)
     rec["files"] = {
         "read": (transcript or {}).get("files_read"),
         "read_source": (transcript or {}).get(
