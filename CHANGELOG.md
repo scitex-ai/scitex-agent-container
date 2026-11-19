@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.40.2] - 2026-11-19
+
 ### Security
 - Sealed Claude Code, Codex and OpenCode TUI panes now start their agent
   tree under the control-plane mask (`_sandbox/_hide`), as Hermes already
