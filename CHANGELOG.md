@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-11-19
+
 ### Added
 - `sac sandbox exec` — a sealed run of a PLAIN COMMAND (no agent harness,
   no model key): `--image SIF --run-root DIR --timeout S [--egress-allow
