@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.40.3] - 2026-11-19
+
 ### Fixed
 - A sealed run's supervisor could record a stop that arrived while the
   container was still being launched without forwarding it, leaving the
