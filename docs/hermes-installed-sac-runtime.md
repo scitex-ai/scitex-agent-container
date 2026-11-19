@@ -13,6 +13,13 @@ or older image CLI is refused. Hermes itself remains the image executable
 at `/opt/hermes-agent/.venv/bin/hermes` so host Python tools cannot replace
 the reviewed harness accidentally.
 
+A sealed run (`spec.sandbox`) is the exception: its agent must not reach SAC.
+There the owner still runs from the launching installation, but no
+`PREPEND_PATH`, `SAC_BIN` or `SAC_BIN_IN_SIF` is emitted (declaring one is
+refused), a builtin SAC MCP server is refused, and the owner starts the agent
+tree with the installation, the image's SAC and `/state/<name>` hidden
+(see docs/sandbox.md, "control plane").
+
 Before launch, the finalized explicit binds must expose the installed
 Python prefix, standard library prefix, console script, and every
 interpreter symlink hop at their original absolute paths. Existing host
