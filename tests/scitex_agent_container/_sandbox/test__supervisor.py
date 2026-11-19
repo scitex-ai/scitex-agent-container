@@ -237,3 +237,30 @@ def test_env_file_outside_readable_dirs_is_left_alone(tmp_path):
     seal_env_flags(["--env-file", str(src)], ALLOWED, tmp_path / "s", scrub_roots=(tmp_path / "home",))
     # Assert
     assert src.read_text() == "GITHUB_TOKEN=g\n"
+
+
+def test_exit_after_a_sac_stop_request_is_attributed_to_sac(tmp_path):
+    # Arrange
+    import json
+
+    state, run, image = _prepared_run(tmp_path)
+    (run / "out" / "stop_requested.json").write_text(json.dumps({"t": "x", "by": "sac agents stop"}))
+    proc = _supervise(state, image, [sys.executable, "-c", "raise SystemExit(1)"])
+    # Act
+    proc.wait(timeout=60)
+    rec = json.loads((run / "out" / "outcome.json").read_text())
+    # Assert
+    assert (rec["exit"]["code"], rec["exit"]["stopped_by"]) == (1, "sac")
+
+
+def test_exit_without_a_stop_request_is_not_attributed(tmp_path):
+    # Arrange
+    import json
+
+    state, run, image = _prepared_run(tmp_path)
+    proc = _supervise(state, image, [sys.executable, "-c", "raise SystemExit(3)"])
+    # Act
+    proc.wait(timeout=60)
+    rec = json.loads((run / "out" / "outcome.json").read_text())
+    # Assert
+    assert rec["exit"] == {"code": 3}

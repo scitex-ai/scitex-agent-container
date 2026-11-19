@@ -62,5 +62,6 @@ class RunPaths:
     out = property(lambda s: s.root / "out")
     outcome = property(lambda s: s.root / "out" / OUTCOME)
     exit_code = property(lambda s: s.root / "out" / "exit_code")
+    stop_requested = property(lambda s: s.root / "out" / "stop_requested.json")
     proxy_sock = property(lambda s: s.root / "rt" / "sock" / "proxy.sock")
     ingress_sock = property(lambda s: s.root / "rt" / "sock" / "ingress.sock")

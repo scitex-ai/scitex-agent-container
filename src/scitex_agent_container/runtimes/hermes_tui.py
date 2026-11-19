@@ -235,7 +235,17 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         self._stop_cct(config)
         self._stop_inbox(config)
         self._stop_recovery(config)
-        return self._stop_session(config)
+        try:
+            return self._stop_session(config)
+        except Exception:
+            # A sealed run's outcome is finalized EVEN when the pane teardown
+            # check fails or is too slow under load; its layers stay until a
+            # later stop/start verifies the container is gone.
+            from .._sandbox import end_run, is_sandboxed
+
+            if is_sandboxed(config):
+                end_run(config, state_dir_for_config(config), teardown_verified=False)
+            raise
 
     def send_turn(
         self, config: AgentConfig, text: str, *, wait_ready: bool = True
