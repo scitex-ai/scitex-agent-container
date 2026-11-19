@@ -98,6 +98,7 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
 | Field | Documented | Implemented | Verdict | Source path |
 | --- | --- | --- | --- | --- |
 | `mcp_servers` | dict-of-dicts merged into `.mcp.json`; supports `${metadata.*}` interpolation | `interpolate_mcp_servers` walks env + args | ✓ | `_parsers/_mcp.py` |
+| `mcp_servers.<name>.inherit_env` | `true` (default) / `false` / list of env names; SAC-only, stripped from the harness config | `inherit_mode` validates at load; bake + Hermes refill honour it | ✓ | `_mcp_inherit_env.py`, `runtimes/_mcp_spec_env.py`, `runtimes/_hermes_mcp_env.py` |
 | `telegram.enabled` | bool | `TelegramSpec` has no `enabled` field; uses `auto_connect` (default True) | ✗ (field name) | `_parsers/_telegram.py:10-17`, `_types.py:TelegramSpec` |
 | `telegram.chat_id` | doc'd | **Not in parser**; parser has `bot_token_env`, `allowed_users`, `auto_connect`, `greeting` | ✗ (field name) | `_parsers/_telegram.py:10-17` |
 | `hooks.{pre_start,post_start,pre_stop}` | shell commands lists | Matches; also `post_stop` exists in `HOOK_KEYS` (`_helpers.py`); `mkdir -p workdir/.claude` auto-prepended | ✓ (doc omits `post_stop`) | `_parsers/_hooks.py`, `_loaders.py:251-255` |

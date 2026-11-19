@@ -431,6 +431,46 @@ A dict-of-dicts merged into `<workdir>/.mcp.json` at start. Mirrors
 the `.mcp.json` shape directly. Use this OR drop a `.mcp.json` into
 `to_home/` (lands at `$HOME/.mcp.json`).
 
+SAC makes the agent's `spec.env` durable in every stdio entry: it bakes
+the values into each entry's `env` block of `.mcp.json` (Claude Code,
+Codex, OpenCode and the SDK runner read that file), and the Hermes profile
+also refills store/identity names (`SCITEX_STORE_DSN`, `PGUSER`, ...)
+from the launch env. An entry that ends up with a PostgreSQL DSN gets a
+SAC-generated `PGPASSFILE`, and the launch is refused unless a host
+`.pgpass` row backs the project role.
+
+One optional SAC-only key per entry controls that inheritance. It is
+validated at load and never written to the harness's own MCP config:
+
+| `inherit_env` | The entry receives |
+|---------------|--------------------|
+| `true` (default) | its own `env` + all of `spec.env` (unchanged behaviour) |
+| `false` | ONLY its own `env`: no spec-env bake, no launch-env refill, no SAC-generated `PGPASSFILE` / pgpass materialization |
+| `[NAME, ...]` | its own `env` + only the listed spec/launch env names |
+
+Any other value (a string, a number, a list with an empty or non-string
+item) is refused. The PostgreSQL credential check applies per entry, only
+to entries whose final env carries a DSN, so a store-free server can run in
+an agent whose `spec.env` has `SCITEX_STORE_DSN`:
+
+```yaml
+spec:
+  env:
+    SCITEX_STORE_DSN: postgresql://db.example:5432/scitex
+  mcp_servers:
+    review:                       # reads one local report, needs no store
+      command: scitex-live-paper
+      args: [mcp, start]
+      inherit_env: false
+      env: {REPORT: /work/evidence-report.json}
+```
+
+A DSN that a `false` entry declares itself must bring its own `PGUSER` and
+`PGPASSFILE`. `sac agents explain <name>` lists, per entry, its
+`inherit_env` mode and the env NAMES it receives (never values).
+`inherit_env` controls what SAC writes into the entry; a harness may still
+pass its own process env to a server's first spawn.
+
 ### `spec.telegram` / `spec.hooks` / `spec.extensions`
 
 | Field                  | Description                                                                |
