@@ -23,6 +23,7 @@ import os
 import secrets as _secrets
 import shutil
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ from ._outcome import (
     hermes_usage,
     manifest,
     manifest_diff,
-        read_json,
+    read_json,
     utc_now,
 )
 
@@ -99,7 +100,6 @@ def _symlink(target: Path, link: Path) -> None:
     os.replace(tmp, link)
 
 
-
 def begin_run(config: Any, state_dir: Path) -> Path | None:
     """Prepare a fresh run for a sandboxed ``config``; ``None`` when not sandboxed."""
     sb = getattr(config, "sandbox", None)
@@ -113,7 +113,7 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     agent = str(getattr(config, "name", "agent"))
     root = Path(sb.run_root)
     root.mkdir(parents=True, exist_ok=True)
-    free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+    free_mb = shutil.disk_usage(root).free // (1 << 20)
     if free_mb < sb.run_size_mb:
         raise SandboxRunError(
             f"{root} has {free_mb} MB free; spec.sandbox.run.size needs {sb.run_size_mb} MB"
@@ -122,7 +122,16 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     run_dir = root / agent / run_id
     rp = RunPaths(run_dir)
     run_dir.mkdir(parents=True, mode=0o700)
-    for d in (rp.home, rp.overlay, rp.workdir, rp.uvwork, rp.bin, rp.sock, rp.secrets, rp.out):
+    for d in (
+        rp.home,
+        rp.overlay,
+        rp.workdir,
+        rp.uvwork,
+        rp.bin,
+        rp.sock,
+        rp.secrets,
+        rp.out,
+    ):
         d.mkdir(parents=True, mode=0o700, exist_ok=True)
     src = Path(__file__).with_name("netgw.py")
     shutil.copyfile(src, rp.bin / "netgw.py")
@@ -161,11 +170,19 @@ def _force_writable(func, path, _exc) -> None:
     func(path)
 
 
+def _rmtree_forcing(path: Path) -> None:
+    """``rmtree`` with the chmod retry; ``onexc`` exists only on Python >= 3.12."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_force_writable)
+    else:
+        shutil.rmtree(path, onerror=_force_writable)
+
+
 def _remove_layers(rp: RunPaths) -> list[str]:
     removed = []
     for p in (rp.home, rp.workdir, rp.uvwork, rp.root / "rt", rp.overlay):
         if p.is_dir() and not p.is_symlink():
-            shutil.rmtree(p, onexc=_force_writable)
+            _rmtree_forcing(p)
         elif p.exists() or p.is_symlink():
             p.unlink(missing_ok=True)
         removed.append(str(p))
@@ -253,7 +270,9 @@ def end_run(
             "(killed with its pane); see egress logs and harness logs",
         }
     before = read_json(rp.out / "home_manifest_start.json") or {}
-    transcript = hermes_transcript(rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp")
+    transcript = hermes_transcript(
+        rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp"
+    )
     rec["tool_calls"] = transcript or {
         "available": False,
         "reason": "the harness left no transcript SAC can read",

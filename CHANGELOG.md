@@ -18,6 +18,8 @@ versioning follows [SemVer](https://semver.org/).
   `sac agents stop` was needed). The record is closed with the stop
   attribution; the run's layers are kept (`layers.deferred`) until a later
   stop or start can verify the container is gone, then removed or archived.
+- Removing a sealed run's layers no longer raises `TypeError` on Python
+  3.11 (the 0.40.0 code used an `rmtree` keyword that exists only on 3.12+).
 
 ## [0.40.0] - 2026-11-19
 
