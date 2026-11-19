@@ -31,6 +31,7 @@ __all__ = [
     "SECRET_FD_ENV",
     "TOKEN_ENV",
     "gateway_bootstrap_argv",
+    "forget_working_dir_imports",
     "gateway_ready_dir",
     "hidden_spawner",
     "spawn_hidden_gateway",
@@ -45,8 +46,13 @@ SECRET_FD_ENV = "SAC_HIDDEN_SECRET_FD"
 #: Far above any API key, far below a pipe's buffer (the write never blocks).
 MAX_SECRET_BYTES = 4_096
 
+# ``-c`` puts the (possibly agent-writable) working directory first on
+# sys.path; ``os``/``sys`` are already loaded, so drop it before importing
+# anything else.
 _BOOTSTRAP = """\
-import ctypes, os, runpy, sys
+import os, sys
+sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
+import ctypes, runpy
 if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:
     raise SystemExit("[sac-hide] cannot make the gateway non-dumpable")
 fd = int(os.environ.pop("SAC_HIDDEN_SECRET_FD"))
@@ -85,6 +91,17 @@ def gateway_bootstrap_argv(argv: list[str], *, path: str | None = None) -> list[
         raise RuntimeError(f"{argv[0]} is not on PATH; cannot start the Hermes gateway")
     script = Path(located)
     return [_script_interpreter(script), "-c", _BOOTSTRAP, str(script), *argv[1:]]
+
+
+def forget_working_dir_imports() -> None:
+    """Drop the working directory from ``sys.path`` (sealed owner only).
+
+    The owner runs as ``python -m`` with a working directory the agent may
+    write to; a later top-level import must never resolve to a module the
+    agent planted there while the owner still sees the hidden paths.
+    """
+    cwd = os.getcwd()
+    sys.path[:] = [p for p in sys.path if p not in ("", ".", cwd)]
 
 
 def gateway_ready_dir(state_dir: Path, *, hidden: list[str]) -> Path:

@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .._runners._hermes_owned_session import owned_session_projection
-from ._hermes_hidden_launch import gateway_ready_dir, start_gateway
+from ._hermes_hidden_launch import (
+    forget_working_dir_imports,
+    gateway_ready_dir,
+    start_gateway,
+)
 from ._hermes_tui_context_owner import (
     apply_session_age_policy,
     clear_session_heartbeat,
@@ -396,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
 
     state_dir = Path(args.state_dir)
     hidden = list(args.hide)
+    if hidden:
+        forget_working_dir_imports()
     generation = uuid.uuid4().hex
     ready_dir = gateway_ready_dir(state_dir, hidden=hidden)
     gateway_ready_path = ready_dir / f".{READY_FILE}.{generation}"

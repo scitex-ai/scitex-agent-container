@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._sandbox._hide import HIDE_MODULE
+from scitex_agent_container._sandbox._hide import HIDE_SCRIPT, hide_argv
 from scitex_agent_container.runtimes._hermes_hidden_launch import (
     SECRET_FD_ENV,
     TOKEN_ENV,
@@ -56,7 +56,7 @@ def _env(tmp_path: Path, bindir: Path) -> dict[str, str]:
     return env
 
 
-def _bootstrapped_record(tmp_path: Path) -> dict:
+def _bootstrapped_record(tmp_path: Path, cwd: Path | None = None) -> dict:
     """Run the gateway bootstrap (without the namespace launcher) and record."""
     bindir = _fake_hermes(tmp_path)
     env = _env(tmp_path, bindir)
@@ -67,7 +67,9 @@ def _bootstrapped_record(tmp_path: Path) -> dict:
     import subprocess
 
     argv = gateway_bootstrap_argv(["hermes", "serve", "--x"], path=env["PATH"])
-    subprocess.run(argv, env=env, pass_fds=(read_fd,), check=True, timeout=60)
+    subprocess.run(
+        argv, env=env, pass_fds=(read_fd,), cwd=cwd, check=True, timeout=60
+    )
     os.close(read_fd)
     return json.loads((tmp_path / "record.json").read_text())
 
@@ -148,7 +150,7 @@ def test_hidden_spawner_wraps_the_command_in_the_launcher():
     proc = spawn(["true"], env={"PATH": os.environ.get("PATH", "")})
     proc.wait(timeout=60)
     # Assert
-    assert proc.args[1:] == ["-m", HIDE_MODULE, "--hide", "/state/a", "--", "true"]
+    assert proc.args[1:] == ["-I", HIDE_SCRIPT, "--hide", "/state/a", "--", "true"]
 
 
 def test_bootstrap_makes_the_gateway_non_dumpable(record):
@@ -187,3 +189,69 @@ def test_plain_gateway_receives_the_key_in_its_environment(tmp_path):
         json.loads((tmp_path / "record.json").read_text())["token"]
         == "tok-plain-0123456789"
     )
+
+
+PLANTED = "import pathlib; pathlib.Path({marker!r}).write_text('planted ran')\n"
+
+
+def _plant(directory: Path, module: str, marker: Path) -> None:
+    """A module an agent could write into the owner's working directory."""
+    target = directory / module
+    if module.endswith("/__init__.py"):
+        target.parent.mkdir(parents=True)
+    target.write_text(PLANTED.format(marker=str(marker)))
+
+
+def test_bootstrap_never_imports_a_module_planted_in_its_working_dir(tmp_path):
+    # Arrange
+    planted, marker = tmp_path / "agent-writable", tmp_path / "marker"
+    planted.mkdir()
+    _plant(planted, "runpy.py", marker)
+    _plant(planted, "ctypes/__init__.py", marker)
+    # Act
+    _bootstrapped_record(tmp_path, cwd=planted)
+    # Assert
+    assert not marker.exists()
+
+
+def test_launcher_never_imports_a_module_planted_in_its_working_dir(tmp_path):
+    # Arrange
+    import subprocess
+
+    planted, marker = tmp_path / "agent-writable", tmp_path / "marker"
+    planted.mkdir()
+    for module in ("glob.py", "argparse.py", "scitex_agent_container/__init__.py"):
+        _plant(planted, module, marker)
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(planted)}
+    argv = hide_argv(sys.executable, ["/state/a"], ["true"])
+    # Act
+    subprocess.run(argv, env=env, cwd=planted, timeout=60, check=False)
+    # Assert
+    assert not marker.exists()
+
+
+OWNER_SYS_PATH_PROBE = """\
+import os, sys
+sys.path.insert(0, os.getcwd())
+sys.path.insert(0, "")
+from scitex_agent_container.runtimes._hermes_hidden_launch import forget_working_dir_imports
+forget_working_dir_imports()
+print(int(os.getcwd() in sys.path or "" in sys.path))
+"""
+
+
+def test_sealed_owner_drops_its_working_dir_from_sys_path(tmp_path):
+    # Arrange
+    import subprocess
+
+    import scitex_agent_container
+
+    src = Path(scitex_agent_container.__file__).resolve().parents[1]
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(src)}
+    # Act
+    out = subprocess.run(
+        [sys.executable, "-c", OWNER_SYS_PATH_PROBE],
+        env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    # Assert
+    assert out.stdout.strip() == "0"

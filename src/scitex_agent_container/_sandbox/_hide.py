@@ -1,7 +1,10 @@
 """Run one command of a sealed agent with SAC's control plane hidden from it.
 
-    python -m scitex_agent_container._sandbox._hide \\
-        --hide /state/<name> --hide <SAC prefix> ... -- CMD...
+    python -I <this file> --hide /state/<name> --hide <SAC prefix> ... -- CMD...
+
+It is started by FILE PATH under ``-I`` (stdlib only, no package import):
+the caller's working directory may be agent-writable, and ``-m`` would put
+it (and ``PYTHONPATH``) ahead of SAC on ``sys.path`` before any mask exists.
 
 Inside a sealed run SAC's in-container owner (``_hermes_tui_owner``) needs
 the per-agent state dir (gateway projection, the gateway API key, logs) and
@@ -45,14 +48,15 @@ from pathlib import Path
 
 __all__ = [
     "EXIT_HIDE_FAILED",
-    "HIDE_MODULE",
+    "HIDE_SCRIPT",
     "SAC_CONSOLE_SCRIPTS",
     "covered_paths",
     "hide_argv",
     "main",
 ]
 
-HIDE_MODULE = "scitex_agent_container._sandbox._hide"
+#: This launcher, run by path: see the module docstring.
+HIDE_SCRIPT = str(Path(__file__).resolve())
 #: Exit status when the control plane could not be hidden (CMD never ran).
 EXIT_HIDE_FAILED = 125
 #: Console scripts that drive SAC; none may remain runnable under the mask.
@@ -74,7 +78,7 @@ class HideError(RuntimeError):
 
 def hide_argv(python: str, hidden: list[str], argv: list[str]) -> list[str]:
     """``argv`` started through this launcher with ``hidden`` covered."""
-    out = [str(python), "-m", HIDE_MODULE]
+    out = [str(python), "-I", HIDE_SCRIPT]
     for path in hidden:
         out += ["--hide", str(path)]
     return [*out, "--", *argv]

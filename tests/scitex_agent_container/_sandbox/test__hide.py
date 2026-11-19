@@ -7,11 +7,13 @@ argv shape and which paths get covered.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from scitex_agent_container._sandbox._hide import (
     EXIT_HIDE_FAILED,
-    HIDE_MODULE,
+    HIDE_SCRIPT,
     HideError,
     covered_paths,
     hide_argv,
@@ -19,16 +21,26 @@ from scitex_agent_container._sandbox._hide import (
 )
 
 
-def test_hide_argv_runs_the_module_with_each_hidden_path():
+def test_hide_argv_runs_the_launcher_file_isolated_with_each_hidden_path():
     # Arrange
     hidden = ["/state/a", "/venv"]
     # Act
     argv = hide_argv("/py", hidden, ["hermes", "serve"])
     # Assert
     assert argv == [
-        "/py", "-m", HIDE_MODULE, "--hide", "/state/a", "--hide", "/venv",
+        "/py", "-I", HIDE_SCRIPT, "--hide", "/state/a", "--hide", "/venv",
         "--", "hermes", "serve",
     ]  # fmt: skip
+
+
+def test_launcher_script_is_this_modules_file():
+    # Arrange
+    import scitex_agent_container._sandbox._hide as hide_mod
+
+    # Act
+    script = Path(HIDE_SCRIPT)
+    # Assert
+    assert script == Path(hide_mod.__file__).resolve()
 
 
 def test_absent_hidden_path_is_skipped(tmp_path):
