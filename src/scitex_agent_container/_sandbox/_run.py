@@ -46,8 +46,10 @@ __all__ = [
     "begin_run",
     "current_run",
     "end_run",
+    "finalize_run",
     "mark_stop_requested",
     "new_run_id",
+    "prepare_run_dir",
     "stop_attribution",
 ]
 
@@ -100,26 +102,24 @@ def _symlink(target: Path, link: Path) -> None:
     os.replace(tmp, link)
 
 
-def begin_run(config: Any, state_dir: Path) -> Path | None:
-    """Prepare a fresh run for a sandboxed ``config``; ``None`` when not sandboxed."""
-    sb = getattr(config, "sandbox", None)
-    if sb is None:
-        return None
-    validate_sandbox_config(config)
-    state_dir = Path(state_dir).expanduser()
-    previous = current_run(state_dir)
-    if previous is not None:
-        end_run(config, state_dir)
-    agent = str(getattr(config, "name", "agent"))
+def prepare_run_dir(sb: Any, name: str, *, record: dict | None = None) -> Path:
+    """Create ONE fresh run dir ``<run.root>/<name>/<run_id>/`` and its record.
+
+    The run's layers (``$HOME``, overlay, workdir, ``/uvwork``), the
+    read-only launchers, ``out/`` and ``outcome.json`` (``status:
+    prepared``). Touches nothing outside the run dir: the agent launch adds
+    its state-dir links (:func:`begin_run`); ``sac sandbox exec`` uses the
+    run dir directly. ``record`` adds keys to the prepared record.
+    """
     root = Path(sb.run_root)
     root.mkdir(parents=True, exist_ok=True)
     free_mb = shutil.disk_usage(root).free // (1 << 20)
     if free_mb < sb.run_size_mb:
         raise SandboxRunError(
-            f"{root} has {free_mb} MB free; spec.sandbox.run.size needs {sb.run_size_mb} MB"
+            f"{root} has {free_mb} MB free; the run size cap needs {sb.run_size_mb} MB"
         )
     run_id = new_run_id()
-    run_dir = root / agent / run_id
+    run_dir = root / name / run_id
     rp = RunPaths(run_dir)
     run_dir.mkdir(parents=True, mode=0o700)
     for d in (
@@ -138,15 +138,12 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
     for src, dst in (("netgw.py", "netgw.py"), ("_hide.py", "hide.py")):
         shutil.copyfile(Path(__file__).with_name(src), rp.bin / dst)
         os.chmod(rp.bin / dst, 0o444)
-    _home_aside(state_dir / "home")
-    _symlink(rp.home, state_dir / "home")
-    _symlink(run_dir, run_link(state_dir))
     atomic_write_json(
         rp.outcome,
         {
             "schema": SCHEMA,
             "status": "prepared",
-            "agent": agent,
+            "agent": name,
             "run_id": run_id,
             "run_dir": str(run_dir),
             "prepared_at": utc_now(),
@@ -158,8 +155,26 @@ def begin_run(config: Any, state_dir: Path) -> Path | None:
                 "overlay_size_mb": sb.run_size_mb,
                 "after": sb.run_after,
             },
+            **(record or {}),
         },
     )
+    return run_dir
+
+
+def begin_run(config: Any, state_dir: Path) -> Path | None:
+    """Prepare a fresh run for a sandboxed ``config``; ``None`` when not sandboxed."""
+    sb = getattr(config, "sandbox", None)
+    if sb is None:
+        return None
+    validate_sandbox_config(config)
+    state_dir = Path(state_dir).expanduser()
+    previous = current_run(state_dir)
+    if previous is not None:
+        end_run(config, state_dir)
+    run_dir = prepare_run_dir(sb, str(getattr(config, "name", "agent")))
+    _home_aside(state_dir / "home")
+    _symlink(RunPaths(run_dir).home, state_dir / "home")
+    _symlink(run_dir, run_link(state_dir))
     return run_dir
 
 
@@ -222,13 +237,16 @@ def stop_attribution(rp: RunPaths) -> dict | None:
     }
 
 
-def _apply_after_policy(rec: dict, rp: RunPaths, state_dir: Path) -> None:
-    """``run.after`` + home link cleanup; only once the container is gone."""
+def _apply_after_policy(rec: dict, rp: RunPaths) -> None:
+    """``run.after``; only once the container is gone."""
     after = (rec.get("policy") or {}).get("after", "remove")
     if after == "remove":
         rec["layers"] = {"after": "remove", "removed": _remove_layers(rp)}
     else:
         rec["layers"] = {"after": "archive", "kept": str(rp.root)}
+
+
+def _unlink_home(rp: RunPaths, state_dir: Path) -> None:
     home = state_dir / "home"
     if home.is_symlink() and Path(os.readlink(home)) == rp.home:
         home.unlink()
@@ -237,7 +255,7 @@ def _apply_after_policy(rec: dict, rp: RunPaths, state_dir: Path) -> None:
 def end_run(
     config: Any, state_dir: Path, *, teardown_verified: bool = True
 ) -> dict | None:
-    """Finalize the current run (idempotent); returns the final record.
+    """Finalize the current run of an agent (idempotent); the final record.
 
     ``teardown_verified=False`` (the pane/cgroup teardown check failed or
     was too slow) still FINALIZES the record — exit, usage, files — but
@@ -251,10 +269,23 @@ def end_run(
     if run_dir is None:
         return None
     rp = RunPaths(run_dir)
+    rec = finalize_run(rp, teardown_verified=teardown_verified)
+    if teardown_verified:
+        _unlink_home(rp, state_dir)
+    return rec
+
+
+def finalize_run(rp: RunPaths, *, teardown_verified: bool = True) -> dict:
+    """Finalize the run at ``rp`` (idempotent): files, usage, ``run.after``.
+
+    A plain-command record (``kind: command``, ``sac sandbox exec``) has no
+    harness, so it carries no ``tool_calls`` / ``token_usage``.
+    """
+    run_dir = rp.root
     rec = read_json(rp.outcome) or {"schema": SCHEMA, "run_dir": str(run_dir)}
     if rec.get("status") == "finalized":
         if teardown_verified and (rec.get("layers") or {}).get("deferred"):
-            _apply_after_policy(rec, rp, state_dir)
+            _apply_after_policy(rec, rp)
             rec["layers"]["completed_at"] = utc_now()
             atomic_write_json(rp.outcome, rec)
         return rec
@@ -272,31 +303,36 @@ def end_run(
             "(killed with its pane); see egress logs and harness logs",
         }
     before = read_json(rp.out / "home_manifest_start.json") or {}
-    transcript = hermes_transcript(
-        rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp"
+    harness = rec.get("kind") != "command"
+    transcript = (
+        hermes_transcript(rp.home / ".hermes" / "state.db", rp.out / ".transcript-tmp")
+        if harness
+        else None
     )
-    rec["tool_calls"] = transcript or {
-        "available": False,
-        "reason": "the harness left no transcript SAC can read",
-    }
+    if harness:
+        rec["tool_calls"] = transcript or {
+            "available": False,
+            "reason": "the harness left no transcript SAC can read",
+        }
     attribution = stop_attribution(rp)
     if attribution and isinstance(rec.get("exit"), dict):
         rec["exit"].update(attribution)
     rec["files"] = {
-        "read": (transcript or {}).get("files_read"),
-        "read_source": (transcript or {}).get(
-            "source", "unavailable: no harness transcript (SAC takes no syscall trace)"
-        ),
         "home_written": manifest_diff(before, manifest(rp.home)),
         "overlay_written": manifest_diff({}, manifest(rp.overlay / "upper")),
     }
-    rec["token_usage"] = hermes_usage(rp.home / ".hermes" / "state.db") or {
-        "available": False,
-        "reason": "the harness left no usage record SAC can read",
-    }
+    if harness:
+        rec["files"]["read"] = (transcript or {}).get("files_read")
+        rec["files"]["read_source"] = (transcript or {}).get(
+            "source", "unavailable: no harness transcript (SAC takes no syscall trace)"
+        )
+        rec["token_usage"] = hermes_usage(rp.home / ".hermes" / "state.db") or {
+            "available": False,
+            "reason": "the harness left no usage record SAC can read",
+        }
     shutil.rmtree(rp.secrets, ignore_errors=True)
     if teardown_verified:
-        _apply_after_policy(rec, rp, state_dir)
+        _apply_after_policy(rec, rp)
     else:
         rec["layers"] = {
             "after": (rec.get("policy") or {}).get("after", "remove"),

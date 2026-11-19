@@ -38,6 +38,7 @@ when the supervisor was killed before it observed the container exit),
 NAMES, never values), `egress` (summary + log paths), `token_usage` (Hermes
 `state.db` totals when available), `files.home_written` and
 `files.overlay_written` (files in the overlay's `upper/`), `size` (limit + peak),
+`kind` / `command` / `output` for a plain-command run (below),
 `tool_calls` and `files.read` (from the harness's own transcript — Hermes `state.db` messages: every tool call with its arguments and result size, the paths passed to file-reading tools, and the first assistant-message time; `source` names it; no syscall trace), `layers`.
 
 ## Host-side RPC still works
@@ -47,12 +48,78 @@ Loopback listeners inside the sealed namespace (e.g. Hermes' TUI gateway) are
 port on the host's `127.0.0.1` and relays each connection back in through the
 `ingress.sock` unix socket. The mirror is inbound-only; it cannot carry egress.
 
+## Plain commands (`sac sandbox exec`)
+
+The same seal for ONE command that is not an agent — no harness, no model
+key, no spec. For callers that must run untrusted code in isolation (e.g.
+scitex-agentic-journal running a submitted bundle's `clew bundle rerun`):
+
+```bash
+sac sandbox exec --image /path/to/image.sif \
+    --run-root /scratch/$USER/sac-exec-runs --timeout 600 \
+    --bind "$PWD/bundle:/bundle" --pwd /bundle \
+    --egress-allow pypi.org:443 --egress-allow files.pythonhosted.org:443 \
+    --env-allow MY_TOKEN \
+    -- clew bundle rerun .
+```
+
+| flag | meaning |
+|---|---|
+| `--image SIF` | the image (a file; its sha256 is recorded). Needs `python3` + `unshare` like any sealed run. |
+| `--run-root DIR` | durable dir; the run is `<DIR>/<name>/<run_id>/`. `/tmp`, `/var/tmp`, `/dev/shm`, `/run` are refused. |
+| `--timeout S` | required wall-clock limit; on expiry the container gets SIGTERM (SIGKILL 10 s later), sac exits **124** and `exit.timed_out: true`. |
+| `--egress-allow H:P` | repeatable; **default: none** — no egress at all (every CONNECT is refused and logged, DNS is NXDOMAIN). |
+| `--bind SRC:DST[:ro\|rw]` | repeatable; **read-only unless `:rw`**. SRC must exist. DST may not cover `/`, `/proc`, `/sys`, `/dev`, `/home/agent` or `/run/sac-sandbox`. |
+| `--env-allow NAME` | repeatable; the variable's value is taken from the CALLER's env. A value holding `$`, a backtick, `"`, `'`, `\` or a line break is refused (exit 2) — apptainer evaluates env values as shell inside the container and would rewrite it (measured: `'$HOME'` arrives expanded); pass such data in a `--bind` file. |
+| `--size-mb N` | cap on the run's writable layers (default 4096). |
+| `--after archive\|remove` | keep the layers (default) or delete all but `out/`. |
+| `--name N` | run group under the run root (default `exec`). |
+| `--pwd DIR` | working directory inside the container (default `/home/agent`). |
+| `--dry-run` | print the plan (the exact `apptainer exec` argv and policy) as JSON; run nothing. |
+
+**What the command sees:** the image, the `--bind` mounts, a fresh
+`$HOME=/home/agent`, `/tmp` + `/var/tmp`, a writable rootfs layer and
+`/uvwork` (all per run, on the run root), and `/run/sac-sandbox` (the
+stdlib gateway launchers + the proxy socket). Nothing of SAC is mounted (no
+venv, no state dir, no fleet binds); `--containall` keeps the host `$HOME`,
+`/tmp` and processes out. **Environment:** the `--env-allow` names plus
+`LANG=C.UTF-8` and the caller's `TERM`, passed through a 0600 env file
+under `secrets/` that is deleted once the gateway is up (values never
+appear in an argv); `PATH` and other image-defined variables come from the
+image (`%environment`), `HOME` is `/home/agent`, and the gateway sets
+`HTTPS_PROXY`/`HTTP_PROXY`. Every other caller variable is dropped and its
+NAME recorded. apptainer itself starts with a minimal process env.
+
+**Output:** the command's stdout/stderr are **tee'd** — streamed to sac's
+stdout/stderr as they arrive AND written to `<run_dir>/out/stdout.log` /
+`stderr.log` (kept under both `--after` modes). sac's own lines go to stderr
+only, prefixed `[sac-sandbox]`; the last one names the outcome path. **Exit
+status:** the command's own status; 124 on `--timeout`; 96 when the run
+could not be set up; 2 for a usage error. SIGINT/SIGTERM/SIGHUP to sac are
+forwarded to the container and recorded as `exit.stopped_by: "caller"` +
+`exit.stop_signal`.
+
+The run is the agent machinery without the agent: `_run.prepare_run_dir`
+(the fresh run dir and `outcome.json`), `_argv.run_flags` + `netgw_wrap`
+(the network seal), `_supervisor.supervise` in the foreground (env seal,
+egress proxy, size watchdog, deadline, tee) and `_run.finalize_run` (files
+written, `--after`). Its record has `kind: "command"`, `command` (argv,
+binds, pwd, timeout), `output` (log paths) and `env.requested` / `passed` /
+`missing` / `dropped`; it has no `token_usage` / `tool_calls` (no harness).
+
 ## Limits
 
-* Supported on the TUI runtimes (`runtime: tui`: Hermes, Claude, Codex,
-  OpenCode panes). The headless SDK runner has no `begin_run` hook and its
-  launch refuses with "no prepared run".
+* Agents: supported on the TUI runtimes (`runtime: tui`: Hermes, Claude,
+  Codex, OpenCode panes). The headless SDK runner has no `begin_run` hook and
+  its launch refuses with "no prepared run". A plain command needs no
+  runtime: use `sac sandbox exec` (there is no `runtime: command` spec form).
 * The image needs `python3`, `unshare` (util-linux) and `/dev/net/tun` support.
+* `sac sandbox exec` lists files written to `$HOME` and the rootfs overlay;
+  writes into an `:rw` bind are not listed (they land on the host path).
+  The gateway launchers under `/run/sac-sandbox/bin` (stdlib copies of
+  `netgw.py` / `hide.py`) are visible to the command; nothing else of SAC is.
+* Only a SIF FILE is accepted as `--image` (a sandbox directory has no
+  single sha256 to record).
 * `run.size` is enforced by polling (5 s), so a burst can overshoot briefly
   before the container is terminated. (A FUSE ext3 overlay image would be a
   hard cap but stacks a third FUSE layer and stalled Hermes for minutes on a
