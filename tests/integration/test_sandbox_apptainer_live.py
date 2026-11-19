@@ -46,6 +46,7 @@ from scitex_agent_container._sandbox import (
     sandbox_flags,
     supervised_argv,
 )
+from scitex_agent_container._sandbox._hide import hide_argv
 from scitex_agent_container._sandbox._supervisor import main as supervise
 
 SIF = os.environ.get("SAC_SANDBOX_TEST_SIF", "")
@@ -322,7 +323,8 @@ echo "CAPS=$(awk '/^CapEff/{{print $2}}' /proc/self/status)"
 exit 7
 """
 
-HIDE = f"{SAC_PY} -m scitex_agent_container._sandbox._hide"
+# By file path under -I, exactly as hide_argv starts it (never ``-m``).
+HIDE = " ".join(hide_argv(SAC_PY, [], [])[:-1])
 OWNER_SCRIPT = f"""
 {HIDE} --hide {STATE} --hide {SAC_PREFIX} --hide /opt/venv-sac -- bash $HOME/hide-probe.sh
 echo "HIDE_RC=$?" >> $HOME/hide-report.txt

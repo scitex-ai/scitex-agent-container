@@ -9,6 +9,7 @@ Host::
     <run_dir>/workdir/             apptainer --workdir (/tmp, /var/tmp)
     <run_dir>/uvwork/              /uvwork
     <run_dir>/rt/bin/netgw.py      the in-container gateway (bound read-only)
+    <run_dir>/rt/bin/hide.py       the control-plane mask launcher (bound read-only)
     <run_dir>/rt/sock/             proxy.sock (host-served) + ingress.sock (container-served)
     <run_dir>/secrets/             filtered 0600 env files (NOT mounted; deleted once consumed)
     <run_dir>/out/                 outcome.json, exit_code, egress_*.jsonl (NOT mounted)
@@ -24,6 +25,7 @@ from pathlib import Path
 
 __all__ = [
     "C_BIN",
+    "C_HIDE",
     "C_INGRESS",
     "C_NETGW",
     "C_PROXY_SOCK",
@@ -37,6 +39,7 @@ C_ROOT = "/run/sac-sandbox"
 C_BIN = f"{C_ROOT}/bin"
 C_SOCK = f"{C_ROOT}/sock"
 C_NETGW = f"{C_BIN}/netgw.py"
+C_HIDE = f"{C_BIN}/hide.py"
 C_PROXY_SOCK = f"{C_SOCK}/proxy.sock"
 C_INGRESS = f"{C_SOCK}/ingress.sock"
 OUTCOME = "outcome.json"

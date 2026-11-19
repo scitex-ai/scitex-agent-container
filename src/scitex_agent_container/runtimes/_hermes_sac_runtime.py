@@ -132,33 +132,17 @@ def _sealed(config: Any) -> bool:
 
 
 def control_plane_paths(config: Any) -> list[str]:
-    """What a sealed agent must not see: its state dir and SAC itself.
+    """What a sealed Hermes agent must not see: its state dir and SAC itself.
 
     The owner keeps all of them and starts the agent tree with each one
-    covered (``_hermes_tui_owner --hide``): ``/state/<name>`` (gateway key,
-    secret env, logs), the launching installation (its whole environment
-    when it is a venv, else its ``sac`` script and package), SAC's own
-    in-image venv as a whole, and every other in-image SAC location the TUI
-    channel resolver knows (shared venvs: their SAC scripts and package).
+    covered (``_hermes_tui_owner --hide``). The list is the harness-neutral
+    :func:`.._sandbox._mask.control_plane_paths`; Hermes additionally
+    REQUIRES the launching installation (its owner runs from it).
     """
-    from ._apptainer_inner_argv_tui import (
-        _SAC_BIN_IN_SIF_CANDIDATES,
-        _SAC_BIN_IN_SIF_DEFAULT,
-    )
+    from .._sandbox._mask import control_plane_paths as neutral_paths
 
-    installation = sac_installation(config)
-    paths = [f"/state/{config.name}"]
-    if installation.prefix != installation.base_prefix:
-        paths.append(str(installation.prefix))
-    else:
-        paths.append(str(Path(__file__).resolve().parents[1]))
-    if not installation.binary.is_relative_to(installation.prefix):
-        paths.append(str(installation.binary))
-    paths.append(str(Path(_SAC_BIN_IN_SIF_DEFAULT).parents[1]))
-    for candidate in _SAC_BIN_IN_SIF_CANDIDATES:
-        paths += [candidate, str(Path(candidate).with_name("scitex-agent-container"))]
-    paths.append(IMAGE_SAC_SOURCE)
-    return list(dict.fromkeys(paths))
+    sac_installation(config)
+    return neutral_paths(config)
 
 
 def sac_runtime_env_flags(config: Any) -> list[str]:

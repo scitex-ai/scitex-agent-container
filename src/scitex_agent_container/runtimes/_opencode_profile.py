@@ -106,15 +106,13 @@ def _opencode_mcp_servers(home: Path) -> dict[str, dict[str, Any]]:
     return translated
 
 
-def materialize_opencode_profile(
-    config: AgentConfig, *, state_dir: Path
-) -> list[Path]:
+def materialize_opencode_profile(config: AgentConfig, *, state_dir: Path) -> list[Path]:
     """Write the derived ``opencode.json`` + owner-only env to each home."""
+    from ._apptainer_provider import resolve_provider_api_key
+    from ._gateway_opencode import OPENCODE_GATEWAY
     from ._to_home import deploy_to_home
     from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
     from .mcp_config import setup_mcp_config
-    from ._apptainer_provider import resolve_provider_api_key
-    from ._gateway_opencode import OPENCODE_GATEWAY
 
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -200,8 +198,16 @@ def profile_env_argv(state_dir: Path) -> list[str]:
 def validate_opencode_profile(
     config: AgentConfig, *, state_dir: Path, launch_argv: Sequence[str]
 ) -> None:
-    """Validate the materialized profile against the finalized argv."""
-    del launch_argv  # No MCP-pg credential cross-check at pilot scope.
+    """Validate the materialized profile against the finalized argv.
+
+    A sealed run's owner runs from the launching SAC installation (it
+    masks serve and the TUI), so that installation must be bound at its
+    own paths and nothing may point the agent at it — the Hermes rule.
+    """
+    if getattr(config, "sandbox", None) is not None:
+        from ._hermes_sac_runtime import validate_sac_runtime
+
+        validate_sac_runtime(config, launch_argv=launch_argv)
     from ._to_home_overlay import resolve_overlay_upper_home
 
     targets = [Path(state_dir) / "home"]
