@@ -218,7 +218,7 @@ def test_remote_ssh_transport_preserves_dispatch_to_real_loopback_bridge(
     _, port = endpoints
     shim = tmp_path / "ssh"
     shim.write_text(
-        "#!/usr/bin/python3\nimport os,sys\nos.execv('/bin/sh', ['sh','-c',sys.argv[-1]])\n"
+        "#!/usr/bin/env python3\nimport os,sys\nos.execv('/bin/sh', ['sh','-c',sys.argv[-1]])\n"
     )
     shim.chmod(0o755)
     import os
