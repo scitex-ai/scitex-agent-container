@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-11-20
+
 ### Fixed
 - Qualify the GUI and development extras with SDK 0.3.25 so they resolve with
   Hub's authenticated project and LivePaper integrations. The loopback SSH test
