@@ -437,6 +437,11 @@ tr.agent-row[data-fleet-hidden="true"] { display: none; }
 .agents-3col > section[data-stx-pane] { min-height: 0; height: 100%; max-height: 100%; overflow: hidden; }
 .agents-3col:not(.stx-panes--single) > section[data-stx-pane] { display: flex; flex-direction: column; }
 .agents-3col > section[data-stx-pane] > div { flex: 1; min-height: 0; overflow-y: auto; }
+/* These surfaces live inside SDK grid tracks, rather than fixed-width
+   navigation rails. Fill each track instead of inheriting the sidebar's
+   250px width, which squeezes the DM composer and Details content. */
+.agents-3col .agents-chat-pane,
+.agents-3col .agents-detail-pane { width: 100%; min-width: 0; }
 .agents-roster { table-layout: fixed; width: 100%; }
 .agents-roster thead th { padding: 7px 8px; }
 .agents-roster tbody td { padding: 7px 8px; }
