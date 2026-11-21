@@ -61,6 +61,8 @@ def heartbeat_lease_rows(
                 runtime_identity_source="authoritative-heartbeat",
                 probe_runtime="authoritative-heartbeat",
                 probe_error=None,
+                # Heartbeat leases carry work evidence, never spec identity.
+                spec_uuid="",
                 labels={"resident_state": resident_state},
             )
         )
