@@ -37,10 +37,20 @@ def _deep_merge(base: Any, overlay: Any, *, name: str, path: str) -> Any:
 
     A differing leaf (overlay overrides a non-equal base value) is logged at
     WARNING so a per-agent override of the shared baseline stays visible.
+
+    ``None`` is REMOVAL, not a value: an overlay entry of ``None`` drops the
+    corresponding base key (recursively — ``{"env": None}`` strips the whole
+    env block). This is how an isolated child excludes baseline servers or
+    store/quota env it must not inherit (card
+    to-home-baseline-merge-defeats-child-isolation-20260920); without it the
+    union-only merge defeats any spec-level isolation intent.
     """
     if isinstance(base, dict) and isinstance(overlay, dict):
         out = dict(base)
         for key, value in overlay.items():
+            if value is None:
+                out.pop(key, None)
+                continue
             if key in base:
                 child = f"{path}.{key}" if path else key
                 out[key] = _deep_merge(base[key], value, name=name, path=child)
@@ -63,20 +73,27 @@ def merge_mcp_json(baseline: dict, overlay: dict) -> dict:
 
     * ``mcpServers`` — union by name; a same-name server is deep-merged with the
       overlay (per-agent) winning on leaf conflicts. A differing leaf is
-      WARNING-logged, never fatal.
+      WARNING-logged, never fatal. An overlay entry of ``None`` REMOVES the
+      server (exclusion wins — isolated children drop baseline servers they
+      must not inherit).
     * Other top-level keys — ``overlay`` wins where present, else ``baseline``
-      is preserved.
+      is preserved (``None`` removes here too).
     """
     merged: dict[str, Any] = dict(baseline)
     servers: dict[str, Any] = dict(baseline.get("mcpServers") or {})
     for name, defn in (overlay.get("mcpServers") or {}).items():
-        if name in servers:
+        if defn is None:
+            servers.pop(name, None)
+        elif name in servers:
             servers[name] = _deep_merge(servers[name], defn, name=name, path="")
         else:
             servers[name] = defn
     for key, value in overlay.items():
         if key != "mcpServers":
-            merged[key] = value
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
     merged["mcpServers"] = servers
     return merged
 
