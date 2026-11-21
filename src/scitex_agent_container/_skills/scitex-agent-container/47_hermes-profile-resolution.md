@@ -121,10 +121,10 @@ without requiring the host package source path to be mounted into the image.
 Load the owning package's leaf on demand:
 
 ```bash
-scitex-dev dev skills get --help
-scitex-dev dev skills list --help
-scitex-dev dev skills get scitex-dev 24_host-registry
-scitex-dev dev skills get scitex-dev 36_skill-registry
+scitex dev dev skills get --help
+scitex dev dev skills list --help
+scitex dev dev skills get scitex-dev 24_host-registry
+scitex dev dev skills get scitex-dev 36_skill-registry
 sac dev skills get 47_hermes-profile-resolution
 ```
 
