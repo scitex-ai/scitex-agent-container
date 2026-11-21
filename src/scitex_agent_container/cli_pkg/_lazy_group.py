@@ -42,10 +42,18 @@ class _LazyCommandsDict(dict):
     """Dict-of-commands that resolves lazy entries on ``get`` / ``in``.
 
     The CLI audit (and any third-party tooling that introspects a
-    click group) reads ``group.commands.get(name)`` directly without
-    going through ``Group.get_command``. With a plain dict, lazy
-    entries are invisible. This subclass forwards misses to the owning
-    group's lazy resolver and caches the result.
+    click group) reads ``group.commands`` by name (``get`` / ``in`` /
+    ``[]``) without going through ``Group.get_command``. With a plain
+    dict, lazy entries are invisible, so this subclass forwards misses
+    to the owning group's lazy resolver and caches the result.
+
+    Deliberately NO enumeration overrides: two variants were tried
+    and both broke (populate-everything crashed --help on an
+    import-faulting lazy module; scoped materialisation broke the
+    startup-budget import closure). Enumeration tools must use
+    ``Group.list_commands(ctx)``, which already merges lazy names.
+    The scitex-dev 0.62.9 snapshotter enumerates dict keys instead —
+    that fix belongs upstream (scitex-dev), not here.
     """
 
     def __init__(self, group: "LazyGroup") -> None:
