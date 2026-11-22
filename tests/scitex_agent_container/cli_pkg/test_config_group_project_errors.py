@@ -53,6 +53,7 @@ def test_project_show_rejects_unsupported_target_option(paths):
     source = layer(home / "source", "explicit-project")
     # Act
     result = runner.invoke(config_group, ["show", "--scope", "project",
-                           "--source", str(source), "--target", str(home / "target")])
+                           "--source", str(source), "--target", str(home / "target")],
+                           standalone_mode=False)
     # Assert
-    assert "No such option: --target" in result.output
+    assert result.exception.option_name == "--target"
