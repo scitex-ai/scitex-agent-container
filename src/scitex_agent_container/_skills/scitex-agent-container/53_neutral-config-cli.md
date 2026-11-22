@@ -15,7 +15,9 @@ harness does not establish a neutral renderer for it.
 ## Resolve the selected layer
 
 `--scope user` is the default. It selects
-`~/.scitex/agent-container/.agents`; native output defaults to `~/.claude`, or
+`~/.scitex/agent-container/.agents`, or `SAC_AGENTS_DIR` when set. An explicit
+`--source` wins over that override; `~` is expanded in the environment value.
+Native output defaults to `~/.claude`, or
 `CLAUDE_CONFIG_DIR` when set. Project scope selects
 `<git-root>/.scitex/agent-container/.agents` and `<git-root>/.claude`.
 These commands inspect or render the selected layer; `show` is not a report of
@@ -53,6 +55,8 @@ Use owned temporary paths for qualification, not live credentials or agent
 homes. Source commands and flags are defined by the
 [CLI implementation](../../cli_pkg/config_group.py). Owning checkout tests are
 `tests/scitex_agent_container/cli_pkg/test_config_group.py` and
-`tests/scitex_agent_container/_neutral_config/`: they cover preview/apply,
+`tests/scitex_agent_container/_neutral_config/`;
+`tests/scitex_agent_container/cli_pkg/test_config_paths.py` also exercises
+source/target/import precedence in temporary homes and projects. They cover preview/apply,
 drift, migration and preservation behavior. They do not establish native
 launch, hosted delivery or another harness's renderer.
