@@ -161,8 +161,10 @@ def _deploy_mcp_merge(
     instead we UNION the ``mcpServers`` (baseline ∪ per-agent) via
     :func:`_mcp_merge.merge_mcp_json`. Fail-loud (no silent fallback): an
     unparseable source/destination ``.mcp.json`` raises
-    :class:`WorkspaceMcpMergeError`; a same-name server defined two different
-    ways raises :class:`_mcp_merge.McpMergeConflict`. Both abort the deploy.
+    :class:`WorkspaceMcpMergeError` and aborts the deploy. A same-name server
+    is recursively merged with per-agent leaf values winning; differing leaves
+    are WARNING-logged. ``McpMergeConflict`` is retained for import compatibility
+    but is no longer raised by :func:`_mcp_merge.merge_mcp_json`.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     _clear_readonly_dst(dst)

@@ -57,10 +57,22 @@ SAC verifies the projected bytes and passes them through Hermes'
 |---------------------------|---------------------------------|------------------------|
 | `AGENTS.md` | `$HOME/AGENTS.md` | exact projection |
 | `CLAUDE.md` | `$HOME/CLAUDE.md` | marker-protected projection |
-| `.mcp.json`               | `$HOME/.mcp.json`               | full overwrite         |
+| `.mcp.json` | `$HOME/.mcp.json` | server-name union; per-agent leaf values win |
 | `.env`                    | `$HOME/.env`                    | mode 0600, overwrite   |
 | `state.md`                | `$HOME/state.md`                | marker-protected append |
 | `.claude/{commands,skills,hooks}/` | `$HOME/.claude/*/`     | recursive copy         |
+
+For `.mcp.json`, `_to_home_deployers._deploy_mcp_merge` uses
+`_mcp_merge.merge_mcp_json`: disjoint server names combine, same-name server
+definitions merge recursively, and differing leaf values use the per-agent
+overlay with a warning. Invalid JSON aborts with `WorkspaceMcpMergeError`.
+The owning controls are `tests/scitex_agent_container/runtimes/test__mcp_merge.py`
+and the three `test_mcp_json_*` cases in `test__to_home.py`.
+
+Source symlinks in `to_home/` are dereference-copied into real content; dangling
+links abort. This is distinct from the later host-command/skill merge, which
+can create links. See `_to_home._walk_and_apply`, `_symlink_resolve.py` and the
+symlink cases in `test__to_home.py` / `test__symlink_resolve.py`.
 
 Every launch writes `$HOME/.scitex/agent-container/runtime/prompt-projections.json` from the executable
 materializer. It records SHA-256 provenance for the explicit startup prompts,

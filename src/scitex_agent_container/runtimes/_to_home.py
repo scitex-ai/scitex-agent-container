@@ -14,7 +14,7 @@ The single canonical layout for materializing files into an agent's
         │   │                        it by settings_json.setup_settings_json)
         │   ├── hooks/
         │   └── skills/
-        ├── .mcp.json              → $HOME/.mcp.json             (full overwrite)
+        ├── .mcp.json              → $HOME/.mcp.json             (deep-merge, per-agent wins)
         ├── .env                   → $HOME/.env                  (overwrite, chmod 0600)
         ├── state.md               → $HOME/state.md              (marker-protected)
         └── secrets/               → $HOME/secrets/              (mirror, perms preserved)
@@ -31,10 +31,11 @@ Semantics per entry (see :func:`materialize_to_home`):
     marker is preserved. Malformed existing markers hard-abort the
     deploy with :class:`WorkspaceCLAUDEMarkerError`.
   - **.env** — full overwrite; chmod 0600 after write.
+  - **.mcp.json** — server-name union; per-agent leaf values win conflicts.
   - **Other regular files** — full overwrite (``shutil.copy2``).
   - **Directories** — recursed; structure preserved.
-  - **Symlinks** — preserved as symlinks (target not resolved). Both
-    absolute and relative targets pass through verbatim.
+  - **Source symlinks** — dereference-copied to real files/directories.
+    Dangling targets abort with :class:`DanglingToHomeSymlinkError`.
 
 No fragmented "leaf-vs-mirror" distinction — every path under
 ``to_home/`` lands at the same relative path under ``workspace_home``.
@@ -135,7 +136,8 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 # shared baseline ``_shared/to_home/.mcp.json`` carries the default MCP servers
 # (sac / scitex-cards / claude-code-telegrammer); a per-agent ``.mcp.json`` must
 # UNION its servers with that baseline, not replace it (which would silently
-# drop the defaults). Same-name conflict → fail loud. See :func:`_deploy_mcp_merge`.
+# drop the defaults). Per-agent leaf values win with a warning; invalid JSON
+# aborts. See :func:`_deploy_mcp_merge`.
 _MCP_MERGE_BASENAMES = frozenset({".mcp.json"})
 
 # Files that get chmod 0600 after copy. ``.env`` only by default; the
