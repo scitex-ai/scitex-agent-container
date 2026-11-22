@@ -119,4 +119,3 @@ def isolated_home(tmp_path: Path) -> Iterator[Path]:
             os.environ.pop("HOME", None)
         else:
             os.environ["HOME"] = saved
-
