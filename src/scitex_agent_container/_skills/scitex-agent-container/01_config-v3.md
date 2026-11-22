@@ -131,7 +131,9 @@ container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
 `$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `AGENTS.md` is
 an exact projection; `.env`
-gets mode 0600; everything else is a full overwrite. `${VAR}` and
+gets mode 0600; `.mcp.json` deep-merges server definitions; ordinary regular
+files are overwritten. Source symlinks are copied as real files/directories;
+dangling targets abort the deploy. `${VAR}` and
 `${metadata.name}` are interpolated in text files. A shared baseline
 `to_home/` (`<agents_dir>/_shared/to_home`, override `$SAC_TO_HOME_BASELINE`)
 is applied first; the per-agent `to_home/` overlays on top.
@@ -140,7 +142,7 @@ is applied first; the per-agent `to_home/` overlays on top.
 |---|---|---|---|
 | `to_home/CLAUDE.md` | `$HOME/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
 | `to_home/AGENTS.md` | `$HOME/AGENTS.md` | 0644 | Neutral instruction projection; Hermes consumes its verified bytes through `agent.system_prompt` |
-| `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Full overwrite |
+| `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Server-name union; per-agent values win recursive leaf conflicts |
 | `to_home/.env` | `$HOME/.env` | **0600** | Full overwrite; sourceable by spawned shells |
 | `to_home/state.md` | `$HOME/state.md` | 0644 | Marker-protected (handover snapshot) |
 | `to_home/.claude/<x>/` | `$HOME/.claude/<x>/` | copy | `hooks/`, `skills/`, `commands/`, `agents/`, … |

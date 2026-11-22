@@ -16,6 +16,9 @@ from scitex_agent_container.runtimes._prompt_projection_integrity import (
 from scitex_agent_container.runtimes._to_home import deploy_to_home
 
 
+pytestmark = pytest.mark.usefixtures("materialization_host")
+
+
 def _config(tmp_path: Path) -> tuple[AgentConfig, Path, Path]:
     agents = tmp_path / "agents"
     shared = agents / "_shared" / "to_home"

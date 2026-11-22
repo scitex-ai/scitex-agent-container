@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] sac CLI reference
-  [DETAILS] Lifecycle (start/stop/restart/status/health/tail/recall/check/find), image lifecycle (build/sandbox/update/freeze/list/switch/rollback/status/snapshot — delegates to scitex-container), account/quota, network/peer/A2A, db, registry, event, MCP introspection. Long-form flag tables in 10_cli.md.
+  [DETAILS] Lifecycle, images (via scitex-container), accounts/quota, network/peer/A2A, state and MCP introspection. Flag tables in 10_cli.md; neutral config in 53_neutral-config-cli.md.
 tags: [scitex-agent-container-cli-reference]
 ---
 
@@ -113,6 +113,7 @@ sac image rollback --layer base --yes
 | `sac installation` | Bootstrap helpers for a new fleet host. |
 | `sac installation setup-cron` | Add (or remove) the post-merge-pull crontab entry. |
 | `sac template render-contributor-spec` | Materialize a contributor agent spec from the v3 template. |
+| `sac config show / deploy / check / import` | [Claude neutral config, preview, drift and writes](53_neutral-config-cli.md). |
 
 ## Other
 
