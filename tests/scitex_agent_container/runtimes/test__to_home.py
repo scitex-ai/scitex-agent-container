@@ -33,6 +33,9 @@ from scitex_agent_container.runtimes._to_home import (
     resolve_to_home_dir,
 )
 
+pytestmark = pytest.mark.usefixtures("materialization_host")
+
+
 START_MARKER_RE = re.compile(
     r"<!-- Start of scitex-agent-container generated section.*?-->"
 )
