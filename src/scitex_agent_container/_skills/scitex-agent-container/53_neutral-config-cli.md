@@ -56,7 +56,7 @@ homes. Source commands and flags are defined by the
 [CLI implementation](../../cli_pkg/config_group.py). Owning checkout tests are
 `tests/scitex_agent_container/cli_pkg/test_config_group.py` and
 `tests/scitex_agent_container/_neutral_config/`;
-`tests/scitex_agent_container/cli_pkg/test_config_paths.py` also exercises
+`tests/scitex_agent_container/cli_pkg/test_config_group_paths_*.py` also exercises
 source/target/import precedence in temporary homes and projects. They cover preview/apply,
 drift, migration and preservation behavior. They do not establish native
 launch, hosted delivery or another harness's renderer.
