@@ -148,11 +148,11 @@ def listen(
         sac listener start --yes --print-token # echo the bearer token, then exit
 
     \b
-    DEPRECATED: bare `sac listener` still BOOTS the daemon, so the systemd unit
-    and every existing launcher keep working — but it now warns. Use
-    `sac listener start --yes`. The warning still names the historical v0.23.0
-    removal target; removal has not been implemented. Existing launchers
-    must migrate before bare startup can be removed.
+    DEPRECATED: bare `sac listener` still BOOTS the daemon with a warning.
+    Use `sac listener start --yes`; the source systemd template already uses
+    `listen start --yes`, while direct respawn still falls back to bare `listen`.
+    The warning still names historical v0.23.0; removal is unimplemented.
+    Existing launchers must migrate before bare startup can be removed.
     """
     # Stash group-level options so subcommands (``start`` / ``stop`` /
     # ``restart`` / ``status``) can mirror ``sac listen``'s own bind
