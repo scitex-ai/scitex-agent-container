@@ -84,7 +84,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [50](50_credential-distribution-preview.md) — credential preview
 - [51](51_send-preview.md) — send plan
 - [52](52_listen-preview.md) — listener preview
-- [53](53_neutral-config-cli.md) — neutral configuration preview, drift and guarded writes
+- [53](53_neutral-config-cli.md) — neutral config: preview, drift, writes
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
@@ -93,9 +93,9 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [44](44_agent-to-agent-recovery.md) — wedged-peer recovery
 - [45](45_agent-to-agent-recovery-tmux.md) — tmux recovery and MCP reconnect
 - [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
-- [47_hermes-profile-resolution.md](47_hermes-profile-resolution.md) — profiles, project context, skills, judge errors
-- [48_model-availability.md](48_model-availability.md) — API preflights, caps, fresh restarts, Say Hi
-- [49_subscription-errors.md](49_subscription-errors.md) — entitlement/judge diagnosis and bounded recovery
+- [47](47_hermes-profile-resolution.md) — profiles, project context, skills, judge errors
+- [48](48_model-availability.md) — API preflights, caps, fresh restarts, Say Hi
+- [49](49_subscription-errors.md) — entitlement/judge diagnosis and bounded recovery
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — troubleshooting
