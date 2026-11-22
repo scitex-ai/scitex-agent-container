@@ -24,7 +24,7 @@ Run from `spec.yaml` via Apptainer/SSH; observe with
 Claude and direct Codex support TUI/headless; Hermes and OpenCode support
 TUI. Authentication is separate from harness selection. OpenAI Agents SDK
 has no lifecycle launch adapter; Command Code is unregistered. See
-[how-sac-works.md](../../../../docs/how-sac-works.md) for the support matrix.
+[how-sac-works.md](https://github.com/scitex-ai/scitex-agent-container/blob/c8d22d99ca4bc98668866e6a4774516cf1df2935/docs/how-sac-works.md) for the support matrix.
 
 ## What the package ships
 
@@ -38,12 +38,12 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 ## Sub-skills
 
 ### Onboarding & interfaces
-- [01_installation.md](01_installation.md) — pip install + auth + per-host hook
+- [01](01_installation.md) — pip install + auth + per-host hook
 - [02_quick-start.md](02_quick-start.md) — first agent
 - [03_python-api.md](03_python-api.md) — Python API
 - [04_cli-reference.md](04_cli-reference.md) — CLI reference
 - [05_mcp-tools.md](05_mcp-tools.md) — `sac mcp` server + tool inventory
-- [06_http-api.md](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
+- [06](06_http-api.md) — `POST /v1/turn` wire format (`spec.a2a.port` enables)
 
 ### Core
 - [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT
@@ -51,15 +51,15 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
 - [04_resource-management.md](04_resource-management.md)
 - [05_resource-heartbeat.md](05_resource-heartbeat.md)
-- [06_env-injection-ports.md](06_env-injection-ports.md) — four env-injection ports
+- [06-env](06_env-injection-ports.md) — four env-injection ports
 - [07_a2a-protocol.md](07_a2a-protocol.md) — native A2A protocol (`sac a2a serve`)
-- [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
+- [07-ext](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
 - [08_templates.md](08_templates.md) — six pattern templates
 - [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence
 - [15_claude-session.md](15_claude-session.md) — SDK runner + `POST /v1/turn` inbound
 - [16](16_claude-session-migration.md) — historical claude-code→SDK migration
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format
-- [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent
+- [18](18_full-agent-delegation.md) — delegate to another *full* agent
 - [19](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
 - [33](33_twin-spawning.md) — context-inheriting twin
 - [34](34_spec-is-a-contract-not-state.md)
@@ -72,7 +72,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [24_image-build.md](24_image-build.md) — Apptainer image builds
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — home delivery
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — host refresh
+- [26-host](26_credentials-rotation-host.md) — host refresh
 - [26-acct](26_credentials-account-selection.md) — boot account pin/picker + 7d policy
 - [27_credentials-relogin.md](27_credentials-relogin.md) — re-login and 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
