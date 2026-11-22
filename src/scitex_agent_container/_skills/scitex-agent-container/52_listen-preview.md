@@ -9,10 +9,14 @@ tags: [scitex-agent-container-listen-preview]
 
 # Preview listener lifecycle arguments
 
-`listener` is the public namespace. The hidden `listen` alias forwards to the
-same group until 0.40.0, warning on stderr once per shell session. Group options,
-subcommands and approval checks are shared. Existing launcher argv still works;
-this change does not alter service units, token paths or bare startup.
+`listener` is the public namespace. The reviewed source still registers the
+hidden `listen` alias, warning on stderr once per shell session. Its deprecation
+metadata specifies removal in **0.40.0**, earlier than the declared source
+version **0.42.1**: removal and caller migration remain unresolved. Observed
+alias retention does not extend that deadline or promise future compatibility.
+Group options, subcommands and approval checks are currently shared. Existing
+launcher argv still works in this source; this guide does not alter service
+units, token paths or bare startup.
 The JSON preview target remains `"listen"` for compatibility.
 
 ```bash
@@ -64,7 +68,8 @@ An older peer lacking the flag refuses it; no unapproved retry is made.
 This source change does not migrate deployed callers or peer executables. Preview belongs to the
 explicit `start`, `stop` and `restart` verbs.
 
-Source: `cli_pkg/_listen_preview.py`, `_listen_stop_approval.py`,
+Source: `cli_pkg/_main.py` (alias/deprecation registration),
+`_listen_preview.py`, `_listen_stop_approval.py`,
 `_listen_restart_approval.py`, `_listen_start_approval.py`,
 `_listen_verbs.py`, `_port_options.py` and `listen_cmds.py`.
 Behavioral controls: `tests/scitex_agent_container/cli_pkg/test__listen_preview.py`,
