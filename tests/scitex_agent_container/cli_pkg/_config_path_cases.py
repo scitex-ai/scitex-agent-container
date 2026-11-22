@@ -1,5 +1,7 @@
 """Owned path inputs for config_group CLI behavior tests; no mocked readers."""
 
+from contextlib import contextmanager
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +9,17 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.config_group import config_group
+
+
+@contextmanager
+def working_directory(path):
+    """Use an owned fixture directory and always restore the caller's cwd."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
 
 
 def layer(root, label):
@@ -22,7 +35,9 @@ def paths(tmp_path):
     home.mkdir()
     runner = CliRunner(env={"HOME": str(home), "SAC_AGENTS_DIR": None,
                             "CLAUDE_CONFIG_DIR": None})
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    with working_directory(cwd):
         yield runner, home
 
 
@@ -67,7 +82,7 @@ def project_case(paths, request):
     nested = root / "nested"
     nested.mkdir()
     env = {"SAC_AGENTS_DIR": str(user), "CLAUDE_CONFIG_DIR": str(home / "native-decoy")}
-    with runner.isolated_filesystem(temp_dir=nested):
+    with working_directory(nested):
         yield SimpleNamespace(runner=runner, env=env, source=source, user=user,
                               target=root / ".claude", decoy=home / "native-decoy")
 
