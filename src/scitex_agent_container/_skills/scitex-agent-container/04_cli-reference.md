@@ -113,6 +113,7 @@ sac image rollback --layer base --yes
 | `sac installation` | Bootstrap helpers for a new fleet host. |
 | `sac installation setup-cron` | Add (or remove) the post-merge-pull crontab entry. |
 | `sac template render-contributor-spec` | Materialize a contributor agent spec from the v3 template. |
+| `sac config show / deploy / check / import` | Selected neutral layer, Claude preview/drift and guarded writes; see [neutral configuration](53_neutral-config-cli.md). |
 
 ## Other
 

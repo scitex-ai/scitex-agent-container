@@ -84,6 +84,7 @@ has no lifecycle launch adapter; Command Code is unregistered. See
 - [50](50_credential-distribution-preview.md) — credential preview
 - [51](51_send-preview.md) — send plan
 - [52](52_listen-preview.md) — listener preview
+- [53](53_neutral-config-cli.md) — neutral configuration preview, drift and guarded writes
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
