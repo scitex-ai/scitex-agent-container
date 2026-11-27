@@ -437,7 +437,8 @@ dev = [
     # doesn't pull the gh CLI plumbing — only maintainers / CI rotation.
     "scitex-git>=0.3.0",
     "pytest>=7.0.0,<9.0.0",
-    "pytest-cov>=4.0.0",
+    "pytest-cov>=7.0.0",
+    "coverage[toml]>=7.13.0",
     "pytest-xdist>=3.0.0",
     # A2A v1.0 push-channel work (ADR-0001 commit 1) introduced async
     # tests against the inbox broker. STRICT asyncio mode keeps the
@@ -1007,9 +1008,9 @@ ignore = ["E501"]
 
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters
-# (subprocess.run, jupyter nbconvert --execute, etc.) are wired in via
-# tests/conftest.py force-set of COVERAGE_PROCESS_START + a .pth shim.
-# See ~/proj/scitex-dev/src/scitex_dev/_skills/general/05_development_06_subprocess-coverage.md.
+# (subprocess.run, jupyter nbconvert --execute, etc.) are covered via
+# coverage.py's subprocess patch (coverage >= 7.10).
+patch = ["subprocess"]
 parallel = true
 branch = true
 source = ["scitex_agent_container"]
