@@ -108,6 +108,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "migrate-layers",
                 "migrate-engines",
                 "migrate-images",
+                "migrate-spec-uuids",
                 "scratch-migrate",
                 "link-specs",
                 "restore-worktree",
@@ -368,6 +369,13 @@ _register_migrate_engines(agent_group)
 from ._agents_migrate_images import register as _register_migrate_images  # noqa: E402
 
 _register_migrate_images(agent_group)
+
+# `migrate-spec-uuids` — move SAC<0.40 working-tree-only `spec.uuid` start
+# stamps into each agent's runtime state file, then drop the line, so the
+# identity survives the cleanup. Committed uuids are untouched.
+from ._agents_migrate_spec_uuids import register as _register_migrate_spec_uuids  # noqa: E402
+
+_register_migrate_spec_uuids(agent_group)
 
 # `scratch-migrate` — ADR-0024: move each STOPPED agent's overlay-upper
 # ``/uvwork`` (11.7 GB for sac alone on the root LV, measured 2026-09-03)

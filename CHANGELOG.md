@@ -6,6 +6,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- A start on a spec that carries `spec.uuid` now also records it in the
+  agent's runtime state file (`<state_dir>/spec_uuid`), the file a start of a
+  uuid-less spec reads (#1777). If the two differ, the spec wins: the file is
+  overwritten atomically and the change is logged. This is best-effort, so a
+  failed write never blocks a start. Removing a `uuid:` line that SAC < 0.40
+  stamped into a spec at start no longer forks the agent's identity.
+
+### Added
+- `sac agents migrate-spec-uuids [NAME] [--agents-dir DIR] [--dry-run]
+  [--json]` handles `uuid:` lines that exist in a spec's working tree but not
+  in its git `HEAD` (SAC < 0.40 start stamps). It writes the uuid to the
+  agent's runtime state file, then removes only that line. Authored
+  (committed) uuids are not touched. If the state file already holds a
+  different uuid, the command refuses and exits 1. For a spec outside git
+  or not committed at HEAD, it records the uuid in state and keeps the line.
+  It never touches running agents.
+
 ## [0.42.1] - 2026-11-20
 
 ### Fixed
