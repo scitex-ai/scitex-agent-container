@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Qualify the GUI and development extras with SDK 0.3.26 (exact pin) so they
+  resolve with Hub's cohort, which now requires `scitex-sdk>=0.3.26`. SDK
+  0.3.26 is additive (host storage gate, API operation/serving/MCP layer) and
+  changes no GUI shell, app header, embed launcher, CSS or JavaScript the
+  dashboard renders.
+
 ## [0.42.1] - 2026-11-20
 
 ### Fixed

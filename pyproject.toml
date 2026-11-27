@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.42.1"
+version = "0.42.2"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -238,10 +238,10 @@ gui = [
     # (css/app/app-header.css + data-stx-app-header) the dashboard adopts.
     "django>=4.2",
     # SSoT pin: scitex-sdk behavior is part of our render contract
-    # Hub's shared GUI cohort requires SDK >=0.3.25. Keep an exact version
+    # Hub's shared GUI cohort requires SDK >=0.3.26. Keep an exact version
     # here and in [dev], and qualify renderer/interaction behavior when
     # changing it; an open floor would admit unreviewed render changes.
-    "scitex-sdk[gui]==0.3.25",
+    "scitex-sdk[gui]==0.3.26",
 ]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
@@ -494,7 +494,7 @@ dev = [
     # `[gui]` extra so the two cannot drift.
     "django>=4.2",
     # Same SSoT pin as [gui] above — the two must not drift.
-    "scitex-sdk[gui]==0.3.25",
+    "scitex-sdk[gui]==0.3.26",
 ]
 docs = [
     "sphinx>=7.0",
