@@ -172,7 +172,7 @@ def _migrate_one(
                 return out
         state_path = Path(state_dir_for(spec_path)) / RUNTIME_UUID_FILE
         out.state_path = str(state_path)
-    except Exception as exc:  # stx-allow: fallback (reason: one unreadable spec is REPORTED as action=error and fails the run; it must not hide the plan for every other spec)
+    except Exception as exc:  # stx-allow: fallback (reason: one unreadable spec becomes a SpecUuidMigration(action=error) row printed to stdout by `sac agents migrate-spec-uuids` and fails the run with exit 1; it must not hide the plan for every other spec)
         out.action = "error"
         out.reason = f"{type(exc).__name__}: {exc}"
         return out

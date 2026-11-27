@@ -187,20 +187,24 @@ def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
     """Leak-guard companion to the sentinel test above.
 
     Proves the helper's save/restore seam actually restores: after an
-    injected resolution, an unset resolution must show no trace of the
-    sentinel. Deliberately says NOTHING about where the unset arm lands —
-    0.57.0 answers a unix socket, 0.58.1 answers the fleet primary, and both
-    are upstream's business (see the docstring above for the incident that
-    taught this). Mutation-checked: making ``_resolved_store_locator`` skip
-    its ``finally`` restore leaves the sentinel in ``os.environ`` and this
-    fails.
+    injected resolution, the process environment holds exactly the
+    ``SCITEX_STORE_DSN`` it held before. Deliberately says NOTHING about
+    where an unset resolution lands — 0.57.0 answers a unix socket, 0.58.1
+    the fleet primary, and newer scitex-dev REFUSES an unset DSN on a host
+    that manages a shared store node (``StoreTargetError``, seen on the
+    self-hosted CI runner) — all upstream's business (see the docstring
+    above for the incident that taught this). Mutation-checked: making
+    ``_resolved_store_locator`` skip its ``finally`` restore leaves the
+    sentinel in ``os.environ`` and this fails.
     """
+    import os
+
     # Arrange
-    _resolved_store_locator(_SENTINEL_DSN)
+    before = os.environ.get("SCITEX_STORE_DSN")
     # Act
-    unset = _resolved_store_locator(None)
+    _resolved_store_locator(_SENTINEL_DSN)
     # Assert
-    assert "sentinel.invalid" not in unset
+    assert os.environ.get("SCITEX_STORE_DSN") == before
 
 
 # ----------------------------------------------------------------------
@@ -472,7 +476,6 @@ def test_the_host_process_role_never_reaches_a_container(tmp_path: Path) -> None
     env = effective_env(config, defaults=FLEET_DEFAULT_ENV)
     # Assert
     assert env[PG_USER_ENV] == derive_pg_role("some-agent")
-
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:

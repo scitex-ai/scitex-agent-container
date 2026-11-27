@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.42.3] - 2026-11-27
+
+0.42.2 is reserved by the pending SDK 0.3.26 release PR (#1810).
+
 ### Fixed
 - A start on a spec that carries `spec.uuid` now also records it in the
   agent's runtime state file (`<state_dir>/spec_uuid`), the file a start of a

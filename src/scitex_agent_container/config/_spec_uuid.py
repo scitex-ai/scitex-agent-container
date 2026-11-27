@@ -190,7 +190,7 @@ def record_runtime_spec_uuid(state_dir: str | Path, spec_uuid: str) -> str | Non
         try:
             if parse_spec_uuid(previous, path=str(path)) == value:
                 return previous
-        except ValueError:  # stx-allow: fallback (reason: a malformed state file is replaced by the authoritative spec value below and the change is logged)
+        except ValueError:  # stx-allow: fallback (reason: a malformed state file is replaced by the authoritative spec value below; the warning goes to the scitex_logging logger scitex_agent_container.config._spec_uuid)
             pass
         _logger().warning(
             "spec.uuid %s differs from runtime state %s (%r); the spec is "
