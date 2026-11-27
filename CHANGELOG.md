@@ -6,6 +6,9 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Subprocess coverage is configured via coverage.py's `patch = ["subprocess"]`; `tests/conftest.py` no longer installs `.pth` hooks into site-packages or overwrites caller-owned coverage environment variables.
+
 ## [0.42.1] - 2026-11-20
 
 ### Fixed
