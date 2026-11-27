@@ -16,7 +16,7 @@ from ._secret_pool import read_pool
 
 #: Operator secret names passed through into the agent profile secret scope.
 #: PROPOSED set for operator ack (see sac-agent-full-permissions-20261020):
-#: generic provider keys + the Cloudflare pair, resolved by NAME from the
+#: generic provider keys + the scoped Cloudflare token, resolved by NAME from the
 #: trusted pool at launch. App-scoped keys (NEWB_*, *_TWITTER_*, ZOTERO_*,
 #: SAC_*, SCITEX_SCHOLAR_*, SCITEX_AUDIO_*, SCITEX_HUB_CAMPAIGN_*,
 #: SCITEX_GENAI_GATEWAY_*) and bearer tokens (GITHUB/HUGGINGFACE/CODECOV)
@@ -37,8 +37,11 @@ OPERATOR_SECRET_ENV_NAMES: tuple[str, ...] = (
     "PERPLEXITY_API_KEY",
     "SEMANTIC_SCHOLAR_API_KEY",
     "XIAOMI_API_KEY",
-    "SCITEX_CLOUDFLARE_API_KEY",
-    "SCITEX_CLOUDFLARE_EMAIL",
+    # Scoped Cloudflare API token (DNS/Cache Purge/Workers Routes on the SciTeX
+    # zones; Tunnel + Workers Scripts on the SciTeX account). It replaced the
+    # Global API key pair (SCITEX_CLOUDFLARE_API_KEY + _EMAIL) on 2026-11-27:
+    # that key can do anything on the account and must never reach an agent.
+    "SCITEX_CLOUDFLARE_API_TOKEN",
 )
 
 log = slogging.getLogger(__name__)

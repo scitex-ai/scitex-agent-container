@@ -151,3 +151,15 @@ def test_default_optional_slots_are_not_missing_credential_warnings(
         r.levelno == logging.DEBUG and "missing from the pool" in r.getMessage()
         for r in caplog.records
     ) and not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_allowlist_never_carries_the_cloudflare_global_key() -> None:
+    # The Global API key (+ its email) can do anything on the account; agents
+    # get the scoped token instead. Guard against it creeping back in.
+    from scitex_agent_container.runtimes._operator_secret_env import (
+        OPERATOR_SECRET_ENV_NAMES,
+    )
+
+    assert "SCITEX_CLOUDFLARE_API_KEY" not in OPERATOR_SECRET_ENV_NAMES
+    assert "SCITEX_CLOUDFLARE_EMAIL" not in OPERATOR_SECRET_ENV_NAMES
+    assert "SCITEX_CLOUDFLARE_API_TOKEN" in OPERATOR_SECRET_ENV_NAMES
