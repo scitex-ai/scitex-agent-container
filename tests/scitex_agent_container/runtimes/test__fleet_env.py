@@ -194,11 +194,23 @@ def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
     taught this). Mutation-checked: making ``_resolved_store_locator`` skip
     its ``finally`` restore leaves the sentinel in ``os.environ`` and this
     fails.
+
+    REFUSING is one of those upstream answers. scitex-dev 0.67 refuses an
+    unset resolution on a host that manages a node of the shared store
+    (``~/.scitex/pg`` exists) instead of picking a default — measured on the
+    self-hosted CI runners and operator workstations. The refusal is the
+    unset arm's outcome, so its text is checked for the sentinel exactly like
+    a locator would be.
     """
+    from scitex_dev.store import StoreTargetError
+
     # Arrange
     _resolved_store_locator(_SENTINEL_DSN)
     # Act
-    unset = _resolved_store_locator(None)
+    try:
+        unset = _resolved_store_locator(None)
+    except StoreTargetError as refusal:
+        unset = str(refusal)
     # Assert
     assert "sentinel.invalid" not in unset
 
@@ -472,7 +484,6 @@ def test_the_host_process_role_never_reaches_a_container(tmp_path: Path) -> None
     env = effective_env(config, defaults=FLEET_DEFAULT_ENV)
     # Assert
     assert env[PG_USER_ENV] == derive_pg_role("some-agent")
-
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:

@@ -12,6 +12,9 @@ versioning follows [SemVer](https://semver.org/).
   0.3.26 is additive (host storage gate, API operation/serving/MCP layer) and
   changes no GUI shell, app header, embed launcher, CSS or JavaScript the
   dashboard renders.
+- The store leak-guard test accepts scitex-dev's refusal of an unset store
+  DSN on hosts that manage a shared-store node (self-hosted CI runners), so
+  the matrix no longer fails there for a reason unrelated to sac.
 
 ## [0.42.1] - 2026-11-20
 
