@@ -154,12 +154,27 @@ def test_default_optional_slots_are_not_missing_credential_warnings(
 
 
 def test_allowlist_never_carries_the_cloudflare_global_key() -> None:
-    # The Global API key (+ its email) can do anything on the account; agents
-    # get the scoped token instead. Guard against it creeping back in.
+    # Arrange: the Global API key (+ its email) can do anything on the
+    # account; agents get the scoped token instead. Guard against it
+    # creeping back in.
     from scitex_agent_container.runtimes._operator_secret_env import (
         OPERATOR_SECRET_ENV_NAMES,
     )
 
-    assert "SCITEX_CLOUDFLARE_API_KEY" not in OPERATOR_SECRET_ENV_NAMES
-    assert "SCITEX_CLOUDFLARE_EMAIL" not in OPERATOR_SECRET_ENV_NAMES
-    assert "SCITEX_CLOUDFLARE_API_TOKEN" in OPERATOR_SECRET_ENV_NAMES
+    global_key_names = {"SCITEX_CLOUDFLARE_API_KEY", "SCITEX_CLOUDFLARE_EMAIL"}
+    # Act
+    leaked = global_key_names & set(OPERATOR_SECRET_ENV_NAMES)
+    # Assert
+    assert leaked == set()
+
+
+def test_allowlist_carries_the_scoped_cloudflare_token() -> None:
+    # Arrange: agents that manage DNS/tunnels need the scoped token.
+    from scitex_agent_container.runtimes._operator_secret_env import (
+        OPERATOR_SECRET_ENV_NAMES,
+    )
+
+    # Act
+    present = "SCITEX_CLOUDFLARE_API_TOKEN" in OPERATOR_SECRET_ENV_NAMES
+    # Assert
+    assert present
