@@ -16,7 +16,11 @@ FIRST-SEEN-STABLE. A spec without ``uuid`` gets one the first time sac
 touches it for real (``sac agents create`` writes it into the spec; the
 start path keeps one in RUNTIME STATE via :func:`runtime_spec_uuid` and
 never edits the committed spec — issue #1777), and that value is then stable: this
-module never overwrites a present, valid uuid. Concurrent first-sights on
+module never overwrites a present, valid uuid in a spec. A start on a spec
+that DOES carry ``uuid`` mirrors it into the same runtime state file
+(:func:`record_runtime_spec_uuid`), so removing a host-only stamp line later
+keeps the identity; :mod:`._spec_uuid_migrate` performs that removal.
+Concurrent first-sights on
 two hosts stamp per-FILE values that the fleet sync then reconciles like
 any other spec edit — the file is the source of truth, not either host's
 memory of it.
@@ -39,6 +43,8 @@ __all__ = [
     "backfill_spec_uuids",
     "ensure_spec_uuid",
     "parse_spec_uuid",
+    "record_runtime_spec_uuid",
+    "resolve_start_spec_uuid",
     "runtime_spec_uuid",
 ]
 
@@ -98,9 +104,7 @@ def ensure_spec_uuid(spec_path: str | Path) -> str:
             f"cannot stamp spec.uuid in {path}: no mappable `spec:` block. "
             f"Is this a v3 spec.yaml?"
         )
-    existing = find_key(
-        bodies, block.start, block.stop, block.child_indent, "uuid"
-    )
+    existing = find_key(bodies, block.start, block.stop, block.child_indent, "uuid")
     if existing is not None:
         parsed = parse_key_line(bodies[existing])
         value = parsed.value.strip() if parsed is not None else ""
@@ -144,6 +148,78 @@ def runtime_spec_uuid(state_dir: str | Path) -> str:
     finally:
         tmp.unlink(missing_ok=True)
     return stamped
+
+
+def _write_state_uuid(path: Path, value: str) -> None:
+    """Atomically replace ``path`` with ``value`` (tmp in the same dir + rename)."""
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(value + "\n")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def record_runtime_spec_uuid(state_dir: str | Path, spec_uuid: str) -> str | None:
+    """Mirror an AUTHORED ``spec.uuid`` into ``<state_dir>/spec_uuid``.
+
+    Returns the value the state file held before (``None`` when absent), so
+    a caller can tell a first record from a correction.
+
+    Why: SAC < 0.40 stamped ``uuid:`` lines into specs at START, and those
+    lines are often working-tree-only (never committed). If the identity
+    lives ONLY in the spec, deleting such a line makes the next start mint a
+    new runtime uuid and the agent's rows fork. Keeping the runtime state
+    file in step with the spec means :func:`runtime_spec_uuid` already holds
+    the same identity the day the line goes away.
+
+    The spec is authoritative: a state file holding a different (or
+    malformed) value is overwritten atomically and the change is logged —
+    the start is recording what the spec SAYS, so the spec wins.
+    """
+    value = parse_spec_uuid(spec_uuid, path="<spec.uuid>")
+    if not value:
+        raise ValueError("record_runtime_spec_uuid needs a non-empty spec.uuid")
+    path = Path(state_dir).expanduser() / RUNTIME_UUID_FILE
+    previous: str | None = None
+    if path.is_file():
+        previous = path.read_text().strip()
+        try:
+            if parse_spec_uuid(previous, path=str(path)) == value:
+                return previous
+        except ValueError:  # stx-allow: fallback (reason: a malformed state file is replaced by the authoritative spec value below; the warning goes to the scitex_logging logger scitex_agent_container.config._spec_uuid)
+            pass
+        _logger().warning(
+            "spec.uuid %s differs from runtime state %s (%r); the spec is "
+            "authoritative, overwriting the state file",
+            value,
+            path,
+            previous,
+        )
+    _write_state_uuid(path, value)
+    return previous
+
+
+def resolve_start_spec_uuid(spec_uuid: str, state_dir: str | Path) -> str:
+    """The ``spec_uuid`` a START records, keeping runtime state in step.
+
+    An authored ``spec.uuid`` is returned as-is and mirrored into
+    ``<state_dir>/spec_uuid`` (:func:`record_runtime_spec_uuid`); a spec
+    without one uses the runtime-minted value (:func:`runtime_spec_uuid`).
+    """
+    if spec_uuid:
+        record_runtime_spec_uuid(state_dir, spec_uuid)
+        return parse_spec_uuid(spec_uuid)
+    return runtime_spec_uuid(state_dir)
+
+
+def _logger():
+    import scitex_logging
+
+    return scitex_logging.getLogger(__name__)
 
 
 def backfill_spec_uuids(agents_dir: str | Path) -> dict[str, str]:
