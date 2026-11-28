@@ -45,6 +45,9 @@ READERS = frozenset(
 RECURSIVE_READERS = frozenset(
     "grep egrep fgrep zgrep rg ag ack cp scp rsync tar zip 7z 7za diff".split()
 )
+#: Readers whose first positional operand is a PATTERN, not a file.
+SEARCHERS = frozenset("grep egrep fgrep zgrep rg ag ack".split())
+_PATTERN_OPTS = frozenset({"-e", "--regexp", "-f", "--file"})
 #: Prefixes that run the NEXT word as the program.
 WRAPPERS = frozenset(
     """
@@ -142,6 +145,31 @@ def _operands(words: Sequence[str], start: int) -> list[str]:
     return out
 
 
+def _without_search_pattern(words: Sequence[str]) -> list[str]:
+    """Drop a searcher's PATTERN operand: `grep .netrc docs/` names no file.
+
+    Only the first non-option word after the searcher is dropped, and only
+    when no `-e`/`-f` supplies the pattern -- so the worst a mis-parse (an
+    option value such as `-A 3`) can do is keep a pattern, never drop a FILE
+    that follows a real pattern.
+    """
+    out = list(words)
+    for k, word in enumerate(out):
+        if os.path.basename(word) not in SEARCHERS:
+            continue
+        rest = out[k + 1 :]
+        if any(
+            w in _PATTERN_OPTS or w.startswith(("--regexp=", "--file=")) for w in rest
+        ):
+            return out
+        for j, w in enumerate(rest):
+            if not w.startswith("-"):
+                del out[k + 1 + j]
+                return out
+        return out
+    return out
+
+
 def _gpg_hits(words: Sequence[str], at: int, cwd: str) -> list[Hit]:
     args = list(words[at + 1 :])
     if any(a.split("=", 1)[0] in _GPG_EXPORT_SECRET for a in args):
@@ -203,7 +231,9 @@ def hits_for_bash(command: str, cwd: str, depth: int = 0) -> list[Hit]:
             continue
         # `find DIR -exec cat {} +` walks DIR, so the directory counts.
         recursive = "find" in progs or any(p in RECURSIVE_READERS for p in readers)
-        hits += find_hits(_operands(words, start), cwd, recursive=recursive)
+        hits += find_hits(
+            _operands(_without_search_pattern(words), start), cwd, recursive=recursive
+        )
         if progs[0] == "xargs" and before == "|":
             # `find ~/.ssh | xargs cat`: the reader's operands arrive on stdin,
             # so the upstream command's operands are what gets read.
