@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-11-29
+
 ### Security
 - Stop copying the whole `$HOME/.env` into sac's process environment when
   a provider or engine key is resolved (scitex-config#47). Before this
@@ -17,6 +19,13 @@ versioning follows [SemVer](https://semver.org/).
   only the named variable with `scitex_config.read_dotenv` and exports
   nothing. Precedence is unchanged: shell export, then `$HOME/.env`, then
   empty (which still fails loud). Requires `scitex-config>=0.4.0`.
+
+### Fixed
+- The GUI and development extras declare `scitex-sdk[gui]>=0.3.25`
+  instead of an exact pin (PS-237: no exact pins in publishable metadata).
+- `test_the_sentinel_never_leaks_into_the_unset_arm` checks the restored
+  environment directly instead of resolving an unset store. On a host
+  that manages a store node, scitex-dev refuses an unset DSN.
 
 ## [0.42.1] - 2026-11-20
 

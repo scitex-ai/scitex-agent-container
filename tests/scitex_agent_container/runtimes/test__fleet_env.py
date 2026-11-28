@@ -187,20 +187,22 @@ def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
     """Leak-guard companion to the sentinel test above.
 
     Proves the helper's save/restore seam actually restores: after an
-    injected resolution, an unset resolution must show no trace of the
-    sentinel. Deliberately says NOTHING about where the unset arm lands —
-    0.57.0 answers a unix socket, 0.58.1 answers the fleet primary, and both
-    are upstream's business (see the docstring above for the incident that
-    taught this). Mutation-checked: making ``_resolved_store_locator`` skip
-    its ``finally`` restore leaves the sentinel in ``os.environ`` and this
-    fails.
+    injected resolution, the process environment shows no trace of the
+    sentinel. It reads ``os.environ`` directly rather than resolving the
+    unset arm, because where that arm lands is upstream's business (0.57.0
+    answered a unix socket, 0.58.1 the fleet primary, and current scitex-dev
+    REFUSES an unset DSN on a host that manages a store node). Mutation-checked:
+    making ``_resolved_store_locator`` skip its ``finally`` restore leaves the
+    sentinel in ``os.environ`` and this fails.
     """
+    import os
+
     # Arrange
     _resolved_store_locator(_SENTINEL_DSN)
     # Act
-    unset = _resolved_store_locator(None)
+    after = os.environ.get("SCITEX_STORE_DSN", "")
     # Assert
-    assert "sentinel.invalid" not in unset
+    assert "sentinel.invalid" not in after
 
 
 # ----------------------------------------------------------------------
