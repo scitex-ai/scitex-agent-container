@@ -4,8 +4,8 @@ No mocks: the Hermes resolver, the credential-pool store, and dotenv
 loading all run for real against ``tmp_path`` profiles. ``$HOME`` is
 swapped through the ``env_save_restore`` fixture (which is what
 ``Path.home`` reads on POSIX) instead of patching ``Path.home``, and the
-explicit ``dotenv_path`` production passes makes ``load_dotenv`` a natural
-no-op against the empty fake home — no ``load_dotenv`` stub required.
+``$HOME/.env`` lookup production does (``resolve_host_env``) finds no file
+in the empty fake home and resolves to "" — no dotenv stub required.
 ``sys.path`` gains the selected checkout only for the duration of each
 scenario and is restored afterwards.
 """

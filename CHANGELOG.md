@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Stop copying the whole `$HOME/.env` into sac's process environment when
+  a provider or engine key is resolved (scitex-config#47). Before this
+  release, `provider_env_flags`, `openai_env_flags` and the engine-honour
+  token check called `scitex_config.load_dotenv(dotenv_path=$HOME/.env)`,
+  which exported every variable in that file, unrelated credentials
+  included. Every tmux pane, container and probe sac spawned afterwards
+  inherited them. The new `config._host_env.resolve_host_env(name)` reads
+  only the named variable with `scitex_config.read_dotenv` and exports
+  nothing. Precedence is unchanged: shell export, then `$HOME/.env`, then
+  empty (which still fails loud). Requires `scitex-config>=0.4.0`.
+
 ## [0.42.1] - 2026-11-20
 
 ### Fixed
