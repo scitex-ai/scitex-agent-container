@@ -40,6 +40,7 @@ _PROVIDER = "scitex-agent-container"
 _BUNDLE = "_baseline_assets/image_build_hooks"
 _PROCESS_WAIT_BUNDLE = "_baseline_assets/process_wait_hooks"
 _EXIT_CODE_BUNDLE = "_baseline_assets/exit_code_hooks"
+_SECRET_READ_BUNDLE = "_baseline_assets/secret_read_hooks"
 
 #: Absolute on-disk path to the same bundle, for callers that already have
 #: the package imported and do not want to go through importlib.resources.
@@ -50,6 +51,15 @@ DENY_SELF_MATCHING_PGREP_WAIT = (
     f"{_PROCESS_WAIT_BUNDLE}/deny_self_matching_pgrep_wait.sh"
 )
 DENY_SWALLOWED_EXIT_CODE = f"{_EXIT_CODE_BUNDLE}/deny_swallowed_exit_code.sh"
+DENY_SECRET_FILE_READ = f"{_SECRET_READ_BUNDLE}/deny_secret_file_read.sh"
+
+#: Every Claude Code tool that can put a file's CONTENTS (or, for Glob, a
+#: secret-store listing) into the transcript. ``NotebookRead`` is retired in
+#: current Claude Code (``Read`` reads notebooks) but costs nothing to keep
+#: for older harnesses. Codex reaches files only through its shell tool,
+#: whose hook payload carries ``tool_name: "Bash"`` -- so the ``Bash`` entry
+#: is what covers a codex pane; the native names never fire there.
+SECRET_READ_TOOLS = ("Read", "NotebookRead", "Grep", "Glob", "Bash")
 
 
 def provide_hooks() -> "tuple[HookRule, ...]":
@@ -144,6 +154,38 @@ def provide_hooks() -> "tuple[HookRule, ...]":
             provider=_PROVIDER,
             script=DENY_SWALLOWED_EXIT_CODE,
         ),
+        HookRule(
+            id="sac.no-secret-file-read",
+            rule=(
+                "Refuse Read/NotebookRead/Grep/Glob/Bash calls that would read "
+                "secret material from disk -- SSH/GPG private keys, ~/.pw GPG "
+                "payloads, the dotfiles .bash.d/secrets token store, "
+                "*.pem/*.p12/*.pfx, git/gh/netrc/docker/aws credential files, "
+                "and /var/lib/scitex-secrets-signing -- after ~ expansion, "
+                "`..` collapse and symlink resolution; listing a directory, "
+                "public keys and `gpg --list-keys` stay allowed."
+            ),
+            reason=(
+                "Whatever a tool reads lands in the session transcript, which "
+                "is append-only, durable and leaves the machine; deleting a "
+                "scratch file afterwards does nothing. The only existing "
+                "secret guard, deny_broad_env_dump.sh, is Bash-only and "
+                "covers environment dumps, so a Read of ~/.ssh/id_ed25519, a "
+                "Grep over .bash.d/secrets/access_tokens, or a `cat` of "
+                "~/.config/gh/hosts.yml went through unchallenged. Agents "
+                "never need those files: credentials reach them as "
+                "environment variables through sac's payload system and the "
+                "operator's secret pool, so the deny message routes the agent "
+                "there and to the operator instead of to another path. The "
+                "matcher spans every content-reading tool because a "
+                "Bash-only rule is bypassed by the native Read tool."
+            ),
+            event="pre-tool-use",
+            severity="deny",
+            matches=SECRET_READ_TOOLS,
+            provider=_PROVIDER,
+            script=DENY_SECRET_FILE_READ,
+        ),
     )
 
 
@@ -152,6 +194,9 @@ __all__ = [
     "BUNDLE_DIR",
     "DENY_RAW_APPTAINER_BUILD",
     "DENY_SELF_MATCHING_PGREP_WAIT",
+    "DENY_SWALLOWED_EXIT_CODE",
+    "DENY_SECRET_FILE_READ",
+    "SECRET_READ_TOOLS",
 ]
 
 # EOF

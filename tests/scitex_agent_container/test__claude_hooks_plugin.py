@@ -112,9 +112,7 @@ def test_entry_point_targets_this_provider():
         "scitex-agent-container"
     ]
     # Assert
-    assert target == (
-        "scitex_agent_container._claude_hooks_plugin:provide_hooks"
-    )
+    assert target == ("scitex_agent_container._claude_hooks_plugin:provide_hooks")
 
 
 def test_provider_imports_without_scitex_dev_contract():
@@ -154,9 +152,7 @@ def test_raw_build_rule_denies_on_bash_pre_tool_use():
 def test_process_wait_rule_denies_on_bash_pre_tool_use():
     # Arrange
     (rule,) = [
-        r
-        for r in plugin.provide_hooks()
-        if r.id == "sac.no-self-matching-pgrep-wait"
+        r for r in plugin.provide_hooks() if r.id == "sac.no-self-matching-pgrep-wait"
     ]
     # Act
     shape = (rule.event, rule.severity, rule.matches)
@@ -168,14 +164,70 @@ def test_process_wait_rule_denies_on_bash_pre_tool_use():
 def test_exit_code_rule_denies_on_bash_pre_tool_use():
     # Arrange
     (rule,) = [
-        r
-        for r in plugin.provide_hooks()
-        if r.id == "sac.no-swallowed-exit-code"
+        r for r in plugin.provide_hooks() if r.id == "sac.no-swallowed-exit-code"
     ]
     # Act
     shape = (rule.event, rule.severity, rule.matches)
     # Assert
     assert shape == ("pre-tool-use", "deny", ("Bash",))
+
+
+def test_declared_secret_read_script_resolves_to_a_real_file():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SECRET_FILE_READ
+    # Assert
+    assert script.is_file()
+
+
+def test_declared_secret_read_script_is_executable():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SECRET_FILE_READ
+    # Assert
+    assert script.stat().st_mode & 0o111
+
+
+def test_secret_read_engine_ships_next_to_its_wrapper():
+    # Arrange -- the wrapper fails OPEN without its siblings, so a missing
+    # module would silently disable the guard.
+    bundle = (
+        Path(plugin.__file__).resolve().parent / plugin.DENY_SECRET_FILE_READ
+    ).parent
+    # Act
+    present = sorted(p.name for p in bundle.glob("secret_file_read_*.py"))
+    # Assert
+    assert present == [
+        "secret_file_read_bash.py",
+        "secret_file_read_core.py",
+        "secret_file_read_paths.py",
+    ]
+
+
+def test_secret_read_tools_cover_every_content_reading_tool():
+    # Arrange
+    expected = {"Read", "NotebookRead", "Grep", "Glob", "Bash"}
+    # Act
+    declared = set(plugin.SECRET_READ_TOOLS)
+    # Assert
+    assert declared == expected
+
+
+@_needs_contract
+def test_secret_read_rule_denies_on_every_file_tool():
+    # Arrange
+    (rule,) = [r for r in plugin.provide_hooks() if r.id == "sac.no-secret-file-read"]
+    # Act
+    shape = (rule.event, rule.severity, rule.matches, rule.script)
+    # Assert
+    assert shape == (
+        "pre-tool-use",
+        "deny",
+        plugin.SECRET_READ_TOOLS,
+        plugin.DENY_SECRET_FILE_READ,
+    )
 
 
 @_needs_contract
@@ -186,5 +238,6 @@ def test_every_rule_states_a_substantive_reason():
     thin = [r.id for r in rules if len(r.reason) < 120]
     # Assert
     assert thin == []
+
 
 # EOF
