@@ -194,13 +194,20 @@ def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
     taught this). Mutation-checked: making ``_resolved_store_locator`` skip
     its ``finally`` restore leaves the sentinel in ``os.environ`` and this
     fails.
+
+    It inspects ``os.environ`` directly instead of resolving the unset arm:
+    newer scitex-dev raises ``StoreTargetError`` for an unset DSN on hosts
+    that are not the fleet primary (2026-11-28, CI on scitex-ci-03), which is
+    again a fact about WHERE the default goes, not about the seam.
     """
+    import os
+
     # Arrange
-    _resolved_store_locator(_SENTINEL_DSN)
+    before = os.environ.get("SCITEX_STORE_DSN")
     # Act
-    unset = _resolved_store_locator(None)
+    _resolved_store_locator(_SENTINEL_DSN)
     # Assert
-    assert "sentinel.invalid" not in unset
+    assert os.environ.get("SCITEX_STORE_DSN") == before
 
 
 # ----------------------------------------------------------------------
@@ -472,7 +479,6 @@ def test_the_host_process_role_never_reaches_a_container(tmp_path: Path) -> None
     env = effective_env(config, defaults=FLEET_DEFAULT_ENV)
     # Assert
     assert env[PG_USER_ENV] == derive_pg_role("some-agent")
-
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:
