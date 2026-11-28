@@ -1,0 +1,16 @@
+{
+  "_comment_deny_secret_file_read_hook": "PreToolUse wiring for deny_secret_file_read.sh. Unlike the Bash-only sac guards this one needs its OWN matcher block, because it gates the native file tools too: Read, NotebookRead, Grep, Glob and Bash. Deploy the wrapper together with secret_file_read_core.py, secret_file_read_paths.py and secret_file_read_bash.py into $HOME/.claude/hooks/pre-tool-use/ via to_home materialization; the wrapper FAILS OPEN (allow) if python3 or the engine is missing. This fragment is the LEGACY/manual wiring path, kept so the bundle stays installable by hand; the sanctioned path is the `scitex_dev.hooks` entry point declared in scitex_agent_container/_claude_hooks_plugin.py (rule id sac.no-secret-file-read), which scitex-dev discovers and applies centrally. Operator override (logged, no inline marker): SAC_ALLOW_SECRET_FILE_READ=1 in the harness launch environment. Covered / not-covered table: sibling README.md.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|NotebookRead|Grep|Glob|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-tool-use/deny_secret_file_read.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
