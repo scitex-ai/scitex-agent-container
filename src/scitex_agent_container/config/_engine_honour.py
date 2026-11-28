@@ -108,17 +108,13 @@ class EngineVerdict:
 def _resolve_token(name: str) -> str:
     """The host value of env var ``name`` through the launch's own cascade.
 
-    Returns ``""`` when unresolvable. Imported lazily so ``import
-    scitex_agent_container.config`` does not pay scitex-config's
-    first-import auto-configuration — the same reason
-    ``_harness_types._harness_logger`` imports lazily.
+    Returns ``""`` when unresolvable. Shell export wins over
+    ``$HOME/.env``. Only ``name`` is read, and nothing is exported into
+    ``os.environ`` (see :mod:`._host_env`).
     """
-    from pathlib import Path
+    from ._host_env import resolve_host_env
 
-    from scitex_config import PriorityConfig, load_dotenv
-
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    return PriorityConfig(auto_uppercase=False).resolve(key=name, default="") or ""
+    return resolve_host_env(name)
 
 
 def _ok(engine: EngineSpec, *, probed: bool = False) -> EngineVerdict:

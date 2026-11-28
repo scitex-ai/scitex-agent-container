@@ -30,17 +30,19 @@ The provider API key is resolved through the SciTeX-ecosystem standard
 ``direct → config → env → default`` cascade exposed by
 ``scitex_config``:
 
-  1. ``scitex_config.load_dotenv(dotenv_path=$HOME/.env)`` merges the
-     host-level ``$HOME/.env`` into ``os.environ`` **without overriding
-     any already-set var** — an explicit ``export DEEPSEEK_API_KEY=...``
+  1. ``config._host_env.resolve_host_env(name)`` reads ONLY ``name``
+     from the host-level ``$HOME/.env`` (``scitex_config.read_dotenv``,
+     nothing is exported into ``os.environ``) and uses it **only when the
+     var is not already set** — an explicit ``export DEEPSEEK_API_KEY=...``
      in the launch shell still wins. Path is pinned to ``$HOME/.env``
-     on purpose: the default ``load_dotenv`` order also checks
-     ``cwd/.env`` first, which would be a surprise for an operator
-     running ``sac agents start`` from an unrelated project dir.
+     on purpose: a cwd-first search would be a surprise for an
+     operator running ``sac agents start`` from an unrelated project
+     dir. Other ``$HOME/.env`` variables are never read into sac's
+     environment, so spawned processes do not inherit them.
   2. ``scitex_config.PriorityConfig(auto_uppercase=False).resolve(
-     key=auth_token_env, default="")`` then reads the value from
-     ``os.environ`` (the only layer populated for this resolver —
-     no YAML config_dict by design; secrets do not belong in YAML).
+     key=auth_token_env, default=<$HOME/.env value>)`` reads the
+     process env first (no YAML config_dict by design; secrets do not
+     belong in YAML).
      ``auto_uppercase=False`` because ``auth_token_env`` is already
      the literal env-var name declared in ``spec.claude.provider``.
      ``PriorityConfig`` auto-masks ``API_KEY`` / ``TOKEN`` / ``SECRET``
@@ -111,12 +113,10 @@ configures the Claude SDK, which an ``openai``-harness agent never runs).
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 from ..config._harness_registry import known_harnesses
+from ..config._host_env import resolve_host_env
 from ._apptainer_context_window import context_window_env
 from ._apptainer_provider_cfg import container_config_dir
 
@@ -163,13 +163,8 @@ def resolve_provider_api_key(config: AgentConfig) -> str:
         )
 
     # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
-    # load_dotenv() is no-op-safe — already-set process env always wins,
-    # so calling it on every provider-env resolution is cheap and
-    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
-    # surprise of the default load_dotenv() search order.
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    resolver = PriorityConfig(auto_uppercase=False)
-    api_key = resolver.resolve(key=auth_token_env, default="")
+    # Only this one var is read; no .env content reaches os.environ.
+    api_key = resolve_host_env(auth_token_env)
     if not api_key:
         raise ProviderEnvError(
             f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
@@ -450,14 +445,11 @@ def openai_env_flags(config: AgentConfig) -> list[str]:
             "two declarations."
         )
 
-    # Same scitex-config precedence as provider_env_flags above:
-    # shell-export > $HOME/.env > default (see that function's comment
-    # for why the dotenv path is pinned to $HOME/.env).
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    resolver = PriorityConfig(auto_uppercase=False)
-    api_key = resolver.resolve(key=_SAC_OPENAI_KEY_ENV, default="")
+    # Same precedence as provider_env_flags above:
+    # shell-export > $HOME/.env > default, one named var at a time.
+    api_key = resolve_host_env(_SAC_OPENAI_KEY_ENV)
     if not api_key:
-        api_key = resolver.resolve(key=_OPENAI_KEY_ENV, default="")
+        api_key = resolve_host_env(_OPENAI_KEY_ENV)
     if not api_key:
         raise ProviderEnvError(
             f"spec.harness: openai but neither {_SAC_OPENAI_KEY_ENV} "

@@ -70,7 +70,7 @@ dependencies = [
     #      → default` cascade (see ADR-0011).
     # v0.3.0 was the release that split public from ecosystem-internal
     # and exposed both surfaces — that is our hard minimum.
-    "scitex-config>=0.3.0",
+    "scitex-config>=0.4.0",
     # 0.3.0 gave sac's source-bundled ``sac image build`` the atomic
     # ``build(...)`` it delegates to (timestamped SIF + stable symlink
     # swap; a failed build leaves the prior image intact) with ``cwd``

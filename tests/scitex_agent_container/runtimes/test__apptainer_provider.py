@@ -202,9 +202,9 @@ def test_provider_with_account_raises_provider_env_error(env_save_restore):
 # ---------------------------------------------------------------------------
 #
 # The runtime delegates auth-token resolution to scitex_config:
-#   load_dotenv(dotenv_path=$HOME/.env) merges $HOME/.env into os.environ
-#   WITHOUT overriding already-set vars, then PriorityConfig.resolve()
-#   reads the value from os.environ. The tests below pin $HOME to a
+#   resolve_host_env(name) reads ONLY ``name`` from $HOME/.env
+#   (scitex_config.read_dotenv, nothing exported to os.environ) and
+#   PriorityConfig.resolve() prefers an already-set process env var. The tests below pin $HOME to a
 #   tmp_path so the real ~/.env is never touched.
 
 
@@ -218,7 +218,7 @@ def test_auth_token_resolved_from_home_dotenv_via_scitex_config(
 ):
     # Arrange — pin HOME to tmp, drop the key in $HOME/.env only.
     # Host env intentionally lacks DEEPSEEK_API_KEY so the value MUST
-    # come from the .env via scitex_config.load_dotenv.
+    # come from the .env via scitex_config.read_dotenv.
     env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
     _write_home_dotenv(tmp_path, "DEEPSEEK_API_KEY=sk-from-home-dotenv\n")
@@ -232,8 +232,8 @@ def test_auth_token_resolved_from_home_dotenv_via_scitex_config(
 
 def test_shell_export_wins_over_home_dotenv(env_save_restore, tmp_path):
     # Arrange — both layers populated with DIFFERENT values. The shell
-    # export should win because scitex_config.load_dotenv never
-    # overrides an already-set process env var.
+    # export should win because resolve_host_env reads the process env
+    # before $HOME/.env.
     env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.set("DEEPSEEK_API_KEY", "sk-from-shell-export")
     _write_home_dotenv(tmp_path, "DEEPSEEK_API_KEY=sk-from-home-dotenv\n")
@@ -265,7 +265,7 @@ def test_home_dotenv_supports_quoted_and_export_prefixed_lines(
 ):
     # Arrange — common .env shapes operators copy from dotfiles: an
     # ``export FOO="bar"`` style line with surrounding double quotes.
-    # scitex_config.load_dotenv strips both forms.
+    # scitex_config.read_dotenv strips both forms.
     env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
     _write_home_dotenv(

@@ -100,6 +100,16 @@ ecosystem primitive.
    `spec.claude.provider` remain mutually exclusive — an API-key
    backend uses no Anthropic OAuth.
 
+> **Amendment (2026-11-28, scitex-config#47).** `load_dotenv()` copied
+> *every* `$HOME/.env` variable into sac's `os.environ`, and every process
+> sac spawned inherited them. sac now calls
+> `config._host_env.resolve_host_env(name)`. That reads only the named
+> variable with `scitex_config.read_dotenv` (scitex-config >= 0.4.0) and
+> passes it as the `PriorityConfig` default. Precedence is unchanged
+> (shell export > `$HOME/.env` > empty), and nothing is exported. The
+> "process-wide `os.environ` mutation" consequence below no longer
+> applies.
+
 ## Consequences
 
 ### Positive

@@ -50,11 +50,11 @@ _OPENAI_ENV_KEYS = (
 def clean_openai_env(tmp_path: Path, env_save_restore):
     """Scrub every OpenAI-column env var and sandbox ``$HOME``.
 
-    ``openai_env_flags`` merges ``$HOME/.env`` into the process env via
-    ``scitex_config.load_dotenv``; redirecting ``HOME`` keeps the
-    developer's real ``~/.env`` out of the cascade. Pre-deleting every
-    column key means any value ``load_dotenv`` re-adds from a test-
-    written ``.env`` is tracked and restored by ``env_save_restore``.
+    ``openai_env_flags`` reads named keys from ``$HOME/.env`` (via
+    ``config._host_env.resolve_host_env``, which exports nothing);
+    redirecting ``HOME`` keeps the developer's real ``~/.env`` out of the
+    cascade, and pre-deleting every column key keeps the shell layer
+    empty so the test-written ``.env`` is what the cascade sees.
     """
     home = tmp_path / "home"
     home.mkdir()
